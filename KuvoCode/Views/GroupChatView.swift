@@ -28,7 +28,8 @@ struct GroupChatView: View {
             addQuote(text, how: "selection")
         }) {
             // Laid out by a stack of their own, as a session's rows are (see `RowStack`).
-            RowStack(items: messages, id: \.id, spacing: 18, same: ==, estimate: { 70 + CGFloat($0.text.count / 95) * 24 }) { message, _ in
+            RowStack(items: messages, id: \.id, spacing: 18, same: ==, estimate: { 70 + CGFloat($0.text.count / 95) * 24 },
+                     text: { FindText.shown(markdown: $0.text, folders: []) }) { message, _ in
                 GroupMessageRow(message: message, author: message.author.flatMap { bots.bot($0) }, members: members,
                                 reply: { reply(to: message) }, undo: { undo(from: message) },
                                 startWork: message.tasks?.contains { $0.state == .proposed } == true ? { groups.startWork(message.id, in: group.id) } : nil)

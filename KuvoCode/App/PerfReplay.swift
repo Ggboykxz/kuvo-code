@@ -836,6 +836,49 @@ enum PerfCopyTest {
     }
 }
 
+/// KUVO_PERF_SELECT=<file>: eight seconds after launch, a drag from the last reply text in view
+/// up past the top of the conversation, held there KUVO_PERF_SELECT_HOLD seconds (1.5) so it
+/// scrolls; what the selection copies written to the file.
+@MainActor
+enum PerfSelectTest {
+    static func run() {
+        guard let file = ProcessInfo.processInfo.environment["KUVO_PERF_SELECT"] else { return }
+        let hold = Double(ProcessInfo.processInfo.environment["KUVO_PERF_SELECT_HOLD"] ?? "") ?? 1.5
+        Task {
+            try? await Task.sleep(for: .seconds(8))
+            guard let stack = ScrollAnchor.shownAnchor?.stack, let window = stack.window, let scroll = stack.enclosingScrollView else { return }
+            func texts(in view: NSView) -> [ReplyTextView] { (view as? ReplyTextView).map { [$0] } ?? view.subviews.flatMap(texts) }
+            let clip = scroll.contentView
+            let visible = scroll.convert(scroll.bounds, to: nil)
+            guard let last = texts(in: stack).filter({ $0.window != nil && clip.convert($0.bounds, from: $0).intersects(clip.bounds) })
+                .max(by: { $0.convert($0.bounds, to: nil).minY > $1.convert($1.bounds, to: nil).minY }) else { return }
+            let box = last.convert(last.bounds, to: nil)
+            // Near the end of its text (window coordinates are from the bottom).
+            let start = NSPoint(x: box.midX, y: max(box.minY + 6, visible.minY + 110))
+            let end = NSPoint(x: visible.midX, y: visible.maxY + 30)
+            func event(_ type: NSEvent.EventType, at point: NSPoint) -> NSEvent? {
+                NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                   windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)
+            }
+            for step in 1...12 {
+                let t = CGFloat(step) / 12
+                if let drag = event(.leftMouseDragged, at: NSPoint(x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t)) { NSApp.postEvent(drag, atStart: false) }
+            }
+            let up = Timer(timeInterval: hold, repeats: false) { _ in
+                MainActor.assumeIsolated { if let up = event(.leftMouseUp, at: end) { NSApp.postEvent(up, atStart: false) } }
+            }
+            RunLoop.main.add(up, forMode: .common)
+            let before = clip.bounds.origin.y
+            guard let down = event(.leftMouseDown, at: start) else { return }
+            last.mouseDown(with: down)
+            let copied = stack.selectedText()
+            let spots = stack.selection.map { "anchor \($0.anchor), focus \($0.focus)" } ?? "no selection"
+            let out = "scrolled \(Int(before)) → \(Int(clip.bounds.origin.y)) of \(Int(scroll.documentView?.frame.height ?? 0)), insets \(scroll.contentInsets.top)/\(scroll.contentInsets.bottom); start \(start), end \(end), view \(visible), text at \(box); \(spots); first responder \(window.firstResponder.map { String(describing: type(of: $0)) } ?? "none"); \(copied.count) characters copied\n\n" + copied
+            try? out.write(toFile: file, atomically: true, encoding: .utf8)
+        }
+    }
+}
+
 /// KUVO_PERF_LAYOUT_CHECK=<file>: for 30 seconds after launch, twice a second, each TextKit reply
 /// text in the window whose text isn't laid out at its own width, or doesn't fit its frame (lines
 /// drawn over what's under it, or a gap), written to the file; "all right" at the end if none.

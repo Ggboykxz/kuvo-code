@@ -17,6 +17,11 @@ struct RowStack<Item, Row: View>: NSViewRepresentable {
     let estimate: (Item) -> CGFloat
     /// Rows added come in, rising a little as they fade in (not a whole history arriving).
     var animatesNew = true
+    /// A row's words as they're copied, for a selection that takes all of it (a row without text
+    /// of its own to select in: your message, a line of steps; or one not made at the time).
+    var text: (Item) -> String = { _ in "" }
+    /// The space a row leaves above itself (inside its view): a selection's tint leaves it out.
+    var space: (Item, Int) -> CGFloat = { _, _ in 0 }
     @ViewBuilder let row: (Item, Int) -> Row
 
     final class Coordinator {
@@ -47,8 +52,10 @@ struct RowStack<Item, Row: View>: NSViewRepresentable {
             changed.insert(key)
         }
         context.coordinator.items = now
-        let items = items, row = row, estimate = estimate
+        let items = items, row = row, estimate = estimate, text = text, space = space
         let environment = context.environment
+        view.rowText = { index in index < items.count ? text(items[index]) : "" }
+        view.rowSpace = { index in index < items.count ? space(items[index], index) : 0 }
         view.scrollAnchor = environment.scrollAnchor
         environment.scrollAnchor?.stack = view
         view.apply(ids: ids, changed: changed, spacing: spacing, animatesNew: animatesNew && !old.isEmpty, estimate: { estimate(items[$0]) }) { index in
@@ -62,8 +69,16 @@ struct RowStack<Item, Row: View>: NSViewRepresentable {
     }
 }
 
-final class RowStackView: NSView {
+final class RowStackView: NSView, NSUserInterfaceValidations {
     override var isFlipped: Bool { true }
+
+    func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        switch item.action {
+        case #selector(copy(_:)): orderedSelection != nil
+        case #selector(selectAll(_:)): !ids.isEmpty
+        default: true
+        }
+    }
 
     /// One row's view.
     private final class Host {
@@ -322,6 +337,7 @@ final class RowStackView: NSView {
             host.view.removeFromSuperview()
             keptOrder.append(id)
         }
+        if selection != nil || !tints.isEmpty { showSelection() }
         // Made but not shown (measured on the way, then out of view once what's above moved it,
         // or to go to it): kept as those put away are, so they're let go in turn.
         for (id, host) in hosts where !host.isShown && !keptOrder.contains(id) { keptOrder.append(id) }
@@ -500,6 +516,252 @@ final class RowStackView: NSView {
         return covered > view.height * 0.4
     }
 
+    // MARK: Selecting across rows
+
+    /// A place in the conversation's text: a row, the text in it (its replies' text views, top
+    /// to bottom), and a character in that. A row without text of its own to select in counts
+    /// whole: before it (0) or after it (`Int.max`).
+    struct Spot: Comparable {
+        var row: Int
+        var unit: Int
+        var offset: Int
+
+        static func < (a: Spot, b: Spot) -> Bool {
+            (a.row, a.unit, a.offset) < (b.row, b.unit, b.offset)
+        }
+    }
+
+    /// One selection across the conversation, as in a page: from where a drag began to where it
+    /// is, through replies, your messages, steps and code between, whichever text holds it.
+    private(set) var selection: (anchor: Spot, focus: Spot)?
+    var rowText: (Int) -> String = { _ in "" }
+    var rowSpace: (Int) -> CGFloat = { _ in 0 }
+    /// The rows selected whole, each tinted behind.
+    private var tints: [String: NSView] = [:]
+
+    private var orderedSelection: (start: Spot, end: Spot)? {
+        guard let selection, selection.anchor != selection.focus else { return nil }
+        return selection.anchor < selection.focus ? (selection.anchor, selection.focus) : (selection.focus, selection.anchor)
+    }
+
+    /// The text you select in, in a row's view: its prose and its code, in reading order.
+    private func units(in view: NSView) -> [NSTextView] {
+        var found: [NSTextView] = []
+        func walk(_ view: NSView) {
+            for sub in view.subviews where !sub.isHidden {
+                if sub is ReplyTextView || sub is ReplyCodeTextView, let text = sub as? NSTextView { found.append(text) } else { walk(sub) }
+            }
+        }
+        walk(view)
+        return found.sorted {
+            let a = $0.convert($0.bounds, to: view), b = $1.convert($1.bounds, to: view)
+            return a.minY != b.minY ? a.minY < b.minY : a.minX < b.minX
+        }
+    }
+
+    /// Where `point` (in this view) is in the conversation's text.
+    private func spot(at point: NSPoint) -> Spot? {
+        guard !ids.isEmpty, width > 0 else { return nil }
+        let y = min(max(point.y, 0), max(0, total - 1))
+        let index = min(ids.count - 1, max(0, tops.partitioningIndex { $0 > y } - 1))
+        let frame = frame(at: index)
+        guard let host = hosts[ids[index]], host.isShown else {
+            return Spot(row: index, unit: 0, offset: point.y < frame.midY ? 0 : .max)
+        }
+        let texts = units(in: host.view)
+        guard !texts.isEmpty else { return Spot(row: index, unit: 0, offset: point.y < frame.midY ? 0 : .max) }
+        for (unit, text) in texts.enumerated() {
+            let box = text.convert(text.bounds, to: self)
+            if point.y < box.minY { return Spot(row: index, unit: unit, offset: 0) }
+            if point.y <= box.maxY {
+                return Spot(row: index, unit: unit, offset: text.characterIndexForInsertion(at: text.convert(point, from: self)))
+            }
+        }
+        return Spot(row: index, unit: texts.count - 1, offset: texts[texts.count - 1].textStorage?.length ?? 0)
+    }
+
+    /// The part of `unit` in row `row` the selection takes, if any.
+    private func range(row: Int, unit: Int, length: Int, in selected: (start: Spot, end: Spot)) -> NSRange? {
+        let here = (row, unit), start = (selected.start.row, selected.start.unit), end = (selected.end.row, selected.end.unit)
+        guard !(here < start), !(end < here) else { return nil }
+        let low = here == start ? min(selected.start.offset, length) : 0
+        let high = here == end ? min(selected.end.offset, length) : length
+        return high > low ? NSRange(location: low, length: high - low) : nil
+    }
+
+    /// Whether a row without text of its own is in the selection.
+    private func takesWhole(_ row: Int, in selected: (start: Spot, end: Spot)) -> Bool {
+        guard row >= selected.start.row, row <= selected.end.row else { return false }
+        if row == selected.start.row, selected.start.offset == .max { return false }
+        if row == selected.end.row, selected.end.offset == 0, selected.end.unit == 0 { return false }
+        return true
+    }
+
+    /// The selection drawn: ranges in the texts it takes part of, a tint behind rows it takes whole.
+    private func showSelection() {
+        let selected = orderedSelection
+        var tinted: Set<String> = []
+        for (id, host) in hosts {
+            guard let index = rowIndex[id] else { continue }
+            let texts = units(in: host.view)
+            for (unit, text) in texts.enumerated() {
+                let length = text.textStorage?.length ?? 0
+                let range = selected.flatMap { range(row: index, unit: unit, length: length, in: $0) } ?? NSRange(location: 0, length: 0)
+                if text.selectedRange() != range { text.setSelectedRange(range) }
+            }
+            if texts.isEmpty, host.isShown, let selected, takesWhole(index, in: selected) { tinted.insert(id) }
+        }
+        for (id, tint) in tints where !tinted.contains(id) {
+            tint.removeFromSuperview()
+            tints[id] = nil
+        }
+        for id in tinted {
+            guard let host = hosts[id], let index = rowIndex[id] else { continue }
+            let tint = tints[id] ?? SelectionTint()
+            tints[id] = tint
+            if tint.superview !== self { addSubview(tint, positioned: .below, relativeTo: host.view) }
+            // Its words, not the space above them.
+            var box = frame(at: index)
+            let space = min(rowSpace(index), box.height)
+            box = NSRect(x: box.minX, y: box.minY + space, width: box.width, height: box.height - space)
+            tint.frame = box.insetBy(dx: -4, dy: -2)
+        }
+    }
+
+    /// Follows a drag from `event` (a press in a reply's text, or between rows) to where it's let
+    /// go, the conversation scrolling when it reaches the top or bottom. A press that doesn't
+    /// move clears the selection; `click` is told of it.
+    func trackSelection(from event: NSEvent, click: () -> Void) {
+        guard let window, let clip = enclosingScrollView?.contentView else { return click() }
+        let start = convert(event.locationInWindow, from: nil)
+        let extending = event.modifierFlags.contains(.shift) && selection != nil
+        guard let anchor = extending ? selection?.anchor : spot(at: start) else { return click() }
+        var dragged = extending
+        if extending, let focus = spot(at: start) {
+            selection = (anchor, focus)
+            showSelection()
+        }
+        NSEvent.startPeriodicEvents(afterDelay: 0.05, withPeriod: 0.03)
+        defer { NSEvent.stopPeriodicEvents() }
+        // Where the pointer last was, in the window: held still past an edge, the conversation
+        // goes on scrolling under it.
+        var pointer = event.locationInWindow
+        tracking: while let next = window.nextEvent(matching: [.leftMouseDragged, .leftMouseUp, .periodic]) {
+            switch next.type {
+            case .leftMouseUp:
+                break tracking
+            case .leftMouseDragged, .periodic:
+                if next.type == .leftMouseDragged { pointer = next.locationInWindow }
+                let point = convert(pointer, from: nil)
+                if !dragged, hypot(point.x - start.x, point.y - start.y) < 3 { continue }
+                dragged = true
+                // Past the top or bottom of what's in sight (not under the header or the
+                // composer): the conversation scrolls, faster the further.
+                var view = convert(clip.bounds, from: clip)
+                if let insets = enclosingScrollView?.contentInsets {
+                    view = NSRect(x: view.minX, y: view.minY + insets.top, width: view.width, height: max(1, view.height - insets.top - insets.bottom))
+                }
+                let past = point.y < view.minY ? point.y - view.minY : point.y > view.maxY ? point.y - view.maxY : 0
+                if past != 0, next.type == .periodic {
+                    let step = max(-60, min(60, past / 2))
+                    if step < 0 { scrollAnchor?.stopFollowing() }
+                    // As far as it goes either way: to the first row, out from under the header.
+                    var bounds = clip.bounds
+                    bounds.origin.y += step
+                    let target = clip.constrainBoundsRect(bounds).origin
+                    if abs(target.y - clip.bounds.origin.y) > 0.5, let scrollView = enclosingScrollView {
+                        clip.scroll(to: target)
+                        scrollView.reflectScrolledClipView(clip)
+                        DispatchQueue.main.async { [weak clip] in
+                            guard let clip else { return }
+                            NotificationCenter.default.post(name: NSView.boundsDidChangeNotification, object: clip)
+                        }
+                    }
+                    layoutSubtreeIfNeeded()
+                }
+                let clamped = NSPoint(x: point.x, y: min(max(point.y, view.minY), view.maxY))
+                // Past an end that's in view: to the very start or end.
+                let top = convert(NSPoint.zero, to: enclosingScrollView?.documentView).y <= clip.bounds.minY + (enclosingScrollView?.contentInsets.top ?? 0) + 1
+                let bottom = convert(NSPoint(x: 0, y: total), to: enclosingScrollView?.documentView).y >= clip.bounds.maxY - (enclosingScrollView?.contentInsets.bottom ?? 0) - 1
+                if past < 0, top {
+                    selection = (anchor, Spot(row: 0, unit: 0, offset: 0))
+                    showSelection()
+                } else if past > 0, bottom, let last = ids.indices.last {
+                    selection = (anchor, Spot(row: last, unit: .max, offset: .max))
+                    showSelection()
+                } else if let focus = spot(at: clamped) {
+                    selection = (anchor, focus)
+                    showSelection()
+                }
+            default:
+                break
+            }
+        }
+        guard dragged else {
+            clearSelection()
+            return click()
+        }
+        if orderedSelection != nil { window.makeFirstResponder(self) } else { clearSelection() }
+    }
+
+    func clearSelection() {
+        guard selection != nil || !tints.isEmpty else { return }
+        selection = nil
+        showSelection()
+    }
+
+    /// The selection's words, in order: what's selected in each text, and rows taken whole as
+    /// they're copied.
+    func selectedText() -> String {
+        guard let selected = orderedSelection else { return "" }
+        var parts: [String] = []
+        for index in selected.start.row...selected.end.row where index < ids.count {
+            let texts = hosts[ids[index]].map { units(in: $0.view) } ?? []
+            if texts.isEmpty {
+                if takesWhole(index, in: selected) {
+                    let words = rowText(index).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !words.isEmpty { parts.append(words) }
+                }
+                continue
+            }
+            var row: [String] = []
+            for (unit, text) in texts.enumerated() {
+                guard let storage = text.textStorage, let range = range(row: index, unit: unit, length: storage.length, in: selected) else { continue }
+                row.append(text is ReplyTextView ? ReplyTextView.plain(storage, in: range) : (storage.string as NSString).substring(with: range))
+            }
+            if !row.isEmpty { parts.append(row.joined(separator: "\n\n")) }
+        }
+        return parts.joined(separator: "\n\n")
+    }
+
+    // The selection takes the keyboard once made: ⌘C and Add to Chat copy it, ⌘A selects all.
+    override var acceptsFirstResponder: Bool { selection != nil }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { clearSelection() }
+        return resigned
+    }
+
+    @objc func copy(_ sender: Any?) {
+        let text = selectedText()
+        guard !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    override func selectAll(_ sender: Any?) {
+        guard let last = ids.indices.last else { return }
+        selection = (Spot(row: 0, unit: 0, offset: 0), Spot(row: last, unit: .max, offset: .max))
+        showSelection()
+        window?.makeFirstResponder(self)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        // Between rows: a selection starts here too.
+        trackSelection(from: event) {}
+    }
+
     #if DEBUG
     /// The rows in view, where they are in the window (from its top, as SwiftUI's global space
     /// has it) and in the scroll view's document, for the tests.
@@ -531,3 +793,22 @@ extension Array {
     }
 }
 
+
+/// What tints a row a selection takes whole, behind it.
+private final class SelectionTint: NSView {
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.cornerRadius = 6
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var wantsUpdateLayer: Bool { true }
+
+    override func updateLayer() {
+        layer?.backgroundColor = NSColor.selectedTextBackgroundColor.withAlphaComponent(0.6).cgColor
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}

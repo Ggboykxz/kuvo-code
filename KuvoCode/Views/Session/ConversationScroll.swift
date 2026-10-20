@@ -116,6 +116,7 @@ struct ConversationScroll<Rows: View>: View {
                     .id(ScrollAnchor.end)
             }
             .environment(\.scrollAnchor, anchor)
+            .onAppear { anchor.stopFollowing = { [scroller] in scroller.follow(false) } }
             .padding(.horizontal, Metrics.gutter)
             // Room under the card's header, which the conversation scrolls beneath.
             .padding(.top, 16)
@@ -509,6 +510,9 @@ final class ScrollAnchor {
     /// The rows, when they're laid out by a `RowStack` rather than the lazy stack: it keeps
     /// them in place itself, and knows where each is.
     weak var stack: RowStackView?
+    /// Stops keeping the end in view, as scrolling up does: a selection dragged up past the top
+    /// scrolls the conversation, which would otherwise go back to the end.
+    var stopFollowing: () -> Void = {}
 
     /// The rows laid out, where they are in the conversation, and those shown now. A row that
     /// goes and comes back where it was (the whole conversation hidden a moment) isn't told its

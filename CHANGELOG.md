@@ -124,6 +124,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Window › Fill, Center and Move & Resize work again, and so do their keys: since 0.5.20 they were greyed out.
 - Find marks its matches in replies already on screen, and the marks go when Find closes. A group chat's faces in replies update too.
 - A reply being written comes in smoothly: its words are drawn as each frame of the screen begins, so they no longer cost a dropped frame now and then (about one frame in five before, one in thirty-five now).
+- Selecting text in a conversation goes on from row to row, as on a web page: drag from a reply up or down through your messages, steps and code blocks, and past the top or bottom it scrolls along. Copy and Add to Chat take all of it, in order, and ⌘A selects the whole conversation. Add to Chat no longer goes through your clipboard.
 
 ## 0.5.22
 

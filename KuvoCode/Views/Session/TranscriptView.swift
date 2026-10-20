@@ -136,6 +136,7 @@ struct TranscriptView: View {
         .task { await PerfDrag.run() }
         .onAppear { PerfCompare.run() }
         .onAppear { PerfCopyTest.run() }
+        .onAppear { PerfSelectTest.run() }
         .onAppear { PerfLayoutCheck.run() }
         // KUVO_DEMO_WANDER=<seconds>: that long after it opens, scrolls up a screen or two and back
         // down, again and again, as you would reading what streams in, for KUVO_DEMO_WANDER_FOR
@@ -191,7 +192,8 @@ struct TranscriptView: View {
 
     /// The rows, laid out by a stack of their own (see `RowStack`).
     private func rowStack(_ rows: [Row]) -> some View {
-        RowStack(items: rows, id: \.id, same: ==, estimate: Self.estimate, animatesNew: !rowCache.isBulk) { row, index in
+        RowStack(items: rows, id: \.id, same: ==, estimate: Self.estimate, animatesNew: !rowCache.isBulk, text: { $0.copiedText(folders: model.folders()) },
+                 space: { row, index in index == 0 ? 0 : row.spacing(after: rows[index - 1]) }) { row, index in
             RowView(row: row, directory: model.session.location.directory, folders: model.folders, heard: model.heard, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" && !isOffline ? { model.buildPlan() } as () -> Void : nil, reply: model.reply(to:))
                 .equatable()
                 .environment(\.findHighlight, find.highlight(for: row.id))
@@ -568,6 +570,22 @@ enum Row: Identifiable, Hashable {
             return [.plain(shell.command), .plain(ShellRow.output(of: shell))]
         default:
             return []
+        }
+    }
+
+    /// Its words as a selection across the conversation copies it whole: as it reads (Markdown
+    /// as shown), a line of steps as its summary.
+    func copiedText(folders: [String]) -> String {
+        switch self {
+        case .steps(_, let blocks, _):
+            return StepsRow.summary(of: blocks)
+        default:
+            return findParts.map { part in
+                switch part {
+                case .plain(let text): text
+                case .markdown(let text): FindText.shown(markdown: text, folders: folders)
+                }
+            }.joined(separator: "\n")
         }
     }
 

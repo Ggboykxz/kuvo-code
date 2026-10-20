@@ -298,6 +298,31 @@ final class ReplyTextView: NSTextView, NSTextViewDelegate {
         return text.replacingOccurrences(of: "\u{2028}", with: "\n").replacingOccurrences(of: "\u{200B}", with: "---")
     }
 
+    // A press starts a selection across the conversation (see `RowStackView.trackSelection`),
+    // which goes on into the rows above and below; one that doesn't move is a click, a link's
+    // opening. A double or triple click selects a word or paragraph here, as text does.
+    override func mouseDown(with event: NSEvent) {
+        guard event.clickCount == 1, let stack = enclosingRowStack else {
+            enclosingRowStack?.clearSelection()
+            return super.mouseDown(with: event)
+        }
+        stack.trackSelection(from: event) { [self] in
+            guard let link = link(at: convert(event.locationInWindow, from: nil)) else { return }
+            _ = textView(self, clickedOnLink: link.value, at: link.index)
+        }
+    }
+
+    /// The link under `point`, if one is.
+    private func link(at point: NSPoint) -> (value: Any, index: Int)? {
+        guard let layout = layoutManager, let container = textContainer, let storage = textStorage, storage.length > 0 else { return nil }
+        let inContainer = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
+        let glyph = layout.glyphIndex(for: inContainer, in: container)
+        guard layout.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: container).contains(inContainer) else { return nil }
+        let index = layout.characterIndexForGlyph(at: glyph)
+        guard index < storage.length, let value = storage.attribute(.link, at: index, effectiveRange: nil) else { return nil }
+        return (value, index)
+    }
+
     // Another text taking the keyboard leaves this one's selection behind; clear it, so only
     // one selection shows at a time, as in Textual.
     override func resignFirstResponder() -> Bool {
@@ -310,6 +335,10 @@ final class ReplyTextView: NSTextView, NSTextViewDelegate {
 /// Draws what TextKit doesn't: inline code's rounded background, a quote's bar, a heading's line
 /// and a rule.
 nonisolated final class ReplyLayoutManager: NSLayoutManager {
+    override func fillBackgroundRectArray(_ rectArray: UnsafePointer<NSRect>, count rectCount: Int, forCharacterRange charRange: NSRange, color: NSColor) {
+        super.fillBackgroundRectArray(rectArray, count: rectCount, forCharacterRange: charRange, color: SelectionColor.shown(color, in: firstTextView))
+    }
+
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
         guard let storage = textStorage, let container = textContainers.first else { return }
@@ -544,7 +573,7 @@ final class ReplyCodeView: NSView {
 final class ReplyCodeTextView: NSTextView {
     convenience init() {
         let storage = NSTextStorage()
-        let layout = NSLayoutManager()
+        let layout = ReplyCodeLayoutManager()
         storage.addLayoutManager(layout)
         let container = NSTextContainer(size: NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))
         container.lineFragmentPadding = 0
@@ -564,6 +593,15 @@ final class ReplyCodeTextView: NSTextView {
         guard let storage = textStorage, ReplyText.replace(storage, with: text) else { return }
         cachedSize = nil
         needsDisplay = true
+    }
+
+    // As a reply's text: a press selects across the conversation (see `ReplyTextView`).
+    override func mouseDown(with event: NSEvent) {
+        guard event.clickCount == 1, let stack = enclosingRowStack else {
+            enclosingRowStack?.clearSelection()
+            return super.mouseDown(with: event)
+        }
+        stack.trackSelection(from: event) {}
     }
 
     private var cachedSize: CGSize?
@@ -749,5 +787,34 @@ enum ReplyText {
         storage.replaceCharacters(in: NSRange(location: start, length: old.length - start), with: text.attributedSubstring(from: NSRange(location: start, length: new.length - start)))
         storage.endEditing()
         return true
+    }
+}
+
+/// A code block's layout: its selection in the color of the conversation's.
+nonisolated final class ReplyCodeLayoutManager: NSLayoutManager {
+    override func fillBackgroundRectArray(_ rectArray: UnsafePointer<NSRect>, count rectCount: Int, forCharacterRange charRange: NSRange, color: NSColor) {
+        super.fillBackgroundRectArray(rectArray, count: rectCount, forCharacterRange: charRange, color: SelectionColor.shown(color, in: firstTextView))
+    }
+}
+
+/// A selection across the conversation is drawn as the one with the keyboard is, in each of its
+/// texts, though none of them has the keyboard (the conversation does).
+nonisolated enum SelectionColor {
+    static func shown(_ color: NSColor, in text: NSTextView?) -> NSColor {
+        MainActor.assumeIsolated {
+            guard color == .unemphasizedSelectedTextBackgroundColor, let text, let window = text.window, window.isKeyWindow,
+                  window.firstResponder is RowStackView else { return color }
+            NSColor.selectedTextBackgroundColor.setFill()
+            return .selectedTextBackgroundColor
+        }
+    }
+}
+
+extension NSView {
+    /// The conversation's rows this is in, if it's in some.
+    var enclosingRowStack: RowStackView? {
+        var view = superview
+        while let current = view, !(current is RowStackView) { view = current.superview }
+        return view as? RowStackView
     }
 }
