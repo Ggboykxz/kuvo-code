@@ -51,7 +51,7 @@ const TAB_IDLE = Number(process.env.KUVO_BROWSER_TAB_IDLE || 12 * 3600) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 26;
+const KEEPER = 27;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -772,9 +772,14 @@ async function host() {
         case "Kuvo.hold": {
           // You took a page over from the agent, or handed it back.
           const { targetId, on } = message.params ?? {};
-          orphaned.delete(targetId);
-          if (targetId && on && targets.has(targetId)) held.set(targetId, client);
-          else if (targetId) held.delete(targetId);
+          if (targetId && on && targets.has(targetId)) {
+            orphaned.delete(targetId);
+            held.set(targetId, client);
+          } else if (targetId && [client, null].includes(held.get(targetId))) {
+            // Only its own hold, or one kept for a Mac that dropped: not another Mac's.
+            orphaned.delete(targetId);
+            held.delete(targetId);
+          }
           announceHeld();
           return message.id !== undefined && send(client, { id: message.id, result: {} });
         }
@@ -1550,11 +1555,14 @@ async function pageFile(p, session, access) {
   const frames = await tree("Page.getFrameTree");
   const main = frames?.frame?.url ?? (await address(p));
   const addresses = [main];
+  // A frame from a file, or one with a file's origin (a blank page or blob a file page opened).
+  let fromFile = false;
   (function collect(node) {
     if (node?.frame?.url) addresses.push(node.frame.url);
+    if (String(node?.frame?.securityOrigin ?? "").startsWith("file:")) fromFile = true;
     for (const child of node?.childFrames ?? []) collect(child);
   })(frames);
-  if (!addresses.some((each) => each.startsWith("file:"))) return null;
+  if (!fromFile && !addresses.some((each) => each.startsWith("file:"))) return null;
   const resources = await tree("Page.getResourceTree");
   (function collect(node) {
     // What it has, not what it was refused.

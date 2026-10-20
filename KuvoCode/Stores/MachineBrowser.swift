@@ -166,6 +166,7 @@ final class MachineBrowser {
     /// Closing on purpose (the machine removed, nothing showing it, the app quitting): the pages
     /// this Mac took over go back to their agents now, rather than when the keeper gives up on it.
     private func handBackAll() {
+        if link == nil { handedBackOffline.formUnion(myHolds) }
         for page in myHolds { link?.fire("Kuvo.hold", ["targetId": page, "on": false]) }
         heldPages.subtract(myHolds)
         myHolds = []
@@ -217,7 +218,11 @@ final class MachineBrowser {
             MainActor.assumeIsolated { self?.wake() }
         })
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main, using: { [weak self] _ in
-            MainActor.assumeIsolated { self?.handBackAll() }
+            MainActor.assumeIsolated {
+                // Written before the app is gone; SSH sends it as its input closes.
+                self?.handBackAll()
+                self?.link?.flush()
+            }
         })
     }
 
@@ -365,7 +370,7 @@ final class MachineBrowser {
             dropTask = Task {
                 try? await Task.sleep(for: .seconds(5))
                 guard !Task.isCancelled, !isWanted else { return }
-                handBackAll()
+                // Pages you took over stay yours meanwhile, as the keeper keeps them a while.
                 disconnect()
             }
         }
@@ -1186,11 +1191,19 @@ final class MachineBrowserLink {
         try process.run()
     }
 
+    /// Waits until what was sent has gone to SSH.
+    func flush() { reader.flush() }
+
     func stop() {
         guard !stopped else { return }
         stopped = true
         process.terminationHandler = nil
-        if process.isRunning { process.terminate() }
+        // What was written last (pages handed back, say) goes first: with its input closed after
+        // it, SSH sends it and ends; stopped a moment later if it hasn't.
+        let process = UncheckedProcess(process)
+        reader.close {
+            DispatchQueue.global().asyncAfter(deadline: .now() + 1.5) { if process.value.isRunning { process.value.terminate() } }
+        }
         fail("The browser connection closed.")
     }
 
@@ -1287,6 +1300,17 @@ final class MachineBrowserLink {
             writing.async { [writer] in try? writer?.write(contentsOf: data) }
         }
 
+        /// Waits until what was written has gone to SSH.
+        func flush() { writing.sync {} }
+
+        /// Closes the input once what was written before has gone, then `done`.
+        func close(then done: @escaping @Sendable () -> Void) {
+            writing.async { [writer] in
+                try? writer?.close()
+                done()
+            }
+        }
+
         func read(_ data: Data) {
             buffer.append(data)
             while let end = buffer.firstIndex(of: 0x0A) {
@@ -1326,4 +1350,10 @@ final class MachineBrowserLink {
             return hasher.finalize()
         }
     }
+}
+
+/// A process to stop from another thread, once its link has let go of it.
+private struct UncheckedProcess: @unchecked Sendable {
+    let value: Process
+    init(_ value: Process) { self.value = value }
 }

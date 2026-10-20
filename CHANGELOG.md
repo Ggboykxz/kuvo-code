@@ -15,7 +15,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Under Ask First, and in a group chat, the agent's browser opens files in the conversation's folder (and temporary ones) only: a file elsewhere on your Mac or the machine, which a command would have asked about, isn't opened without your say, nor read when a link, a redirect or going back leads there (on a machine, a page's pictures and frames from elsewhere don't load either). A tab you opened on such a file stays as it is, and the agent goes on in a new tab.
 - On a machine, an agent no longer switches to or closes a browser tab another conversation's agent is using, as on your Mac.
 - A page in the panel that isn't on screen (a bot's, say) can no longer open the file picker over the app, where you couldn't tell which page asked.
-- On a machine, a page you took over stays yours while your Mac sleeps or its connection drops for a moment: the agent doesn't go on in it until you hand it back.
+- On a machine, a page you took over stays yours while your Mac sleeps, its connection drops for a moment or you look at another conversation: the agent doesn't go on in it until you hand it back, or you remove the machine or quit. Another Mac's hand-back no longer ends yours.
 - A machine's browser saves a download with a long name in Japanese, Chinese or another such script under its name, and clears downloads after a week while it keeps running too.
 - On a machine, a link the agent clicks that opens a new window (a sign-in window, say) is where it goes on, as on your Mac, rather than back on the page that opened it.
 - After your Mac wakes, a machine's browser view comes back right away, rather than once its old connection times out.
