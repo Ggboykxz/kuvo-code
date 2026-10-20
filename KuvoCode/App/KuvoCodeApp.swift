@@ -8,6 +8,12 @@ import UsageKit
 enum Launch {
     static func main() {
         if AppInfo.isHostingTests {
+            // Only as a copy of its own (scripts/test-app.sh): as the app itself, the tests would
+            // read and change your settings and reach your machines.
+            guard AppInfo.bundleID.hasSuffix(".tests") else {
+                FileHandle.standardError.write(Data("Run the app's tests with scripts/test-app.sh, which builds a copy of the app of their own (\(AppInfo.bundleID) is the app itself).\n".utf8))
+                exit(78)
+            }
             NSApplication.shared.setActivationPolicy(.accessory)
             NSApplication.shared.run()
         } else {
