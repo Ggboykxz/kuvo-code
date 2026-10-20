@@ -802,10 +802,13 @@ final class Workspace {
         let recent = (try? await api.messages(session: id, limit: 100).data) ?? []
         var stored = message
         for case .user(let user) in recent where user.id == message.id { stored = user }
-        // What it replied to comes back over the composer, as you wrote it.
-        let (quotes, text) = Quoting.draft(of: ReviewComments.split(withComments).text)
+        // What it replied to comes back over the composer, as you wrote it, and so do its comments.
+        let written = ReviewComments.split(withComments)
+        let (quotes, text) = Quoting.draft(of: written.text)
         let files = Attachments.restored(SessionModel.files(of: message, stored: stored), noting: paths)
-        Drafts.shared[session.id] = Drafts.Draft(text: text, files: files, quotes: quotes)
+        var draft = Drafts.Draft(text: text, files: files, quotes: quotes)
+        draft.comments = written.comments
+        Drafts.shared[session.id] = draft
         requestedTab = session.id
     }
 

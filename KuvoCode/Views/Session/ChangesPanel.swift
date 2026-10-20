@@ -449,7 +449,7 @@ private struct BranchMenu: View {
         .alert(title, isPresented: Binding(get: { outcome != nil }, set: { if !$0 { outcome = nil } })) {
             if case .conflict(_, let target) = outcome, let model {
                 Button("Ask the Agent to Fix It") {
-                    model.send("Merge \(target) into this branch (\(tree.branch)), resolve the conflicts, and commit the merge.", for: catalog.model(model.session.model))
+                    model.send("Merge \(target) into this branch (\(tree.branch)), resolve the conflicts, and commit the merge.", for: catalog.model(model.session.model), withComments: false)
                 }
                 Button("Cancel", role: .cancel) {}
             } else if case .merged = outcome, let model, !workspace.worktreeIsShared(directory, besides: model.id) {

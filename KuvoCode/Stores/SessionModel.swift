@@ -748,12 +748,14 @@ final class SessionModel {
         return Workspace.isChat(directory) ? "chat" : "project"
     }
 
-    func send(_ text: String, files: [URL] = [], for model: Model?, queue: Bool = false) {
+    /// `withComments`: your review comments go with it; a message the app writes for you leaves
+    /// them for yours.
+    func send(_ text: String, files: [URL] = [], for model: Model?, queue: Bool = false, withComments: Bool = true) {
         let written = text
-        let comments = reviewComments
+        let comments = withComments ? reviewComments : []
         let text = ReviewComments.text(text.trimmingCharacters(in: .whitespacesAndNewlines), adding: comments)
         guard !text.isEmpty || !files.isEmpty else { return }
-        reviewComments = []
+        if withComments { reviewComments = [] }
         let id = Identifier.message()
         sentIDs.insert(id)
         // With nothing running (or about to) and nothing queued, there's nothing to wait for.
@@ -1269,7 +1271,7 @@ final class SessionModel {
                 fail(error)
                 return
             }
-            send("Go ahead and build it, as planned.", for: nil)
+            send("Go ahead and build it, as planned.", for: nil, withComments: false)
         }
     }
 
