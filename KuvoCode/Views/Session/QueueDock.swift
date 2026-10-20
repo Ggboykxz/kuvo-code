@@ -75,7 +75,7 @@ private struct QueueRow: View {
             if let picture = item.files.first(where: { AttachmentItem.local($0).isImage }) {
                 QueuePicture(url: picture)
             }
-            Text(summary)
+            Text(styledSummary)
                 .font(.system(size: 13.5))
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -141,6 +141,16 @@ private struct QueueRow: View {
             Button("Remove", role: .destructive) { model.cancelPending(item) }
         }
         .disabled(item.isLocal)
+    }
+
+    /// The summary, with the agents and files it names standing out, as in its bubble.
+    private var styledSummary: AttributedString {
+        let summary = summary
+        var styled = AttributedString(summary)
+        let references = SentMessage.split(item.text).references
+        let folders = [model.session.location.directory]
+        MessageMentions.apply(to: &styled, agents: MessageMentions.agents(references), folders: folders, links: false)
+        return styled
     }
 
     /// The message's first line, or what's attached when there's no text.

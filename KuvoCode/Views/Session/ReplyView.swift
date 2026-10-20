@@ -39,7 +39,7 @@ struct ReplyView: NSViewRepresentable {
     private func update(_ view: ReplyPieceView) {
         view.openURL = openURL
         view.cardIsFocused = cardIsFocused
-        let marks = (parser as? FileLinkingParser).flatMap { $0.highlight == nil && $0.mentions.isEmpty ? nil : AnyHashable(ParserMarks(highlight: $0.highlight, mentions: $0.mentions)) }
+        let marks = (parser as? FileLinkingParser).flatMap { $0.highlight == nil && $0.mentions.isEmpty && $0.agents.isEmpty ? nil : AnyHashable(ParserMarks(highlight: $0.highlight, mentions: $0.mentions, agents: $0.agents)) }
         view.show(markdown, document: {
             if let parser = parser as? FileLinkingParser, images == nil { return ReplyDocument.cached(markdown: markdown, parser: parser, style: style) }
             return ReplyDocument(markdown: markdown, parser: parser, style: style, images: images)
@@ -53,10 +53,12 @@ struct ReplyView: NSViewRepresentable {
     }
 }
 
-/// What a reply's parser draws besides its words: Find's marks and a group chat's faces.
+/// What a reply's parser draws besides its words: Find's marks, a group chat's faces and the
+/// agents a message names.
 private struct ParserMarks: Hashable {
     var highlight: FindHighlight?
     var mentions: [Bot]
+    var agents: [MessageMentions.Agent]
 }
 
 extension Look.Typeface {

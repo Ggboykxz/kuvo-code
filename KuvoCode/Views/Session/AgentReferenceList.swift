@@ -139,33 +139,3 @@ struct AgentReferenceList: View {
         return what + (agent.machine.map { " · on \($0)" } ?? "")
     }
 }
-
-extension AgentReferences {
-    /// The address a named agent's link opens: its conversation (see `YourMessage`).
-    static func link(to session: String) -> URL? {
-        URL(string: "kuvo-agent://" + session)
-    }
-
-    /// The conversation a link made by `link(to:)` opens.
-    static func session(in url: URL) -> String? {
-        url.scheme == "kuvo-agent" ? url.host() : nil
-    }
-
-    /// Styles each "&Name" of `references` in `text`: in bold, a bot's in its own color, as
-    /// "@Mira" shows in a group chat, and each a link to its conversation.
-    @MainActor static func apply(to text: inout AttributedString, references: [Reference]) {
-        let plain = String(text.characters)
-        let bots = AgentMail.shared.app?.bots
-        for (range, reference) in find(in: plain, references: references) {
-            let start = plain.distance(from: plain.startIndex, to: range.lowerBound)
-            let length = plain.distance(from: range.lowerBound, to: range.upperBound)
-            let lower = text.characters.index(text.startIndex, offsetBy: start)
-            let upper = text.characters.index(lower, offsetBy: length)
-            if let bot = bots?.bot(forSession: reference.session) {
-                text[lower..<upper].swiftUI.foregroundColor = GroupMentions.ink(bot.look)
-            }
-            text[lower..<upper].inlinePresentationIntent = .stronglyEmphasized
-            text[lower..<upper].link = link(to: reference.session)
-        }
-    }
-}

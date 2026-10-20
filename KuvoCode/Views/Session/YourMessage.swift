@@ -14,8 +14,10 @@ struct YourMessage: View {
     let text: String
     /// Words with styling of their own (a group chat's mentions).
     var style: ((String) -> AttributedString?)?
-    /// The bots and sessions it names with "&": in bold, each opening its conversation.
+    /// The bots and sessions it names with "&", each opening its conversation, and the project's
+    /// folders for the files it names with "@": they stand out (see `MessageMentions`).
     var references: [AgentReferences.Reference] = []
+    var folders: [String] = []
     var attachments: [AttachmentItem] = []
     var comments: [ReviewComment] = []
     let sent: Date
@@ -70,16 +72,6 @@ struct YourMessage: View {
         }
     }
 
-    /// Its words' own styling, with the agents it names on top.
-    private var styled: ((String) -> AttributedString?)? {
-        guard !references.isEmpty else { return style }
-        return { [style, references] part in
-            var text = style?(part) ?? AttributedString(part)
-            AgentReferences.apply(to: &text, references: references)
-            return text
-        }
-    }
-
     /// The named agents whose conversations are here to open, each once.
     private var openable: [AgentReferences.Reference] {
         var seen = Set<String>()
@@ -88,13 +80,7 @@ struct YourMessage: View {
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 2) {
-            UserBubble(text: text, style: styled, attachments: attachments, comments: comments)
-                // A named agent opens its conversation.
-                .environment(\.openURL, OpenURLAction { url in
-                    guard let session = AgentReferences.session(in: url) else { return .systemAction }
-                    if app.workspace.session(session) != nil { app.open(.session(session)) }
-                    return .handled
-                })
+            UserBubble(text: text, style: style, references: references, folders: folders, attachments: attachments, comments: comments)
             // Always laid out, shown under the pointer: nothing moves when they appear.
             HStack(spacing: 0) {
                 Text(MessageTime.sentAt(sent))

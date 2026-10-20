@@ -699,13 +699,13 @@ private struct RowView: View, Equatable {
         case .user(let message):
             let (text, comments, paths, references) = SentMessage.split(CommandMessages.shared.text(of: message))
             let stored = (message.files ?? []).enumerated().map { AttachmentItem.stored($1, id: "\(message.id)#\($0)") }
-            YourMessage(text: text, references: references, attachments: stored + Attachments.paths(paths, besides: (message.files ?? []).compactMap(\.fileURL)).map(AttachmentItem.path), comments: comments, sent: Date(timeIntervalSince1970: message.time.created / 1000),
+            YourMessage(text: text, references: references, folders: folders(), attachments: stored + Attachments.paths(paths, besides: (message.files ?? []).compactMap(\.fileURL)).map(AttachmentItem.path), comments: comments, sent: Date(timeIntervalSince1970: message.time.created / 1000),
                         fork: { fork(message) }, undo: { undo(message) },
                         undoNote: YourMessage.undoNote(in: directory),
                         isOffline: isOffline)
         case .pending(let item):
-            let (text, comments, paths) = UserBubble.split(item.text)
-            UserBubble(text: text, attachments: item.files.map(AttachmentItem.local) + Attachments.paths(paths, besides: item.files).map(AttachmentItem.path), comments: comments,
+            let (text, comments, paths, references) = SentMessage.split(item.text)
+            UserBubble(text: text, references: references, folders: folders(), attachments: item.files.map(AttachmentItem.local) + Attachments.paths(paths, besides: item.files).map(AttachmentItem.path), comments: comments,
                        status: item.isLocal ? "Sending" : item.delivery == .queue ? "Queued" : "Sending")
                 .contextMenu { Button("Cancel", role: .destructive) { cancel(item) }.disabled(isOffline) }
         case .assistant(let message, let showsError):
@@ -773,10 +773,24 @@ struct UserBubble: View {
     let text: String
     /// Words with styling of their own (a group chat's mentions), in place of plain ones.
     var style: ((String) -> AttributedString?)?
+    /// The bots and sessions it names with "&", and the project's folders for the files it names
+    /// with "@": they stand out (see `MessageMentions`).
+    var references: [AgentReferences.Reference] = []
+    var folders: [String] = []
     var attachments: [AttachmentItem] = []
     var comments: [ReviewComment] = []
     var status: String?
     @Environment(\.findHighlight) private var highlight
+    @Environment(AppModel.self) private var app
+
+    /// A part of its words with its own styling, and what it names standing out.
+    private func styled(_ part: String, agents: [MessageMentions.Agent]) -> AttributedString? {
+        let own = style?(part)
+        guard part.contains(AgentReferences.trigger) || (!folders.isEmpty && part.contains("@")) else { return own }
+        var text = own ?? AttributedString(part)
+        MessageMentions.apply(to: &text, agents: agents, folders: folders)
+        return text
+    }
 
     /// A message as its bubble shows it: its words, the review comments it was sent with, and
     /// the files it names as attached.
@@ -816,6 +830,7 @@ struct UserBubble: View {
             // What it replied to, each part above the words that answer it.
             let parts = Self.parts(text)
             let marks = highlight?.spread(over: parts.map(\.text))
+            let agents = MessageMentions.agents(references)
             ForEach(parts.indices, id: \.self) { index in
                 Group {
                     if parts[index].isQuote {
@@ -823,7 +838,7 @@ struct UserBubble: View {
                             .frame(maxWidth: 420, alignment: .trailing)
                             .padding(.top, index == 0 ? 0 : 6)
                     } else {
-                        MessageText(text: parts[index].text, styled: style?(parts[index].text))
+                        MessageText(text: parts[index].text, styled: styled(parts[index].text, agents: agents))
                     }
                 }
                 .environment(\.findHighlight, marks?[index])
@@ -837,6 +852,16 @@ struct UserBubble: View {
         .opacity(status == nil ? 1 : 0.7)
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.leading, 80)
+        // A named agent opens its conversation; a named file, in the side panel.
+        .environment(\.openURL, OpenURLAction { url in
+            if let session = MessageMentions.session(in: url) {
+                if app.workspace.session(session) != nil { app.open(.session(session)) }
+                return .handled
+            }
+            guard url.isFileURL else { return .systemAction }
+            app.utilities.show(url)
+            return .handled
+        })
     }
 }
 
@@ -979,8 +1004,9 @@ struct MarkdownText: View {
     let text: String
     /// The project's folders: file names written as code in them become links.
     var folders: () -> [String] = { [] }
-    /// In a group chat, its bots, for their mentions.
+    /// In a group chat, its bots, for their mentions, and the agents a message names with "&".
     var mentions: [Bot] = []
+    var agents: [MessageMentions.Agent] = []
     /// Still being written: a code block it ends in is colored once it's done.
     var isWriting = false
     @Environment(\.findHighlight) private var highlight
@@ -1009,7 +1035,7 @@ struct MarkdownText: View {
             ForEach(chunks.indices, id: \.self) { index in
                 // Code still being written is colored once it's done.
                 MarkdownPiece(text: isWriting ? MarkdownChunks.text(of: chunks[index], marking: CodeLanguage.writing) : String(chunks[index].text),
-                              folders: folders, mentions: mentions, highlight: marks?[index])
+                              folders: folders, mentions: mentions, agents: agents, highlight: marks?[index])
                     .equatable()
                     .padding(.top, chunks[index].gap)
             }
@@ -1023,11 +1049,12 @@ private struct MarkdownPiece: View, Equatable {
     let text: String
     let folders: () -> [String]
     let mentions: [Bot]
+    let agents: [MessageMentions.Agent]
     let highlight: FindHighlight?
     @Environment(AppModel.self) private var app
 
     static func == (a: MarkdownPiece, b: MarkdownPiece) -> Bool {
-        a.text == b.text && a.highlight == b.highlight && a.mentions == b.mentions
+        a.text == b.text && a.highlight == b.highlight && a.mentions == b.mentions && a.agents == b.agents
     }
 
     var body: some View {
@@ -1040,8 +1067,12 @@ private struct MarkdownPiece: View, Equatable {
 
     /// With TextKit: a few views a piece, where Textual makes several for every block.
     private var textKit: some View {
-        ReplyView(markdown: text, parser: FileLinkingParser(folders: folders, mentions: mentions, highlight: highlight)) { url in
-            // A file opens in the side panel; web links in the browser.
+        ReplyView(markdown: text, parser: FileLinkingParser(folders: folders, mentions: mentions, agents: agents, highlight: highlight)) { url in
+            // A file opens in the side panel, a named agent its conversation; web links in the browser.
+            if let session = MessageMentions.session(in: url) {
+                if app.workspace.session(session) != nil { app.open(.session(session)) }
+                return true
+            }
             guard url.isFileURL else { return false }
             app.utilities.show(url)
             return true
@@ -1052,7 +1083,7 @@ private struct MarkdownPiece: View, Equatable {
     }
 
     private var textual: some View {
-        StructuredText(text, parser: FileLinkingParser(folders: folders, mentions: mentions, highlight: highlight))
+        StructuredText(text, parser: FileLinkingParser(folders: folders, mentions: mentions, agents: agents, highlight: highlight))
             // Textual reads it again only when the text changes: made again when the marks do.
             .id(highlight)
             .transcriptFont()
@@ -1064,8 +1095,12 @@ private struct MarkdownPiece: View, Equatable {
             .textual.highlighterTheme(CodeColors.theme)
             .textual.structuredTextStyle(.gitHub)
             .textual.textSelection(.enabled)
-            // A file opens in the side panel; web links in the browser.
+            // A file opens in the side panel, a named agent its conversation; web links in the browser.
             .environment(\.openURL, OpenURLAction { url in
+                if let session = MessageMentions.session(in: url) {
+                    if app.workspace.session(session) != nil { app.open(.session(session)) }
+                    return .handled
+                }
                 guard url.isFileURL else { return .systemAction }
                 app.utilities.show(url)
                 return .handled

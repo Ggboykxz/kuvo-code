@@ -201,7 +201,7 @@ private struct GroupMessageRow: View, Equatable {
                 .multilineTextAlignment(.center)
         } else if message.author == nil {
             YourMessage(text: message.text, style: { GroupMentions.styled($0, bots: members) },
-                        references: AgentReferences.named(in: [message.text]).map { AgentReferences.Reference(name: $0.name, session: $0.session) },
+                        references: MessageMentions.agents(namedIn: message.text).map(\.reference),
                         sent: message.time, undo: undo,
                         undoNote: "The chat goes back to before this message, and the message comes back to the composer. The bots are told to set aside what was taken back.")
         } else {
@@ -256,7 +256,7 @@ private struct GroupMessageRow: View, Equatable {
                         StepsRow(blocks: steps.map(Message.Content.tool), isLive: false, directory: author?.directory ?? "")
                             .padding(.bottom, 2)
                     }
-                    MarkdownText(text: message.text, mentions: members)
+                    MarkdownText(text: message.text, mentions: members, agents: MessageMentions.agents(namedIn: message.text))
                     ForEach((message.steps ?? []).filter { WidgetCard.isWidget($0) || MadePictureRow.isMade($0) }) { call in
                         Group {
                             if MadePictureRow.isMade(call) { MadePictureRow(call: call) } else { WidgetCard(call: call, send: answerAgent) }

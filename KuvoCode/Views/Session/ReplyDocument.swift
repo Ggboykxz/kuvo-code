@@ -80,8 +80,8 @@ struct ReplyDocument {
     private static let cacheLimit = 600_000
 
     static func cached(markdown: String, parser: FileLinkingParser, style: Style) -> ReplyDocument {
-        // With Find's marks or a group chat's faces, made each time (rarely).
-        guard parser.highlight == nil, parser.mentions.isEmpty else { return ReplyDocument(markdown: markdown, parser: parser, style: style) }
+        // With Find's marks, a group chat's faces or named agents, made each time (rarely).
+        guard parser.highlight == nil, parser.mentions.isEmpty, parser.agents.isEmpty else { return ReplyDocument(markdown: markdown, parser: parser, style: style) }
         let key = CacheKey(markdown: markdown, style: style, folders: parser.folders())
         if let known = cache[key] { return known }
         // A long one from short parts, each kept: as a reply is written, only its last part is

@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Mentions stand out in your messages everywhere: files you name with @ (a click opens them in the panel) and bots or sessions you name with &, in sent, sending and waiting messages, and in bots' messages in group chats.
 - Type & in any message, a group chat's too, to name one of your bots or sessions, like &Mira: the agent knows which one you mean, and the name shows in bold (a bot's in its color) and opens that conversation. Agents can now read each other's conversations, not only write to each other.
 - Settings › Permissions › Always Allowed lists approvals you saved in sessions on your machines too, and removes them there.
 - Notifications hide a hex value after any name that isn't a hash's (AESKey, SECRETKEY, SIGNATURE…), and show commit hashes, checksums and cache keys.
