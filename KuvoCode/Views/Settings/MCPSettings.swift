@@ -30,9 +30,11 @@ struct MCPSettings: View {
         if !changes.isEmpty { config.set(changes) }
     }
 
+    /// Your servers: not Kuvo Code's own, nor integrations', which their page adds and removes
+    /// (with their keys, sign-ins and machines' copies, which removing one here would leave).
     private var names: [String] {
         let configured = config.value(at: Self.path)?.object?.keys.map { $0 } ?? []
-        return Set(configured + live.map(\.name)).subtracting(Self.builtIn).sorted()
+        return Set(configured + live.map(\.name)).subtracting(Self.builtIn).filter { Integrations.service($0) == nil }.sorted()
     }
 
     var body: some View {
@@ -269,6 +271,8 @@ private struct ServerEditor: View {
 
     /// Why the name you typed can't be used, if it can't.
     private var problem: String? {
+        // Nothing would be written: what you fill in would be lost.
+        if let broken = app.engineConfig.problem { return "The engine's settings file can't be changed here: \(broken)" }
         if newID.isEmpty {
             return newName.trimmingCharacters(in: .whitespaces).isEmpty ? nil : "A name needs a letter or a number."
         }

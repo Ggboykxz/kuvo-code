@@ -309,6 +309,16 @@ struct IntegrationsSettings: View {
     private func removeEntry(_ service: Integrations.Service) {
         config.set(nil, at: MCPSettings.path + [service.id])
         for key in Integrations.keys(of: service.way) { IntegrationKeys.set(nil, for: IntegrationKeys.variable(service.id, key.name)) }
+        // Bots with keys of their own for it stop using it too: their keys go, and their
+        // folders' settings stop naming its server.
+        let bots = app.bots.list
+        Task {
+            for bot in bots {
+                let theirs = Set(Integrations.keys(of: service.way).map { IntegrationKeys.variable(service.id, $0.name, bot: bot.id) })
+                let held = await Task.detached { IntegrationKeys.variables(ofBot: bot.id) }.value
+                if !theirs.isDisjoint(with: held) { await BotKeys.remove(service, bot: bot, app: app) }
+            }
+        }
         // What its server kept: its own folder (and the file it once kept), here and on the
         // machines that are connected.
         for name in [service.id, "\(service.id).json"] { try? FileManager.default.removeItem(at: AppInfo.supportDirectory.appending(path: "integrations/\(name)")) }
@@ -316,8 +326,13 @@ struct IntegrationsSettings: View {
         for engine in app.machines.engines.values {
             let machine = engine.machine.id
             // One out of reach: the next time it answers.
-            guard engine.isReady else { app.machines.runLater(Machines.integrationMark(service.id) + "rm -rf \(kept)", on: machine); continue }
-            Task.detached { _ = RemoteShell.run("rm -rf \(kept)", on: machine) }
+            let later = Machines.integrationMark(service.id) + "rm -rf \(kept)"
+            guard engine.isReady else { app.machines.runLater(later, on: machine); continue }
+            // One that drops meanwhile: the next time it answers, as for one away.
+            Task {
+                let done = await Task.detached { RemoteShell.run("rm -rf \(kept)", on: machine) != nil }.value
+                if !done { app.machines.runLater(later, on: machine) }
+            }
         }
         if !Integrations.macOnly.contains(service.id) { app.renewEngines(mac: false) }
     }
