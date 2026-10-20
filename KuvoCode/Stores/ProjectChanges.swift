@@ -238,11 +238,14 @@ nonisolated enum Git {
                 on(["ls-files", "--error-unmatch", "--", path]) == nil ? nil : git(["rm", "--cached", "-f", "-q", "--", path])
             }
             // A folder where a file goes back (put in its place, a repository cloned there): git
-            // would delete it, and all in it, for good. It goes to the Trash first.
+            // would delete it, and all in it, for good. It goes to the Trash first. Not a
+            // submodule that's one already, which git puts back by its commit and leaves be.
             func clear(_ paths: [String]) -> String? {
                 for path in paths {
                     let url = RemoteFolder.url(root).appending(path: path)
                     guard isFolder(url) else { continue }
+                    let kept = scope == .unstaged ? on(["ls-files", "-s", "--", path]) : on(["ls-tree", "HEAD", "--", path])
+                    if kept?.hasPrefix("160000") == true { continue }
                     do { try trash(url) } catch { return error.localizedDescription }
                 }
                 return nil
