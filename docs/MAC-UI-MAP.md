@@ -378,10 +378,41 @@ or the Windows client does not show it.
 | `IntegrationsSettings`, `SiteSignInPage`, `ConnectView`, `PasswordsSettings` | OAuth / site sign-ins: secrets are not handled here |
 
 **Boundary, stated plainly:** the ledger covers all 74 view files and all 23 settings pages,
-but 20 view files — including the five excluded Settings pages — are ⛔. "100 % of the Mac UI"
-in this project means 100 % of the in-scope 54 view files, with 18 of the 23 settings pages;
-the excluded surfaces need a maintainer decision before they can be reproduced, and the Windows
-client cannot prove them from the Mac source alone.
+but 20 view files are excluded — five of them the excluded Settings pages. One of those,
+`BrowserSettings.swift`, also carries the in-scope Panel page (§6.5). "100 % of the Mac UI" in
+this project therefore means 100 % of the in-scope screens: 54 wholly in-scope view files plus
+the Panel page, and 18 of the 23 settings pages. The excluded surfaces need a maintainer
+decision before they can be reproduced, and the Windows client cannot prove them from the Mac
+source alone.
+
+### 6.5 The files behind the pages
+
+The pages do not map one file per page, which is why the ledger counts pages and view files
+separately:
+
+| Mac page(s) | File |
+| --- | --- |
+| General, Notifications, Privacy, Usage | `Settings/GeneralSettings.swift` |
+| Appearance | `Settings/AppearanceSettings.swift` |
+| Shortcuts | `Settings/ShortcutsSettings.swift` |
+| Storage | `Settings/StorageSettings.swift` |
+| Accounts | `Providers/ProvidersView.swift` |
+| Agents | `Settings/AgentsSettings.swift` |
+| Permissions | `Settings/PermissionsSettings.swift` |
+| Commands | `Settings/CommandsSettings.swift` |
+| Skills | `Settings/SkillsSettings.swift` |
+| MCP | `Settings/MCPSettings.swift` |
+| Engine | `Settings/EngineSettings.swift` |
+| Git, Worktrees | `Settings/GitSettings.swift` |
+| Archived | `Settings/ArchivedSessionsSettings.swift` |
+| Panel | `Settings/BrowserSettings.swift` (`PanelSettingsView`; the `BrowserSettings` half is ⛔) |
+| Phone, Integrations, Machines, Passwords | their own `Settings/*.swift` files — ⛔ |
+| Site sign-in | `Settings/SiteSignInPage.swift` — ⛔ |
+
+Three shared files carry the chrome of every page: `Settings/SettingsControls.swift` (rows,
+wells, buttons), `Settings/SettingsDetail.swift` (page header, column), and
+`Shared/FormFieldsView.swift` (text fields, steppers, pickers). They are in scope with the
+pages: the look comes from §3, the behaviour from §9.
 
 ---
 
@@ -519,6 +550,32 @@ Phase 0's extraction is only useful if every later phase is measured against it.
 5. **Gates per batch.** Unit tests (`node --test`, 91), DOM test with `KUVO_HARNESS_LIVE=1`,
    `npx tsc --noEmit`, UI build, CI on `windows-latest`, then one version number and one
    release. A batch that is not green does not get a version.
+
+### 10.1 The capture matrix
+
+Each state is captured at 1440 × 900 and 1000 × 700, in light and in dark, once its tokens
+exist. `windows/tools/capture.mjs` takes one shot; the state setup is the harness's. A phase is
+not done until its rows exist in both themes and its computed values match §3.
+
+| State | What the capture must show |
+| --- | --- |
+| Empty, no project | warm canvas, ambient, sidebar empty state, column width |
+| Session, light | user bubble at radius 18, transcript type, code well, tool call |
+| Session, dark | dark card fills, specular rim, accent glass, code well |
+| Composer with quote and attachment | quote bar 3 pt, "Replying to", attachment row, foot |
+| Palette with a query | 600 width, 48 search, 30 rows, 18 radius, glass |
+| Settings › Appearance | nine accents, four sizes, window mode, typeface |
+| Settings › General | page header, 49 inset, grouped form, 38 header |
+| Drawer › Files, Changes, Terminal | 44 header, 9 tab pill, file tree, diff well |
+| Sidebar with projects and sessions | 32 rows, 18 icons, unread, one search well |
+| Title bar with tabs and split | tab capsule 30, tile 25 × 20, controls inset |
+| Queue and context gauge open | queue rows, 12 ring, 320 popover |
+| Find bar open | find field, count, previous/next, highlights |
+| Image viewer | radius 10, capsule toolbar, backdrop |
+| Message hover | time and actions, no layout shift, 0.12 s |
+| Permission card | attention card, Allow/Deny, Try Again |
+| Window: glass and solid | material and canvas tint vs canvas solid |
+| Reduced Motion | shimmer stopped, spinner still, transitions reduced |
 
 **Definition of done for this ledger:** every in-scope row is ✅ on both axes, every excluded
 row is ⛔ with a reason, and no ◐ or ⬜ remains. The look is then the Mac's, not an
