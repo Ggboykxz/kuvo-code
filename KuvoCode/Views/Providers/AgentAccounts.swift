@@ -1,19 +1,22 @@
 import OpenCodeKit
 import SwiftUI
 
-/// Accounts' first section: the plans you may already pay for, each signed in as you. The coding
-/// agents (Claude Code, Codex, Cursor, Grok, Antigravity) run on this Mac as their makers built
-/// them; the plans (GitHub Copilot, GitLab Duo, Poe, OpenCode) bring their models to Kuvo Code's
-/// own agent.
+/// Accounts' first sections: what you may already pay for, each signed in as you. The coding
+/// agents (Claude Code, Codex, Cursor, Grok, Antigravity) run as their makers built them, on this
+/// Mac or a machine, and each signs in to them on its own (picked in their section); the plans
+/// (GitHub Copilot, GitLab Duo, Poe, OpenCode) bring their models to Kuvo Code's own agent, and
+/// your machines get a copy of their sign-ins, as of every account on the page.
 ///
 /// What you use is in a card, a product to a block: its name with what it needs from you on the
 /// right (an update), and under it your accounts with it, side by side (none is the main one). The
 /// rest are tiles below, to sign in to with a click.
 struct SubscriptionsSection: View {
+    enum Shows { case agents, plans }
+    let shows: Shows
+    /// For the agents: the machine whose they are (nil: this Mac's).
+    var machine: MachineEngine?
     /// Opens a sign-in, in the page's place.
     let connect: (Integration) -> Void
-    /// The plans the engine signs in to too (this Mac's Accounts), not only the coding agents.
-    var showsPlans = true
     @Environment(Catalog.self) private var catalog
     @Environment(AppModel.self) private var app
     /// The agents shown: this Mac's, or a machine's (`agentsBridge`).
@@ -25,77 +28,124 @@ struct SubscriptionsSection: View {
         let products = self.products
         let used = products.filter(\.hasAccounts)
         let more = products.filter { !$0.hasAccounts }
+        if shows == .agents || !products.isEmpty { section(used: used, more: more) }
+    }
+
+    private func section(used: [Product], more: [Product]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(showsPlans ? "Subscriptions" : "Coding Agents")
+                    Text(shows == .agents ? "Coding Agents" : "Plans")
                         .font(.headline)
-                    Text(showsPlans ? "Sign in with a plan or account you already have." : "Sign in to each on this machine, with a plan or account you already have. It finishes in your browser here.")
+                    Text(subtitle)
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 12)
-                // You installed one or signed in to one elsewhere: asked anew (so is everything
-                // when you come back to the app).
-                Button {
-                    Task { await catalog.refreshAgents(fresh: true) }
-                } label: {
-                    if catalog.isRefreshingAgents {
-                        Spinner(size: 13)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 13, weight: .medium))
-                    }
-                }
-                .buttonStyle(IconButtonStyle(width: 28, height: 26))
-                .disabled(catalog.isRefreshingAgents || agents.api == nil)
-                .accessibilityLabel("Refresh")
-                .help("Check again which agents are installed and signed in")
-            }
-            if let failure = agents.failure, catalog.codingAgents.isEmpty {
-                ErrorCard(message: "The coding agents couldn't start. \(failure)")
-            } else if catalog.codingAgents.isEmpty {
-                HStack(spacing: 8) {
-                    Spinner(size: 14)
-                    Text("Looking for your coding agents…")
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 6)
-            }
-            if !used.isEmpty {
-                VStack(spacing: 0) {
-                    ForEach(used) { product in
-                        ProductBlock(product: product, connect: connect)
-                        if product.id != used.last?.id {
-                            Divider().padding(.leading, 58)
+                if shows == .agents {
+                    AccountsPlaceMenu()
+                    // You installed one or signed in to one elsewhere: asked anew (so is
+                    // everything when you come back to the app).
+                    Button {
+                        Task { await catalog.refreshAgents(fresh: true) }
+                    } label: {
+                        if catalog.isRefreshingAgents {
+                            Spinner(size: 13)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 13, weight: .medium))
                         }
                     }
+                    .buttonStyle(IconButtonStyle(width: 28, height: 26))
+                    .disabled(catalog.isRefreshingAgents || agents.api == nil)
+                    .accessibilityLabel("Refresh")
+                    .help("Check again which agents are installed and signed in")
                 }
-                .background(Surface.cardFill(scheme, focused: false), in: .rect(cornerRadius: Metrics.cardRadius))
-                .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
             }
-            if !more.isEmpty {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 10)], spacing: 10) {
-                    ForEach(more) { product in
-                        SubscriptionTile(product: product, connect: connect)
+            if shows == .agents, let machine, !isRunning(machine) {
+                unavailable(machine)
+            } else {
+                if shows == .agents, let failure = agents.failure, catalog.codingAgents.isEmpty {
+                    ErrorCard(message: "The coding agents couldn't start. \(failure)")
+                } else if shows == .agents, catalog.codingAgents.isEmpty {
+                    HStack(spacing: 8) {
+                        Spinner(size: 14)
+                        Text("Looking for your coding agents…")
+                            .foregroundStyle(.secondary)
                     }
+                    .padding(.vertical, 6)
                 }
-                .padding(.top, used.isEmpty ? 0 : 4)
+                if !used.isEmpty {
+                    VStack(spacing: 0) {
+                        ForEach(used) { product in
+                            ProductBlock(product: product, connect: connect)
+                            if product.id != used.last?.id {
+                                Divider().padding(.leading, 58)
+                            }
+                        }
+                    }
+                    .background(Surface.cardFill(scheme, focused: false), in: .rect(cornerRadius: Metrics.cardRadius))
+                    .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
+                }
+                if !more.isEmpty {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 10)], spacing: 10) {
+                        ForEach(more) { product in
+                            SubscriptionTile(product: product, connect: connect)
+                        }
+                    }
+                    .padding(.top, used.isEmpty ? 0 : 4)
+                }
             }
         }
-        .task(id: agents.api != nil) { await catalog.refreshAgents(fresh: true) }
+        .task(id: agents.api != nil) {
+            if shows == .agents { await catalog.refreshAgents(fresh: true) }
+        }
+    }
+
+    private var subtitle: String {
+        switch shows {
+        case .agents:
+            if let machine { return "Signed in on \(machine.machine.name) on its own. Signing in finishes in your browser here." }
+            return app.machines.list.isEmpty ? "Sign in with a plan or account you already have." : "Sign in with a plan or account you already have. Each of your machines signs in to these on its own."
+        case .plans:
+            return app.machines.list.isEmpty ? "Their models, in Kuvo Code's own agent." : "Their models, in Kuvo Code's own agent, on this Mac and your machines."
+        }
+    }
+
+    private func isRunning(_ engine: MachineEngine) -> Bool {
+        engine.isReady && engine.agents.api != nil && !engine.agents.isDown
+    }
+
+    /// A machine whose agents can't be asked now: why, and a way back.
+    @ViewBuilder private func unavailable(_ engine: MachineEngine) -> some View {
+        if engine.isReady {
+            ErrorCard(message: "The coding agents aren’t running on \(engine.machine.name). They start with its engine: when nothing runs there, disconnect it in Settings › Machines and connect it again.")
+        } else {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(engine.machine.name) isn’t connected")
+                    MachineStatus(engine: engine)
+                }
+                Spacer()
+                if !engine.connection.isUnderWay {
+                    Button("Connect") { app.connect(engine) }
+                        .buttonStyle(.glass)
+                }
+            }
+        }
     }
 
     /// In a fixed order: the coding agents, then the plans.
     private var products: [Product] {
         var all: [Product] = []
-        for base in OutsideAgents.order {
+        for base in OutsideAgents.order where shows == .agents {
             let accounts = catalog.codingAgents.filter { OutsideAgents.base($0.id) == base }
             guard let own = accounts.first(where: { OutsideAgents.account($0.id) == nil }) else { continue }
             let added = accounts.filter { OutsideAgents.account($0.id) != nil }
             all.append(Product(kind: .agent(own: own, added: added)))
         }
-        for id in Catalog.planProviders where showsPlans {
+        for id in Catalog.planProviders where shows == .plans {
             guard let plan = catalog.providers.first(where: { $0.id == id }) else { continue }
             all.append(Product(kind: .plan(plan)))
         }

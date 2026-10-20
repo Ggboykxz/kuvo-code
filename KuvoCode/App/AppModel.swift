@@ -55,12 +55,14 @@ final class AppModel {
     var openMainWindow: (() -> Void)?
     /// Settings fill the main window in place of the sessions while this is on.
     var showsSettings = false
-    /// Accounts opened for a machine's sign-ins (a conversation there needs one): the page shows it.
-    var accountsMachine: String?
+    /// Whose coding agents Settings › Accounts shows: this Mac's (nil), or a machine's (each signs
+    /// in to them on its own), picked in the menu next to Coding Agents. The rest of the page is
+    /// this Mac's accounts, which your machines get a copy of.
+    var accountsPlace: String?
 
     /// Settings › Accounts, showing `machine`'s sign-ins (nil: this Mac's).
     func openAccounts(on machine: String?) {
-        accountsMachine = machine
+        accountsPlace = machine
         openSettings(.accounts)
     }
     /// Settings' tabs: the page, and the sites you're signing in to.
