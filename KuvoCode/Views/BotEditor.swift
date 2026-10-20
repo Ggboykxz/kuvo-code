@@ -1024,7 +1024,8 @@ private struct WakeList: View {
                             failure = nil
                             Task {
                                 do { try await bots.wakeNow(wake, of: bot) } catch {
-                                    wokenNow.remove(wake.id)
+                                    // Sent all the same, it stays woken; else it can be tried again.
+                                    if case Bots.Failure.wakeStays = error {} else { wokenNow.remove(wake.id) }
                                     failure = error.localizedDescription
                                 }
                             }

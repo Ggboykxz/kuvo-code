@@ -141,6 +141,10 @@ final class Bots {
         case tooMany
         case noWake
         case stillOn(String)
+        /// Wake Up Now couldn't read a machine's wake-up whole, to send it as its time would.
+        case unreadWake(String)
+        /// Wake Up Now sent it, but couldn't take it off the schedule: it comes at its time too.
+        case wakeStays(String)
         var errorDescription: String? {
             switch self {
             case .notConnected(let machine): "\(machine) isn’t connected. Connect to it, then try again."
@@ -149,6 +153,8 @@ final class Bots {
             case .tooSoon: "Pick a time at least a minute from now."
             case .tooMany: "This bot has \(Wakes.limit) wake-ups waiting. Cancel some first."
             case .noWake: "Couldn’t add the wake-up. Check that the machine is connected, then try again."
+            case .unreadWake(let machine): "Couldn’t read the wake-up on \(machine). Check that it’s connected, then try again."
+            case .wakeStays(let reason): "It woke up, but the wake-up couldn’t be cancelled, so it comes at its time too. \(reason)"
             }
         }
     }
@@ -617,11 +623,15 @@ final class Bots {
         if let machine = bot.machine {
             let file = ((bot.folder as NSString).appendingPathComponent("wakes") as NSString).appendingPathComponent(wake.id)
             let output = await Task.detached { RemoteShell.run("cat \(SSHConnection.quoted(file))", on: machine) }.value
-            if let output, case let whole = String(decoding: output, as: UTF8.self), !whole.isEmpty { note = whole }
+            // Not the shortened line in its place: the bot would act on half its note.
+            guard let output, case let whole = String(decoding: output, as: UTF8.self), !whole.isEmpty else { throw Failure.unreadWake(machine) }
+            note = whole
         }
         try await api.prompt(session: bot.sessionID, id: Identifier.message(), text: Wakes.marker + note, delivery: .queue)
-        // One that repeats keeps its time. (One whose machine went away since stays listed.)
-        if wake.every == nil { try? await cancelWake(wake, of: bot) }
+        // One that repeats keeps its time; one that doesn't is done, or it would come again.
+        if wake.every == nil {
+            do { try await cancelWake(wake, of: bot) } catch { throw Failure.wakeStays(error.localizedDescription) }
+        }
     }
 
     /// Sends this Mac's bots' wake-ups as they come due, while the app runs; ones missed while it
