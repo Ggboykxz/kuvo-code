@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Bots on this Mac can use any model, the coding agents' and Auto included; picking one for an existing bot carries its conversation over, as for a session. Blocks catch more commands hidden in a command line, and ask about a line they can't read through. Undo puts back a file the agent moved or copied, and keeps files your ignore rules left out.
 - Notifications hide a hex key after a key's or secret's name however it's written (quoted, in YAML or JSON), and show checksums and cache keys.
 - When this Mac's engine stops for good, its sessions no longer show as working or keep the Mac awake.
 - Cursor sessions work when they don't approve everything, instead of failing with "sandboxing is not supported in this environment". You can pick thinking effort for every Cursor and Grok model that has it. When your settings (a mode, the session's agent, Permissions) don't allow a tool, Grok and Antigravity carry on without it instead of stopping the turn.
