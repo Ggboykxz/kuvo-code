@@ -317,7 +317,11 @@ final class BrowserAgent {
         let printed = folder.appending(path: url.lastPathComponent)
         // Backgrounds and colors as on screen; printing leaves them out otherwise.
         _ = try? await browser.webView.callAsyncJavaScript(Self.keepColorsScript, contentWorld: .page)
-        switch await PagePrinter.save(browser.webView, to: printed) {
+        // What you filled in stays out of it, as out of a screenshot.
+        _ = await run(Self.maskScript, [:], in: browser)
+        let saved = await PagePrinter.save(browser.webView, to: printed)
+        _ = await run(Self.unmaskScript, [:], in: browser)
+        switch saved {
         case .saved(let pages):
             do {
                 try Data(contentsOf: printed).write(to: url, options: .atomic)
