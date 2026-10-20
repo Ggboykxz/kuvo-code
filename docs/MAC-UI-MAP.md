@@ -476,6 +476,12 @@ listed here because their drawing is not a single `Shape`:
 Symbol becomes a drawn SVG with the same silhouette, on the same 16 pt optical grid, with a
 1.5 pt stroke at 16 pt, round caps and joins, and `currentColor`. Decorative icons are
 `aria-hidden`; icon-only buttons carry the Mac's `.help` text as `aria-label` and `title`.
+
+**Done in 0.5.42, for the marks the client uses today:** the drawings live in
+`windows/app/src/components/symbols.tsx` (the symbols, the folder, the app's own prompt
+mark), the glyphs that stood in for them are gone, and the check that keeps them gone is in
+`windows/mac-tokens.test.mjs`. The remaining symbols arrive with the screens that use them
+(Phase 6).
 Provider logos come from models.dev, monochrome by default, maker colour only where the Mac
 uses `colored: true` (`ProviderLogo.swift:7-12`).
 

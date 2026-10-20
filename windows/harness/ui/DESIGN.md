@@ -192,9 +192,18 @@ license terms travel with the app, in `windows/THIRD_PARTY_LICENSES.txt`.
 ## Icons
 
 The Mac uses 89 SF Symbols across 238 sites (`docs/MAC-UI-INVENTORY.md` §1). They are drawn as
-inline SVG at the Mac's point size and weight in Phase 4; emoji are banned as interface marks.
-A mark that has no SF Symbol equivalent is drawn from the Swift `Path`/`Canvas` source (six
-declarations), not borrowed from a generic icon set.
+inline SVG at the Mac's point size and weight; emoji are banned as interface marks, and so
+is a letter, an arrow or a cross standing in for one. A mark that has no SF Symbol
+equivalent is drawn from the Swift `Path`/`Canvas` source (six declarations), not borrowed
+from a generic icon set.
+
+The house style for a drawn symbol: the 16 pt optical grid, a 1.5 pt stroke at 16 pt, round
+caps and joins, and `currentColor`, so a mark takes the ink of the text it sits in. The
+drawings live in `windows/app/src/components/symbols.tsx` — the symbols the app uses, the
+folder the Mac draws (`FolderIcon.swift`: a 16 × 13 grid, a fifth of the ink filled over
+its outline) and the app's own prompt mark, the `>_` the spinner writes
+(`Spinner.swift:153-177`). The check that no text glyph stands in for a mark is in
+`windows/mac-tokens.test.mjs`.
 
 ## Wording
 
@@ -234,7 +243,7 @@ same ones the App Router renders.
 | 2a | The conversation card and its 38 pt header, the 62 pt fade, 8 pt window gaps, the sidebar on the glass, 32 pt rows, one search, the composer on the column | 0.5.38 ✅ |
 | 2b | The title bar's tabs, the drawer, the palette and the settings card | 0.5.39 ✅ |
 | 3 | Motion: analytic spring, press, shimmer, reduced motion | 0.5.40 ✅ |
-| 4 | Icons: 89 symbols as SVG, six drawn marks | |
+| 4 | Icons: 89 symbols as SVG, six drawn marks | 0.5.42 |
 | 5 | Wording: 1,208 strings verbatim | |
 | 6 | Screens: 23 settings pages, transcript, drawers | |
 | 7 | Gestures and shortcuts | |

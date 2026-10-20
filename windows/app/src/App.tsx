@@ -45,6 +45,7 @@ import {
 import { Settings, settingsPageTitle } from "./Settings";
 import { DiffModal, Drawer, Palette, Picker, Toast } from "./Overlays";
 import { Shimmer } from "./components/ai-elements/shimmer";
+import { PromptMark, Symbol } from "./components/symbols";
 import { motion } from "motion/react";
 import { macSpringOrStill } from "./motion";
 
@@ -80,7 +81,7 @@ function ToolCard({ part }: { part: TranscriptEntry["parts"] extends (infer P)[]
         onClick={() => hasDetails && setOpen(value => !value)}
         title={hasDetails ? "Show what it did" : undefined}
       >
-        <span className="tool-chevron">{hasDetails ? (open ? "▾" : "▸") : ""}</span>
+        <span className="tool-chevron">{hasDetails ? <Symbol name="chevron.right" size={12} className={open ? "turned" : ""} /> : null}</span>
         <span className="tool-name">{part.name ?? "tool"}</span>
         <span className="tool-status">{status === "completed" ? "done" : status === "error" ? "failed" : status}</span>
       </button>
@@ -212,7 +213,7 @@ function StepsRow({ entry }: { entry: TranscriptEntry }) {
   return (
     <div className="steps-row">
       <button className="steps-summary" onClick={() => setOpen(value => !value)} title={open ? "Hide the steps" : "Show each step"}>
-        <span className="where">{open ? "▾" : "▸"}</span>
+        <span className="where"><Symbol name="chevron.right" size={12} className={open ? "turned" : ""} /></span>
         <span>{summary}</span>
       </button>
       {open ? (
@@ -364,7 +365,7 @@ function EntryNodes({ transcript }: { transcript: Transcript }) {
                   title="Send your last message again"
                   onClick={() => void sendPrompt(lastMessage)}
                 >
-                  ↺ Try Again
+                  <Symbol name="arrow.clockwise" size={12} /> Try Again
                 </button>
               ) : null}
             </div>
@@ -735,7 +736,11 @@ function SessionTabs() {
               <svg viewBox="0 0 16 16" width="10" height="10" fill="none">
                 <path d="M2.7 3.4h10.6v6.7H8.2l-3.2 2.5v-2.5H2.7z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
               </svg>
-              {status ? <span className={`tab-status ${status}`} /> : null}
+              {status ? (
+                <span className={`tab-status ${status}`}>
+                  {status === "running" ? <PromptMark size={9} /> : null}
+                </span>
+              ) : null}
             </span>
             <span className="tab-title">{title}</span>
             <span
@@ -830,9 +835,11 @@ function Sidebar() {
                   } catch (error) { complain(error); }
                 }}
               >
-                ⇩
+                <Symbol name="tray.and.arrow.down" size={12} />
               </button>
-              <button className="session-delete" title="Delete this session" onClick={() => void deleteSession(session)}>✕</button>
+              <button className="session-delete" title="Delete this session" aria-label="Delete this session" onClick={() => void deleteSession(session)}>
+                <Symbol name="xmark" size={10} />
+              </button>
             </li>
           );
         })}
@@ -1044,12 +1051,12 @@ function Composer() {
                 } catch (error) { complain(error); }
               }}
             >
-              ✕
+              <Symbol name="xmark" size={10} />
             </button>
           </div>
         ))}
         <button className="small" title={queueOpen ? "Fold the queue away" : "Show what is waiting"} onClick={() => { setQueueOpen(open => !open); render(); }}>
-          {queueOpen ? "↑" : `↓ ${queueItems.length} waiting`}
+          <Symbol name={queueOpen ? "arrow.up" : "arrow.down"} size={12} /> {queueItems.length} waiting
         </button>
       </div>
       <div id="autocomplete" className="autocomplete" hidden={mentions.length === 0}>
@@ -1068,7 +1075,9 @@ function Composer() {
         {files.map((file, index) => (
           <span className="attachment-chip" key={index}>
             {file.name}
-            <button className="small" type="button" onClick={() => setFiles(current => current.filter((_, i) => i !== index))}>✕</button>
+            <button className="small" type="button" title="Remove this file" aria-label="Remove this file" onClick={() => setFiles(current => current.filter((_, i) => i !== index))}>
+              <Symbol name="xmark" size={10} />
+            </button>
           </span>
         ))}
       </div>
@@ -1474,7 +1483,7 @@ export function App() {
             title="Go to the latest words"
             onClick={() => { scrollToLatest(true); }}
           >
-            ↓ Latest
+            <Symbol name="arrow.down" size={12} /> Latest
           </button>
           <div id="asks" className="asks">
             {(state.transcript?.permissions ?? []).map(request => <PermissionCard key={request.id} request={request} />)}
@@ -1497,7 +1506,9 @@ export function App() {
                 return <option key={id} value={id}>{session?.title || id.slice(0, 8)}</option>;
               })}
             </select>
-            <button id="split-close" className="small" onClick={() => { state.split = null; render(); }}>✕</button>
+            <button id="split-close" className="small" title="Close this session" aria-label="Close this session" onClick={() => { state.split = null; render(); }}>
+              <Symbol name="xmark" size={11} />
+            </button>
           </div>
           <div id="split-entries" className="entries">
             {state.split ? <EntryNodes transcript={state.transcripts.get(state.split) ?? { entries: [], pending: [], permissions: [], running: false }} /> : null}

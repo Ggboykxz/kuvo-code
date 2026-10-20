@@ -2,6 +2,7 @@
 // engine's settings file, saved whole as they are made.
 
 import { useEffect, useState } from "react";
+import { Symbol } from "./components/symbols";
 import { api } from "./api";
 import {
   clearShortcut,
@@ -549,7 +550,9 @@ function ShortcutKeys({ shortcut }: { shortcut: Shortcut }) {
         {recording ? "Type Shortcut…" : keys}
       </button>
       {!recording && keys.length > 0 ? (
-        <button type="button" className="keycap-clear" title="Clear Shortcut" aria-label="Clear Shortcut" onClick={() => void clearShortcut(shortcut.id)}>✕</button>
+        <button type="button" className="keycap-clear" title="Clear Shortcut" aria-label="Clear Shortcut" onClick={() => void clearShortcut(shortcut.id)}>
+          <Symbol name="xmark" size={9} />
+        </button>
       ) : null}
       {refused ? <span className="settings-note">A shortcut needs Ctrl or Alt.</span> : null}
     </span>
@@ -793,7 +796,7 @@ function ArchivedPage() {
         <input type="text" value={query} placeholder="Search" onChange={event => setQuery(event.target.value)} />
       </div>
       {shown.length === 0 ? (
-        <div className="settings-note">None yet. Put a session away with the ⇩ button beside it, and it comes here.</div>
+        <div className="settings-note">None yet. Put a session away with the archive button beside it, and it comes here.</div>
       ) : shown.map(session => (
         <div className="cfg-row" key={session.id}>
           <div className="cfg-row-main">
@@ -822,7 +825,7 @@ function ArchivedPage() {
               } catch (error) { complain(error); }
             }}
           >
-            ✕
+            <Symbol name="xmark" size={11} />
           </button>
         </div>
       ))}

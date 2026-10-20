@@ -7,6 +7,7 @@ import { errorText } from "./lib";
 import { ChangesPanel } from "./Changes";
 import { complain, loadProjectFiles, loadSessions, notify, openProjectFile, openSession, render, state, useStore, newSession, exportConversation, stopRun } from "./store";
 import { keysOf } from "./shortcuts";
+import { Symbol } from "./components/symbols";
 
 // ---- The command palette ----
 
@@ -293,7 +294,9 @@ export function Picker() {
         </ul>
         <div id="picker-note" className="where">{note}</div>
         <div className="settings-editor-buttons">
-          <button id="picker-up" className="small" disabled={parent === null} onClick={() => parent && void browse(parent)}>↑</button>
+          <button id="picker-up" className="small" title="Up one folder" aria-label="Up one folder" disabled={parent === null} onClick={() => parent && void browse(parent)}>
+            <Symbol name="chevron.up" size={12} />
+          </button>
           <button id="picker-go" className="small" onClick={() => void browse(typed)}>Go</button>
           <button id="picker-use" className="primary" onClick={async () => {
             try {
@@ -464,7 +467,9 @@ export function DiffModal() {
       <div className="diff-card">
         <div className="diff-head">
           <strong id="diff-title">{state.diffTitle ?? "Changes in this session"}</strong>
-          <button className="small" onClick={() => { state.diffOpen = false; render(); }}>✕</button>
+          <button className="small" title="Close" aria-label="Close" onClick={() => { state.diffOpen = false; render(); }}>
+            <Symbol name="xmark" size={11} />
+          </button>
         </div>
         <div id="diff-body" className="diff-body">
           {state.sessionDiff.map(file => (

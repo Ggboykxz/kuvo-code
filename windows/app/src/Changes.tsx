@@ -3,6 +3,7 @@
 // the next message, and a commit the session's model can write the message for.
 
 import { useEffect, useState } from "react";
+import { Symbol } from "./components/symbols";
 import { api } from "./api";
 import { complain, notify, state, useStore } from "./store";
 
@@ -134,7 +135,7 @@ export function ChangesPanel() {
             <div className="changes-file" key={file.file}>
               <div className="changes-file-head">
                 <button className="changes-file-toggle" onClick={() => toggle(file.file)}>
-                  <span className="where">{isOpen ? "▾" : "▸"}</span>
+                  <span className="where"><Symbol name="chevron.right" size={11} className={isOpen ? "turned" : ""} /></span>
                   <span className="changes-file-name">{file.file}</span>
                   <span className="where">{`+${file.additions ?? 0} −${file.deletions ?? 0}`}</span>
                 </button>

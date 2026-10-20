@@ -25,6 +25,8 @@ const sources = {
   app: read("app", "src", "App.tsx"),
   design: read("harness", "ui", "DESIGN.md"),
   motion: read("app", "src", "motion.ts"),
+  symbols: read("app", "src", "components", "symbols.tsx"),
+  changes: read("app", "src", "Changes.tsx"),
   shimmer: read("app", "src", "components", "ai-elements", "shimmer.tsx"),
   tailwind: read("app", "app", "globals.css"),
   postcss: read("app", "postcss.config.mjs"),
@@ -333,10 +335,16 @@ const checks = [
     assert.match(thinking, /--color-muted-foreground: var\(--ink-soft\)/);
   }],
 
-  ["the working mark turns at the Mac's beat, and stands still when asked", ({ css, rule }) => {
-    assert.match(rule(".tab-status.running {"), /animation: kuvo-spin 1\.6s linear infinite/);
-    assert.match(css, /@keyframes kuvo-spin \{\n  to \{ transform: rotate\(360deg\); \}/);
-    assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[^}]*\.tab-status\.running \{ animation: none; \}/s);
+  ["the working mark is the app's own, written at the Mac's beat", ({ css, rule }) => {
+    // The Mac's spinner writes the app's prompt mark: the chevron first, the cursor next,
+    // a hold, and a fade, over its 1.6 s round (Spinner.swift:40-54).
+    assert.match(css, /animation: kuvo-mark-chevron 1\.6s ease-in-out infinite/);
+    assert.match(css, /animation: kuvo-mark-cursor 1\.6s ease-in-out infinite/);
+    assert.match(css, /animation: kuvo-mark-fade 1\.6s linear infinite/);
+    assert.match(css, /@keyframes kuvo-mark-chevron \{\n  0% \{ stroke-dashoffset: 100; \}/);
+    assert.match(css, /@keyframes kuvo-mark-fade \{\n  0%, 78% \{ opacity: 1; \}/);
+    // And it stands still when the system asks for less movement.
+    assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[^}]*\.tab-status\.running[^}]*\}/s);
   }],
 
   ["the stylesheet is compiled with Tailwind, and only the AI Elements' classes are in it", ({ build, tailwind, postcss }) => {
@@ -358,6 +366,31 @@ const checks = [
     // The build copies the export where the harness looks for it.
     assert.match(build, /ui-build/);
     assert.match(build, /fs\.copyFileSync/);
+  }],
+
+  ["no text glyph stands in for a mark: the Mac's symbols are drawn", ({ app, overlays, settings, changes, symbols }) => {
+    // The Mac draws its symbols; a letter, an arrow or a cross standing in for one is a
+    // defect (docs/MAC-UI-MAP.md §7).
+    const marks = /[✕✖▾▸▴▵↺↻⇩⇧↑↓⋯]/g;
+    for (const [name, source] of Object.entries({ app, overlays, settings, changes })) {
+      const found = source.match(marks);
+      assert.equal(found, null, `${name} has no glyph standing in for a mark (${found?.join(" ") ?? ""})`);
+    }
+    // The drawings themselves: the Mac's house style — a 1.5 pt stroke at 16 pt, round
+    // caps and joins, in the ink of the text they sit in.
+    assert.match(symbols, /strokeWidth=\{stroke\}/);
+    assert.match(symbols, /const stroke = \(1\.5 \* size\) \/ 16;/);
+    assert.match(symbols, /stroke="currentColor"/);
+    assert.match(symbols, /strokeLinecap="round"/);
+    assert.match(symbols, /strokeLinejoin="round"/);
+    // And the two the Mac draws rather than borrowing: the folder (a 16 × 13 grid) and the
+    // app's own prompt mark, the `>_` the spinner writes.
+    assert.match(symbols, /viewBox="0 0 16 13"/);
+    assert.match(symbols, /fillOpacity="0\.2"/);
+    assert.match(symbols, /const stroke = size \/ 11\.5;/);
+    assert.match(symbols, /viewBox="0 0 690 530"/);
+    assert.match(symbols, /M77 74L267 262 77 450/);
+    assert.match(symbols, /M377 450h230/);
   }],
 
   ["the window is built by Next.js, and exported as the static files the harness serves", ({ next, page, build }) => {

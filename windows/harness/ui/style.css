@@ -2839,3 +2839,70 @@ html[data-theme="dark"] .tab-pill {
               0 0.5px 1px rgba(0, 0, 0, 0.35),
               0 2px 6px rgba(0, 0, 0, 0.30);
 }
+
+/* ==========================================================================
+   Phase 4 — the Mac's marks, drawn
+
+   The symbols are drawings, not text: the same silhouettes on the 16 pt grid,
+   a 1.5 pt stroke at 16 pt, round caps and joins, in `currentColor`. The two
+   the Mac draws itself are drawn here too: the folder (`FolderIcon.swift`) and
+   the app's own prompt mark, the `>_` the spinner writes
+   (`Spinner.swift:153-177`).
+   ========================================================================== */
+
+/* The chevron turns when it is open, as the Mac's does. */
+.turned { transform: rotate(90deg); }
+
+/* The marks sit in their buttons, not beside them. */
+button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display: block; }
+.session-delete, .keycap-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.tool-chevron, .steps-summary .where {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The working mark: the app's own prompt mark, written and erased as the Mac's
+   spinner writes it (Spinner.swift:40-54) — the chevron first, the cursor next,
+   a hold, and a fade, over the Mac's 1.6 s round. */
+.tab-status.running {
+  width: 13px;
+  height: 13px;
+  right: -4px;
+  bottom: -3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--ink-soft);
+  animation: none;
+}
+.tab-status.running path:first-child {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  animation: kuvo-mark-chevron 1.6s ease-in-out infinite;
+}
+.tab-status.running path:last-child {
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+  animation: kuvo-mark-cursor 1.6s ease-in-out infinite;
+}
+.tab-status.running svg { animation: kuvo-mark-fade 1.6s linear infinite; }
+@keyframes kuvo-mark-chevron {
+  0% { stroke-dashoffset: 100; }
+  40%, 100% { stroke-dashoffset: 0; }
+}
+@keyframes kuvo-mark-cursor {
+  0%, 32% { stroke-dashoffset: 100; }
+  60%, 100% { stroke-dashoffset: 0; }
+}
+@keyframes kuvo-mark-fade {
+  0%, 78% { opacity: 1; }
+  100% { opacity: 0.35; }
+}
