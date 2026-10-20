@@ -30,9 +30,11 @@ struct MCPSettings: View {
         if !changes.isEmpty { config.set(changes) }
     }
 
+    /// Your servers: not Kuvo Code's own, nor integrations', which their page adds and removes
+    /// (with their keys, sign-ins and machines' copies, which removing one here would leave).
     private var names: [String] {
         let configured = config.value(at: Self.path)?.object?.keys.map { $0 } ?? []
-        return Set(configured + live.map(\.name)).subtracting(Self.builtIn).sorted()
+        return Set(configured + live.map(\.name)).subtracting(Self.builtIn).filter { Integrations.service($0) == nil }.sorted()
     }
 
     var body: some View {
@@ -76,6 +78,7 @@ struct MCPSettings: View {
                                 .foregroundStyle(.secondary)
                         } else {
                             Button("Add") { add(server) }
+                                .accessibilityLabel("Add \(server.title)")
                         }
                     }
                 }
@@ -195,8 +198,11 @@ struct MCPSettings: View {
 
     private func removePending() {
         guard let removal else { return }
-        app.engineConfig.set(nil, at: removal)
         self.removal = nil
+        // Once the closing editor's fields have saved what you typed last, or they'd write it
+        // back into a half-made entry.
+        let config = app.engineConfig
+        DispatchQueue.main.async { config.set(nil, at: removal) }
     }
 }
 
@@ -265,10 +271,15 @@ private struct ServerEditor: View {
 
     /// Why the name you typed can't be used, if it can't.
     private var problem: String? {
+        // Nothing would be written: what you fill in would be lost.
+        if let broken = app.engineConfig.problem { return "The engine's settings file can't be changed here: \(broken)" }
         if newID.isEmpty {
             return newName.trimmingCharacters(in: .whitespaces).isEmpty ? nil : "A name needs a letter or a number."
         }
         if MCPSettings.builtIn.contains(newID) { return "Kuvo Code uses that name for its own tools." }
+        // Integrations know theirs by name: one of yours by that name would show as it there,
+        // and removing that integration would remove it.
+        if let service = Integrations.service(newID) { return "\(service.title) uses that name: add it in Integrations, or pick another name." }
         let isTaken = config.value(at: MCPSettings.path + [newID]) != nil || taken.contains(newID)
         return isTaken ? "There's a server called \(newID) already." : nil
     }

@@ -37,16 +37,20 @@ struct UserAPIKeyStore: Sendable {
     }
 
     /// Which combination of sources currently holds a key — drives the four-state per-provider API-key
-    /// editor. A saved key plus an environment key is `overrideActive` because config wins.
+    /// editor. A saved key plus an environment key is `overrideActive` because config wins. A key in
+    /// another tool's config file (`~/.config/…`) is the user's own, like an environment key: shown
+    /// read-only, never removed from here (fork change).
     func keyStatus() -> APIKeyStatus {
         moveSavedFileToKeychain()
-        let hasConfig = keyFromKeychain() != nil || keyFromConfigFile() != nil
+        let hasSaved = keyFromKeychain() != nil
+        let hasFile = keyFromConfigFile() != nil
         let hasHost = keyFromHostApp() != nil
         let hasEnv = keyFromEnvironment() != nil
-        switch (hasConfig, hasHost || hasEnv) {
+        switch (hasSaved, hasFile || hasHost || hasEnv) {
         case (true, true): return .overrideActive
         case (true, false): return .saved
-        case (false, true): return hasHost ? .fromHostApp : .fromEnvironment
+        // As `loadKey` picks: a config file before the host app.
+        case (false, true): return hasHost && !hasFile ? .fromHostApp : .fromEnvironment
         default: return .notSet
         }
     }
@@ -67,8 +71,9 @@ struct UserAPIKeyStore: Sendable {
         if files.exists(configPaths[0]) { try? files.remove(configPaths[0]) }
     }
 
-    /// Remove the saved key from every config path (not just the primary), so clearing truly clears it —
-    /// otherwise a key in an alternate path would resurface. A missing file is a no-op.
+    /// Remove the saved key: the Keychain's, and the host app's own file from earlier versions. Other
+    /// tools' config files are the user's, and stay (fork change: upstream removed every config path);
+    /// a key there shows as the user's own after this. A missing file is a no-op.
     func deleteKey() throws {
         do {
             try secrets.delete(secretAccount)
@@ -76,7 +81,7 @@ struct UserAPIKeyStore: Sendable {
             AppLog.error(.auth, "delete \(secretAccount) API key from the Keychain failed: \(error)")
             throw makeError(.deleteFailed)
         }
-        for path in configPaths {
+        for path in configPaths.prefix(1) {
             guard files.exists(path) else { continue }
             do {
                 try files.remove(path)

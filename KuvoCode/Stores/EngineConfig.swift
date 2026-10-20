@@ -12,18 +12,30 @@ final class EngineConfig {
     /// Why the file couldn't be read. It's left alone until it's fixed.
     private(set) var problem: String?
 
+    /// Settings kept only here, never written anywhere: something being made (a new agent),
+    /// filled in by the same controls, until it's created.
+    let isDraft: Bool
+
     init(file: URL) {
         self.file = file
+        isDraft = false
         reload()
         Self.current = self
+    }
+
+    init(draft settings: [String: JSONValue]) {
+        file = URL(filePath: "/dev/null")
+        isDraft = true
+        self.settings = settings
     }
 
     /// This Mac's, for the places that make a session's rules.
     static weak var current: EngineConfig?
 
     /// Reads the file again and adds what Kuvo Code starts every engine with, unless it sets it:
-    /// web search through a free provider, moving to another when one is rate limited. The engine
-    /// has none chosen, and every search the agent tried failed ("Web search provider is required").
+    /// web search through Exa, which needs no key. The engine has none chosen, and every search
+    /// the agent tried failed ("Web search provider is required"). Not "random": that keeps one
+    /// service a session, and one that needs a key (Firecrawl) answers every search with nothing.
     ///
     /// It goes in the file, so a choice made anywhere (here, in Settings, in a project's own
     /// settings) wins over it, and only once: what you change or remove later stays as you left
@@ -31,13 +43,25 @@ final class EngineConfig {
     /// over) gets it again.
     func addDefaults() {
         reload()
+        guard problem == nil else { return }
         let isNew = !FileManager.default.fileExists(atPath: file.path)
-        guard problem == nil, isNew || !UserDefaults.standard.bool(forKey: Self.defaultsAddedKey) else { return }
-        if settings["websearch"] == nil { add(.object(["provider": .string("random")]), as: "websearch") }
-        if problem == nil { UserDefaults.standard.set(true, forKey: Self.defaultsAddedKey) }
+        let defaults = UserDefaults.standard
+        if isNew || !defaults.bool(forKey: Self.defaultsAddedKey) {
+            if settings["websearch"] == nil { add(Self.search, as: "websearch") }
+            if problem == nil {
+                defaults.set(true, forKey: Self.defaultsAddedKey)
+                defaults.set(true, forKey: Self.searchMovedKey)
+            }
+        } else if !defaults.bool(forKey: Self.searchMovedKey) {
+            // "random", as Kuvo Code chose it before: Exa instead, once.
+            if value(at: ["websearch"]) == .object(["provider": .string("random")]) { set(Self.search, at: ["websearch"]) }
+            if problem == nil { defaults.set(true, forKey: Self.searchMovedKey) }
+        }
     }
 
+    private static let search: JSONValue = .object(["provider": .string("exa")])
     private static let defaultsAddedKey = "engine.defaultsAdded"
+    private static let searchMovedKey = "engine.searchMovedToExa"
 
     /// Adds a setting to the file as it's written, keeping its layout and order: one line at its
     /// end. A file that's new, or not laid out as expected, is written whole, as `set` does.
@@ -66,10 +90,13 @@ final class EngineConfig {
               let member = inline(.object([key: value])).map({ String($0.dropFirst().dropLast()) }) else { return nil }
         let isEmpty = text[last] == "{"
         let head = String(text[...last]), tail = String(text[close...])
-        guard text.contains("\n") else { return head + (isEmpty ? "" : ", ") + member + tail }
-        let lineStart = text[..<last].lastIndex(of: "\n").map { text.index(after: $0) } ?? text.startIndex
+        // The file's own line ending ("\r\n" is one Character to Swift, so it's read by scalar).
+        let scalars = text.unicodeScalars
+        let newline = scalars.contains("\r") ? (scalars.contains("\n") ? "\r\n" : "\r") : scalars.contains("\n") ? "\n" : nil
+        guard let newline else { return head + (isEmpty ? "" : ", ") + member + tail }
+        let lineStart = text[..<last].lastIndex(where: \.isNewline).map { text.index(after: $0) } ?? text.startIndex
         let indent = isEmpty ? "  " : String(text[lineStart...].prefix { $0 == " " || $0 == "\t" })
-        return head + (isEmpty ? "" : ",") + "\n" + indent + member + "\n" + tail
+        return head + (isEmpty ? "" : ",") + newline + indent + member + newline + tail
     }
 
     /// `value` as JSON on one line, spaced as people write it: `{"provider": "random"}`.
@@ -116,6 +143,7 @@ final class EngineConfig {
 
     /// Reads the file again, after it was changed elsewhere.
     func reload() {
+        guard !isDraft else { return }
         guard let data = try? Data(contentsOf: file) else {
             settings = [:]
             problem = nil
@@ -167,6 +195,7 @@ final class EngineConfig {
     }
 
     private func save() {
+        guard !isDraft else { return }
         // No "$schema": opencode's published schema is still v1's, and would mark v2's keys
         // as errors in an editor.
         let document = settings

@@ -87,17 +87,24 @@ public struct InboxItem: Codable, Sendable, Hashable, Identifiable {
     /// Files attached to user input, where they're files on this Mac.
     public var files: [URL] { Self.files(in: payload) }
 
+    /// The engine keeps each file as `{data, mime, name, source: {type: "uri", uri}}`, or
+    /// `source: {type: "inline"}` for one sent in the message itself; as sent, `{uri, name}`.
     static func files(in payload: JSONValue) -> [URL] {
         (payload["files"]?.array ?? []).compactMap { file in
-            file["uri"]?.string.flatMap(URL.init(string:)).flatMap { $0.isFileURL ? $0 : nil }
+            (file["source"]?["uri"]?.string ?? file["uri"]?.string).flatMap(URL.init(string:)).flatMap { $0.isFileURL ? $0 : nil }
         }
     }
 
     /// Files the input carries in itself (`data:`, like a photo sent from a phone).
     static func inlineFiles(in payload: JSONValue) -> [Message.User.Attachment] {
         (payload["files"]?.array ?? []).compactMap { file in
+            let name = file["name"]?.string
+            if file["source"]?["type"]?.string == "inline", let data = file["data"]?.string {
+                let mime = file["mime"]?.string ?? "application/octet-stream"
+                return Message.User.Attachment(mime: mime, name: name, source: .uri("data:\(mime);base64,\(data)"))
+            }
             guard let uri = file["uri"]?.string, uri.hasPrefix("data:") else { return nil }
-            return Message.User.Attachment(mime: dataType(uri), name: file["name"]?.string, source: .uri(uri))
+            return Message.User.Attachment(mime: dataType(uri), name: name, source: .uri(uri))
         }
     }
 

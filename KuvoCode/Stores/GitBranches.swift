@@ -23,6 +23,9 @@ nonisolated extension Git {
             let candidate = suffix == 1 ? name : "\(name)-\(suffix)"
             guard run(["rev-parse", "--verify", "--quiet", "refs/heads/" + candidate], in: directory) == nil else { continue }
             guard let complaint = report(["switch", "--quiet", "-c", candidate], in: directory, environment: [:]) else { return candidate }
+            // Made and checked out, but a hook complained after (Git LFS's, say, without git-lfs
+            // on the app's PATH): it's the branch all the same.
+            if currentBranch(in: directory) == candidate { return candidate }
             failure = complaint
         }
         throw GitFailure(message: failure.isEmpty ? "Couldn't make a branch for the worktree." : failure)
@@ -53,9 +56,15 @@ nonisolated extension Git {
         return nil
     }
 
-    /// Changes that aren't committed, new files included.
-    static func hasUncommittedChanges(in directory: String) -> Bool {
-        !(run(["status", "--porcelain"], in: directory) ?? "").isEmpty
+    /// Changes that aren't committed, new files included; and, when git can't say (a machine's
+    /// connection dropped), as if there were, so nothing is thrown away on a guess.
+    /// New files count whatever git's settings say, as the Changes panel lists them.
+    /// `includingHidden`: also changes in submodules their `ignore` setting leaves out, for
+    /// before a worktree is removed, which would delete them unasked.
+    static func hasUncommittedChanges(in directory: String, includingHidden: Bool = false) -> Bool {
+        let hidden = ["--untracked-files=normal"] + (includingHidden ? ["--ignore-submodules=none"] : [])
+        guard let status = run(["status", "--porcelain"] + hidden, in: directory) else { return true }
+        return !status.isEmpty
     }
 
     /// How many commits `directory`'s branch has that `base` doesn't.
@@ -75,9 +84,12 @@ nonisolated extension Git {
     static func merge(_ branch: String, into directory: String, environment: [String: String]) -> MergeResult {
         guard let failure = report(["merge", "--no-edit", branch], in: directory, environment: environment) else { return .merged }
         let conflicted = (run(["diff", "--name-only", "--diff-filter=U"], in: directory) ?? "").split(separator: "\n").map(String.init)
-        guard !conflicted.isEmpty else { return .failed(failure) }
-        _ = report(["merge", "--abort"], in: directory, environment: environment)
-        return .conflict(conflicted)
+        // Stopped partway for another reason (a hook, signing the commit): taken back too, or the
+        // folder stays in the middle of a merge.
+        if run(["rev-parse", "-q", "--verify", "MERGE_HEAD"], in: directory) != nil {
+            _ = report(["merge", "--abort"], in: directory, environment: environment)
+        }
+        return conflicted.isEmpty ? .failed(failure) : .conflict(conflicted)
     }
 
     /// Pushes what `directory` has checked out to `origin`, and returns the page that opens a
@@ -174,8 +186,17 @@ nonisolated enum GitPreferences {
     static let defaultBranchPrefix = "kuvo/"
 
     /// What a session's own branch starts with ("kuvo/").
+    /// As git takes it in a branch's name: without spaces around it (one typed at the end of
+    /// the field doesn't show), the characters a branch can't have (~ ^ : ? * [ \), "..", or a
+    /// start in - / or .; else every worktree's branch would fail to be made.
     static var branchPrefix: String {
-        UserDefaults.standard.string(forKey: branchPrefixKey) ?? defaultBranchPrefix
+        let typed = UserDefaults.standard.string(forKey: branchPrefixKey) ?? defaultBranchPrefix
+        var prefix = typed.trimmingCharacters(in: .whitespacesAndNewlines).filter { character in
+            !" ~^:?*[\\".contains(character) && !character.isWhitespace && !(character.asciiValue.map { $0 < 32 || $0 == 127 } ?? false)
+        }
+        while prefix.contains("..") { prefix = prefix.replacingOccurrences(of: "..", with: ".") }
+        while let first = prefix.first, "-/.".contains(first) { prefix.removeFirst() }
+        return prefix
     }
 
     /// A prompt for a commit message or pull request, with your instructions for it added.

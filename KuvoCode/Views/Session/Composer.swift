@@ -6,6 +6,10 @@ import UniformTypeIdentifiers
 /// the mode (Build/Plan) and model pickers, and a send button that turns into
 /// Stop while the agent works.
 struct Composer: View {
+    /// The session it's writing to, where it stays as you go from one to another: what it was
+    /// doing (a recalled message, the "@" or "/" list) is let go, and the cursor goes after the
+    /// draft there.
+    var session: String? = nil
     @Binding var text: String
     @Binding var files: [URL]
     /// What you're replying to, as a card over the text, with a way to drop it.
@@ -16,6 +20,8 @@ struct Composer: View {
     let agent: String
     let approval: ToolApproval
     let model: ModelRef?
+    /// On Auto, the model of your list at work now (its latest reply's).
+    var modelInUse: ModelRef?
     let isRunning: Bool
     /// Messages are waiting their turn, so ⌘Return adds to the queue even while idle.
     var hasQueue = false
@@ -46,18 +52,40 @@ struct Composer: View {
     var attempts = 1
     var onSelectAttempts: (Int) -> Void = { _ in }
     var onSend: () -> Void
-    /// ⌘Return: after the run, and anything queued before.
-    var onQueue: () -> Void = {}
+    /// ⌘Return: after the run, and anything queued before. Where nothing can be running yet (a
+    /// new session's composer), it sends.
+    var onQueue: (() -> Void)?
     /// ↑ in an empty composer brings back the last waiting message; false if there's none.
     var onEditLast: () -> Bool = { false }
     var onStop: () -> Void
+    /// The mode and approval chip: hidden where they're not yours to pick (a subagent's are its
+    /// agent's).
+    var showsMode = true
+    /// The models its picker offers, when they aren't the session's (a subagent's: the engine's).
+    var scope: ModelScope?
+    /// Takes the keyboard as it shows; a subagent's beside the conversation leaves it there.
+    var focusesOnAppear = true
+    /// What the empty field says, when it isn't the usual.
+    var prompt: String?
 
     @Environment(Catalog.self) private var catalog
+    @Environment(Workspace.self) private var workspace
     @Environment(\.colorScheme) private var scheme
     @Environment(\.cardIsFocused) private var cardIsFocused
     @Environment(\.messageFont) private var messageFont
     @Environment(\.bot) private var bot
     @FocusState private var isFocused: Bool
+
+    /// The models its picker offers, by where the conversation lives (see `ModelScope.at`): the
+    /// same for a session, a chat and a bot's conversation.
+    private var modelScope: ModelScope {
+        if let scope { return scope }
+        if let session {
+            guard let current = workspace.session(session) else { return .engine }
+            return .at(current.location.directory)
+        }
+        return .at(folders.first)
+    }
     @FocusState private var answering: UUID?
     @Environment(\.composerFocused) private var composerFocused
     @State private var isTargeted = false
@@ -65,6 +93,9 @@ struct Composer: View {
     @State private var historyIndex: Int?
     /// The project's files for "@", read when one is typed.
     @State private var mentionFiles: [ProjectFiles.File] = []
+    /// The folders `mentionFiles` were read in: a read for another session's project, coming in
+    /// after you went to this one, isn't this one's.
+    @State private var mentionFilesFolders: [String] = []
     @State private var mentionFilesRead: Date?
     @State private var mentionIndex = 0
     /// Where the "@" whose list was closed with Escape is, so it stays closed.
@@ -72,6 +103,8 @@ struct Composer: View {
     @State private var commandIndex = 0
     /// The "/" list was closed with Escape; it opens again for a new message.
     @State private var dismissedCommands = false
+    /// "&" and the bots and sessions it names.
+    @State private var agents = AgentPicker()
 
     private var canSend: Bool {
         if isOffline { return false }
@@ -90,6 +123,8 @@ struct Composer: View {
                 CommandList(commands: commandMatches, selected: min(commandIndex, commandMatches.count - 1)) { runCommand($0) }
             } else if let mention {
                 MentionList(files: mention.matches, selected: min(mentionIndex, max(mention.matches.count - 1, 0))) { insertMention($0) }
+            } else if let named = agents.matches(in: text, excluding: session) {
+                AgentReferenceList(agents: named, selected: min(agents.selected, named.count - 1)) { agents.insert($0, into: $text) }
             }
             if commentCount > 0 {
                 Menu {
@@ -134,6 +169,7 @@ struct Composer: View {
                 .lineLimit(1...12)
                 .focused($isFocused)
                 .onKeyPress(.return, phases: .down) { press in
+                    if Self.isComposing { return .ignored }
                     if let commandMatches, press.modifiers.isEmpty {
                         runCommand(commandMatches[min(commandIndex, commandMatches.count - 1)])
                         return .handled
@@ -155,6 +191,7 @@ struct Composer: View {
                     return .handled
                 }
                 .onKeyPress(.tab) {
+                    if Self.isComposing { return .ignored }
                     if let commandMatches {
                         text = "/" + commandMatches[min(commandIndex, commandMatches.count - 1)].name + " "
                         return .handled
@@ -164,6 +201,7 @@ struct Composer: View {
                     return .handled
                 }
                 .onKeyPress(.escape) {
+                    if Self.isComposing { return .ignored }
                     // Closes the "/" or "@" list first; otherwise stops the agent, as ⌘. does.
                     if commandMatches != nil {
                         dismissedCommands = true
@@ -173,11 +211,14 @@ struct Composer: View {
                         dismissedMention = text.distance(from: text.startIndex, to: start)
                         return .handled
                     }
+                    // An open Find bar goes first; the next Escape stops.
+                    if ConversationFind.closeOpen() { return .handled }
                     guard isRunning else { return .ignored }
                     onStop()
                     return .handled
                 }
                 .onKeyPress(.upArrow) {
+                    if Self.isComposing { return .ignored }
                     if let commandMatches {
                         commandIndex = max(0, min(commandIndex, commandMatches.count - 1) - 1)
                         return .handled
@@ -191,6 +232,7 @@ struct Composer: View {
                     return recall(-1) ? .handled : .ignored
                 }
                 .onKeyPress(.downArrow) {
+                    if Self.isComposing { return .ignored }
                     if let commandMatches {
                         commandIndex = min(commandMatches.count - 1, commandIndex + 1)
                         return .handled
@@ -214,6 +256,8 @@ struct Composer: View {
                     }
                 }
                 .onSubmit(send)
+                // Last, so its keys come before the ones above while its list is open.
+                .modifier(AgentPicking(picker: agents, text: $text, excluding: session))
 
             HStack(spacing: 4) {
                 if isShell {
@@ -228,11 +272,14 @@ struct Composer: View {
                                 .hoverHighlight(in: Capsule(), mutesInk: true)
                         }
                         .buttonStyle(.plain)
+                        .clickablePointer()
                         .help("Attach Files… You can also drop files here, or paste them.")
                         // Set on the engine: not while it's out of reach.
-                        ModeChip(agent: agent, approval: approval, onSelectAgent: onSelectAgent, onSelectApproval: onSelectApproval)
-                            .disabled(isOffline)
-                        ModelChip(selection: model, onSelect: onSelectModel)
+                        if showsMode {
+                            ModeChip(agent: agent, approval: approval, onSelectAgent: onSelectAgent, onSelectApproval: onSelectApproval)
+                                .disabled(isOffline)
+                        }
+                        ModelChip(selection: model, onSelect: onSelectModel, scope: modelScope, inUse: modelInUse)
                             .disabled(isOffline)
                         if let worktree {
                             WorkplaceChip(worktree: worktree, attempts: attempts, onSelect: onSelectWorktree, onSelectAttempts: onSelectAttempts)
@@ -270,10 +317,26 @@ struct Composer: View {
             answering = nil
         }
         .onChange(of: quoteFocus) { _, id in answering = id }
+        .onChange(of: session) {
+            historyIndex = nil
+            mentionFiles = []
+            mentionFilesRead = nil
+            mentionIndex = 0
+            dismissedMention = nil
+            commandIndex = 0
+            dismissedCommands = false
+            isTargeted = false
+            // Undoing typing here brings back nothing from the session it was writing to before.
+            if let editor = NSApp.keyWindow?.firstResponder as? NSTextView, editor.isFieldEditor {
+                editor.undoManager?.removeAllActions(withTarget: editor)
+                editor.textStorage.map { editor.undoManager?.removeAllActions(withTarget: $0) }
+            }
+            focusAtEnd()
+        }
         // Where you type is where you work: the window's commands follow.
         .onChange(of: isFocused || answering != nil) { _, focused in if focused { composerFocused?() } }
         .onAppear {
-            focusAtEnd()
+            if focusesOnAppear { focusAtEnd() }
             #if DEBUG
             // KUVO_DEMO_COMPOSER_FILES: comma-separated paths to show as attached.
             if files.isEmpty, let list = ProcessInfo.processInfo.environment["KUVO_DEMO_COMPOSER_FILES"] {
@@ -288,6 +351,14 @@ struct Composer: View {
     private func focusAtEnd() {
         isFocused = true
         Self.cursorToEnd(of: text)
+    }
+
+    /// An input method is composing in the field that has the keyboard (Japanese, Chinese,
+    /// Korean…): Return picks its candidate, Escape cancels it and the arrows move through its
+    /// list, rather than sending, stopping the agent or going back through messages. For every
+    /// composer.
+    static var isComposing: Bool {
+        (NSApp.keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() == true
     }
 
     /// A new line where the cursor is (Shift-Return), in the field that has the keyboard; at the
@@ -318,6 +389,7 @@ struct Composer: View {
     }
 
     private var placeholder: String {
+        if let prompt { return prompt }
         if isRunning { return "Add to the task, or ⌘↩ to queue a follow-up…" }
         if let bot { return bot.job.isEmpty ? "Tell \(bot.name) its job…" : "Message \(bot.name)…" }
         if folders.first.map(Workspace.isChat) == true { return "Ask anything…" }
@@ -345,6 +417,7 @@ struct Composer: View {
     }
 
     private func queue() {
+        guard let onQueue else { return send() }
         guard canSend else { return }
         onQueue()
     }
@@ -368,7 +441,7 @@ struct Composer: View {
     private var mention: (query: String, matches: [ProjectFiles.File])? {
         guard !folders.isEmpty, !isShell, let (query, start) = Mentions.query(in: text),
               text.distance(from: text.startIndex, to: start) != dismissedMention else { return nil }
-        let matches = Mentions.matches(query, in: mentionFiles)
+        let matches = Mentions.matches(query, in: mentionFilesFolders == folders ? mentionFiles : [])
         return matches.isEmpty ? nil : (query, matches)
     }
 
@@ -381,8 +454,13 @@ struct Composer: View {
         }
         guard mentionFilesRead.map({ Date().timeIntervalSince($0) > 30 }) ?? true else { return }
         mentionFilesRead = Date()
+        let folders = folders
         let roots = folders.map(RemoteFolder.url)
-        Task { mentionFiles = await Task.detached { ProjectFiles.mentionable(roots) }.value }
+        Task {
+            let files = await Task.detached { ProjectFiles.mentionable(roots) }.value
+            mentionFiles = files
+            mentionFilesFolders = folders
+        }
     }
 
     private func insertMention(_ file: ProjectFiles.File) {
@@ -626,9 +704,17 @@ private struct PasteAttachments: ViewModifier {
     let isActive: Bool
     let attach: ([URL]) -> Void
     @State private var monitor: Any?
+    /// What attaching does now: the composer stays as you go to another session, and the monitor
+    /// made in one must attach to the draft of the one in view.
+    @State private var current = Current()
+
+    private final class Current {
+        var attach: ([URL]) -> Void = { _ in }
+    }
 
     func body(content: Content) -> some View {
-        content
+        current.attach = attach
+        return content
             .onChange(of: isActive, initial: true) { _, active in
                 if active { install() } else { remove() }
             }
@@ -637,14 +723,14 @@ private struct PasteAttachments: ViewModifier {
 
     private func install() {
         guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [current] event in
             // Only in the window it's in: not in a sheet over it, nor a panel, where the paste is
             // that field's.
             guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
                   event.charactersIgnoringModifiers == "v",
                   let window = event.window, window.attachedSheet == nil, window.sheetParent == nil, !(window is NSPanel),
                   let urls = Self.pastedFiles() else { return event }
-            attach(urls)
+            current.attach(urls)
             return nil
         }
     }

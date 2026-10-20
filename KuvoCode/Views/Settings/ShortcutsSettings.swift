@@ -56,6 +56,11 @@ struct ShortcutsSettings: View {
             Shortcut(keys: ["!"], title: "At the start: run a shell command"),
             Shortcut(keys: ["@"], title: "Mention a file"),
         ]),
+        ("Model Picker", [
+            Shortcut(keys: ["⌘", "1 – 9"], title: "That model in the list"),
+            Shortcut(keys: ["⌥", "↑ / ↓"], title: "The provider above or below"),
+            Shortcut(keys: ["← / →"], title: "On the effort: lower or higher"),
+        ]),
     ]
 
     var body: some View {

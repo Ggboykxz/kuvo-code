@@ -96,19 +96,19 @@ struct EngineSettings: View {
                     }
                 )) {
                     Text("None").tag("")
-                    Text("Any connected service").tag("random")
+                    Text("Any service").tag("random")
                     ForEach(searchProviders) { Text($0.name).tag($0.id) }
                     Divider()
                     Text("Off").tag("off")
                 }
-                // The chosen service's key, or every service's when any connected one will do.
+                // The chosen service's key, or every service's when any one will do.
                 ForEach(keyedServices) { integration in
                     LabeledContent("\(integration.name) API key") {
                         let credentials = integration.connections.filter { $0.type == "credential" }.compactMap(\.credentialID)
                         if !credentials.isEmpty {
                             HStack(spacing: 12) {
                                 Text("Added").foregroundStyle(.secondary)
-                                Button("Remove") { removeKeys(credentials) }
+                                Button("Remove") { removeKeys(credentials, of: integration.id) }
                             }
                         } else if let variable = integration.connections.first(where: { $0.type == "env" }) {
                             // From the environment: nothing here to change.
@@ -121,7 +121,7 @@ struct EngineSettings: View {
             } header: {
                 Text("Web Search")
             } footer: {
-                Text("Each search service needs its own API key. With none chosen, the agent can't search the web.")
+                Text("Some services need an API key; others search without one. With none chosen, the agent can't search the web.")
                     .foregroundStyle(.secondary)
             }
 
@@ -172,7 +172,8 @@ struct EngineSettings: View {
         .settingsDetail(item: $addingKey, title: { _ in nil }) { ref in
             ConnectDetail(integrationID: ref.id, note: "The agent can search the web with it now.") { addingKey = nil }
         }
-        .task {
+        // Again once the engine is ready: opened while it starts, or after Restart.
+        .task(id: app.engine == .ready) {
             guard let api = app.api else { return }
             shells = (try? await api.shells()) ?? []
             searchProviders = (try? await api.webSearchProviders()) ?? []
@@ -188,11 +189,13 @@ struct EngineSettings: View {
         return ids.compactMap { id in catalog.integrations.first { $0.id == id } }
     }
 
-    /// Removes a service's stored keys, so a wrong one can be added again.
-    private func removeKeys(_ ids: [String]) {
+    /// Removes a service's stored keys, so a wrong one can be added again: here, and the copies on
+    /// your machines.
+    private func removeKeys(_ ids: [String], of integration: String) {
         guard let api = app.api else { return }
         Task {
             for id in ids { try? await api.removeCredential(id) }
+            app.forgetSignIn(integration)
             await catalog.refresh()
         }
     }

@@ -37,6 +37,9 @@ HEADER
     section OpenUsage fork https://github.com/robinebers/openusage \
         "Packages/UsageKit is a fork of OpenUsage, not the official OpenUsage. The OpenUsage name and logo are trademarks of Robin Ebers and aren't used." \
         Packages/UsageKit/LICENSE
+    section Textual 0.5.0 https://github.com/gonzalezreal/textual \
+        "Packages/Textual is a copy of Textual with Kuvo Code's changes (see its README)." \
+        Packages/Textual/LICENSE
     section Prism 1.29.0 https://prismjs.com \
         "KuvoCode/Resources/prism-bundle.js, with its language definitions, as bundled by Textual's Scripts/bundle-prism.sh." \
         Licenses/Prism.txt

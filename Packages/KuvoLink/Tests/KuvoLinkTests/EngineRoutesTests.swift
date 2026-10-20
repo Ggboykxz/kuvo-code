@@ -45,6 +45,31 @@ final class FakeEngine: URLProtocol, @unchecked Sendable {
         return (status, headers, pieces)
     }
 
+    @Test func theAgentsBridgeAlsoTakesTheirAccountsAndAuto() {
+        #expect(EngineRoutes.allowsAgents("api/session/ses_1/prompt", method: "POST"))
+        #expect(EngineRoutes.allowsAgents("api/integration"))
+        #expect(EngineRoutes.allowsAgents("api/integration/claude-code@1f2e/connect/oauth", method: "POST"))
+        #expect(EngineRoutes.allowsAgents("api/kuvo/auto", method: "PUT"))
+        #expect(EngineRoutes.allowsAgents("api/kuvo/auto/limits", method: "DELETE"))
+        // Not by percent-encoding what's never allowed: the bridge decodes it.
+        #expect(!EngineRoutes.allowsAgents("api/integration/claude-code/%75pdate", method: "POST"))
+        #expect(!EngineRoutes.allowsAgents("api/kuvo/%65ngine"))
+        // Nor with parts the bridge drops: empty ones and "." ones.
+        for path in ["api/integration/claude-code//update", "api/integration/claude-code/./update", "api/integration/claude-code/%2e/update",
+                     "api/integration//claude-code/update", "api/integration/claude-code/update/", "api/kuvo//engine",
+                     "api/integration/claude-code/update#x", "api/kuvo/engine#"] {
+            #expect(!EngineRoutes.allowsAgents(path, method: "POST"), "\(path)")
+        }
+        #expect(EngineRoutes.routed("api//integration/x/./%75pdate?y=1") == "api/integration/x/update?y=1")
+        #expect(EngineRoutes.allowsAgents("api/kuvo/accounts/codex-cli@9a8b", method: "PATCH"))
+        #expect(!EngineRoutes.allowsAgents("api/kuvo/engine", method: "PUT"))
+        #expect(!EngineRoutes.allowsAgents("api/integration/claude-code/update", method: "POST"))
+        #expect(!EngineRoutes.allowsAgents("api/fs/read/../../etc/passwd"))
+        // The engine's own list stays as it was.
+        #expect(!EngineRoutes.allows("api/integration"))
+        #expect(!EngineRoutes.allows("api/kuvo/auto"))
+    }
+
     @Test func passesRequestsWithTheEnginesPassword() async throws {
         FakeEngine.asked = []
         let request = LinkRequest(method: "POST", path: "api/session/ses_1/prompt?x=1", headers: ["X-Opencode-Directory": "/p", "Authorization": "Basic forged", "Cookie": "c"], body: Data("{}".utf8))

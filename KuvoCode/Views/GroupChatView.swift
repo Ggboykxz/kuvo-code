@@ -27,14 +27,14 @@ struct GroupChatView: View {
         ConversationScroll(scroller: scroller, spacing: 18, change: [messages.last?.id, speaker?.id, String(messages.count)], quote: { text in
             addQuote(text, how: "selection")
         }) {
-            ForEach(messages) { message in
+            // Laid out by a stack of their own, as a session's rows are (see `RowStack`).
+            RowStack(items: messages, id: \.id, spacing: 18, same: ==, estimate: { 70 + CGFloat($0.text.count / 95) * 24 },
+                     text: { FindText.shown(markdown: $0.text, folders: []) }) { message, _ in
                 GroupMessageRow(message: message, author: message.author.flatMap { bots.bot($0) }, members: members,
                                 reply: { reply(to: message) }, undo: { undo(from: message) },
                                 startWork: message.tasks?.contains { $0.state == .proposed } == true ? { groups.startWork(message.id, in: group.id) } : nil)
                     .equatable()
                     .environment(\.findHighlight, find.highlight(for: message.id))
-                    .id(message.id)
-                    .transition(.opacity.combined(with: .offset(y: 8)))
             }
             if let speaker {
                 TypingRow(bot: speaker)
@@ -55,7 +55,8 @@ struct GroupChatView: View {
         }
         .safeAreaBar(edge: .bottom, spacing: 0) {
             VStack(spacing: 10) {
-                if groups.paused.contains(group.id) && speaker == nil {
+                // Once the wrap-up after the limit is done: Keep Going does nothing before.
+                if groups.paused.contains(group.id) && !groups.discussing.contains(group.id) {
                     PausedBar { groups.keepGoing(group.id) }
                         .transition(.opacity.combined(with: .offset(y: 6)))
                 }
@@ -199,7 +200,9 @@ private struct GroupMessageRow: View, Equatable {
                 .frame(maxWidth: .infinity)
                 .multilineTextAlignment(.center)
         } else if message.author == nil {
-            YourMessage(text: message.text, style: { GroupMentions.styled($0, bots: members) }, sent: message.time, undo: undo,
+            YourMessage(text: message.text, style: { GroupMentions.styled($0, bots: members) },
+                        references: MessageMentions.agents(namedIn: message.text).map(\.reference),
+                        sent: message.time, undo: undo,
                         undoNote: "The chat goes back to before this message, and the message comes back to the composer. The bots are told to set aside what was taken back.")
         } else {
             HStack(alignment: .top, spacing: 10) {
@@ -248,15 +251,17 @@ private struct GroupMessageRow: View, Equatable {
                     .frame(height: 20)
                     // As a session shows them, at the detail you chose for steps; what it made, after
                     // its words.
-                    let steps = (message.steps ?? []).filter { !WidgetCard.isWidget($0) }
+                    let steps = (message.steps ?? []).filter { !WidgetCard.isWidget($0) && !MadePictureRow.isMade($0) }
                     if !steps.isEmpty {
                         StepsRow(blocks: steps.map(Message.Content.tool), isLive: false, directory: author?.directory ?? "")
                             .padding(.bottom, 2)
                     }
-                    MarkdownText(text: message.text, mentions: members)
-                    ForEach((message.steps ?? []).filter(WidgetCard.isWidget)) { call in
-                        WidgetCard(call: call, send: answerAgent)
-                            .padding(.top, 6)
+                    MarkdownText(text: message.text, mentions: members, agents: MessageMentions.agents(namedIn: message.text))
+                    ForEach((message.steps ?? []).filter { WidgetCard.isWidget($0) || MadePictureRow.isMade($0) }) { call in
+                        Group {
+                            if MadePictureRow.isMade(call) { MadePictureRow(call: call) } else { WidgetCard(call: call, send: answerAgent) }
+                        }
+                        .padding(.top, 6)
                     }
                     if let tasks = message.tasks, !tasks.isEmpty {
                         WorkList(tasks: tasks, members: members, start: startWork)
@@ -329,6 +334,7 @@ private struct WorkList: View {
                     .hoverHighlight(in: RoundedRectangle(cornerRadius: 8), mutesInk: true)
                 }
                 .buttonStyle(.plain)
+                .clickablePointer()
                 .disabled(!opens)
                 .help(opens ? "Open \(bot?.name ?? "the bot")’s conversation, where it works on this" : "")
             }
@@ -353,7 +359,7 @@ private struct WorkList: View {
 
     /// Whether the bot is waiting on you in its conversation: a permission, a question, a sign-in.
     private static func waits(on bot: Bot, in workspace: Workspace) -> Bool {
-        workspace.needsAttention(bot.sessionID) || workspace.asking.values.contains(bot.sessionID)
+        workspace.needsAttention(bot.sessionID)
     }
 
     /// Its words as the lead wrote them: code, bold and links shown, on its own lines.
@@ -483,6 +489,8 @@ private struct GroupComposer: View {
     @Environment(\.messageFont) private var messageFont
     @FocusState private var isFocused: Bool
     @FocusState private var answering: UUID?
+    /// "&" and the bots and sessions it names, as in a session.
+    @State private var agents = AgentPicker()
 
     private var canSend: Bool {
         !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -491,6 +499,9 @@ private struct GroupComposer: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let named = agents.matches(in: text, excluding: nil) {
+                AgentReferenceList(agents: named, selected: min(agents.selected, named.count - 1)) { agents.insert($0, into: $text) }
+            }
             if !quotes.isEmpty {
                 QuoteList(quotes: $quotes, answering: $answering, focus: quoteFocus, font: messageFont.body, onSubmit: send)
             }
@@ -499,8 +510,11 @@ private struct GroupComposer: View {
                 .font(messageFont.body)
                 .lineLimit(1...10)
                 .focused($isFocused)
+                // As a session's composer, for the end-to-end tests.
+                .accessibilityIdentifier("composer")
                 .onChange(of: focusRequest) { focusAtEnd() }
                 .onKeyPress(.return, phases: .down) { press in
+                    if Composer.isComposing { return .ignored }
                     // Return sends; Shift-Return starts a new line.
                     if press.modifiers.contains(.shift) || press.modifiers.contains(.option) {
                         Composer.newLine(in: $text)
@@ -514,6 +528,8 @@ private struct GroupComposer: View {
                     stop()
                     return .handled
                 }
+                // Last, so its keys come before the ones above while its list is open.
+                .modifier(AgentPicking(picker: agents, text: $text, excluding: nil))
             HStack(spacing: 2) {
                 // Each bot: a click asks it by name.
                 ForEach(members) { bot in
@@ -525,7 +541,9 @@ private struct GroupComposer: View {
                             .hoverHighlight(in: Capsule(), mutesInk: true)
                     }
                     .buttonStyle(.plain)
+                    .clickablePointer()
                     .help("Ask \(bot.name)")
+                    .accessibilityLabel("Ask \(bot.name)")
                 }
                 Spacer(minLength: 0)
                 SendStopButton(stops: isTalking, canSend: canSend, sendHelp: "Send (Return)", stopHelp: "Stop the Discussion (Esc)", send: send, stop: stop)

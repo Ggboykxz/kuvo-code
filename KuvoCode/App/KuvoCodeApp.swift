@@ -35,8 +35,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
     let updates = Updates()
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Opened from the disk image, it can't update itself: it offers to move to Applications.
+        AppLocation.offerMove()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         Notifier.shared.start()
+        FieldScrolling.start()
+        // Agents' sign-in on their own, allowed before it kept its account: that account now.
+        Task.detached { Passwords.keepAgentAccounts() }
         Notifier.shared.answer = { [model] session, request, answer in model.workspace.answer(request, in: session, with: answer) }
         Notifier.shared.reply = { [model] session, text in
             // A group chat's (its meeting's): to the chat.
@@ -91,10 +99,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let first = folders.first { model.open(.folder(first.path(percentEncoded: false))) }
     }
 
-    /// The Dock icon's menu: the latest sessions, and a new one.
+    /// The Dock icon's menu: the latest sessions and chats, and a new session.
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         let menu = NSMenu()
-        let sessions = model.workspace.projects.flatMap(\.sessions).filter { !Workspace.isArchived($0) }
+        let sessions = (model.workspace.projects.flatMap(\.sessions) + model.workspace.chats).filter { !Workspace.isArchived($0) }
             .sorted { $0.time.updated > $1.time.updated }.prefix(5)
         for session in sessions {
             let id = session.id

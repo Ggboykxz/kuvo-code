@@ -9,20 +9,35 @@ struct ProvidersView: View {
     @Environment(AppModel.self) private var app
     @Environment(\.colorScheme) private var scheme
     @Environment(\.settingsInset) private var inset
-    @State private var connecting: Integration?
+    @State private var connecting: Connecting?
     /// One of your own providers, open in the page's place.
     @State private var editing: ProviderEdit?
     /// What to remove once its editor has closed (and its fields are done saving).
     @State private var removal: [String]?
     @State private var search = ""
 
+    /// The machine whose coding agents show (nil: this Mac's), picked in their section.
+    private var machine: MachineEngine? { app.accountsPlace.flatMap { app.machines.engine($0) } }
+
+    /// A sign-in, open in the page's place: a coding agent's on this Mac or on a machine (its own
+    /// there); anything else this Mac's, which your machines get a copy of.
+    struct Connecting: Identifiable {
+        let integration: Integration
+        var machine: String?
+        var id: String { (machine ?? "") + "/" + integration.id }
+    }
+
     var body: some View {
         list
-            // The page's way back is the way out, so no Cancel in the steps.
-            .settingsDetail(item: $connecting, title: { _ in nil }) { integration in
-                ConnectView(integrationID: integration.id, onDone: {
+            // The page's way back is the way out, so no Cancel in the steps. (On a machine, its
+            // own sign-in, finishing in this Mac's browser.)
+            .settingsDetail(item: $connecting, title: { _ in nil }) { item in
+                let engine = item.machine.flatMap { app.machines.engine($0) }
+                ConnectView(integrationID: item.integration.id, onDone: {
                     withAnimation(.ui) { connecting = nil }
                 })
+                .environment(engine?.catalog ?? catalog)
+                .environment(\.agentsBridge, engine?.agents)
             }
             .settingsDetail(item: $editing, title: { _ in "New Provider" }, onDismiss: removePending) { edit in
                 CustomProviderEditor(id: edit.providerID) { editing = nil } remove: { path in
@@ -33,7 +48,11 @@ struct ProvidersView: View {
         #if DEBUG
         .task {
             if let id = ProcessInfo.processInfo.environment["KUVO_DEMO_PROVIDERS"], let provider = catalog.providers.first(where: { $0.id == id }) {
-                connecting = provider
+                connecting = Connecting(integration: provider)
+            }
+            // KUVO_DEMO_ACCOUNTS_MACHINE=<machine>: that machine's coding agents.
+            if let id = ProcessInfo.processInfo.environment["KUVO_DEMO_ACCOUNTS_MACHINE"], app.machines.engine(id) != nil {
+                app.accountsPlace = id
             }
         }
         #endif
@@ -42,6 +61,15 @@ struct ProvidersView: View {
     private func removePending() {
         guard let removal else { return }
         app.engineConfig.set(nil, at: removal)
+        // Its key goes with it, here and on your machines: one made again with its name doesn't
+        // quietly reconnect with the old one.
+        if let id = removal.last, let api = app.api, let provider = catalog.integrations.first(where: { $0.id == id }) {
+            let ids = provider.connections.filter { $0.type == "credential" }.compactMap(\.credentialID)
+            Task {
+                for credential in ids { try? await api.removeCredential(credential) }
+                app.forgetSignIn(id)
+            }
+        }
         self.removal = nil
     }
 
@@ -50,12 +78,21 @@ struct ProvidersView: View {
             VStack(alignment: .leading, spacing: 26) {
                 SearchField(text: $search, prompt: "Search \(catalog.providers.count) providers")
 
-                if search.isEmpty, !catalog.connectedProviders.isEmpty {
+                if search.isEmpty {
+                    SubscriptionsSection(shows: .agents, machine: machine) { connecting = Connecting(integration: $0, machine: machine?.machine.id) }
+                        .environment(machine?.catalog ?? catalog)
+                        .environment(\.agentsBridge, machine?.agents)
+                        // Another place's agents: asked anew.
+                        .id(machine?.machine.id)
+                    SubscriptionsSection(shows: .plans) { connecting = Connecting(integration: $0) }
+                }
+
+                if search.isEmpty, !connected.isEmpty {
                     section("Connected") {
                         VStack(spacing: 0) {
-                            ForEach(catalog.connectedProviders) { provider in
-                                ConnectedRow(provider: provider) { connecting = provider }
-                                if provider.id != catalog.connectedProviders.last?.id {
+                            ForEach(connected) { provider in
+                                ConnectedRow(provider: provider) { connecting = Connecting(integration: provider) }
+                                if provider.id != connected.last?.id {
                                     Divider().padding(.leading, 56)
                                 }
                             }
@@ -69,14 +106,14 @@ struct ProvidersView: View {
                     section("Popular") {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 12)], spacing: 12) {
                             ForEach(featured) { provider in
-                                ProviderTile(provider: provider) { connecting = provider }
+                                ProviderTile(provider: provider) { connecting = Connecting(integration: provider) }
                             }
                         }
                     }
                 }
 
                 if search.isEmpty {
-                    CustomProvidersSection { connecting = $0 } edit: { id in editing = ProviderEdit(id: id) }
+                    CustomProvidersSection { connecting = Connecting(integration: $0) } edit: { id in editing = ProviderEdit(id: id) }
                 }
 
                 if others.isEmpty, !search.isEmpty {
@@ -93,7 +130,7 @@ struct ProvidersView: View {
                     section(search.isEmpty ? "All Providers" : "Results") {
                         LazyVStack(spacing: 0) {
                             ForEach(others) { provider in
-                                ProviderRow(provider: provider) { connecting = provider }
+                                ProviderRow(provider: provider) { connecting = Connecting(integration: provider) }
                             }
                         }
                         .padding(4)
@@ -108,8 +145,13 @@ struct ProvidersView: View {
         }
     }
 
+    /// Accounts connected, but the coding agents' and plans': they have sections of their own.
+    private var connected: [Integration] {
+        catalog.connectedProviders.filter { !OutsideAgents.isAgent($0.id) && !Catalog.planProviders.contains($0.id) }
+    }
+
     private var featured: [Integration] {
-        Catalog.featured.compactMap { id in catalog.providers.first { $0.id == id && !$0.isConnected } }
+        Catalog.featured.compactMap { id in catalog.providers.first { $0.id == id && !$0.isConnected && !Catalog.planProviders.contains(id) } }
     }
 
     private var others: [Integration] {
@@ -117,7 +159,7 @@ struct ProvidersView: View {
         if query.isEmpty {
             // Your own are listed in their own section.
             let shown = Set(Catalog.featured).union(app.engineConfig.value(at: CustomProvidersSection.path)?.object?.keys ?? [:].keys)
-            return catalog.providers.filter { !shown.contains($0.id) && !$0.isConnected }
+            return catalog.providers.filter { !shown.contains($0.id) && !$0.isConnected && !OutsideAgents.isAgent($0.id) && !Catalog.planProviders.contains($0.id) }
         }
         return catalog.providers.filter { $0.name.localizedCaseInsensitiveContains(query) || $0.id.localizedCaseInsensitiveContains(query) }
     }
@@ -211,14 +253,14 @@ private struct ProviderTile: View {
     /// The headline way in: "Sign in with ChatGPT", "Sign in", "API key".
     /// ("Login with" is the engine's wording for some; one wording reads better side by side.)
     private var hint: String {
-        for method in provider.signInMethods {
+        for method in provider.offeredSignInMethods {
             if case .oauth(_, let label, _) = method, !label.localizedCaseInsensitiveContains("legacy") {
                 // Under the provider's name, its name again ("OpenCode Console account") says nothing.
                 if label.localizedCaseInsensitiveContains(provider.name) { return "Sign in" }
                 return label.replacingOccurrences(of: "Login with", with: "Sign in with")
             }
         }
-        return provider.signInMethods.contains { $0.id == "key" } ? "API key" : "Connect"
+        return provider.offeredSignInMethods.contains { $0.id == "key" } ? "API key" : "Connect"
     }
 }
 
@@ -255,6 +297,7 @@ private struct ProviderRow: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .onHover { isHovering = $0 }
     }
 }
@@ -308,6 +351,43 @@ private struct ConnectedRow: View {
         let ids = provider.connections.filter { $0.type == "credential" }.compactMap(\.credentialID)
         Task {
             for id in ids { try? await api.removeCredential(id) }
+            // And its copies on your machines (a ChatGPT sign-in).
+            app.forgetSignIn(provider.id)
+        }
+    }
+}
+
+/// Whose coding agents Accounts shows, by their section's title: this Mac's, or one of your
+/// machines' (each signs in to them on its own). Only there while you have machines.
+struct AccountsPlaceMenu: View {
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
+        if !app.machines.list.isEmpty {
+            let current = app.accountsPlace.flatMap { id in app.machines.list.first { $0.id == id } }
+            Menu {
+                Picker("Coding Agents On", selection: Binding(get: { current?.id }, set: { id in withAnimation(.ui) { app.accountsPlace = id } })) {
+                    Label("This Mac", systemImage: "laptopcomputer").tag(String?.none)
+                    Section("Machines") {
+                        ForEach(app.machines.list) { machine in
+                            Label(machine.name, systemImage: "server.rack").tag(Optional(machine.id))
+                        }
+                    }
+                }
+                .pickerStyle(.inline)
+            } label: {
+                HStack(spacing: 5) {
+                    Label(current?.name ?? "This Mac", systemImage: current == nil ? "laptopcomputer" : "server.rack")
+                        .labelStyle(.titleAndIcon)
+                    MenuChevron()
+                }
+                .font(.system(size: 13, weight: .medium))
+            }
+            .menuStyle(.button)
+            .menuIndicator(.hidden)
+            .buttonStyle(TextButtonStyle(cornerRadius: 6, dimsAtRest: false))
+            .fixedSize()
+            .help("Each machine signs in to the coding agents on its own. Plans and API keys work on all of them.")
         }
     }
 }

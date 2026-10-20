@@ -17,6 +17,7 @@ struct HoverHighlight<S: Shape>: ViewModifier {
             .background(fill, in: shape)
             .contentShape(shape)
             .onHover { isHovering = $0 }
+            .clickablePointer()
             .animation(.easeOut(duration: 0.12), value: isHovering)
     }
 

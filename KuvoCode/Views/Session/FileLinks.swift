@@ -92,6 +92,8 @@ struct FileLinkingParser: MarkupParser {
     let folders: () -> [String]
     /// In a group chat, its bots: "@Name" shows their face and color.
     var mentions: [Bot] = []
+    /// In a group chat, the bots and sessions a message names with "&" (see `MessageMentions`).
+    var agents: [MessageMentions.Agent] = []
     var highlight: FindHighlight?
 
     func attributedString(for input: String) throws -> AttributedString {
@@ -104,6 +106,7 @@ struct FileLinkingParser: MarkupParser {
         var text = try AttributedStringMarkdownParser.markdown().attributedString(for: protected)
         MathText.restore(&text, formulas)
         if !mentions.isEmpty { GroupMentions.apply(to: &text, bots: mentions, faces: true) }
+        if !agents.isEmpty { MessageMentions.apply(to: &text, agents: agents, marks: .attachments) }
         for (range, url) in FileLinks.spans(in: text, folders: folders()) {
             var attributes = text[range].runs.first?.attributes ?? AttributeContainer()
             var intent = attributes.inlinePresentationIntent ?? []

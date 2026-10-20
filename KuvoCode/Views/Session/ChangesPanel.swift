@@ -19,7 +19,18 @@ struct ChangesPanel: View {
     /// Syntax colors, per file, worked out off the main thread.
     @State private var highlighting: [String: DiffHighlighting] = [:]
 
-    struct DraftTarget: Equatable { var file: String; var line: Int }
+    /// The line a comment is being written on, as it read then: the list can change under it (the
+    /// agent edits the file), and the comment stays with that line, not its place.
+    struct DraftTarget: Equatable {
+        var file: String
+        var side: ReviewComment.Side
+        var number: Int
+        var text: String
+
+        func isFor(_ line: DiffLine, in file: String) -> Bool {
+            self.file == file && side == (line.kind == .removed ? .old : .new) && number == line.number && text == line.text
+        }
+    }
     @Environment(AppModel.self) private var app
     @Environment(Workspace.self) private var workspace
     @Environment(Catalog.self) private var catalog
@@ -45,7 +56,13 @@ struct ChangesPanel: View {
     private var isPrimary: Bool { changes.directory == folders.first }
 
     /// The session's record of its edits is about its own folder.
-    private var engineChanges: [FileDiff] { isPrimary ? model?.changes ?? [] : [] }
+    /// The session's changes as kept for it: the engine's record, or for a coding agent's session
+    /// (whose bridge keeps none) the edits its steps made.
+    private var engineChanges: [FileDiff] {
+        guard isPrimary, let model else { return [] }
+        return OutsideAgents.isAgentSession(model.session) ? model.editedFiles : model.changes
+    }
+    private var editedFiles: [FileDiff] { isPrimary ? model?.editedFiles ?? [] : [] }
 
     /// Comments name files by their path, after the folder's name outside the primary folder,
     /// as the agent knows the project's folders.
@@ -66,7 +83,7 @@ struct ChangesPanel: View {
         // Git is quick to ask; look again every few seconds while the panel is open.
         .task(id: "\(changes.directory)\n\(changes.scope)\n\(changes.base ?? "")") {
             while !Task.isCancelled {
-                await changes.refresh(fallback: engineChanges)
+                await changes.refresh(fallback: engineChanges, edits: editedFiles)
                 try? await Task.sleep(for: .seconds(3))
             }
         }
@@ -76,8 +93,9 @@ struct ChangesPanel: View {
                 highlighting[file.id] = await DiffHighlighting.make(for: file)
             }
         }
-        .onChange(of: model?.isRunning) { Task { await changes.refresh(fallback: engineChanges) } }
-        .onChange(of: engineChanges) { Task { await changes.refresh(fallback: engineChanges) } }
+        .onChange(of: model?.isRunning) { Task { await changes.refresh(fallback: engineChanges, edits: editedFiles) } }
+        .onChange(of: engineChanges) { Task { await changes.refresh(fallback: engineChanges, edits: editedFiles) } }
+        .onChange(of: editedFiles) { Task { await changes.refresh(fallback: engineChanges, edits: editedFiles) } }
     }
 
     // MARK: Header
@@ -91,6 +109,7 @@ struct ChangesPanel: View {
                         changes = ProjectChanges(directory: folder)
                         changes.scope = scope == .branch || scope == .session ? .uncommitted : scope
                         collapsed = []
+                        highlighting = [:]
                     })) {
                         ForEach(folders, id: \.self) { Text(($0 as NSString).lastPathComponent).tag($0) }
                     }
@@ -173,7 +192,15 @@ struct ChangesPanel: View {
                     .font(.system(size: 12, weight: .medium))
                     .help("Commit the changes, and push them if you like")
                     .popover(isPresented: $isCommitting, arrowEdge: .bottom) {
-                        CommitForm(changes: changes, environment: app.shellEnvironment, api: model.flatMap { workspace.api(forSession: $0.id) } ?? app.api, session: model?.id, model: model?.session.model) { isCommitting = false }
+                        // A coding agent's session asks its own model (Claude Code, Codex); one whose
+                        // agent can't answer outside the conversation, the engine's default model.
+                        let isAgents = model.map { OutsideAgents.isAgentSession($0.session) } ?? false
+                        // (Its bridge: this Mac's, or its machine's.)
+                        let bridge = model.flatMap { workspace.agents(forFolder: $0.session.location.directory)?.api }
+                        CommitForm(changes: changes, environment: app.shellEnvironment,
+                                   api: isAgents ? bridge ?? app.api : model.flatMap { workspace.api(forSession: $0.id) } ?? app.api,
+                                   session: isAgents && bridge == nil ? nil : model?.id, model: isAgents ? nil : model?.session.model,
+                                   fallback: isAgents ? app.api : nil) { isCommitting = false }
                     }
             }
             Button {
@@ -185,6 +212,7 @@ struct ChangesPanel: View {
             }
             .buttonStyle(CardActionStyle())
             .help(collapsed.count == changes.files.count ? "Expand All" : "Collapse All")
+            .accessibilityLabel(collapsed.count == changes.files.count ? "Expand All" : "Collapse All")
             .disabled(changes.files.isEmpty)
         }
         .padding(.horizontal, 14)
@@ -264,6 +292,9 @@ private struct CommitForm: View {
     /// The session open in the window: its model suggests the message.
     let session: String?
     let model: ModelRef?
+    /// Where to ask when the session's model can't (its coding agent can't answer outside the
+    /// conversation): the engine, with its default model.
+    var fallback: OpenCodeAPI? = nil
     let done: () -> Void
     @State private var isSuggesting = false
     @State private var message = ""
@@ -338,7 +369,16 @@ private struct CommitForm: View {
             """, instructionsKey: GitPreferences.commitInstructionsKey)
             do {
                 // Through the session where there is one: free models only answer there.
-                let text = if let session { try await api.generate(prompt, session: session) } else { try await api.generate(prompt, model: model) }
+                let text: String
+                if let session {
+                    do {
+                        text = try await api.generate(prompt, session: session)
+                    } catch let error where fallback != nil && !(error is CancellationError) {
+                        text = try await fallback!.generate(prompt, model: nil)
+                    }
+                } else {
+                    text = try await api.generate(prompt, model: model)
+                }
                 message = text.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "`\"")))
             } catch {
                 failure = error.localizedDescription
@@ -407,17 +447,19 @@ private struct BranchMenu: View {
         .fixedSize()
         .disabled(isWorking)
         .help(isWorktree ? "This session works on its own branch, \(tree.branch). Merge it or create a pull request." : "Create a pull request for \(tree.branch)")
+        .accessibilityLabel(isWorktree ? "Merge or Create Pull Request" : "Create Pull Request")
         .alert(title, isPresented: Binding(get: { outcome != nil }, set: { if !$0 { outcome = nil } })) {
             if case .conflict(_, let target) = outcome, let model {
                 Button("Ask the Agent to Fix It") {
-                    model.send("Merge \(target) into this branch (\(tree.branch)), resolve the conflicts, and commit the merge.", for: catalog.model(model.session.model))
+                    model.send("Merge \(target) into this branch (\(tree.branch)), resolve the conflicts, and commit the merge.", for: catalog.model(model.session.model), withComments: false)
                 }
                 Button("Cancel", role: .cancel) {}
             } else if case .merged = outcome, let model, !workspace.worktreeIsShared(directory, besides: model.id) {
                 // Its work is in the project now: nothing in the worktree is lost.
                 Button("Archive Session and Remove Worktree") {
                     Task {
-                        do { try await workspace.removeWorktree(directory) } catch { NSAlert(error: error).runModal() }
+                        // Only what's committed was merged: changes made since keep the worktree, and the session with it.
+                        do { try await workspace.removeWorktree(directory, discardingChanges: false) } catch { return Modal.show(error) }
                         await workspace.setArchived(model.id, true)
                     }
                 }
@@ -513,6 +555,7 @@ private struct BranchMenu: View {
     /// branch's commits and diff; as it was, without a session or an answer.
     private func described(_ page: URL) async -> URL {
         guard let session = model?.id, let api = workspace.api(forSession: session) else { return page }
+        let isAgents = model.map { OutsideAgents.isAgentSession($0.session) } ?? false
         let base = tree.base, directory = directory
         let summary = await Task.detached { Git.pullRequestSummary(against: base, in: directory) }.value
         let prompt = GitPreferences.prompt("""
@@ -520,7 +563,11 @@ private struct BranchMenu: View {
 
         \(summary)
         """, instructionsKey: GitPreferences.pullRequestInstructionsKey)
-        guard let text = try? await api.generate(prompt, session: session), let pull = Git.parsePullRequest(text) else { return page }
+        // A coding agent's session asks its own model; one whose agent can't answer outside the
+        // conversation, the engine's default model.
+        var written = try? await api.generate(prompt, session: session)
+        if written == nil, isAgents { written = try? await app.api?.generate(prompt) }
+        guard let text = written, let pull = Git.parsePullRequest(text) else { return page }
         return Git.pullRequestPage(page, title: pull.title, body: pull.body)
     }
 }
@@ -547,6 +594,11 @@ private struct FileHeader: View {
                 .foregroundStyle(hasBody ? (isHovering ? .primary : .secondary) : .quaternary)
                 .rotationEffect(.degrees(isCollapsed ? 0 : 90))
                 .frame(width: 10)
+                .accessibilityLabel("\(isCollapsed ? "Expand" : "Collapse") \((file.path as NSString).lastPathComponent)")
+                .accessibilityRemoveTraits(.isHeader)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { toggle() }
+                .accessibilityHidden(!hasBody)
             Image(nsImage: NSWorkspace.shared.icon(of: file.url))
                 .resizable()
                 .frame(width: 18, height: 18)
@@ -563,7 +615,14 @@ private struct FileHeader: View {
                     .background(statusColor.opacity(0.14), in: .capsule)
             }
             Spacer(minLength: 6)
-            DiffStat(additions: file.additions, deletions: file.deletions)
+            if hasBody {
+                DiffStat(additions: file.additions, deletions: file.deletions)
+            } else {
+                // Why it has no lines to show.
+                Text(file.isTooBig ? "Too big to show" : "Binary")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+            }
             // A machine's files open nowhere on this Mac.
             if file.url.isFileURL {
                 Button {
@@ -573,6 +632,7 @@ private struct FileHeader: View {
                 }
                 .buttonStyle(CardActionStyle())
                 .help("Open in Editor")
+                .accessibilityLabel("Open in Editor")
                 .disabled(file.status == .deleted)
             }
             // An AppKit menu, so Open With shows the apps' icons (SwiftUI's leaves them out).
@@ -602,14 +662,18 @@ private struct FileHeader: View {
             Button("Discard", role: .destructive) { perform(.discard) }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(file.status == .added
+            Text(file.isFolder && file.status != .added
+                 ? "The folder in its place has a repository of its own: all of it goes to the Trash, with any of its commits you haven't pushed, and the file comes back."
+                 : file.isFolder
+                 ? "It's a new folder with a repository of its own, so all of it goes to the Trash, with any of its commits you haven't pushed."
+                 : file.status == .added
                  ? "It's a new file, so it goes to the Trash."
                  : scope == .unstaged ? "Its unstaged changes are thrown away; staged ones stay. This can't be undone." : "It goes back to how it was in the last commit. This can't be undone.")
         }
     }
 
     /// Binary files other than pictures have nothing to open.
-    private var hasBody: Bool { !file.isBinary || file.isImage }
+    private var hasBody: Bool { !(file.isBinary || file.isTooBig) || file.isImage }
 
     /// "Sources/Models/" quiet, "Message.swift" bold.
     private var pathText: Text {
@@ -697,7 +761,7 @@ private struct FileBody: View {
     var body: some View {
         if file.isImage {
             ImageDiff(file: file)
-        } else if file.isBinary {
+        } else if file.isBinary || file.isTooBig {
             // Nothing to show line by line; the header says what changed.
             EmptyView()
         } else if file.lines.isEmpty {
@@ -719,15 +783,17 @@ private struct FileBody: View {
                 case .line(let index):
                     let line = file.lines[index]
                     DiffLineRow(line: line, runs: highlighted?.runs(for: line, at: index), gutterWidth: gutter,
-                                comment: addComment == nil ? nil : { draft = .init(file: file.id, line: index) })
+                                comment: addComment == nil ? nil : {
+                                    draft = .init(file: file.id, side: line.kind == .removed ? .old : .new, number: line.number, text: line.text)
+                                })
                     ForEach(comments.filter { $0.matches(line) }) { comment in
                         CommentCard(comment: comment) { deleteComment(comment) }
                     }
-                    if draft == .init(file: file.id, line: index) {
+                    if let target = draft, target.isFor(line, in: file.id) {
                         CommentEditor {
                             draft = nil
                         } save: { text in
-                            addComment?(ReviewComment(file: file.path, line: line.number, side: line.kind == .removed ? .old : .new, snippet: line.text.trimmingCharacters(in: .whitespaces), text: text))
+                            addComment?(ReviewComment(file: file.path, line: target.number, side: target.side, snippet: target.text.trimmingCharacters(in: .whitespaces), text: text))
                             draft = nil
                         }
                     }
@@ -805,8 +871,11 @@ private struct ImageDiff: View {
 }
 
 extension ReviewComment {
+    /// The line it was written on: by its number, and, once the file has changed, by its text,
+    /// so it doesn't slide onto another line.
     func matches(_ line: DiffLine) -> Bool {
         side == (line.kind == .removed ? .old : .new) && self.line == line.number
+            && line.text.trimmingCharacters(in: .whitespaces) == snippet
     }
 }
 
@@ -997,12 +1066,18 @@ nonisolated struct DiffHighlighting: Sendable {
     }
 
     func runs(for line: DiffLine, at index: Int) -> [CodeHighlighter.Run]? {
+        let runs: [CodeHighlighter.Run]
         if line.kind == .removed {
             guard let position = oldIndex[index], position < oldSide.count else { return nil }
-            return oldSide[position]
+            runs = oldSide[position]
+        } else {
+            guard let position = newIndex[index], position < newSide.count else { return nil }
+            runs = newSide[position]
         }
-        guard let position = newIndex[index], position < newSide.count else { return nil }
-        return newSide[position]
+        // Made for the file before its latest change, where another line had this place: the
+        // line as it is, plain, until it's colored again.
+        guard runs.map(\.text).joined() == line.text else { return nil }
+        return runs
     }
 }
 
@@ -1099,7 +1174,11 @@ private struct CommentEditor: View {
                 .font(.system(size: 13))
                 .lineLimit(2...8)
                 .focused($focused)
-                .onKeyPress(.escape) { cancel(); return .handled }
+                .onKeyPress(.escape) {
+                    if Composer.isComposing { return .ignored }
+                    cancel()
+                    return .handled
+                }
                 // Here, not on the button: a button's ⌘Return would take it from the composer too.
                 .onKeyPress(.return, phases: .down) { press in
                     guard press.modifiers.contains(.command) else { return .ignored }

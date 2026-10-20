@@ -111,6 +111,8 @@ final class MachineBrowser {
         didSet { rest(oldValue.subtracting(workingPages)) }
     }
     private var workers: [String: String] = [:]
+    /// The session of the agent at work in a page, when it says.
+    func session(of page: String) -> String? { workers[page] }
     /// Pages an agent finished a step in a moment ago, and pages taken over (by any Mac).
     private var restingPages: Set<String> = []
     private var heldPages: Set<String> = []
@@ -133,6 +135,8 @@ final class MachineBrowser {
 
     /// Pages this Mac took over.
     @ObservationIgnored private var myHolds: Set<String> = []
+    /// Pages handed back while there was no connection, to tell the keeper once there is.
+    @ObservationIgnored private var handedBackOffline: Set<String> = []
 
     /// Takes the page shown over from the agent, or hands it back.
     func takeOver(_ on: Bool) {
@@ -150,11 +154,22 @@ final class MachineBrowser {
         if on {
             heldPages.insert(page)
             myHolds.insert(page)
+            handedBackOffline.remove(page)
         } else {
             heldPages.remove(page)
             myHolds.remove(page)
+            if link == nil { handedBackOffline.insert(page) }
         }
-        link?.fire("Kuvo.hold", ["targetId": page, "on": on])
+        link?.fire("Kuvo.hold", ["targetId": page, "on": on, "mac": MachineEngine.macID])
+    }
+
+    /// Closing on purpose (the machine removed, the app quitting): the pages this Mac took over go
+    /// back to their agents now, rather than when the keeper gives up on it.
+    private func handBackAll() {
+        if link == nil { handedBackOffline.formUnion(myHolds) }
+        for page in myHolds { link?.fire("Kuvo.hold", ["targetId": page, "on": false, "mac": MachineEngine.macID]) }
+        heldPages.subtract(myHolds)
+        myHolds = []
     }
 
     private func noteWorkers(_ status: [String: Any]) {
@@ -199,8 +214,15 @@ final class MachineBrowser {
         self.machine = machine
         // After the Mac sleeps, the connection is gone, though SSH takes a while to notice: start
         // a fresh one right away.
-        NotificationCenter.default.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main, using: { [weak self] _ in
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main, using: { [weak self] _ in
             MainActor.assumeIsolated { self?.wake() }
+        })
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main, using: { [weak self] _ in
+            MainActor.assumeIsolated {
+                // Written before the app is gone; SSH sends it as its input closes.
+                self?.handBackAll()
+                self?.link?.flush()
+            }
         })
     }
 
@@ -244,30 +266,48 @@ final class MachineBrowser {
             return
         }
         let connection = machine.connection
-        do {
-            if try await MachineBrowserInstaller.isInstalled(runtime, on: connection) {
+        // A connection that drops on the way (sending a couple of hundred megabytes takes a
+        // while) is tried twice more, rather than leaving the machine without its browser until
+        // the next launch.
+        for attempt in 1...3 {
+            do {
+                if try await MachineBrowserInstaller.isInstalled(runtime, on: connection) {
+                    setup = .ready
+                    return
+                }
+                setup = .installing(0)
+                let architecture = try await MachineBrowserInstaller.architecture(on: connection)
+                let bundle = try await MachineBrowserInstaller.bundle(for: architecture, runtime: runtime, cache: Self.cache) { fraction in
+                    Task { @MainActor in
+                        if case .installing(let done?) = self.setup, fraction > done { self.setup = .installing(fraction) }
+                    }
+                }
+                setup = .installing(nil)
+                try await MachineBrowserInstaller.send(bundle, runtime, to: connection)
                 setup = .ready
+                log.notice("\(self.machine.destination, privacy: .public) has the browser \(runtime.id, privacy: .public)")
+                return
+            } catch where attempt < 3 && Self.dropped(error) {
+                log.notice("\(self.machine.destination, privacy: .public): SSH dropped setting up the browser, trying again")
+                try? await Task.sleep(for: .seconds(5 * attempt))
+            } catch {
+                log.error("\(self.machine.destination, privacy: .public) couldn't get the browser: \(error.localizedDescription, privacy: .public)")
+                setup = .failed(error.localizedDescription)
                 return
             }
-            setup = .installing(0)
-            let architecture = try await MachineBrowserInstaller.architecture(on: connection)
-            let bundle = try await MachineBrowserInstaller.bundle(for: architecture, runtime: runtime, cache: Self.cache) { fraction in
-                Task { @MainActor in
-                    if case .installing(let done?) = self.setup, fraction > done { self.setup = .installing(fraction) }
-                }
-            }
-            setup = .installing(nil)
-            try await MachineBrowserInstaller.send(bundle, runtime, to: connection)
-            setup = .ready
-            log.notice("\(self.machine.destination, privacy: .public) has the browser \(runtime.id, privacy: .public)")
-        } catch {
-            log.error("\(self.machine.destination, privacy: .public) couldn't get the browser: \(error.localizedDescription, privacy: .public)")
-            setup = .failed(error.localizedDescription)
         }
+    }
+
+    /// SSH stopped on its own (exit 255), not over the machine's host key or this Mac's keys,
+    /// which trying again wouldn't change.
+    static func dropped(_ error: Error) -> Bool {
+        guard case RemoteEngineError.ssh(status: 255, let message) = error else { return false }
+        return !message.contains("Host key verification failed") && !message.localizedCaseInsensitiveContains("permission denied")
     }
 
     /// The machine was removed, or you disconnected it: the live view ends with it.
     func reset() {
+        handBackAll()
         disconnect()
         state = .idle
         pages = []
@@ -330,6 +370,7 @@ final class MachineBrowser {
             dropTask = Task {
                 try? await Task.sleep(for: .seconds(5))
                 guard !Task.isCancelled, !isWanted else { return }
+                // Pages you took over stay yours meanwhile, as the keeper keeps them a while.
                 disconnect()
             }
         }
@@ -362,10 +403,17 @@ final class MachineBrowser {
         link.onEvent = { [weak self] method, params, session in self?.handle(method, params, session) }
         link.onFrame = { [weak self] frame in
             guard let self, frame.session == self.session else { return }
+            // The page as it was: taking a sharp picture of it draws it again, which comes as a
+            // picture too. Not one to show (over the sharp one) or sharpen again.
+            if frame.digest == lastDigest, frame.scroll == picture?.scroll { return }
+            lastDigest = frame.digest
             #if DEBUG
-            meter.frame(frame.image)
+            meter.frame(frame.image, bytes: frame.bytes)
+            meter.picture(scrollY: frame.scroll.y)
             #endif
             picture = Picture(image: frame.image, size: frame.size, scroll: frame.scroll)
+            pictureCount += 1
+            sharpen()
             // Back at the browser's own size: another viewer (another Mac) that set its size left.
             if frame.size == Self.windowSize, viewport.size != Self.windowSize { reapplyViewport() }
         }
@@ -421,8 +469,18 @@ final class MachineBrowser {
             workingPages = (params["status"] as? [String: Any]).map(Self.workingPages) ?? []
             noteWorkers(params["status"] as? [String: Any] ?? [:])
             heldPages = Set(params["held"] as? [String] ?? [])
-            // A new connection: the keeper let go of this Mac's holds with the old one.
-            myHolds = []
+            // A new connection (after a sleep, a dropped one): the pages this Mac took over are
+            // taken again, which the keeper kept a while for it, so their agents don't go on in
+            // them; those handed back meanwhile go back now.
+            // (The keeper knows this Mac's holds by its ID, so this connection can hand back one
+            // the old connection still has there, but not another Mac's.)
+            for page in handedBackOffline { link?.fire("Kuvo.hold", ["targetId": page, "on": false, "mac": MachineEngine.macID]) }
+            heldPages.subtract(handedBackOffline)
+            handedBackOffline = []
+            // Its own still (by this Mac's ID), not one another Mac took over meanwhile.
+            let holders = params["holdMacs"] as? [String: String] ?? [:]
+            myHolds = myHolds.filter { heldPages.contains($0) && (holders[$0] ?? MachineEngine.macID) == MachineEngine.macID }
+            for page in myHolds { link?.fire("Kuvo.hold", ["targetId": page, "on": true, "mac": MachineEngine.macID]) }
             for ask in params["asks"] as? [[String: Any]] ?? [] { asked(ask) }
             Task { await begin() }
         case "Kuvo.asked":
@@ -484,6 +542,9 @@ final class MachineBrowser {
             if params["sessionId"] as? String == session { session = nil }
         default:
             guard sessionID != nil, sessionID == session else { return }
+            #if DEBUG
+            if method.hasPrefix("Page.frame") || method.hasSuffix("EventFired") { meter.event(method) }
+            #endif
             switch method {
             case "Page.frameStartedLoading":
                 if params["frameId"] as? String == shownPage { isLoading = true }
@@ -620,6 +681,7 @@ final class MachineBrowser {
                 return
             }
             session = id
+            lastSharp = nil
             // In front in its window: a tab behind another (a site's new tab) isn't drawn.
             link.fire("Target.activateTarget", ["targetId": target])
             _ = try await link.send("Page.enable", session: id)
@@ -644,6 +706,7 @@ final class MachineBrowser {
         session = nil
         shownPage = nil
         picture = nil
+        lastSharp = nil
         isLoading = false
         dialog = nil
     }
@@ -698,7 +761,47 @@ final class MachineBrowser {
         guard let link, let session else { return }
         let (size, scale) = viewport
         _ = try? await link.send("Emulation.setDeviceMetricsOverride", ["width": Int((size.width / zoom).rounded()), "height": Int((size.height / zoom).rounded()), "deviceScaleFactor": scale * zoom, "mobile": false], session: session)
-        _ = try? await link.send("Page.startScreencast", ["format": "jpeg", "quality": 75, "maxWidth": Int(size.width * scale), "maxHeight": Int(size.height * scale)], session: session)
+        // At the screen's own size (not its scale) while the page moves: making and encoding a
+        // picture at twice that took a server's Chrome long enough to hold up scrolling and clicks
+        // by a good part of a second. Once it stops, a sharp one comes (`sharpen`).
+        _ = try? await link.send("Page.startScreencast", ["format": "jpeg", "quality": 75, "maxWidth": Int(size.width), "maxHeight": Int(size.height)], session: session)
+    }
+
+    /// Pictures that came, to tell whether one came while a sharp one was being made.
+    @ObservationIgnored private var pictureCount = 0
+    @ObservationIgnored private var lastDigest = 0
+    @ObservationIgnored private var sharpening: Task<Void, Never>?
+    /// Where the page was scrolled and when, at the last sharp picture, and whether you did
+    /// anything to the page since.
+    @ObservationIgnored private var lastSharp: (scroll: CGPoint, at: ContinuousClock.Instant)?
+    @ObservationIgnored private var inputSinceSharp = true
+
+    /// A moment after the page last changed, a picture of it at the screen's scale, for the
+    /// pictures that come at half of it while it moves. A page that changes on its own (a
+    /// blinking caret, an animation) gets one every couple of seconds, not one per change.
+    private func sharpen() {
+        sharpening?.cancel()
+        guard viewport.scale > 1, let link, let session, let picture else { return }
+        let count = pictureCount
+        var wait = Duration.milliseconds(300)
+        if !inputSinceSharp, let lastSharp, lastSharp.scroll == picture.scroll {
+            wait = max(wait, .seconds(2) - (ContinuousClock.now - lastSharp.at))
+        }
+        sharpening = Task { [weak self] in
+            try? await Task.sleep(for: wait)
+            guard !Task.isCancelled, let self, self.pictureCount == count, self.session == session else { return }
+            guard let result = try? await link.send("Page.captureScreenshot", ["format": "jpeg", "quality": 85, "fromSurface": true], session: session),
+                  let base64 = result["data"] as? String else { return }
+            let image = await Task.detached(priority: .userInitiated) { () -> CGImage? in
+                guard let data = Data(base64Encoded: base64), let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+                return CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+            }.value
+            // Only if the page is as it was: a picture since is newer.
+            guard let image, !Task.isCancelled, self.pictureCount == count, self.session == session else { return }
+            self.picture = Picture(image: image, size: picture.size, scroll: picture.scroll)
+            self.lastSharp = (picture.scroll, .now)
+            self.inputSinceSharp = false
+        }
     }
 
     private func refreshHistory() async {
@@ -716,6 +819,9 @@ final class MachineBrowser {
     /// Goes to an address, or searches for anything else, in the page shown.
     func load(_ input: String) {
         guard let url = BrowserSession.url(from: input) else { return }
+        #if DEBUG
+        meter.event("navigate")
+        #endif
         fire("Page.navigate", ["url": url.absoluteString])
     }
 
@@ -803,10 +909,40 @@ final class MachineBrowser {
         private var count = 0, since = Date.now, waitingSince: Date?, delays: [Double] = []
         private var size = ""
 
-        func input() { if on, waitingSince == nil { waitingSince = .now } }
+        private var lastInput: Date?
 
-        func frame(_ image: CGImage) {
+        func input() {
             guard on else { return }
+            if waitingSince == nil { waitingSince = .now }
+            lastInput = .now
+        }
+
+        /// Each picture for a while after input, and where the page was scrolled to.
+        func picture(scrollY: CGFloat) {
+            guard on, let lastInput, Date.now.timeIntervalSince(lastInput) < 3 else { return }
+            log.notice("picture \(String(format: "%.0f", Date.now.timeIntervalSince(lastInput) * 1000), privacy: .public) ms after the last input, at \(Int(scrollY), privacy: .public)")
+        }
+
+        /// A navigation's steps, from when it was asked for, and the first picture after each.
+        private var navigatedAt: Date?
+        private var awaitingFrame: String?
+        private var bytes = 0
+
+        func event(_ name: String) {
+            guard on else { return }
+            if name == "navigate" { navigatedAt = .now }
+            let since = navigatedAt.map { String(format: "%.0f", Date.now.timeIntervalSince($0) * 1000) } ?? "-"
+            log.notice("event \(name, privacy: .public) at \(since, privacy: .public) ms")
+            awaitingFrame = name
+        }
+
+        func frame(_ image: CGImage, bytes frameBytes: Int) {
+            guard on else { return }
+            bytes += frameBytes
+            if let awaiting = awaitingFrame, let navigatedAt {
+                log.notice("first picture after \(awaiting, privacy: .public) at \(String(format: "%.0f", Date.now.timeIntervalSince(navigatedAt) * 1000), privacy: .public) ms, \(frameBytes / 1024, privacy: .public) KB")
+                awaitingFrame = nil
+            }
             count += 1
             size = "\(image.width)x\(image.height)"
             if let start = waitingSince {
@@ -816,7 +952,8 @@ final class MachineBrowser {
             let elapsed = Date.now.timeIntervalSince(since)
             guard elapsed >= 1 else { return }
             let delay = delays.isEmpty ? "-" : String(format: "%.0f", delays.reduce(0, +) / Double(delays.count))
-            log.notice("frames \(String(format: "%.1f", Double(self.count) / elapsed), privacy: .public)/s \(self.size, privacy: .public), scroll to frame \(delay, privacy: .public) ms")
+            log.notice("frames \(String(format: "%.1f", Double(self.count) / elapsed), privacy: .public)/s \(self.size, privacy: .public), \(Int(Double(self.bytes) / elapsed / 1024), privacy: .public) KB/s, scroll to frame \(delay, privacy: .public) ms")
+            bytes = 0
             count = 0
             since = .now
             delays = []
@@ -831,11 +968,14 @@ final class MachineBrowser {
         guard let index = downloads.firstIndex(where: { $0.id == id }) else { return }
         let download = downloads[index]
         downloads[index].state = .saving
-        let destination = BrowserSession.free(BrowserSession.safeName(download.name), in: BrowserSession.downloadsFolder)
         let connection = machine.connection
         Task {
             let outcome: Download.State = await Task.detached {
-                guard FileManager.default.createFile(atPath: destination.path, contents: nil), let handle = try? FileHandle(forWritingTo: destination) else {
+                // Copied into the app's temporary folder first, and into Downloads once it's all
+                // there: never a half-copied file under its name, nor one left if the app quits.
+                let partial = FileManager.default.temporaryDirectory.appending(path: "kuvo-download-\(UUID().uuidString)")
+                defer { try? FileManager.default.removeItem(at: partial) }
+                guard FileManager.default.createFile(atPath: partial.path, contents: nil), let handle = try? FileHandle(forWritingTo: partial) else {
                     return .failed("Couldn't write to Downloads.")
                 }
                 let process = Process()
@@ -848,10 +988,15 @@ final class MachineBrowser {
                     process.waitUntilExit()
                 } catch {}
                 try? handle.close()
-                guard process.terminationStatus == 0 else {
-                    try? FileManager.default.removeItem(at: destination)
-                    return .failed("The file isn't on the machine any more.")
-                }
+                guard process.terminationStatus == 0 else { return .failed("The file isn't on the machine any more.") }
+                // Marked as downloaded, as a browser marks what it saves: macOS checks it before it
+                // opens (an app, a script) as it would any download.
+                var values = URLResourceValues()
+                values.quarantineProperties = [kLSQuarantineTypeKey as String: kLSQuarantineTypeWebDownload as String, kLSQuarantineAgentNameKey as String: "Kuvo Code"]
+                var quarantined = partial
+                try? quarantined.setResourceValues(values)
+                let destination = BrowserSession.free(BrowserSession.safeName(download.name), in: BrowserSession.downloadsFolder)
+                do { try FileManager.default.moveItem(at: partial, to: destination) } catch { return .failed("Couldn't write to Downloads.") }
                 return .saved(destination)
             }.value
             if let index = downloads.firstIndex(where: { $0.id == id }) { downloads[index].state = outcome }
@@ -986,6 +1131,7 @@ final class MachineBrowser {
 
     private func fire(_ method: String, _ params: [String: Any] = [:]) {
         guard let link, let session else { return }
+        inputSinceSharp = true
         link.fire(method, params, session: session)
     }
 }
@@ -1049,11 +1195,19 @@ final class MachineBrowserLink {
         try process.run()
     }
 
+    /// Waits until what was sent has gone to SSH.
+    func flush() { reader.flush() }
+
     func stop() {
         guard !stopped else { return }
         stopped = true
         process.terminationHandler = nil
-        if process.isRunning { process.terminate() }
+        // What was written last (pages handed back, say) goes first: with its input closed after
+        // it, SSH sends it and ends; stopped a moment later if it hasn't.
+        let process = UncheckedProcess(process)
+        reader.close {
+            DispatchQueue.global().asyncAfter(deadline: .now() + 1.5) { if process.value.isRunning { process.value.terminate() } }
+        }
         fail("The browser connection closed.")
     }
 
@@ -1122,6 +1276,10 @@ final class MachineBrowserLink {
             var size: CGSize
             var scroll: CGPoint
             var session: String?
+            /// How big it came, as JPEG.
+            var bytes = 0
+            /// Its JPEG's hash: the same picture again (one made as a sharp one was taken) has it.
+            var digest = 0
         }
 
         var writer: FileHandle?
@@ -1144,6 +1302,17 @@ final class MachineBrowserLink {
 
         func write(_ data: Data) {
             writing.async { [writer] in try? writer?.write(contentsOf: data) }
+        }
+
+        /// Waits until what was written has gone to SSH.
+        func flush() { writing.sync {} }
+
+        /// Closes the input once what was written before has gone, then `done`.
+        func close(then done: @escaping @Sendable () -> Void) {
+            writing.async { [writer] in
+                try? writer?.close()
+                done()
+            }
         }
 
         func read(_ data: Data) {
@@ -1174,7 +1343,21 @@ final class MachineBrowserLink {
             let width = (metadata["deviceWidth"] as? NSNumber)?.doubleValue ?? Double(image.width)
             let height = (metadata["deviceHeight"] as? NSNumber)?.doubleValue ?? Double(image.height)
             let scroll = CGPoint(x: (metadata["scrollOffsetX"] as? NSNumber)?.doubleValue ?? 0, y: (metadata["scrollOffsetY"] as? NSNumber)?.doubleValue ?? 0)
-            deliverFrame(Frame(image: image, size: CGSize(width: width, height: height), scroll: scroll, session: session))
+            deliverFrame(Frame(image: image, size: CGSize(width: width, height: height), scroll: scroll, session: session, bytes: data.count, digest: Self.digest(data)))
+        }
+
+        /// A hash of all of it: `Data`'s own covers only its length and first 80 bytes, the same
+        /// JPEG header in every picture, so a changed one the same size passed for the last.
+        private static func digest(_ data: Data) -> Int {
+            var hasher = Hasher()
+            data.withUnsafeBytes { hasher.combine(bytes: $0) }
+            return hasher.finalize()
         }
     }
+}
+
+/// A process to stop from another thread, once its link has let go of it.
+private struct UncheckedProcess: @unchecked Sendable {
+    let value: Process
+    init(_ value: Process) { self.value = value }
 }

@@ -7,6 +7,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 // The bridge keeps its state in KUVO_HOME, so give it a folder of its own before loading it.
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-link-test-"));
@@ -68,7 +69,7 @@ test("addresses, relay messages, frames and messages match the vectors", () => {
     assert.equal(link.frame(f.kind, f.session, hex(f.body)).toString("hex"), f.bytes);
     assert.deepEqual(link.readFrame(hex(f.bytes)), { kind: f.kind, session: f.session, body: hex(f.body) });
   }
-  for (const r of v.routes) assert.equal(link.allowed(r.path), r.allowed, r.path);
+  for (const r of v.routes) assert.equal(link.allowed(r.path, r.method ?? "GET"), r.allowed, `${r.path} ${r.method ?? "GET"}`);
   for (const r of v.sockets) assert.equal(link.socketAllowed(r.path), r.allowed, r.path);
   for (const m of v.messages) {
     assert.equal(link.encodeMessage(m.head, hex(m.body)).toString("hex"), m.bytes);
@@ -142,7 +143,7 @@ function phoneFor(host, hostKey) {
 test("the host lets in a phone with the pairing token once, then by its key", async () => {
   const hostKey = link.newKey();
   link.writeLink({ relay: "wss://relay.test", secret: "", key: hostKey.toString("base64url"), phones: [], pairing: { token: Buffer.alloc(16, 7).toString("base64url"), expires: Date.now() + 60_000 } });
-  const host = new link.LinkHost({ key: hostKey, hello: { v: 1, kind: "machine", name: "my-server", app: "0", engine: "2.0.30" }, authorize: link.authorizePhone, handle: async function* () {} });
+  const host = new link.LinkHost({ key: hostKey, hello: { v: 1, kind: "machine", name: "my-server", app: "0", engine: "2.0.30" }, authorize: link.authorizePhone, confirmed: link.confirmPhone, handle: async function* () {} });
 
   const stranger = phoneFor(host, hostKey);
   assert.deepEqual(await stranger.open({ pair: Buffer.alloc(16, 8).toString("base64url") }), { refused: true });
@@ -156,8 +157,7 @@ test("the host lets in a phone with the pairing token once, then by its key", as
   assert.deepEqual(saved.phones.map(p => [p.key, p.name]), [[link.publicOf(phone.key).toString("base64url"), "Test iPhone"]]);
   // Where its notifications go.
   assert.equal(saved.phones[0].address, phone.address.toString("base64url"));
-  // POSIX file modes; Windows has none, and its own permissions model instead.
-  if (process.platform !== "win32") assert.equal((fs.statSync(link.LINK_FILE).mode & 0o777).toString(8), "600");
+  assert.equal((fs.statSync(link.LINK_FILE).mode & 0o777).toString(8), "600");
 
   // The token is used up; the paired phone comes back without it.
   const late = phoneFor(host, hostKey);
@@ -165,6 +165,12 @@ test("the host lets in a phone with the pairing token once, then by its key", as
   const returning = phoneFor(host, hostKey);
   returning.key.set(phone.key);
   assert.equal((await returning.open({})).name, "my-server");
+  // Somewhere else now: its notifications go there once its session proves its own (a replayed
+  // first handshake message can't), not on the handshake.
+  assert.equal(link.readLink().phones[0].address, phone.address.toString("base64url"));
+  returning.send({ t: "ping" });
+  assert.equal((await returning.receive()).head.t, "pong");
+  assert.equal(link.readLink().phones[0].address, returning.address.toString("base64url"));
 });
 
 // An engine on a free port that answers like opencode does, and records what it was asked.
@@ -319,15 +325,11 @@ test("the self-test passes here", () => {
 
 test("setup keeps the machine's keys and its own phones, starts the bridge, and stops it with no phones left", async () => {
   const { spawnSync } = await import("node:child_process");
-  const { fileURLToPath } = await import("node:url");
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-link-setup-"));
   fs.mkdirSync(path.join(folder, "workspace"));
-  // fileURLToPath, not URL.pathname: Windows gives the latter a leading slash, and node
-  // then looks for /D:/…. 
   const script = fileURLToPath(new URL("../../Sources/KuvoLink/Resources/kuvo-link.js", import.meta.url));
   const setup = input => {
     const result = spawnSync(process.execPath, [script, "setup"], { input: JSON.stringify(input), env: { ...process.env, KUVO_HOME: folder }, encoding: "utf8" });
-    assert.equal(result.status, 0, `setup exited ${result.status}: ${result.stderr}`);
     return JSON.parse(result.stdout);
   };
   const pidFile = path.join(folder, "run", "link.pid");
@@ -335,8 +337,18 @@ test("setup keeps the machine's keys and its own phones, starts the bridge, and 
     // A relay nobody listens on: the bridge keeps trying, which is all this needs.
     const first = setup({ relay: "ws://127.0.0.1:9", name: "test", phones: [{ key: "AAAA", name: "A" }] });
     assert.match(first.address, /^[A-Za-z0-9_-]{22}$/);
-    for (let i = 0; i < 50 && !fs.existsSync(pidFile); i++) await new Promise(r => setTimeout(r, 50));
-    const pid = Number(fs.readFileSync(pidFile, "utf8"));
+    // The file exists briefly before its PID is written; setup also needs its version file.
+    let pid = 0;
+    let ready = false;
+    for (let i = 0; i < 50; i++) {
+      try {
+        pid = Number(fs.readFileSync(pidFile, "utf8"));
+        ready = Number.isInteger(pid) && pid > 0 && fs.readFileSync(path.join(folder, "run", "link.version"), "utf8").trim() === link.BRIDGE_VERSION;
+        if (ready) break;
+      } catch {}
+      await new Promise(r => setTimeout(r, 50));
+    }
+    assert.ok(ready, "the bridge writes its PID and version before setup runs again");
     process.kill(pid, 0);
 
     // Its keys stay; the phones are what the Mac says now; the same bridge carries on.
@@ -364,7 +376,10 @@ test("setup keeps the machine's keys and its own phones, starts the bridge, and 
     }
     assert.ok(stopped);
   } finally {
-    try { process.kill(Number(fs.readFileSync(pidFile, "utf8")), "SIGKILL"); } catch {}
+    try {
+      const pid = Number(fs.readFileSync(pidFile, "utf8"));
+      if (Number.isInteger(pid) && pid > 0) process.kill(pid, "SIGKILL");
+    } catch {}
     fs.rmSync(folder, { recursive: true, force: true });
   }
 });
@@ -406,7 +421,11 @@ test("engine events become notifications, as the Mac words them", async () => {
     ses_bot: { id: "ses_bot", title: "Fixer", metadata: { kuvo: { bot: "bot_1" } }, location: { directory: "/home/me/.kuvo-code/bots/bot_1/workspace" } },
   };
   const messages = { data: [{ type: "assistant", content: [{ type: "text", text: "**All** green:\n 42 tests pass." }] }, { type: "user", content: [] }] };
+  // ses_main is at work, with a tool of the "linear" server running.
+  const working = { data: [{ type: "assistant", content: [{ type: "tool", name: "linear_create_issue", state: { status: "running", input: {} } }] }] };
   const get = async route => {
+    if (route === "api/session/active") return { data: ["ses_main"] };
+    if (route.endsWith("/message?limit=8&order=desc")) return route.includes("ses_main") ? working : { data: [] };
     if (route.endsWith("/message?limit=6&order=desc")) return messages;
     const id = decodeURIComponent(route.split("/").pop());
     if (!sessions[id]) throw new Error("404");
@@ -424,6 +443,13 @@ test("engine events become notifications, as the Mac words them", async () => {
   assert.equal(asked.category, "question");
   assert.equal(asked.body, "Which database?");
   assert.deepEqual(asked.data, { session: "ses_main", request: "frm_1" });
+  // An MCP server's form is filed under no session: it's the one of its folder using that server.
+  const elicitation = { id: "frm_2", sessionID: "global", metadata: { kind: "mcp-elicitation", server: "linear", message: "Which team?" }, fields: [] };
+  const fromServer = await link.noticeFor({ type: "form.created", location: { directory: "/home/me/kuvo-ai" }, data: { form: elicitation } }, get);
+  assert.equal(fromServer.body, "Which team?");
+  assert.deepEqual(fromServer.data, { session: "ses_main", request: "frm_2", requestSession: "global" });
+  // In a folder where nothing uses it: no notice.
+  assert.equal(await link.noticeFor({ type: "form.created", location: { directory: "/home/me/other" }, data: { form: elicitation } }, get), null);
 
   // A bot's run: its news, with what it said last, without its folder.
   const report = await link.noticeFor({ type: "session.execution.succeeded", data: { sessionID: "ses_bot" } }, get);

@@ -79,15 +79,24 @@ struct IntegrationsSettings: View {
             KeyEntry(service: request.service) { saved in
                 addingKey = nil
                 guard saved else { return }
+                // This Mac's engine reads the key from its file as it reads its settings again,
+                // which adding the integration has it do: its server connects again once it has.
                 add(request.service)
-                // Keys reach engines when they start: each starts again once nothing's at work in it.
-                app.renewEngines(mac: true)
+                Task {
+                    try? await Task.sleep(for: .seconds(2))
+                    if let api = app.api { await app.reconnect(request.service.id, api: api, machine: nil) }
+                    await refresh()
+                }
+                // Machines take keys as their engines start: each starts again once nothing's at work there.
+                app.renewEngines(mac: false)
             }
         }
     }
 
     private var list: some View {
         ScrollingSettingsForm {
+            // Integrations live in the settings file: one that can't be changed changes nothing here.
+            ConfigProblem()
             ForEach(Self.kinds, id: \.self) { kind in
                 Section(kind.rawValue) {
                     ForEach(Integrations.all.filter { $0.kind == kind }) { service in
@@ -267,9 +276,16 @@ struct IntegrationsSettings: View {
     }
 
     private func add(_ service: Integrations.Service) {
-        guard let settings = Integrations.settings(for: service) else { return }
-        config.set(settings, at: MCPSettings.path + [service.id])
-        Analytics.shared.track("integration_added", ["integration": service.id])
+        guard config.problem == nil else { return }
+        let path = MCPSettings.path + [service.id]
+        // Added already (a new key or app for it): as you set it up (turned off, Code Mode, headers
+        // you added), written again so the engine reads its keys again.
+        let existing = config.value(at: path)
+        guard let settings = existing ?? Integrations.settings(for: service) else { return }
+        config.set(settings, at: path)
+        // Back again: what its removal left to do on a machine out of reach isn't done.
+        app.machines.dropWaiting(marked: Machines.integrationMark(service.id))
+        if existing == nil { Analytics.shared.track("integration_added", ["integration": service.id]) }
         // One that needs a key waits for it (saving it renews them).
         // Machines' engines take their settings when they start (this Mac's reads the file).
         if Integrations.keys(of: service.way).isEmpty, !Integrations.macOnly.contains(service.id) { app.renewEngines(mac: false) }
@@ -277,18 +293,47 @@ struct IntegrationsSettings: View {
 
     /// Out of the engine's settings, with its keys, its sign-in and what its server kept.
     private func remove(_ service: Integrations.Service) {
-        let signIn = live.first { $0.name == service.id }?.integrationID
+        // Its keys and sign-in stay while it stays in a settings file that can't be changed.
+        guard config.problem == nil else { return }
+        let listed = live.first { $0.name == service.id }?.integrationID
+        Task {
+            // Its sign-in as the engine has it now (the page's last look may have missed it), asked
+            // before it leaves the settings, and then the server with it.
+            var signIn = listed
+            if signIn == nil, let api = app.api { signIn = (try? await api.mcpServers())?.first { $0.name == service.id }?.integrationID }
+            removeEntry(service)
+            if let signIn { app.forgetSignIn(signIn) }
+        }
+    }
+
+    private func removeEntry(_ service: Integrations.Service) {
         config.set(nil, at: MCPSettings.path + [service.id])
         for key in Integrations.keys(of: service.way) { IntegrationKeys.set(nil, for: IntegrationKeys.variable(service.id, key.name)) }
+        // Bots with keys of their own for it stop using it too: their keys go, and their
+        // folders' settings stop naming its server.
+        let bots = app.bots.list
+        Task {
+            for bot in bots {
+                let theirs = Set(Integrations.keys(of: service.way).map { IntegrationKeys.variable(service.id, $0.name, bot: bot.id) })
+                let held = await Task.detached { IntegrationKeys.variables(ofBot: bot.id) }.value
+                if !theirs.isDisjoint(with: held) { await BotKeys.remove(service, bot: bot, app: app) }
+            }
+        }
         // What its server kept: its own folder (and the file it once kept), here and on the
         // machines that are connected.
         for name in [service.id, "\(service.id).json"] { try? FileManager.default.removeItem(at: AppInfo.supportDirectory.appending(path: "integrations/\(name)")) }
         let kept = "\"$HOME/\(RemoteEngineInstaller.root)/integrations/\(service.id)\""
-        for engine in app.machines.engines.values where engine.isReady {
+        for engine in app.machines.engines.values {
             let machine = engine.machine.id
-            Task.detached { _ = RemoteShell.run("rm -rf \(kept)", on: machine) }
+            // One out of reach: the next time it answers.
+            let later = Machines.integrationMark(service.id) + "rm -rf \(kept)"
+            guard engine.isReady else { app.machines.runLater(later, on: machine); continue }
+            // One that drops meanwhile: the next time it answers, as for one away.
+            Task {
+                let done = await Task.detached { RemoteShell.run("rm -rf \(kept)", on: machine) != nil }.value
+                if !done { app.machines.runLater(later, on: machine) }
+            }
         }
-        if let signIn { app.forgetSignIn(signIn) }
         if !Integrations.macOnly.contains(service.id) { app.renewEngines(mac: false) }
     }
 

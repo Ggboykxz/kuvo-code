@@ -26,13 +26,43 @@ nonisolated enum Passwords {
 
     /// Sites you let agents sign in to with their saved password, without asking you each time.
     static let agentSitesKey = "passwords.agentSignIn"
+    /// The account each of those is for (by site): the one you allowed, not whichever is newest.
+    static let agentAccountsKey = "passwords.agentSignInAccounts"
 
     static var agentSites: [String] { UserDefaults.standard.stringArray(forKey: agentSitesKey) ?? [] }
 
-    static func setAgentSignIn(_ host: String, _ allowed: Bool) {
+    private static var agentAccounts: [String: String] {
+        UserDefaults.standard.dictionary(forKey: agentAccountsKey) as? [String: String] ?? [:]
+    }
+
+    static func setAgentSignIn(_ host: String, _ allowed: Bool, account: String? = nil) {
         var sites = agentSites.filter { $0 != host }
-        if allowed { sites.append(host) }
+        var accounts = agentAccounts
+        accounts[host] = nil
+        if allowed {
+            sites.append(host)
+            accounts[host] = account
+        }
         UserDefaults.standard.set(sites.sorted(), forKey: agentSitesKey)
+        UserDefaults.standard.set(accounts, forKey: agentAccountsKey)
+    }
+
+    /// The saved login agents sign in to `host` with on their own, if you allowed that: the
+    /// account you allowed it for.
+    static func agentLogin(for host: String) -> Login? {
+        guard agentSites.contains(host), let account = agentAccounts[host] else { return nil }
+        return logins(for: host).first { $0.account == account }
+    }
+
+    /// Sites allowed before the account was kept get the one they'd have used then, the site's
+    /// newest: a login saved after this isn't used without asking. Run once, at launch.
+    static func keepAgentAccounts() {
+        let accounts = agentAccounts
+        let loose = agentSites.filter { accounts[$0] == nil }
+        guard !loose.isEmpty else { return }
+        for host in loose {
+            if let newest = logins(for: host).first { setAgentSignIn(host, true, account: newest.account) } else { setAgentSignIn(host, false) }
+        }
     }
 
     static func setNever(_ host: String, _ never: Bool) {
@@ -41,8 +71,16 @@ nonisolated enum Passwords {
         UserDefaults.standard.set(sites.sorted(), forKey: neverKey)
     }
 
-    /// 'KUVO', the creator code on every item this saves.
-    private static let creator: OSType = 0x4B55_564F
+    /// 'KUVO', the creator code on every item the app saves. A demo or test copy (another bundle
+    /// ID) marks its own with 'KV' and two letters of its own, so it never lists, fills or
+    /// deletes the passwords you saved in the app.
+    private static let creator: OSType = {
+        guard AppInfo.bundleID != "run.kuvo.code" else { return 0x4B55_564F }
+        var hash: UInt32 = 2_166_136_261
+        for byte in AppInfo.bundleID.utf8 { hash = (hash ^ UInt32(byte)) &* 16_777_619 }
+        let letters = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789".utf8)
+        return 0x4B56_0000 | OSType(letters[Int(hash % 36)]) << 8 | OSType(letters[Int(hash / 36 % 36)])
+    }()
 
     private static var base: [String: Any] {
         [kSecClass as String: kSecClassInternetPassword, kSecAttrCreator as String: creator]
@@ -94,6 +132,11 @@ nonisolated enum Passwords {
         query[kSecAttrServer as String] = login.host
         query[kSecAttrAccount as String] = login.account
         SecItemDelete(query as CFDictionary)
+        // Agents no longer sign in with it on their own: a password saved later for the site isn't
+        // theirs without asking.
+        if agentSites.contains(login.host), agentAccounts[login.host] == login.account {
+            setAgentSignIn(login.host, false)
+        }
     }
 
     /// Asks for Touch ID or your Mac's password before showing or copying a password.
@@ -103,8 +146,9 @@ nonisolated enum Passwords {
         return (try? await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)) ?? false
     }
 
-    /// The world the browser's password scripts run in, apart from the page's own scripts.
-    @MainActor static var world: WKContentWorld { .world(name: "kuvo-passwords") }
+    /// The world the browser's password scripts run in, apart from the page's own scripts. Kept,
+    /// as WebKit drops a world once nothing holds it.
+    @MainActor static let world = WKContentWorld.world(name: "kuvo-passwords")
     static let messageName = "kuvoLogin"
 
     /// Spots a sign-in being sent (a form submitted, a button clicked, Return pressed with a password
@@ -135,6 +179,9 @@ nonisolated enum Passwords {
     /// Fills the page's sign-in fields: the password field, and the username field before it (or,
     /// on a page that asks for the username first, the first one there is).
     static let fillScript = """
+    // Only on the site the login is for: the toolbar's list can be a page behind. And over https,
+    // where it was saved: over plain http it could be read on the way.
+    if (location.hostname !== host || location.protocol !== 'https:') return false;
     const fields = [...document.querySelectorAll('input')].filter((field) => !field.disabled && field.type !== 'hidden');
     const set = (field, value) => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
@@ -190,8 +237,8 @@ final class PasswordCapture: NSObject, WKScriptMessageHandler {
               let webView = message.webView,
               let session = sessions.allObjects.first(where: { $0.webView === webView }) else { return }
         let origin = message.frameInfo.securityOrigin
-        // Secure pages only, and your own development servers.
-        guard origin.protocol == "https" || ["localhost", "127.0.0.1"].contains(origin.host) else { return }
+        // Secure pages only: those are where a saved password is filled in.
+        guard origin.protocol == "https" else { return }
         let host = origin.host
         guard !Passwords.neverSites.contains(host) else { return }
         let account = (body["username"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)

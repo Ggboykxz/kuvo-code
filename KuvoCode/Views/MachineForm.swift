@@ -16,6 +16,8 @@ struct MachineForm: View {
     @State private var destination = ""
     @State private var hosts: [String] = []
     @State private var isChecking = false
+    /// The check of the machine under way: Cancel (or leaving) stops it, so it isn't added after.
+    @State private var checking: Task<Void, Never>?
     @State private var failure: String?
     @FocusState private var isFocused: Bool
 
@@ -30,6 +32,8 @@ struct MachineForm: View {
             }
         }
         .onAppear { isFocused = true }
+        // Gone back from (Back, Escape in Settings): a check under way adds nothing.
+        .onDisappear { checking?.cancel() }
         .task { hosts = await Task.detached { SSHConfig.hosts() }.value }
         .onChange(of: destination) { failure = nil }
     }
@@ -114,7 +118,7 @@ struct MachineForm: View {
 
     /// In an editor in the window, Escape is its Cancel; in Settings, it's the page's way back.
     private func buttons(escapes: Bool) -> some View {
-        EditorFooter(primary: "Add Machine", canDoPrimary: !trimmed.isEmpty, onPrimary: add, onCancel: cancel, cancelsOnEscape: escapes,
+        EditorFooter(primary: "Add Machine", canDoPrimary: !trimmed.isEmpty, onPrimary: add, onCancel: { checking?.cancel(); cancel() }, cancelsOnEscape: escapes,
                      working: isChecking ? "Connecting…" : nil)
     }
 
@@ -130,23 +134,40 @@ struct MachineForm: View {
     private func add() {
         let destination = trimmed
         guard !destination.isEmpty, !isChecking else { return }
+        // A machine's folders are named "<destination>/<path>", and an address with a port or
+        // a path in it (ssh://…, an IPv6 address) can't be told apart from them.
+        if let problem = Self.problem(with: destination) {
+            failure = problem
+            return
+        }
         if app.machines.engine(destination) != nil {
             added(destination)
             return
         }
         isChecking = true
         failure = nil
-        Task {
+        checking = Task {
             defer { isChecking = false }
             do {
                 try await RemoteEngineInstaller(connection: SSHConnection(destination: destination), cache: AppInfo.supportDirectory.appending(path: "engine-linux")).check()
             } catch {
-                failure = error.localizedDescription
+                if !Task.isCancelled { failure = error.localizedDescription }
                 return
             }
+            // Canceled meanwhile: not added, nor your accounts copied to it.
+            guard !Task.isCancelled else { return }
             app.addMachine(destination)
             added(destination)
         }
+    }
+}
+
+extension MachineForm {
+    /// Why a destination can't name a machine here, or nil: a host, or user@host, as `ssh` takes
+    /// one, or a Host from ~/.ssh/config.
+    static func problem(with destination: String) -> String? {
+        let fits = !destination.hasPrefix("-") && destination.rangeOfCharacter(from: CharacterSet(charactersIn: "/:").union(.whitespacesAndNewlines)) == nil
+        return fits ? nil : "Give a host name, or user@host. For a port or an IPv6 address, add a Host for the machine to ~/.ssh/config and give its name."
     }
 }
 
@@ -162,11 +183,12 @@ nonisolated enum SSHConfig {
                 let words = line.split(whereSeparator: { $0 == " " || $0 == "\t" || $0 == "=" }).map(String.init)
                 guard let keyword = words.first?.lowercased(), !keyword.hasPrefix("#") else { continue }
                 if keyword == "host" {
-                    for host in words.dropFirst() where !host.contains(where: { "*?!".contains($0) }) && seen.insert(host).inserted {
+                    // Up to a comment (Host box # home server).
+                    for host in words.dropFirst().prefix(while: { !$0.hasPrefix("#") }) where !host.contains(where: { "*?!".contains($0) }) && seen.insert(host).inserted {
                         hosts.append(host)
                     }
                 } else if keyword == "include" {
-                    for pattern in words.dropFirst() {
+                    for pattern in words.dropFirst().prefix(while: { !$0.hasPrefix("#") }) {
                         let path = pattern.hasPrefix("~/") ? home.appending(path: String(pattern.dropFirst(2))).path
                             : pattern.hasPrefix("/") ? pattern : home.appending(path: ".ssh/" + pattern).path
                         for match in glob(path) { read(URL(filePath: match), depth: depth + 1) }

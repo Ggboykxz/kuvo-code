@@ -11,9 +11,17 @@ final class BrowserToolServer {
     private var connections: [ObjectIdentifier: HTTPConnection] = [:]
     private let token = UUID().uuidString + UUID().uuidString
     private(set) var url: URL?
+    /// The session a caller works for, when it isn't one you see: an engine run in a session with
+    /// the coding agents (Auto's, say) is that session's.
+    var owner: ((String) async -> String?)?
 
     init(agent: BrowserAgent) {
         self.agent = agent
+    }
+
+    /// Where the coding agents reach it (the bridge gives it to each with its session's header).
+    var agentsServer: OutsideAgents.ToolServer? {
+        url.map { OutsideAgents.ToolServer(url: $0.absoluteString, token: token, timeout: BrowserTools.executionTimeout) }
     }
 
     /// The engine's config entry for this server, as `OPENCODE_CONFIG_CONTENT` takes it.
@@ -93,13 +101,15 @@ final class BrowserToolServer {
             return .json(["jsonrpc": "2.0", "id": NSNull(), "error": ["code": -32700, "message": "Parse error"]])
         }
         let client = request.headers["mcp-session-id"]
+        // A coding agent's: its session, as the bridge named it.
+        let session = request.headers["x-kuvo-session"]
         if let batch = body as? [[String: Any]] {
             var replies: [[String: Any]] = []
-            for message in batch { if let reply = await handle(message, from: client) { replies.append(reply) } }
+            for message in batch { if let reply = await handle(message, from: client, session: session) { replies.append(reply) } }
             return replies.isEmpty ? .init(status: 202) : .json(replies)
         }
         guard let message = body as? [String: Any] else { return .init(status: 400) }
-        guard let reply = await handle(message, from: client) else { return .init(status: 202) }
+        guard let reply = await handle(message, from: client, session: session) else { return .init(status: 202) }
         var response = HTTPResponse.json(reply)
         if message["method"] as? String == "initialize" { response.headers["Mcp-Session-Id"] = UUID().uuidString }
         return response
@@ -117,7 +127,7 @@ final class BrowserToolServer {
     private static func key(_ id: Any, client: String?) -> String { (client ?? "") + "|" + String(describing: id) }
 
     /// The reply to one message, or nil for a notification.
-    private func handle(_ message: [String: Any], from client: String?) async -> [String: Any]? {
+    private func handle(_ message: [String: Any], from client: String?, session: String? = nil) async -> [String: Any]? {
         guard let method = message["method"] as? String else { return nil }
         let params = message["params"] as? [String: Any] ?? [:]
         guard let id = message["id"] else {
@@ -142,18 +152,25 @@ final class BrowserToolServer {
         case "tools/call":
             let name = params["name"] as? String ?? ""
             let arguments = params["arguments"] as? [String: Any] ?? [:]
-            // The engine names the session calling, so an ask goes to the right conversation.
-            let caller = (params["_meta"] as? [String: Any])?["ai.opencode/sessionID"] as? String
+            // The engine names the session calling, so an ask goes to the right conversation; the
+            // agents bridge, in a header.
+            var caller = (params["_meta"] as? [String: Any])?["ai.opencode/sessionID"] as? String ?? session
+            if let named = caller, let owner, let own = await owner(named) { caller = own }
             // Not the browser's: no page to serve it.
             if name == BrowserTools.showInPanel { return reply(BrowserTools.showInPanelCall(arguments, caller: caller)) }
             if name == BrowserTools.showWidget { return reply(BrowserTools.showWidgetCall(arguments)) }
-            if BrowserTools.mailTools.contains(name) {
-                let result = await BrowserTools.mail(name, arguments, caller)
-                return reply(["content": [["type": "text", "text": result.text]], "isError": result.isError])
-            }
-            let agent = agent.serving(caller)
             let key = Self.key(id, client: client)
-            let call = Task { CallResult(value: await BrowserTools.call(name, arguments: arguments, agent: agent, caller: caller)) }
+            let call: Task<CallResult, Never>
+            if BrowserTools.mailTools.contains(name) || BrowserTools.wakeTools.contains(name) {
+                // Stopped as the others are: one waiting for an answer stops waiting.
+                call = Task {
+                    let result = BrowserTools.wakeTools.contains(name) ? await BrowserTools.wake(name, arguments, caller) : await BrowserTools.mail(name, arguments, caller)
+                    return CallResult(value: ["content": [["type": "text", "text": result.text]], "isError": result.isError])
+                }
+            } else {
+                let agent = agent.serving(caller)
+                call = Task { CallResult(value: await BrowserTools.call(name, arguments: arguments, agent: agent, caller: caller)) }
+            }
             calls[key] = call
             defer { if calls[key] == call { calls[key] = nil } }
             // The connection closing stops it too.
@@ -214,11 +231,25 @@ enum BrowserTools {
         tool(showWidget, "Show the user something visual or interactive right in this conversation, drawn live where this call is: a chart or graph, a diagram or flow, a mockup, a table to sort, a small app, calculator or game, a timeline, a visual explanation, or choices for them to click. Use it whenever seeing or playing with something says it better than words, and be creative. Write the HTML: a fragment, or a whole page, with its CSS and JavaScript inline; libraries only from cdnjs.cloudflare.com, cdn.jsdelivr.net or unpkg.com (Chart.js, D3, Mermaid, Three.js, Leaflet with its map tiles); pictures from anywhere, but it can't fetch data or send anything, so put the data in the page. Follow light and dark with CSS (it starts transparent with color-scheme light dark, text in CanvasText, and --kuvo-accent as the accent). It's as tall as its content, up to about 760 points, then it scrolls. To hear back, call kuvo.send(text) from a click in it: that sends text to you as the user's message (a choice they made, values they set).",
              ["html": ["type": "string", "description": "The HTML to show."],
               "title": ["type": "string", "description": "A short name for it, shown above it. Write it first, before the HTML: it shows while you write the rest."]], required: ["html"]),
-        tool("list_agents", "List the other agents you can write to with send_message: the user's bots (named helpers with a job of their own) and their other recent sessions, on their Mac and their machines, each with its name, where it runs and its address."),
+        tool("list_agents", "List the other agents you can write to with send_message, or whose conversation you can read with read_conversation: the user's bots (named helpers with a job of their own) and their other recent sessions, on their Mac and their machines, each with its name, where it runs and its address."),
+        tool("read_conversation", "Read another agent's conversation (a bot's or another session's, from list_agents, or one the user names with &): what the user and others wrote to it, its replies, and a line for each step it took, oldest first. Use it to learn what it did, decided or found, to pick up where it left off, or to follow it, without interrupting it. A long one gives its start and its latest part; with query, the parts that mention it.",
+             ["of": ["type": "string", "description": "Its name or address, from list_agents or the user's message."],
+              "query": ["type": "string", "description": "A word or phrase to find in it: only the parts that mention it come back."]], required: ["of"]),
         tool("send_message", "Write to another agent (a bot or another session, from list_agents): it reaches that conversation as a message from you, and its agent takes it up, with its own tools and what it knows. Use it to hand off work, ask for help or information, coordinate, or report back. With wait, you get its answer back here (up to ten minutes); without, it can answer you with send_message later. A message from another agent reaches you the same way, saying who it's from.",
              ["to": ["type": "string", "description": "Its name or address, from list_agents."],
               "text": ["type": "string", "description": "What to say: all it needs to know, as it hasn't seen this conversation."],
               "wait": ["type": "boolean", "description": "Wait for its answer and get it back here."]], required: ["to", "text"]),
+        tool("schedule_wake_up", "Come back to this conversation later, even while the user is away: at `when`, it gets your note as a message starting with \"[Wake-up]\", and you carry on from it. Use it to look again at something later (a build in 20 minutes, a reply tomorrow), or with every, again and again until it's canceled. Never say you can't come back later or run on a timer: schedule a wake-up instead.",
+             ["when": ["type": "string", "description": "+20m, +2h, +1d, or a time like 2026-10-21T09:00 on the user's clock; at least a minute from now."],
+              "note": ["type": "string", "description": "What to do then: all you'll need, as a note to yourself."],
+              "every": ["type": "string", "description": "To have it come back until it's canceled: 30m, 2h, 1d, 1w (at least 5m), or weekdays. Days, weeks and weekdays keep its time of day. When it's due now too, also do the first round now."]], required: ["when", "note"]),
+        tool("watch_for_change", "Wait for something to change without checking yourself (CI finishing, a deploy, a status page, a price, a file): every so often its check, a shell command, runs without you, and this conversation wakes with your note and the new output only when what the check prints changes (not the first time). Make it print just what you watch, like gh run list --limit 1 --json status,conclusion -q '.[0] | .status + \" \" + .conclusion' or curl -s <url> | grep -o '<the part that matters>', so a clock or an ad on the page doesn't count as a change. It runs in this conversation's folder for at most a minute; only what it prints counts, and printing nothing counts too. A run is skipped when a curl, wget or gh in it fails, or when it prints nothing and exits 2 or more. To watch whether a site is up, print its status code: curl -s -o /dev/null -w '%{http_code}' <url>.",
+             ["every": ["type": "string", "description": "How often: 5m or more, 2h, 1d."],
+              "check": ["type": "string", "description": "The shell command that prints what you watch."],
+              "note": ["type": "string", "description": "What to do when it changes."]], required: ["every", "check", "note"]),
+        tool("list_wake_ups", "List this conversation's wake-ups and watches, with their ids, to check what's scheduled before adding one (never keep two for the same thing)."),
+        tool("cancel_wake_up", "Cancel one of this conversation's wake-ups or watches, by its id from list_wake_ups (or the one schedule_wake_up or watch_for_change gave). To change a schedule, cancel it and schedule the new one.",
+             ["id": ["type": "string", "description": "Its id."]], required: ["id"]),
         tool("start_session", "Start a new session: another agent with a conversation of its own, to work on something alongside you (a separate task, a second opinion, one part of a bigger job). It works in this conversation's folder unless you name another, on your model, and gets the task as a message from you, so it knows who to report to. It shows beside this conversation for the user to follow, and you get its address to write to it with send_message; it can write back to you the same way. With wait, you get its first answer back here.",
              ["task": ["type": "string", "description": "What it's to do: all it needs to know, as it hasn't seen this conversation."],
               "title": ["type": "string", "description": "A short name for it, like \"Write the tests\"."],
@@ -241,13 +272,32 @@ enum BrowserTools {
     nonisolated static let showWidget = "show_widget"
 
     /// The tools agents write to each other with (see `AgentMail`).
-    nonisolated static let mailTools: Set<String> = ["list_agents", "send_message", "start_session"]
+    nonisolated static let mailTools: Set<String> = ["list_agents", "send_message", "read_conversation", "start_session"]
     /// Carries out their calls from this Mac's conversations.
     /// The added integrations' sites, which the browser sends the agent away from, to their tools.
     static var integrationSites: () -> [Integrations.Site] = { [] }
     /// When a conversation was sent away from an integration's site, by conversation and site:
     /// asked again a while after, the browser goes there.
     private static var sentAway: [String: Date] = [:]
+
+    /// Whether a conversation may read files outside its folder without asking (Approve All, not a
+    /// group chat's seat), by its session. Unknown, it asks.
+    static var readsAnywhere: (String) -> Bool = { _ in false }
+
+    /// What the browser says instead of opening `address`, a file outside the conversation's
+    /// folder (and the temporary folders, where an agent writes a page to open), when it asks
+    /// before reading those: opened, the browser read it without asking, where a command would
+    /// have asked. Links are followed to where they lead.
+    static func fileNote(for address: String, caller: String?) -> String? {
+        // The address the browser opens, read the way it reads it (trimmed, say).
+        guard let url = BrowserSession.url(from: address), url.isFileURL else { return nil }
+        if let caller, readsAnywhere(caller) { return nil }
+        func real(_ path: String) -> String { URL(filePath: path).resolvingSymlinksInPath().path }
+        let path = real(url.path)
+        let places = [caller.flatMap(sessionFolder), NSTemporaryDirectory(), "/tmp", "/private/tmp"].compactMap { $0 }.map(real)
+        if places.contains(where: { path == $0 || path.hasPrefix($0.hasSuffix("/") ? $0 : $0 + "/") }) { return nil }
+        return "Not opened: \(url.path) is outside this conversation's folder, and this session asks before reading files elsewhere. Ask the user first; if they agree, copy it into the folder (a command, which asks them) and open it there."
+    }
 
     /// What the browser says instead of opening `address`, when it's an added integration's
     /// site: to use its tools. The first time only, so the agent can still open it when the user
@@ -261,6 +311,10 @@ enum BrowserTools {
     }
 
     static var mail: (_ name: String, _ arguments: [String: Any], _ caller: String?) async -> (text: String, isError: Bool) = { _, _, _ in ("Not available.", true) }
+    /// The tools a conversation's wake-ups are set with (see `WakeUps.call`).
+    nonisolated static let wakeTools: Set<String> = ["schedule_wake_up", "watch_for_change", "list_wake_ups", "cancel_wake_up"]
+    /// Carries out their calls from this Mac's conversations.
+    static var wake: (_ name: String, _ arguments: [String: Any], _ caller: String?) async -> (text: String, isError: Bool) = { _, _, _ in ("Not available.", true) }
 
     /// Says it's shown; the conversation draws it.
     nonisolated static func showWidgetCall(_ arguments: [String: Any]) -> [String: Any] {
@@ -320,7 +374,7 @@ enum BrowserTools {
     /// What the engine tells the model about the tools.
     /// Where Kuvo Code's own docs are, for when you ask the agent how to do something in the app.
     /// Every session has these tools, so it hears it wherever it works.
-    nonisolated static let docs = "You're working inside Kuvo Code, the Mac app the user talks to you in: sessions in projects, a side panel with changes, files, terminals and a browser, bots, group chats and remote machines. When the user asks how to do something in Kuvo Code itself (where a setting is, what a button does, how bots, wake-ups or machines work, a shortcut), read its documentation with webfetch rather than guessing: start at https://www.kuvo.run/code/docs/, whose pages include sessions, changes, panel, browsing, machines, bots, integrations, customize, settings, usage, shortcuts, privacy and troubleshooting (each at https://www.kuvo.run/code/docs/<page>/). Answer from what it says, briefly, and say where in the app to find it. When the user names a service (Notion, Linear, GitHub, Slack, their mail or calendar…) and they connected it as an integration, you have tools for it: regular tools in your list, named after it (notion_notion-search, linear_list_issues…), which you call directly, not through execute (they aren't in its catalog). Use those. They reach the user's account directly, signed in as them, so never open that service's website instead, and don't tell the user you'll use the browser for it. If Code Mode says a namespace such as notion is no longer available, that's only Code Mode: the service's regular tools are still there, so call them. If such a tool fails or says it needs signing in, say so and ask the user to sign in under Settings › Integrations. Use the browser for services you have no tools for (their chats or social accounts, say), or when the user asks for a website itself: the user is signed in to sites there, or can sign in when you ask. To show the user a file or folder (one they ask to see or open, or what you made), use show_in_panel: it opens in Kuvo Code's side panel, beside this conversation. To show something visual or interactive (a chart, a diagram, a mockup, a small app or game, choices to click), use show_widget: it draws your HTML live in the conversation, so reach for it whenever a picture or something to play with helps more than words. You're one of the user's agents: their bots and other sessions, on their Mac and machines, can be reached with list_agents and send_message, to hand off work, ask what they know, or report back; a message from one of them says who it's from. When the user asks for another session (a separate or parallel one, one they can follow and talk to), start it with start_session, which opens it beside this conversation; a subagent is only for work you hand off and get back yourself, out of view."
+    nonisolated static let docs = "You're working inside Kuvo Code, the Mac app the user talks to you in: sessions in projects, a side panel with changes, files, terminals and a browser, bots, group chats and remote machines. When the user asks how to do something in Kuvo Code itself (where a setting is, what a button does, how bots, wake-ups or machines work, a shortcut), read its documentation with webfetch rather than guessing: start at https://www.kuvo.run/code/docs/, whose pages include sessions, changes, panel, browsing, machines, bots, integrations, customize, settings, usage, shortcuts, privacy and troubleshooting (each at https://www.kuvo.run/code/docs/<page>/). Answer from what it says, briefly, and say where in the app to find it. When the user names a service (Notion, Linear, GitHub, Slack, their mail or calendar…) and they connected it as an integration, you have tools for it: regular tools in your list, named after it (notion_notion-search, linear_list_issues…), which you call directly, not through execute (they aren't in its catalog). Use those. They reach the user's account directly, signed in as them, so never open that service's website instead, and don't tell the user you'll use the browser for it. If Code Mode says a namespace such as notion is no longer available, that's only Code Mode: the service's regular tools are still there, so call them. If such a tool fails or says it needs signing in, say so and ask the user to sign in under Settings › Integrations. Use the browser for services you have no tools for (their chats or social accounts, say), or when the user asks for a website itself: the user is signed in to sites there, or can sign in when you ask. To show the user a file or folder (one they ask to see or open, or what you made), use show_in_panel: it opens in Kuvo Code's side panel, beside this conversation. To show something visual or interactive (a chart, a diagram, a mockup, a small app or game, choices to click), use show_widget: it draws your HTML live in the conversation, so reach for it whenever a picture or something to play with helps more than words. You're one of the user's agents: their bots and other sessions, on their Mac and machines, can be reached with list_agents and send_message, to hand off work, ask what they know, or report back; a message from one of them says who it's from. read_conversation reads one's conversation, to see what it did or decided without interrupting it. When the user names one with & (like &Mira), their message ends with who that is and its address: read its conversation when they ask about its work, and write to it when they want something from it. When the user asks for another session (a separate or parallel one, one they can follow and talk to), start it with start_session, which opens it beside this conversation; a subagent is only for work you hand off and get back yourself, out of view. You can come back to this conversation later, even while the user is away: schedule_wake_up has it wake you with your note at a time you choose (check a build in 20 minutes, look again tomorrow), or again and again with every, and watch_for_change wakes you only when something you watch changes (CI finishing, a deploy, a page), so don't keep checking or sleep in a command. Never say you can't come back later or run on a timer. list_wake_ups shows what's set, and cancel_wake_up cancels one. For work that's to go on for good (every morning, every week), suggest a bot for it (the + beside Bots in the sidebar), or hand it to a bot whose job it fits with send_message. Don't look for another way to schedule anything."
 
     nonisolated static func instructions(machine: Bool) -> String {
         let place = machine
@@ -344,9 +398,17 @@ enum BrowserTools {
         if let handedBack = await agent.waitForControl() {
             return ["content": [["type": "text", "text": handedBack]], "isError": false]
         }
+        // The tab in use on a file the conversation may not read (one you opened, say): the step
+        // goes on in a new tab. One a step took there keeps its result back. Tabs need neither: the
+        // list reads no page, and a tab on such a file can't be picked.
+        let browses = name.hasPrefix("browser_") && name != "browser_tabs"
+        let moved = browses && name != "browser_new_tab" ? await agent.moveOffForbiddenFile() : nil
         var result = await perform(name, arguments: arguments, agent: agent, caller: caller)
+        if browses, let note = await agent.leaveForbiddenFile() {
+            return ["content": [["type": "text", "text": note]], "isError": true]
+        }
         // Downloads that started or finished meanwhile, ahead of the tool's own result.
-        let notes = agent.takeNotes()
+        let notes = (moved ?? "") + agent.takeNotes()
         if !notes.isEmpty, var content = result["content"] as? [[String: Any]], content.first?["type"] as? String == "text" {
             content[0]["text"] = notes + (content[0]["text"] as? String ?? "")
             result["content"] = content
@@ -365,6 +427,7 @@ enum BrowserTools {
         switch name {
         case "browser_navigate":
             guard let url = string("url") else { return text("Missing url.", error: true) }
+            if let note = fileNote(for: url, caller: caller) { return text(note, error: true) }
             if let note = integrationNote(for: url, caller: caller) { return text(note) }
             return text(await agent.navigate(url))
         case "browser_snapshot":
@@ -403,6 +466,7 @@ enum BrowserTools {
             guard let index = int("index") else { return text("Missing index.", error: true) }
             return text(await agent.hover(index))
         case "browser_new_tab":
+            if let url = string("url"), let note = fileNote(for: url, caller: caller) { return text(note, error: true) }
             if let url = string("url"), let note = integrationNote(for: url, caller: caller) { return text(note) }
             return text(await agent.newTab(string("url")))
         case "browser_upload":
@@ -439,7 +503,9 @@ struct HTTPResponse {
     var body = Data()
 
     static func json(_ object: Any) -> HTTPResponse {
-        let data = (try? JSONSerialization.data(withJSONObject: object)) ?? Data()
+        // Sorted, so the tools' list reads the same at every launch, and a conversation picked up
+        // after one keeps the provider's prompt cache.
+        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
         return HTTPResponse(status: 200, headers: ["Content-Type": "application/json"], body: data)
     }
 }

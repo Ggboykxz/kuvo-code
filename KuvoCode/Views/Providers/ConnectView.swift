@@ -37,12 +37,28 @@ struct ConnectView: View {
     @State private var answers: FormAnswer = [:]
     @State private var key = ""
     @State private var pastedCode = ""
+    /// A sign-in that finishes by itself, whose page gave a code instead: the field to paste it.
+    @State private var isPastingCode = false
+    @State private var isCheckingCode = false
+    @State private var codeError: String?
+    /// The sign-in said how it's going at least once (a page without a link is waited on as any).
+    @State private var hasStatus = false
     @State private var isWorking = false
     /// Why the engine didn't take the key, shown under it until you change it.
     @State private var keyError: String?
     @State private var copied = false
     @State private var copyReset: Task<Void, Never>?
     @State private var pollTask: Task<Void, Never>?
+    /// The page to sign in on, once known: the attempt's, or one its status brought later.
+    @State private var signInURL = ""
+    /// How a sign-in that's getting ready is going ("Downloading… 40%").
+    @State private var progress: String?
+    /// The page was closed: a sign-in still starting then is called off, not opened.
+    @State private var left = false
+    /// For one on a machine: the port its page comes back to, forwarded there meanwhile.
+    @State private var forward = SignInForward()
+    /// The way being started now.
+    @State private var startedID: String?
 
     struct Highlight: Hashable {
         let symbol: String
@@ -88,7 +104,11 @@ struct ConnectView: View {
             Analytics.shared.onboardingStep("connect_account", ["provider": Analytics.provider(integrationID)])
             chooseOnlyMethod()
         }
-        .onDisappear(perform: cancelAttempt)
+        .onDisappear {
+            left = true
+            cancelAttempt()
+            forward.stop()
+        }
     }
 
     // MARK: Steps
@@ -101,7 +121,7 @@ struct ConnectView: View {
                         .font(.system(size: 28, weight: .medium))
                         .foregroundStyle(.primary)
                 } else {
-                    ProviderLogo(id: integrationID, size: 40)
+                    ProviderLogo(id: OutsideAgents.logo(integrationID), size: 40)
                 }
             }
             .frame(width: 72, height: 72)
@@ -131,11 +151,21 @@ struct ConnectView: View {
         return VStack(spacing: 10) {
             ForEach(Array(primary.enumerated()), id: \.element.id) { index, method in
                 Button { start(method) } label: {
-                    Label(label(for: method), systemImage: symbol(for: method))
+                    // The one getting ready (an agent installed first): no more taps meanwhile.
+                    if isWorking, startedID == method.id {
+                        HStack(spacing: 8) {
+                            Spinner(size: 14)
+                            Text(label(for: method))
+                        }
                         .frame(maxWidth: .infinity)
+                    } else {
+                        Label(label(for: method), systemImage: symbol(for: method))
+                            .frame(maxWidth: .infinity)
+                    }
                 }
                 .buttonStyle(index == 0 ? AnyPrimitiveButtonStyle(.glassProminent) : AnyPrimitiveButtonStyle(.glass))
                 .controlSize(.extraLarge)
+                .disabled(isWorking)
             }
             if !legacy.isEmpty {
                 DisclosureGroup("Other ways to sign in") {
@@ -210,8 +240,27 @@ struct ConnectView: View {
         .animation(.ui, value: keyError)
     }
 
+    /// Getting ready (an agent downloading first, its page not there yet): what it's doing, not
+    /// yet waiting on you.
+    private var gettingReady: String? {
+        progress ?? (signInURL.isEmpty && !hasStatus ? "Getting ready…" : nil)
+    }
+
     private func waiting(_ attempt: OAuthAttempt) -> some View {
         VStack(spacing: 18) {
+            // A machine's sign-in whose page can't come back to it.
+            if let problem = forward.problem {
+                ErrorCard(message: problem)
+            }
+            if let gettingReady {
+                HStack(spacing: 8) {
+                    Spinner(size: 16)
+                    Text(gettingReady)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.secondary)
+                        .contentTransition(.numericText())
+                }
+            }
             if let code = attempt.userCode {
                 VStack(spacing: 10) {
                     Text("Enter this code on the page that opened")
@@ -227,7 +276,7 @@ struct ConnectView: View {
                         .buttonStyle(TextButtonStyle())
                         .contentTransition(.symbolEffect(.replace))
                 }
-            } else if attempt.mode == .auto {
+            } else if attempt.mode == .auto, gettingReady == nil {
                 Text("Finish signing in with your browser. This updates on its own.")
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
@@ -251,16 +300,41 @@ struct ConnectView: View {
                     .controlSize(.large)
                     .padding(.top, 8)
                 }
-            } else {
+            } else if gettingReady == nil {
                 HStack(spacing: 8) {
                     Spinner(size: 16)
-                    Text("Waiting for you to finish…")
+                    Text(isCheckingCode ? "Checking the code…" : "Waiting for you to finish…")
                         .foregroundStyle(.secondary)
+                }
+                if attempt.acceptsCode == true, isPastingCode, !isCheckingCode {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("If the page gave you a code, paste it here.")
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            TextField("Paste the code", text: $pastedCode)
+                                .wellField()
+                                .onSubmit { submitCode(attempt) }
+                            Button("Continue") { submitCode(attempt) }
+                                .buttonStyle(.glassProminent)
+                                .keyboardShortcut(.defaultAction)
+                                .disabled(pastedCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
+                        if let codeError {
+                            Text(codeError)
+                                .font(.callout)
+                                .foregroundStyle(.red)
+                        }
+                    }
                 }
             }
 
             HStack(spacing: 16) {
-                Button("Open the Page Again") { open(attempt.url) }
+                if !signInURL.isEmpty {
+                    Button("Open the Page Again") { open(signInURL) }
+                }
+                if attempt.mode == .auto, attempt.acceptsCode == true, !isPastingCode, gettingReady == nil {
+                    Button("Paste a Code") { isPastingCode = true }
+                }
                 // In a sheet, Cancel leaves it; here it goes back to the ways to sign in.
                 if onCancel == nil {
                     Button("Cancel") {
@@ -359,7 +433,7 @@ struct ConnectView: View {
     // MARK: Actions
 
     private var supportedMethods: [Integration.Method] {
-        integration?.signInMethods.filter(isSupported) ?? []
+        integration?.offeredSignInMethods.filter(isSupported) ?? []
     }
 
     private func chooseOnlyMethod() {
@@ -374,6 +448,8 @@ struct ConnectView: View {
     }
 
     private func start(_ method: Integration.Method) {
+        guard !isWorking else { return }
+        startedID = method.id
         answers = FormFieldsView.defaults(for: method.form)
         switch method {
         case .key:
@@ -391,7 +467,7 @@ struct ConnectView: View {
     }
 
     private func proceed(_ method: Integration.Method) {
-        guard let api = app.api else { return }
+        guard let api = catalog.api(forIntegration: integrationID) else { return }
         let answer = FormFieldsView.payload(method.form, answers)
         isWorking = true
         Task {
@@ -400,7 +476,18 @@ struct ConnectView: View {
                 switch method {
                 case .oauth(let id, _, _):
                     let attempt = try await api.startOAuth(integration: integrationID, method: id, answer: answer.isEmpty ? nil : answer)
+                    guard !left else {
+                        try? await api.cancelOAuth(integration: integrationID, attempt: attempt.attemptID)
+                        return
+                    }
                     step = .waiting(attempt)
+                    progress = nil
+                    pastedCode = ""
+                    isPastingCode = false
+                    isCheckingCode = false
+                    codeError = nil
+                    hasStatus = false
+                    signInURL = attempt.url
                     if let code = attempt.userCode { copy(code) }
                     open(attempt.url)
                     if attempt.mode == .auto { poll(attempt) }
@@ -420,7 +507,7 @@ struct ConnectView: View {
     private func connectKey(_ method: Integration.Method) {
         // Return in the field gets here too, past the disabled button.
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let api = app.api, !trimmed.isEmpty, FormFieldsView.isComplete(method.form, answers), !isWorking else { return }
+        guard let api = catalog.api(forIntegration: integrationID), !trimmed.isEmpty, FormFieldsView.isComplete(method.form, answers), !isWorking else { return }
         let answer = FormFieldsView.payload(method.form, answers)
         isWorking = true
         Task {
@@ -441,12 +528,35 @@ struct ConnectView: View {
     private func poll(_ attempt: OAuthAttempt) {
         pollTask?.cancel()
         pollTask = Task {
+            // The engine not knowing the sign-in for ten seconds running: it started over, and the
+            // sign-in went with it.
+            var misses = 0
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
-                guard !Task.isCancelled, let api = app.api else { return }
-                guard let status = try? await api.oauthStatus(integration: integrationID, attempt: attempt.attemptID) else { continue }
+                guard !Task.isCancelled else { return }
+                // Not there (the coding agents starting over) counts as not knowing it.
+                let api = catalog.api(forIntegration: integrationID)
+                guard let api, let status = try? await api.oauthStatus(integration: integrationID, attempt: attempt.attemptID) else {
+                    misses += 1
+                    if misses >= 10 {
+                        noteFailure(method: "oauth", "engine")
+                        let who = OutsideAgents.isAgent(integrationID) ? "The coding agents" : "The engine"
+                        step = .failed("\(who) started over while you were signing in. Try again.")
+                        return
+                    }
+                    continue
+                }
+                misses = 0
+                hasStatus = true
                 switch status.status {
-                case .pending: continue
+                case .pending:
+                    // The page came later (an agent was downloaded first): opened once, as it comes.
+                    if let url = status.url, !url.isEmpty, url != signInURL {
+                        signInURL = url
+                        open(url)
+                    }
+                    withAnimation(.ui) { progress = status.url == nil ? status.message : nil }
+                    continue
                 case .complete: finish(method: "oauth"); return
                 case .failed:
                     noteFailure(method: "oauth", Analytics.trouble(status: nil, status.message ?? ""))
@@ -463,7 +573,7 @@ struct ConnectView: View {
 
     private func complete(_ attempt: OAuthAttempt) {
         let code = pastedCode.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let api = app.api, !code.isEmpty, !isWorking else { return }
+        guard let api = catalog.api(forIntegration: integrationID), !code.isEmpty, !isWorking else { return }
         isWorking = true
         Task {
             defer { isWorking = false }
@@ -477,7 +587,38 @@ struct ConnectView: View {
         }
     }
 
+    /// The code the page gave, typed into the sign-in; how it went comes with the next status.
+    private func submitCode(_ attempt: OAuthAttempt) {
+        let code = pastedCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let api = catalog.api(forIntegration: integrationID), !code.isEmpty, !isCheckingCode else { return }
+        isCheckingCode = true
+        codeError = nil
+        Task {
+            do {
+                try await api.completeOAuth(integration: integrationID, attempt: attempt.attemptID, code: code)
+                // Still waiting a while later (it didn't take that code, and waits for another):
+                // the field again.
+                try? await Task.sleep(for: .seconds(10))
+                if isCheckingCode, case .waiting(let current) = step, current.attemptID == attempt.attemptID {
+                    isCheckingCode = false
+                }
+            } catch {
+                // It may have finished in the browser meanwhile: the poll says how it went.
+                isCheckingCode = false
+                codeError = error.localizedDescription
+            }
+        }
+    }
+
     private func finish(method: String) {
+        forward.stop()
+        // Signed in anew: Custom Auto tries it again where you signed in (an agent's sign-in is
+        // that place's own; a plan's goes to your machines too).
+        if OutsideAgents.isAgent(integrationID) {
+            if let agents = catalog.outsideAgents { Task { await agents.releaseLimit(integrationID) } }
+        } else {
+            app.releaseLimit(integrationID)
+        }
         Analytics.shared.track("account_connected", ["provider": Analytics.provider(integrationID), "method": method])
         Analytics.shared.accountConnected()
         pollTask?.cancel()
@@ -503,14 +644,19 @@ struct ConnectView: View {
     private func cancelAttempt() {
         pollTask?.cancel()
         pollTask = nil
-        if case .waiting(let attempt) = step, let api = app.api {
+        if case .waiting(let attempt) = step, let api = catalog.api(forIntegration: integrationID) {
             noteFailure(method: "oauth", "cancelled")
             Task { try? await api.cancelOAuth(integration: integrationID, attempt: attempt.attemptID) }
         }
     }
 
+    /// A sign-in page, in your browser: a web address only (one from a server's own sign-in
+    /// metadata could name a file or another app).
     private func open(_ url: String) {
-        if let url = URL(string: url) { NSWorkspace.shared.open(url) }
+        guard !url.isEmpty, let url = URL(string: url), ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return }
+        // An agent on a machine: the page comes back to it there.
+        if let machine = catalog.machine { forward.start(for: url, on: machine) }
+        NSWorkspace.shared.open(url)
     }
 
     /// Copies the code, and says so for a moment.

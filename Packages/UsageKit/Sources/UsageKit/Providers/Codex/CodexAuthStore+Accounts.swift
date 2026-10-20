@@ -26,7 +26,7 @@ extension CodexAuthStore {
     private func isDiscovered(_ source: CodexAuthState.Source) -> Bool {
         switch source {
         case .file(let path): additionalAuthHomes.contains { path == $0.trimmingTrailingSlashes + "/auth.json" }
-        case .keychain: false
+        case .keychain, .host: false
         case .pi: true
         }
     }
@@ -43,6 +43,7 @@ extension CodexAuthStore {
         case .file(let path): loadAuth(at: path) == candidate
         case .keychain(let account): await loadOffMainActor { loadKeychainAuth(account: account) } == candidate
         case .pi(let source): loadPiAuth(source) == candidate
+        case .host: hostCandidate() == candidate
         }
     }
 }

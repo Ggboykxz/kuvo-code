@@ -27,6 +27,12 @@ public struct SSHConnection: Sendable, Hashable, Codable {
     static var sharing: [String] {
         let folder = "/tmp/kuvo-ssh-\(getuid())"
         try? FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        // Only a folder that's really this user's alone: one another account made first could
+        // hold a socket of its own, which ssh would hand what it sends (launch secrets on stdin).
+        var info = stat()
+        guard lstat(folder, &info) == 0, info.st_mode & S_IFMT == S_IFDIR, info.st_uid == getuid(), info.st_mode & 0o077 == 0 else {
+            return separate
+        }
         return ["-o", "ControlMaster=auto", "-o", "ControlPath=\(folder)/%C", "-o", "ControlPersist=120"]
     }
 
@@ -34,8 +40,17 @@ public struct SSHConnection: Sendable, Hashable, Codable {
     static let separate = ["-o", "ControlMaster=no", "-o", "ControlPath=none"]
 
     /// The `ssh` arguments that run `script` on the machine with `sh`, whatever its login shell.
+    /// sshd hands the command to that shell, and one like fish reads backslashes in quotes its own
+    /// way, so the script goes as base64, which no shell changes, for `sh` to decode and run. Its
+    /// standard input stays the command's.
     public func arguments(running script: String, extra: [String] = [], shared: Bool = true) -> [String] {
-        Self.options + (shared ? Self.sharing : Self.separate) + extra + [destination, "sh -c " + Self.quoted(script)]
+        Self.options + (shared ? Self.sharing : Self.separate) + extra + [destination, Self.command(running: script)]
+    }
+
+    /// The command line for the machine's login shell that runs `script` with `sh`. Without a
+    /// working `base64` there, it fails (127) rather than running nothing and saying it's done.
+    public static func command(running script: String) -> String {
+        "exec sh -c 'kuvo_script=$(printf %s " + Data(script.utf8).base64EncodedString() + " | base64 -d) || exit 127; eval \"$kuvo_script\"'"
     }
 
     /// Runs `script` on the machine and returns what it printed. `input` is sent to it.
@@ -119,11 +134,15 @@ public struct RemoteEngineInstaller: Sendable {
     var remoteExecutable: String { "$HOME/\(Self.root)/engine/\(OpenCodeEngine.version)/opencode" }
 
     /// Gives the engine folders of its own in `~/.kuvo-code` (`$K`), for everything it runs there,
-    /// so it never touches the machine's own opencode, if it has one.
+    /// so it never touches the machine's own opencode, if it has one. Only you can open `$K`: what's
+    /// in it (conversations, bots' memory, settings) is yours, wherever the home folder is open. (The commands the agent
+    /// runs get the machine's own back: [CommandEnvironment].)
     /// Worked out each time, never kept, so a `root` set later is the one it names.
     static var folders: String {
         """
         K="$HOME/\(root)"
+        mkdir -p "$K" && chmod 700 "$K"
+        \(CommandEnvironment.keepScript)
         export XDG_DATA_HOME="$K/data" XDG_CONFIG_HOME="$K/config" XDG_STATE_HOME="$K/state" XDG_CACHE_HOME="$K/cache" npm_config_cache="$K/cache/npm" BUN_INSTALL="$K/cache/bun" KUVO_INTEGRATIONS="$K/integrations" TMPDIR="$K/tmp"
         mkdir -p "$K/data" "$K/config" "$K/state" "$K/cache" "$K/workspace" "$K/integrations" "$K/tmp"
         find "$K/tmp" -mindepth 1 -maxdepth 1 -mtime +3 -exec rm -rf {} + 2>/dev/null
@@ -207,8 +226,9 @@ public struct RemoteEngineInstaller: Sendable {
 /// the machine's localhost only, behind a password, and this Mac reaches it through an SSH tunnel.
 /// Its settings and secrets
 /// (the password, accounts) go over the session's input rather than a command line, so other users
-/// of the machine can't read them in its process list, and the accounts are never written to its
-/// disk. What's needed to find it again (its process, port and password) is kept in
+/// of the machine can't read them in its process list. Accounts copied there are kept in its
+/// engine's own store, in `~/.kuvo-code/data`, readable by that user only, and signed out when the
+/// machine is removed. What's needed to find it again (its process, port and password) is kept in
 /// `~/.kuvo-code/run/engine.json`, readable by that user only, who could read it from the engine's
 /// process anyway. If the app hasn't been connected for a day, the engine stops by itself.
 public final class RemoteServer: @unchecked Sendable {
@@ -220,17 +240,68 @@ public final class RemoteServer: @unchecked Sendable {
         public var version: String
         /// The app's own notes on how it started it, kept with it.
         public var notes: [String: String]
+        /// The agents bridge beside it (`kuvo-agents.js`), when it was started with one: where it
+        /// listens on the machine's localhost, behind its own password.
+        public var agents: Agents?
+
+        public struct Agents: Codable, Sendable, Equatable {
+            public var port: Int
+            public var password: String
+        }
+
+        public init(pid: Int, port: Int, password: String, version: String, notes: [String: String], agents: Agents?) {
+            self.pid = pid
+            self.port = port
+            self.password = password
+            self.version = version
+            self.notes = notes
+            self.agents = agents
+        }
+
+        // The record keeps the bridge's port and password under names of their own, at the top
+        // (`agentsPort`, `agentsPassword`): scripts on the machine (kuvo-wake's) take the first
+        // `"port"` and `"password"` they find, whatever order the keys come in.
+        private enum CodingKeys: String, CodingKey { case pid, port, password, version, notes, agentsPort, agentsPassword, agents }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            pid = try container.decodeIfPresent(Int.self, forKey: .pid) ?? 0
+            port = try container.decode(Int.self, forKey: .port)
+            password = try container.decode(String.self, forKey: .password)
+            version = try container.decode(String.self, forKey: .version)
+            notes = try container.decodeIfPresent([String: String].self, forKey: .notes) ?? [:]
+            if let port = try container.decodeIfPresent(Int.self, forKey: .agentsPort), let password = try container.decodeIfPresent(String.self, forKey: .agentsPassword) {
+                agents = Agents(port: port, password: password)
+            } else {
+                // As test builds wrote it.
+                agents = try container.decodeIfPresent(Agents.self, forKey: .agents)
+            }
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(pid, forKey: .pid)
+            try container.encode(port, forKey: .port)
+            try container.encode(password, forKey: .password)
+            try container.encode(version, forKey: .version)
+            try container.encode(notes, forKey: .notes)
+            try container.encodeIfPresent(agents?.port, forKey: .agentsPort)
+            try container.encodeIfPresent(agents?.password, forKey: .agentsPassword)
+        }
     }
 
     public let engine: Engine
     public let endpoint: ServerEndpoint
+    /// The agents bridge beside it, through the same tunnel.
+    public let agentsEndpoint: ServerEndpoint?
     public let connection: SSHConnection
     private let tunnel: Process
     private let log: LogTail
 
-    private init(engine: Engine, endpoint: ServerEndpoint, connection: SSHConnection, tunnel: Process, log: LogTail) {
+    private init(engine: Engine, endpoint: ServerEndpoint, agentsEndpoint: ServerEndpoint?, connection: SSHConnection, tunnel: Process, log: LogTail) {
         self.engine = engine
         self.endpoint = endpoint
+        self.agentsEndpoint = agentsEndpoint
         self.connection = connection
         self.tunnel = tunnel
         self.log = log
@@ -260,33 +331,45 @@ public final class RemoteServer: @unchecked Sendable {
     }
 
     /// Starts the engine on the machine, on its own, and waits until it's listening. `environment`
-    /// is handed to it, with values on one line each; `notes` are kept with it.
-    public static func launch(on connection: SSHConnection, environment base: [String: String], notes: [String: String] = [:]) async throws -> Engine {
+    /// is handed to it, with values on one line each; `notes` are kept with it. `withAgents`: the
+    /// agents bridge (`bin/kuvo-agents.js`, put there first) starts beside it.
+    public static func launch(on connection: SSHConnection, environment base: [String: String], notes: [String: String] = [:], withAgents: Bool = false) async throws -> Engine {
         var lastError: Error = RemoteEngineError.timedOut
         // A port someone else took on the machine: try another.
         for _ in 0..<3 {
-            var engine = Engine(pid: 0, port: Int.random(in: 20_000..<60_000), password: ServerProcess.randomPassword(), version: OpenCodeEngine.version, notes: notes)
+            let port = Int.random(in: 20_000..<60_000)
+            let agents = withAgents ? Engine.Agents(port: (port - 20_000 + Int.random(in: 1..<40_000)) % 40_000 + 20_000, password: ServerProcess.randomPassword()) : nil
+            var engine = Engine(pid: 0, port: port, password: ServerProcess.randomPassword(), version: OpenCodeEngine.version, notes: notes, agents: agents)
             var environment = base
             environment["OPENCODE_PASSWORD"] = engine.password
             environment["OPENCODE_CLIENT"] = "desktop"
             environment.removeValue(forKey: "OPENCODE_SERVER_PASSWORD")
             // What's kept to find it again, but its process, which the script adds.
-            struct Record: Encodable { var port: Int, password: String, version: String, notes: [String: String] }
-            let record = String(decoding: try JSONEncoder().encode(Record(port: engine.port, password: engine.password, version: engine.version, notes: engine.notes)), as: UTF8.self)
+            struct Record: Encodable { var port: Int, password: String, version: String, notes: [String: String], agentsPort: Int?, agentsPassword: String? }
+            let record = String(decoding: try JSONEncoder().encode(Record(port: engine.port, password: engine.password, version: engine.version, notes: engine.notes, agentsPort: agents?.port, agentsPassword: agents?.password)), as: UTF8.self)
             environment["KUVO_RECORD"] = String(record.dropFirst())
             environment["KUVO_PORT"] = String(engine.port)
+            if let agents {
+                environment["KUVO_AGENTS_PORT"] = String(agents.port)
+                environment["KUVO_AGENTS_PASSWORD"] = agents.password
+            }
             let lines = environment.sorted { $0.key < $1.key }
                 .filter { !$0.value.contains("\n") }
                 .map { "\($0.key)=\($0.value)\n" }
                 .joined() + "\n"
+            _ = clearedLeftovers
             let input = FileManager.default.temporaryDirectory.appending(path: "kuvo-engine-\(UUID().uuidString)")
-            // Only this user can read it, and it's gone as soon as ssh has sent it.
+            // Only this user can read it, and it's gone as soon as ssh has sent it (or, if the app
+            // stopped first, the next time it starts one).
             FileManager.default.createFile(atPath: input.path, contents: Data(lines.utf8), attributes: [.posixPermissions: 0o600])
             defer { try? FileManager.default.removeItem(at: input) }
             do {
-                let pid = try await connection.run(launchScript, input: input).trimmingCharacters(in: .whitespacesAndNewlines)
-                guard let pid = Int(pid) else { throw RemoteEngineError.unreadableHandshake(pid) }
+                // Its process, and the agents bridge's port when it had to take another.
+                let said = try await connection.run(launchScript, input: input).trimmingCharacters(in: .whitespacesAndNewlines)
+                let parts = said.split(separator: " ").map(String.init)
+                guard let pid = parts.first.flatMap({ Int($0) }) else { throw RemoteEngineError.unreadableHandshake(said) }
                 engine.pid = pid
+                if parts.count > 1, let port = Int(parts[1]) { engine.agents?.port = port }
                 return engine
             } catch RemoteEngineError.ssh(let status, let message) where status == 3 && message.localizedCaseInsensitiveContains("in use") {
                 lastError = RemoteEngineError.exited(status: status, output: message)
@@ -297,6 +380,9 @@ public final class RemoteServer: @unchecked Sendable {
         throw lastError
     }
 
+    /// Settings for the engine that stay out of its environment (see `launchScript`).
+    public static let privateSettingsVariable = "KUVO_PRIVATE_SETTINGS"
+
     /// Reads the settings from the input, gives the engine its own folders under `~/.kuvo-code`,
     /// starts it in a session of its own on the machine's localhost, writes down how to find it,
     /// and starts its watchdog. Prints its process once it listens.
@@ -304,37 +390,66 @@ public final class RemoteServer: @unchecked Sendable {
     /// `KUVO_SETTINGS`, when it's given, becomes the engine's settings file there (its global
     /// settings, which a project's own outrank), in place of what was there.
     ///
-    /// Every minute the watchdog sends bots' wake-ups that are due ([Wakes]). Every ten, it stops
-    /// the engine if the app hasn't been around for a day and no wake-up is waiting.
+    /// `privateSettingsVariable`, when it's given, is the rest of your settings, which can hold
+    /// secrets (a server's environment or headers): written to a file only this user can read in
+    /// `keys`, which the engine reads (`OPENCODE_CONFIG`, above its settings file and below a
+    /// project's own), never left in its environment.
+    ///
+    /// Integrations' keys (`KUVO_KEY_…`) go in files only this user can read, in `keys`, which the
+    /// settings name with `{file:…}`, never in the engine's environment, where the agent's own
+    /// commands (`env`, say) would print them. They're gone once the engine is: its watchdog takes
+    /// them away, unless an engine started since has put its own there.
+    ///
+    /// Every minute the watchdog sends bots' and sessions' wake-ups that are due ([Wakes]). Every
+    /// ten, it stops the engine if the app hasn't been around for a day and no wake-up is waiting.
+    ///
+    /// With `KUVO_AGENTS_PORT` and `KUVO_AGENTS_PASSWORD`, the agents bridge starts beside the
+    /// engine once it listens, with the same settings, and stops with it ([agentsScript]). Only it
+    /// gets its password, never the engine (whose agent's commands could print it) nor what starts
+    /// after it.
     static var launchScript: String {
         """
         while IFS= read -r line && [ -n "$line" ]; do export "$line"; done
         port=$KUVO_PORT; record=$KUVO_RECORD; unset KUVO_PORT KUVO_RECORD
+        aport=${KUVO_AGENTS_PORT-}; unset KUVO_AGENTS_PORT
         \(RemoteEngineInstaller.folders)
         if [ -n "${KUVO_SETTINGS+set}" ]; then
           mkdir -p "$K/config/opencode" && (umask 077; printf '%s\\n' "$KUVO_SETTINGS" >"$K/config/opencode/opencode.json")
           unset KUVO_SETTINGS
         fi
         R="$K/run"; mkdir -p "$R"; chmod 700 "$R"
+        launch="$$.$(date +%s)"
+        rm -rf "$K/keys"; mkdir -p "$K/keys"; chmod 700 "$K/keys"; echo "$launch" >"$K/keys/.launch"
+        for v in $(env | sed -n 's/^\\(KUVO_KEY_[A-Za-z0-9_]*\\)=.*/\\1/p'); do
+          (umask 077; printf '%s' "$(printenv "$v")" >"$K/keys/$v"); unset "$v"
+        done
+        if [ -n "${\(privateSettingsVariable)+set}" ]; then
+          (umask 077; printenv \(privateSettingsVariable) >"$K/keys/settings.json")
+          export OPENCODE_CONFIG="$K/keys/settings.json"; unset \(privateSettingsVariable)
+        fi
         \(Wakes.installScript)
         \(Launcher.installScript)
+        \(CommandEnvironment.installScript)
         export PATH="$K/bin:$PATH"
+        # Bots' and sessions' folders under this root, for `kuvo-wake` (its default is the app's own root).
+        export KUVO_BOTS="$K/bots" KUVO_WAKES="$K/wakes"
         cd "$K/workspace"
         touch "$R/attached"
-        setsid "$K/engine/\(OpenCodeEngine.version)/opencode" serve --port "$port" --hostname 127.0.0.1 >"$R/engine.log" 2>&1 </dev/null &
+        env -u KUVO_AGENTS_PASSWORD setsid "$K/engine/\(OpenCodeEngine.version)/opencode" serve --port "$port" --hostname 127.0.0.1 >"$R/engine.log" 2>&1 </dev/null &
         pid=$!
         i=0
         until grep -q "server listening" "$R/engine.log" 2>/dev/null; do
-          if ! kill -0 "$pid" 2>/dev/null || [ $i -ge 900 ]; then tail -n 5 "$R/engine.log" >&2; kill "$pid" 2>/dev/null; exit 3; fi
+          if ! kill -0 "$pid" 2>/dev/null || [ $i -ge 900 ]; then tail -n 5 "$R/engine.log" >&2; kill "$pid" 2>/dev/null; rm -rf "$K/keys"; exit 3; fi
           sleep 0.1; i=$((i + 1))
         done
         (umask 077; printf '{"pid":%s,%s\n' "$pid" "$record" >"$R/engine.json")
+        \(agentsScript)
         # Kuvo Link, for the phones you've paired: beside the engine, once the Mac has set it up.
         if [ -f "$R/link.json" ] && [ -f "$K/bin/kuvo-link.js" ]; then
           KUVO_HOME="$K" BUN_BE_BUN=1 BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 setsid "$K/engine/\(OpenCodeEngine.version)/opencode" "$K/bin/kuvo-link.js" run >"$R/link.log" 2>&1 </dev/null &
         fi
-        setsid sh -c 'i=0; while kill -0 "$1" 2>/dev/null; do sleep 60; "$3/bin/kuvo-wake" fire "$3/bots" "$2/engine.json" 2>/dev/null; i=$((i + 1)); [ $((i % 10)) -eq 0 ] || continue; { ls "$3"/bots/*/wakes/* || ls -d "$3"/bots/*/watches/*/; } >/dev/null 2>&1 && continue; [ -n "$(find "$2/attached" -mmin +1440 2>/dev/null)" ] && kill "$1"; done' watchdog "$pid" "$R" "$K" >/dev/null 2>&1 </dev/null &
-        echo "$pid"
+        setsid sh -c 'i=0; while kill -0 "$1" 2>/dev/null; do sleep 60; grep -q "\\"pid\\":$1," "$2/engine.json" 2>/dev/null || break; "$3/bin/kuvo-wake" fire "$3/bots" "$2/engine.json" 2>/dev/null; i=$((i + 1)); [ $((i % 10)) -eq 0 ] || continue; { ls "$3"/bots/*/wakes/* || ls -d "$3"/bots/*/watches/*/ || ls "$3"/wakes/*/wakes/* || ls -d "$3"/wakes/*/watches/*/; } >/dev/null 2>&1 && continue; [ -n "$(find "$2/attached" -mmin +1440 2>/dev/null)" ] && kill "$1"; done; [ "$(cat "$3/keys/.launch" 2>/dev/null)" = "$4" ] && rm -rf "$3/keys"' watchdog "$pid" "$R" "$K" "$launch" >/dev/null 2>&1 </dev/null &
+        echo "$pid${aport:+ $aport}"
         """
     }
 
@@ -347,12 +462,21 @@ public final class RemoteServer: @unchecked Sendable {
         onExit: @escaping @Sendable (Int32) -> Void = { _ in }
     ) async throws -> RemoteServer {
         let localPort = try freeLocalPort()
-        let forwards = ["-N", "-o", "ExitOnForwardFailure=yes", "-L", "\(localPort):127.0.0.1:\(engine.port)"]
+        var forwards = ["-o", "ExitOnForwardFailure=yes", "-L", "\(localPort):127.0.0.1:\(engine.port)"]
+        // The agents bridge beside it, through the same connection.
+        var agentsEndpoint: ServerEndpoint?
+        if let agents = engine.agents {
+            let agentsPort = try freeLocalPort(besides: localPort)
+            forwards += ["-L", "\(agentsPort):127.0.0.1:\(agents.port)"]
+            agentsEndpoint = ServerEndpoint(url: URL(string: "http://127.0.0.1:\(agentsPort)")!, password: agents.password)
+        }
 
         let process = Process()
         process.executableURL = URL(filePath: "/usr/bin/ssh")
-        process.arguments = SSHConnection.options + SSHConnection.separate + forwards + [connection.destination]
-        process.standardInput = FileHandle.nullDevice
+        // Not `-N`: a command on the machine that reads this app's end of a pipe, so the tunnel
+        // ends when the app does, however it ends (a crash, a force quit), like this Mac's engine.
+        process.arguments = SSHConnection.options + SSHConnection.separate + forwards + [connection.destination, "cat >/dev/null"]
+        process.standardInput = Pipe.unshared()
         process.standardOutput = FileHandle.nullDevice
         let stderr = Pipe.unshared()
         process.standardError = stderr
@@ -371,21 +495,23 @@ public final class RemoteServer: @unchecked Sendable {
         let client = HTTPClient(endpoint: endpoint)
         struct Info: Decodable { var version: String }
         let deadline = ContinuousClock.now + timeout
-        while true {
-            if !process.isRunning {
-                process.waitUntilExit()
-                _ = exits.fire()
-                throw RemoteEngineError.exited(status: process.terminationStatus, output: log.text.trimmingCharacters(in: .whitespacesAndNewlines))
+        do {
+            while true {
+                if !process.isRunning {
+                    process.waitUntilExit()
+                    throw RemoteEngineError.exited(status: process.terminationStatus, output: log.text.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
+                if (try? await client.send(client.request("GET", "api/info"), as: Info.self)) != nil { break }
+                if ContinuousClock.now > deadline { throw RemoteEngineError.timedOut }
+                try await Task.sleep(for: .milliseconds(150))
             }
-            if (try? await client.send(client.request("GET", "api/info"), as: Info.self)) != nil { break }
-            if ContinuousClock.now > deadline {
-                _ = exits.fire()
-                process.terminate()
-                throw RemoteEngineError.timedOut
-            }
-            try await Task.sleep(for: .milliseconds(150))
+        } catch {
+            // Given up on, or cancelled (a reconnect called off): the tunnel goes with it.
+            _ = exits.fire()
+            if process.isRunning { process.terminate() }
+            throw error
         }
-        return RemoteServer(engine: engine, endpoint: endpoint, connection: connection, tunnel: process, log: log)
+        return RemoteServer(engine: engine, endpoint: endpoint, agentsEndpoint: agentsEndpoint, connection: connection, tunnel: process, log: log)
     }
 
     /// Closes the tunnel. The engine keeps running on the machine.
@@ -396,9 +522,50 @@ public final class RemoteServer: @unchecked Sendable {
 
     deinit { disconnect() }
 
+    /// Starts the agents bridge beside the engine (`$pid`, listening on `$port`), when it's asked
+    /// for (`$aport`, and its password in the environment) and on the machine: in a session of its
+    /// own, from the engine's workspace, with everything it keeps in `$K/agents`; an older one there
+    /// stops first. It stops by itself when the engine does; one that stops otherwise (it crashed)
+    /// starts again, a few times. A port someone else has (it says so, exiting 98) gives way to
+    /// another, written in the engine's record and said with its process (`$aport`). What runs it
+    /// is kept in `run/agents.pid`.
+    static var agentsScript: String {
+        """
+        if [ -n "$aport" ] && [ -n "${KUVO_AGENTS_PASSWORD-}" ] && [ -f "$K/bin/kuvo-agents.js" ]; then
+          \(stopAgentsScript)
+          mkdir -p "$K/agents" && chmod 700 "$K/agents"
+          try=0
+          while :; do
+            : >"$R/agents.log"
+            KUVO_AGENTS_REMOTE=1 KUVO_AGENTS_HOME="$K/agents" KUVO_HOME="$K" KUVO_AGENTS_PORT="$aport" KUVO_ENGINE_PORT="$port" KUVO_ENGINE_PID="$pid" BUN_BE_BUN=1 BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 setsid sh -c 'n=0; while kill -0 "$1" 2>/dev/null && [ $n -lt 5 ]; do "$2" "$3" >>"$4" 2>&1 </dev/null; [ $? -eq 98 ] && exit 98; n=$((n + 1)); sleep 5; done' kuvo-agents "$pid" "$K/engine/\(OpenCodeEngine.version)/opencode" "$K/bin/kuvo-agents.js" "$R/agents.log" </dev/null >/dev/null 2>&1 &
+            apid=$!
+            echo "$apid" >"$R/agents.pid"
+            i=0; until grep -q '"url"' "$R/agents.log" 2>/dev/null || ! kill -0 "$apid" 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i + 1)); done
+            kill -0 "$apid" 2>/dev/null && break
+            try=$((try + 1)); [ $try -ge 3 ] && break
+            old=$aport; aport=$(( $(od -An -N2 -tu2 /dev/urandom | tr -d ' ') % 40000 + 20000 ))
+            sed -i "s/\\"agentsPort\\":$old\\([,}]\\)/\\"agentsPort\\":$aport\\1/" "$R/engine.json"
+          done
+        fi
+        unset KUVO_AGENTS_PASSWORD
+        """
+    }
+
+    /// Stops the agents bridge running there, if one is (needs `$R`), and waits a moment for it to
+    /// put away what it has.
+    static var stopAgentsScript: String {
+        """
+        apid=$(cat "$R/agents.pid" 2>/dev/null)
+        if [ -n "$apid" ] && grep -q kuvo-agents "/proc/$apid/cmdline" 2>/dev/null; then kill -- "-$apid" 2>/dev/null || kill "$apid" 2>/dev/null; i=0; while kill -0 "$apid" 2>/dev/null && [ $i -lt 30 ]; do sleep 0.1; i=$((i + 1)); done; fi
+        rm -f "$R/agents.pid"
+        """
+    }
+
     static var stopScript: String {
         """
         R="\(run)"
+        rm -rf "${R%/run}/keys"
+        \(stopAgentsScript)
         [ -f "$R/engine.json" ] || exit 0
         pid=$(sed -n 's/^{"pid":\\([0-9]*\\),.*/\\1/p' "$R/engine.json")
         [ -n "$pid" ] && grep -q opencode "/proc/$pid/cmdline" 2>/dev/null && kill "$pid"
@@ -406,16 +573,21 @@ public final class RemoteServer: @unchecked Sendable {
         """
     }
 
+    /// What stops the engine, as part of a longer script (in a shell of its own: it ends early when
+    /// there's nothing to stop).
+    public static var stopCommand: String { "(\n" + stopScript + "\n)" }
+
     /// Stops the engine on the machine, if it's running.
     public static func stop(on connection: SSHConnection) async throws {
         try await connection.run(stopScript)
     }
 
     /// Stops the engine on the machine without waiting more than `timeout`, for when the app quits.
-    /// With `unlessWaking`, an engine with bots' wake-ups waiting keeps running, to send them.
-    /// `first` runs before, either way.
+    /// With `unlessWaking`, an engine with bots' or sessions' wake-ups waiting keeps running, to
+    /// send them. `first` runs before, either way.
     public static func stopNow(on connection: SSHConnection, timeout: TimeInterval = 3, unlessWaking: Bool = false, first: String = "") {
-        let waiting = "{ ls \"$HOME/\(RemoteEngineInstaller.root)\"/bots/*/wakes/* || ls -d \"$HOME/\(RemoteEngineInstaller.root)\"/bots/*/watches/*/; } >/dev/null 2>&1 && exit 0\n"
+        let root = "\"$HOME/\(RemoteEngineInstaller.root)\""
+        let waiting = "{ ls \(root)/bots/*/wakes/* || ls -d \(root)/bots/*/watches/*/ || ls \(root)/wakes/*/wakes/* || ls -d \(root)/wakes/*/watches/*/; } >/dev/null 2>&1 && exit 0\n"
         runNow(first + (unlessWaking ? waiting : "") + stopScript, on: connection, timeout: timeout)
     }
 
@@ -452,6 +624,15 @@ public final class RemoteServer: @unchecked Sendable {
         _ = try? await connection.run("touch \"\(run)/attached\" 2>/dev/null || true")
     }
 
+    /// A port nobody on this Mac is listening on right now, other than `taken`.
+    static func freeLocalPort(besides taken: Int) throws -> Int {
+        for _ in 0..<5 {
+            let port = try freeLocalPort()
+            if port != taken { return port }
+        }
+        throw POSIXError(.EADDRINUSE)
+    }
+
     /// A port nobody on this Mac is listening on right now.
     static func freeLocalPort() throws -> Int {
         let socket = Darwin.socket(AF_INET, SOCK_STREAM, 0)
@@ -486,3 +667,15 @@ final class ExitSignal: @unchecked Sendable {
 }
 
 #endif
+
+/// Launch files an earlier run of the app left when it stopped mid-launch: they hold every key
+/// and the engine's password. Cleared once, before the first launch.
+private let clearedLeftovers: Void = {
+    let folder = FileManager.default.temporaryDirectory
+    let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+    for name in names where name.hasPrefix("kuvo-engine-") {
+        let file = folder.appending(path: name)
+        let changed = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+        if changed.timeIntervalSinceNow < -600 { try? FileManager.default.removeItem(at: file) }
+    }
+}()

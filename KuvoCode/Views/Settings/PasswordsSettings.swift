@@ -64,6 +64,7 @@ struct PasswordsSettings: View {
                                 }
                                 .buttonStyle(IconButtonStyle(width: 28, height: 24))
                                 .help("Delete")
+                                .accessibilityLabel("Delete")
                             }
                         } label: {
                             Text(login.host)

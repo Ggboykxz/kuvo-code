@@ -9,6 +9,9 @@ final class BrowserSession: NSObject {
     private(set) var title = ""
     private(set) var url: URL?
     private(set) var isLoading = false
+    /// Why the last page didn't open, until another starts to: for the agent, which would see
+    /// only an empty tab or the page before.
+    fileprivate(set) var loadFailure: String?
     private(set) var canGoBack = false
     private(set) var canGoForward = false
     private(set) var progress = 0.0
@@ -156,6 +159,7 @@ final class BrowserSession: NSObject {
     init(configuration: WKWebViewConfiguration? = nil) {
         let configuration = configuration ?? Self.makeConfiguration()
         PasswordCapture.install(in: configuration)
+        Passkeys.install(in: configuration)
         // A size of its own, so a page lays out (and the agent can use it) before the panel shows it,
         // as a bot's tab does out of sight; the panel sizes it when it shows it.
         webView = WKWebView(frame: NSRect(x: 0, y: 0, width: 1024, height: 768), configuration: configuration)
@@ -194,9 +198,12 @@ final class BrowserSession: NSObject {
         guard let url = Self.url(from: input) else { return }
         // A question the page left open is turned down as you go elsewhere.
         if dialog != nil { answerDialog(accept: false) }
-        // A file on this Mac, with what's in its folder (its pictures, its styles).
+        // A file on this Mac, with what's in its folder (its pictures, its styles); a folder, with
+        // what's in it, not its parent's.
         if url.isFileURL {
-            webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+            var isFolder: ObjCBool = false
+            let folder = FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder) && isFolder.boolValue
+            webView.loadFileURL(url, allowingReadAccessTo: folder ? URL(filePath: url.path, directoryHint: .isDirectory) : url.deletingLastPathComponent())
         } else {
             webView.load(URLRequest(url: url))
         }
@@ -233,13 +240,14 @@ final class BrowserSession: NSObject {
     func fill(_ login: Passwords.Login) {
         guard let password = Passwords.password(for: login) else { return }
         Task {
-            _ = try? await webView.callAsyncJavaScript(Passwords.fillScript, arguments: ["username": login.account, "secret": password], contentWorld: Passwords.world)
+            _ = try? await webView.callAsyncJavaScript(Passwords.fillScript, arguments: ["username": login.account, "secret": password, "host": login.host], contentWorld: Passwords.world)
         }
     }
 
     /// What the toolbar's key offers for the page in view.
     func refreshLogins() {
-        guard let host = webView.url?.host() else {
+        // Filled in over https only, so offered there only.
+        guard let url = webView.url, url.scheme == "https", let host = url.host() else {
             savedLogins = []
             hasLoginField = false
             return
@@ -323,18 +331,16 @@ extension BrowserSession: WKUIDelegate {
         answer?(accept, text)
     }
 
-    /// The page's file picker: the Mac's open panel, over the window.
+    /// The page's file picker: the Mac's open panel, over the window. A page in no window (a bot's
+    /// out of view, say) gets none: you'd pick a file not knowing which page it goes to.
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor ([URL]?) -> Void) {
+        guard let window = webView.window else { return completionHandler(nil) }
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = parameters.allowsMultipleSelection
         panel.canChooseDirectories = parameters.allowsDirectories
         panel.canChooseFiles = true
         panel.prompt = "Choose"
-        if let window = webView.window {
-            panel.beginSheetModal(for: window) { response in completionHandler(response == .OK ? panel.urls : nil) }
-        } else {
-            completionHandler(panel.runModal() == .OK ? panel.urls : nil)
-        }
+        panel.beginSheetModal(for: window) { response in completionHandler(response == .OK ? panel.urls : nil) }
     }
 
     /// A window the page opens, a link or a script's, becomes a real window in a tab of its own, as
@@ -370,6 +376,25 @@ extension BrowserSession: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
         start(download)
+    }
+
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        loadFailure = nil
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        noteFailure(error)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        noteFailure(error)
+    }
+
+    private func noteFailure(_ error: Error) {
+        let error = error as NSError
+        // Stopped for another page, or become a download (WebKit's "frame load interrupted"): not a failure.
+        guard !(error.domain == NSURLErrorDomain && error.code == NSURLErrorCancelled), !(error.domain == "WebKitErrorDomain" && error.code == 102) else { return }
+        loadFailure = error.localizedDescription
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

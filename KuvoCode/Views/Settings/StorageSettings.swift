@@ -284,7 +284,15 @@ nonisolated struct StorageReport: Sendable {
             try? handle.truncate(atOffset: 0)
             try? handle.close()
         }
-        for log in (try? fm.contentsOfDirectory(at: appLogs, includingPropertiesForKeys: nil)) ?? [] { try? fm.removeItem(at: log) }
+        // The usage item's own log is open too: emptied, the rest removed.
+        for log in (try? fm.contentsOfDirectory(at: appLogs, includingPropertiesForKeys: nil)) ?? [] {
+            if log.lastPathComponent == "Usage.log", let handle = try? FileHandle(forWritingTo: log) {
+                try? handle.truncate(atOffset: 0)
+                try? handle.close()
+            } else {
+                try? fm.removeItem(at: log)
+            }
+        }
     }
 }
 
@@ -297,11 +305,15 @@ private struct OldSessions: View {
     @State private var keepsPinned = true
     @State private var isDeleting = false
 
-    /// This Mac's sessions, not a machine's, unused for the chosen time.
+    /// This Mac's sessions, not a machine's, unused for the chosen time. Not a bot's conversation
+    /// (the bot lives on in it, wake-ups and all, however long it's been quiet), nor one with a
+    /// message you started writing.
     private var old: [Session] {
         let cutoff = (Date.now.timeIntervalSince1970 - Double(days) * 86_400) * 1000
+        let bots = workspace.botSessions
         return workspace.sessions
             .filter { $0.time.updated < cutoff && !RemoteFolder.isRemote($0.location.directory) && !(keepsPinned && Workspace.isPinned($0)) && !workspace.running.contains($0.id) }
+            .filter { !bots.contains($0.id) && !Workspace.isBotFolder($0.location.directory) && Drafts.shared[$0.id].isEmpty }
             .sorted { $0.time.updated < $1.time.updated }
     }
 

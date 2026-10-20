@@ -84,7 +84,8 @@ struct SidebarView: View {
                     SidebarSearchRow(text: $search)
 
                     if !search.isEmpty {
-                        let inConversations = conversationResults.filter { found in !results.contains { $0.id == found.session.id } }
+                        // Not those already found by name, nor one deleted since the search.
+                        let inConversations = conversationResults.filter { found in !results.contains { $0.id == found.session.id } && workspace.session(found.session.id) != nil }
                         if !results.isEmpty || inConversations.isEmpty {
                             SectionHeader(title: "Results") { EmptyView() }
                         }
@@ -134,6 +135,7 @@ struct SidebarView: View {
                                     .hoverHighlight(in: RoundedRectangle(cornerRadius: 6), mutesInk: true)
                             }
                             .help("New Bot or Group Chat")
+                            .accessibilityLabel("New Bot or Group Chat")
                         } else {
                             Button(action: newBot) {
                                 Image(systemName: "plus")
@@ -141,6 +143,7 @@ struct SidebarView: View {
                             }
                             .buttonStyle(IconButtonStyle(width: 22, height: 22))
                             .help("New Bot…")
+                            .accessibilityLabel("New Bot")
                         }
                     }
                     if !isFolded("bots") {
@@ -182,6 +185,7 @@ struct SidebarView: View {
                         }
                         .buttonStyle(IconButtonStyle(width: 22, height: 22))
                         .help("New Project… (⇧⌘N)")
+                        .accessibilityLabel("New Project")
                     }
                     if !isFolded("projects") {
                         if workspace.isLoaded && workspace.projects.isEmpty {
@@ -211,6 +215,7 @@ struct SidebarView: View {
                 .padding(.vertical, 10)
             }
             .scrollIndicators(.never)
+            .fadingScrollEdges()
 
             if !Analytics.shared.noticeShown {
                 AnalyticsNotice()
@@ -252,7 +257,8 @@ struct SidebarView: View {
         // Another session picked: a rename in another row ends, keeping what was typed.
         .onChange(of: selection) { if renaming?.id != selection { renaming = nil } }
         // Titles match as you type; conversations once you pause.
-        .task(id: search) {
+        // Again once the sessions are in: a search typed while they load found none.
+        .task(id: "\(search)\n\(workspace.isLoaded)") {
             let query = search.trimmingCharacters(in: .whitespaces)
             guard query.count >= 3 else {
                 conversationResults = []
@@ -324,28 +330,41 @@ struct SidebarView: View {
         guard hasOwnWorktree(session) else { return ask(session) }
         let directory = session.location.directory
         Task {
-            worktreeIsDirty = await Task.detached { Git.hasUncommittedChanges(in: directory) }.value
+            worktreeIsDirty = await Task.detached { Git.hasUncommittedChanges(in: directory, includingHidden: true) }.value
             ask(session)
         }
     }
 
     private func archive(_ session: Session, removingWorktree: Bool) {
+        let discarding = worktreeIsDirty
         Task {
-            if removingWorktree { await removeWorktree(of: session) }
+            // A worktree that stays keeps its session in the list too.
+            if removingWorktree, !(await removeWorktree(of: session, discarding: discarding)) { return }
             await workspace.setArchived(session.id, true)
         }
     }
 
     private func delete(_ session: Session, removingWorktree: Bool) {
         if selection == session.id { selection = nil }
+        let discarding = worktreeIsDirty
         Task {
-            if removingWorktree { await removeWorktree(of: session) }
+            // Deleted either way, as you asked; a worktree that stays shows in Settings › Worktrees.
+            if removingWorktree { await removeWorktree(of: session, discarding: discarding) }
             await workspace.delete(session.id)
         }
     }
 
-    private func removeWorktree(of session: Session) async {
-        do { try await workspace.removeWorktree(session.location.directory) } catch { NSAlert(error: error).runModal() }
+    /// Whether it went; why not, if not, in an alert. `discarding`: you were told its changes that
+    /// aren't committed go.
+    @discardableResult
+    private func removeWorktree(of session: Session, discarding: Bool) async -> Bool {
+        do {
+            try await workspace.removeWorktree(session.location.directory, discardingChanges: discarding)
+            return true
+        } catch {
+            Modal.show(error)
+            return false
+        }
     }
 
     // MARK: Projects
@@ -413,6 +432,7 @@ struct SidebarView: View {
             }
             .buttonStyle(IconButtonStyle(width: 22, height: 22))
             .help("New Chat (⌥⌘N)")
+            .accessibilityLabel("New Chat")
         }
         if !isFolded("chats") {
             if selection == draft {
@@ -510,11 +530,13 @@ struct SidebarView: View {
             EmptyView()
         } title: {
             if renaming == RenameTarget(id: session.id, place: place) {
+                // Each ends only its own rename: one started on another row meanwhile stays.
+                let target = RenameTarget(id: session.id, place: place)
                 InlineTitleField(original: session.title ?? "") { title in
                     Task { await workspace.rename(session.id, to: title) }
-                    renaming = nil
+                    if renaming == target { renaming = nil }
                 } cancel: {
-                    renaming = nil
+                    if renaming == target { renaming = nil }
                 }
             } else {
                 Text(session.title ?? "New Session")
@@ -548,19 +570,23 @@ struct SidebarView: View {
             let panel = NSSavePanel()
             panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
             panel.nameFieldStringValue = (session.title ?? "Conversation").replacingOccurrences(of: "/", with: "-") + ".md"
-            guard panel.runModal() == .OK, let url = panel.url else { return }
+            guard await Modal.run({ panel.runModal() }) == .OK, let url = panel.url else { return }
             try text.write(to: url, atomically: true, encoding: .utf8)
             Analytics.shared.track("session_exported", ["how": "file"])
         } catch {
-            NSAlert(error: error).runModal()
+            Modal.show(error)
         }
     }
 
     /// `place`: where the row is, for renaming it there; nil for a row that can't show it (a
     /// conversation search result).
     @ViewBuilder private func menu(for session: Session, in place: Place? = nil) -> some View {
-        // On a machine that's away, the session is as last seen: what it does waits for it.
-        if let engine = app.machines.engine(workspace.waitingMachine(for: session.id)) {
+        // A bot's own conversation (found by a search): the bot's menu. Deleting, archiving or
+        // renaming it as a session would leave the bot without its conversation.
+        if let bot = bots.list.first(where: { $0.sessionID == session.id }) {
+            Button("Edit Bot…") { editBot(bot) }
+        } else if let engine = app.machines.engine(workspace.waitingMachine(for: session.id)) {
+            // On a machine that's away, the session is as last seen: what it does waits for it.
             Text("\(engine.machine.name) isn’t connected")
             switch engine.state {
             case .starting, .downloading: Text("Connecting…")
@@ -600,7 +626,7 @@ struct SidebarView: View {
                     Clipboard.copy(text)
                     Analytics.shared.track("session_exported", ["how": "copy"])
                 } catch {
-                    NSAlert(error: error).runModal()
+                    Modal.show(error)
                 }
             }
         }
@@ -678,6 +704,7 @@ private struct ConversationResultRow: View {
             .modifier(RowHighlight(isSelected: isSelected))
         }
         .buttonStyle(.plain)
+        .clickablePointer()
     }
 }
 
@@ -761,6 +788,7 @@ private struct SidebarRow<Icon: View, Title: View, Accessory: View>: View {
         } else {
             Button(action: action) { row }
                 .buttonStyle(.plain)
+                .clickablePointer()
         }
     }
 
@@ -830,6 +858,7 @@ private struct ProjectRow: View {
             .hoverHighlight(selected: false)
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .overlay(alignment: .trailing) {
             Button(action: newSession) {
                 Image(systemName: "square.and.pencil")
@@ -939,6 +968,7 @@ private struct FaceRow<Face: View, Subtitle: View, Trailing: View>: View {
             .modifier(RowHighlight(isSelected: isSelected))
         }
         .buttonStyle(.plain)
+        .clickablePointer()
     }
 }
 
@@ -971,7 +1001,7 @@ private struct BotRow: View {
         .onHover { isHovering = $0 }
         // Read again whenever it's done some work: it may have scheduled a wake-up.
         .task(id: session?.time.updated) {
-            await bots.readWakes(bot)
+            await app.wakeUps.read(bot.wakeOwner)
             if hasNews { await workspace.loadReplyPreview(bot.sessionID) }
         }
     }
@@ -1058,10 +1088,12 @@ private struct SectionHeader<Trailing: View>: View {
                             .foregroundStyle(.tertiary)
                             .rotationEffect(.degrees(isFolded.wrappedValue ? -90 : 0))
                             .opacity(isHovering || isFolded.wrappedValue ? 1 : 0)
+                            .accessibilityHidden(true)
                     }
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
+                .clickablePointer()
                 .help(isFolded.wrappedValue ? "Show \(title)" : "Hide \(title)")
                 .accessibilityValue(isFolded.wrappedValue ? "Collapsed" : "Expanded")
             } else {
@@ -1108,7 +1140,7 @@ private struct MoveToProjectMenu: View {
             do {
                 try await workspace.move(session.id, toProject: directory)
             } catch {
-                NSAlert(error: error).runModal()
+                Modal.show(error)
             }
         }
     }
@@ -1117,6 +1149,7 @@ private struct MoveToProjectMenu: View {
 /// How a session is doing, at the end of its row.
 private struct SessionStatus: View {
     @Environment(Workspace.self) private var workspace
+    @Environment(AppModel.self) private var app
     let session: Session
 
     var body: some View {
@@ -1136,6 +1169,17 @@ private struct SessionStatus: View {
         } else if session.isUnread {
             Circle().fill(.tint).frame(width: 7, height: 7)
                 .help("Finished")
+        } else if let next = app.wakeUps.wakes[session.id]?.first {
+            // It wakes itself up later (a bot's row says so in words).
+            Image(systemName: "alarm")
+                .font(.system(size: 11))
+                .foregroundStyle(.tint)
+                .help("Wakes up " + next.due.formatted(Date.RelativeFormatStyle(presentation: .named, unitsStyle: .wide)))
+        } else if app.wakeUps.watches[session.id]?.isEmpty == false {
+            Image(systemName: "eye")
+                .font(.system(size: 11))
+                .foregroundStyle(.tint)
+                .help("Watching for a change")
         }
     }
 }
@@ -1159,20 +1203,36 @@ private struct AccountsRow: View {
                 } else {
                     HStack(spacing: 8) {
                         ForEach(catalog.connectedProviders.prefix(3)) { provider in
-                            ProviderLogo(id: provider.id, size: 18, colored: true)
+                            ProviderLogo(id: OutsideAgents.logo(provider.id), size: 18, colored: true)
                         }
                     }
                 }
                 Text(label)
                     .font(.system(size: 14))
                 Spacer()
+                // One needs you: its sign-in ended, or it's at its usage limit.
+                if !problems.isEmpty {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.orange)
+                        .accessibilityLabel(problemsText)
+                }
             }
             .padding(.horizontal, 10)
             .frame(height: 38)
             .contentShape(.rect)
             .hoverHighlight(selected: false)
         }
-        .help("Accounts, usage, Settings and help")
+        .help(problems.isEmpty ? "Accounts, usage, Settings and help" : problemsText)
+    }
+
+    private var problems: [(name: String, problem: AccountProblem)] {
+        catalog.accountProblems(limits: app.agents.auto)
+    }
+
+    /// "Antigravity: sign in again. Claude Code: at its usage limit."
+    private var problemsText: String {
+        problems.map { "\($0.name): \($0.problem.short)." }.joined(separator: " ")
     }
 
     private func makeMenu() -> NSMenu {
@@ -1180,7 +1240,7 @@ private struct AccountsRow: View {
         let providers = catalog.connectedProviders
         let accounts = ActionItem(
             providers.isEmpty ? "Connect an Account" : "Accounts",
-            subtitle: providers.isEmpty ? "Sign in with a subscription, or add an API key" : Self.list(providers.map(\.name)),
+            subtitle: !problems.isEmpty ? problemsText : providers.isEmpty ? "Sign in with a subscription, or add an API key" : Self.list(providers.map(\.name)),
             image: Self.symbol("person.crop.circle"),
             handler: { showProviders() }
         )

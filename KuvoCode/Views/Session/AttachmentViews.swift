@@ -36,11 +36,15 @@ nonisolated enum AttachmentItem: Identifiable, Sendable {
         return url.flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
     }
 
-    /// From the file name first (a `.swift` file is more than "text"), then the stored type.
+    /// From the file name when it says more than the stored type (a `.swift` file is more than
+    /// "text") or that says nothing; the stored type otherwise, so a name can't make a picture a
+    /// script.
     var type: UTType? {
         let byName = UTType(filenameExtension: (name as NSString).pathExtension)
-        if case .stored(let file, _) = self { return byName ?? UTType(mimeType: file.mime) }
-        return byName
+        guard case .stored(let file, _) = self, let declared = UTType(mimeType: file.mime) else { return byName }
+        guard let byName else { return declared }
+        let saysMore = byName.conforms(to: declared) || (declared.conforms(to: .text) && byName.conforms(to: .text))
+        return saysMore || declared.isDynamic || declared == .data ? byName : declared
     }
 
     var isImage: Bool { type?.conforms(to: .image) == true }
@@ -58,34 +62,61 @@ nonisolated enum AttachmentItem: Identifiable, Sendable {
     }
 
     private var byteCount: Int? {
-        if case .stored(let file, _) = self, let data = file.data { return data.count * 3 / 4 }
+        if case .stored(let file, _) = self, let size = file.size { return size }
         return (try? fileURL?.resourceValues(forKeys: [.fileSizeKey]))??.fileSize
     }
 
+    /// Changes with what it shows: a message's copy from the engine takes the place of the one
+    /// it was sent with, under the same id. Cheap, as views compare it each time they update.
+    var contentID: String {
+        guard case .stored(let file, let id) = self else { return id }
+        let source = switch file.source {
+        case .uri(let uri)? where uri.hasPrefix("data:"): Self.sample(uri)
+        case .uri(let uri)?: uri
+        case .inline?: "inline"
+        case nil: ""
+        }
+        return [id, file.mime, file.data.map(Self.sample) ?? "", source].joined(separator: "|")
+    }
+
+    /// A long string's length and two pieces of it: enough to tell two files apart without
+    /// reading them.
+    private static func sample(_ text: String) -> String {
+        let utf8 = text.utf8
+        let middle = utf8.index(utf8.startIndex, offsetBy: utf8.count / 2)
+        return "\(utf8.count)," + String(decoding: utf8[middle...].prefix(32), as: UTF8.self) + "," + String(decoding: utf8.suffix(32), as: UTF8.self)
+    }
+
     func loadImage() async -> NSImage? {
-        if let cached = AttachmentImages.cache.object(forKey: id as NSString) { return cached }
+        let key = contentID as NSString
+        if let cached = AttachmentImages.cache.object(forKey: key) { return cached }
         let item = self
         let image = await Task.detached(priority: .userInitiated) { () -> NSImage? in
             if let url = item.fileURL, let image = NSImage(contentsOf: url) { return image }
             if case .stored(let file, _) = item, let bytes = file.bytes { return NSImage(data: bytes) }
             return nil
         }.value
-        if let image { AttachmentImages.cache.setObject(image, forKey: id as NSString) }
+        if let image { AttachmentImages.cache.setObject(image, forKey: key) }
         return image
     }
 
-    /// Opens it in its app.
+    /// Opens it in its app. Anything that could run (an app, a script, an installer) shows in
+    /// Finder instead: a click on an attachment never runs it.
     func open() {
-        if let url = localURL() { NSWorkspace.shared.open(url) }
+        guard let url = localURL() else { return }
+        if Attachments.canRun(url) {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+        } else {
+            NSWorkspace.shared.open(url)
+        }
     }
 
-    /// Where it is on this Mac; a pasted image that only the engine has is written out first.
+    /// Where it is on this Mac; one that only the engine has (a pasted image, a tool's picture)
+    /// is written out first, as a download of its type.
     private func localURL() -> URL? {
         if let url = fileURL { return url }
         guard case .stored(let file, _) = self, let bytes = file.bytes else { return nil }
-        let ext = type?.preferredFilenameExtension ?? (name as NSString).pathExtension
-        let base = (name as NSString).deletingPathExtension
-        return Attachments.write(bytes, named: base, extension: ext.isEmpty ? "dat" : ext)
+        return Attachments.writeReceived(bytes, named: name, type: type)
     }
 
     func revealInFinder() {
@@ -149,6 +180,12 @@ struct ComposerAttachment: View {
         .contentShape(.rect(cornerRadius: 10))
         .onTapGesture { if item.isImage { ImageViewer.shared.show([item]) } }
         .help(reason.map { "\(url.path)\n\($0)" } ?? url.path)
+        // One element for VoiceOver, whose remove button is there only on hover.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(item.name)
+        .accessibilityValue(isPath ? "Sent as a path" : item.detail)
+        .accessibilityAction(named: "Remove", remove)
+        .accessibilityAction { if item.isImage { ImageViewer.shared.show([item]) } }
     }
 
     private var reason: String? {
@@ -184,7 +221,7 @@ private struct AttachmentIcon: View {
                     .frame(width: size, height: size)
             }
         }
-        .task(id: item.id) { if item.isImage { image = await item.loadImage() } }
+        .task(id: item.contentID) { if item.isImage { image = await item.loadImage() } }
     }
 
     private var icon: NSImage {
@@ -218,30 +255,67 @@ struct MessageAttachments: View {
     }
 }
 
+/// An image the agent made (generate_image, whichever agent's), in the conversation's flow as
+/// its widgets are: a line while it's being made, then the picture, large, to click for a closer look.
+struct MadePictureRow: View {
+    let call: Message.ToolCall
+
+    static func isMade(_ call: Message.ToolCall) -> Bool {
+        call.name == "generate_image"
+    }
+
+    var body: some View {
+        switch call.state {
+        case .completed(_, let output, _):
+            let items = StepPictures.items(in: output, step: call.id)
+            if items.isEmpty {
+                line("Made an image, but it isn't where it said", symbol: "photo")
+            } else {
+                StepPictures(items: items, height: 420, maxWidth: 560)
+            }
+        case .failed(_, let error, _, _):
+            line("Couldn't make the image: \(error.message)", symbol: "exclamationmark.triangle")
+        default:
+            HStack(spacing: 8) {
+                Spinner(size: 12)
+                Text("Making an image…")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func line(_ text: String, symbol: String) -> some View {
+        Label(text, systemImage: symbol)
+            .foregroundStyle(.secondary)
+    }
+}
+
 /// Pictures a step brought back (a screenshot of the page the agent browses), under the step.
 struct StepPictures: View {
     let items: [AttachmentItem]
+    /// How tall and wide one may be: a step's are small, an image the agent made is shown large.
+    var height: CGFloat?
+    var maxWidth: CGFloat = 360
 
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
             ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                AttachmentPicture(item: item, height: items.count == 1 ? 220 : 140) {
+                AttachmentPicture(item: item, height: height ?? (items.count == 1 ? 220 : 140), maxWidth: maxWidth) {
                     ImageViewer.shared.show(items, at: index)
                 }
             }
         }
     }
 
-    /// The pictures among a step's results, from the data they carry or the files they name.
+    /// The pictures among a step's results, from the data they carry or the files they name. A
+    /// name the tool gives keeps only its stem: the extension is the picture type's.
     static func items(in output: [Message.ToolOutput], step: String) -> [AttachmentItem] {
         output.enumerated().compactMap { index, part -> AttachmentItem? in
-            guard case .file(let uri, let mime, let name) = part, mime.hasPrefix("image/") else { return nil }
-            let fallback = "Screenshot." + (mime.split(separator: "/").last.map(String.init) ?? "png")
-            if uri.hasPrefix("data:"), let comma = uri.firstIndex(of: ",") {
-                let data = String(uri[uri.index(after: comma)...])
-                return .stored(Message.User.Attachment(mime: mime, name: name ?? fallback, data: data, source: .inline), id: "\(step)-\(index)")
-            }
-            return .stored(Message.User.Attachment(mime: mime, name: name ?? fallback, source: .uri(uri)), id: "\(step)-\(index)")
+            guard case .file(let uri, let mime, let name) = part, mime.lowercased().hasPrefix("image/") else { return nil }
+            let type = UTType(mimeType: mime).flatMap { $0.conforms(to: .image) ? $0 : nil } ?? .png
+            let stem = name.map { (Attachments.fileName($0) as NSString).deletingPathExtension } ?? "Screenshot"
+            let file = Message.User.Attachment(mime: mime, name: stem + "." + (type.preferredFilenameExtension ?? "png"), source: .uri(uri))
+            return .stored(file, id: "\(step)-\(index)")
         }
     }
 }
@@ -249,13 +323,14 @@ struct StepPictures: View {
 private struct AttachmentPicture: View {
     let item: AttachmentItem
     let height: CGFloat
+    var maxWidth: CGFloat = 360
     /// Opens it in the viewer.
     let view: () -> Void
     @State private var image: NSImage?
+    /// Loaded without a picture (data that isn't one, a file that's gone): no spinner then.
+    @State private var isMissing = false
     @State private var isHovering = false
     @Environment(\.colorScheme) private var scheme
-
-    private static let maxWidth: CGFloat = 360
 
     var body: some View {
         Group {
@@ -269,7 +344,15 @@ private struct AttachmentPicture: View {
                 RoundedRectangle(cornerRadius: 12)
                     .fill(.fill.tertiary)
                     .frame(width: height * 1.4, height: height)
-                    .overlay(Spinner(size: 16))
+                    .overlay {
+                        if isMissing {
+                            Image(systemName: "photo")
+                                .font(.system(size: 20))
+                                .foregroundStyle(.tertiary)
+                        } else {
+                            Spinner(size: 16)
+                        }
+                    }
             }
         }
         .clipShape(.rect(cornerRadius: 12))
@@ -286,13 +369,16 @@ private struct AttachmentPicture: View {
         .onTapGesture(perform: view)
         .contextMenu { AttachmentMenu(item: item) }
         .help("\(item.name) — click to look closer")
-        .task(id: item.id) { image = await item.loadImage() }
+        .task(id: item.contentID) {
+            image = await item.loadImage()
+            isMissing = image == nil
+        }
     }
 
     /// The picture's own shape, at most `height` tall and `maxWidth` wide, never enlarged.
     private func fitted(_ size: CGSize) -> CGSize {
         guard size.width > 0, size.height > 0 else { return CGSize(width: height, height: height) }
-        let scale = min(Self.maxWidth / size.width, height / size.height, 1)
+        let scale = min(maxWidth / size.width, height / size.height, 1)
         return CGSize(width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
     }
 }
@@ -324,6 +410,7 @@ private struct AttachmentRow: View {
             .contentShape(.rect(cornerRadius: 14))
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovering)
         .contextMenu { AttachmentMenu(item: item) }

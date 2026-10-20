@@ -66,8 +66,10 @@ nonisolated enum Integrations {
     /// from (their values never go in the settings file, see IntegrationKeys). Its tools are plain tools, as the browser's are: behind the
     /// engine's Code Mode, the agent sees only a short list of them under one tool, and went to
     /// the service's site in the browser instead.
-    static func settings(for service: Service) -> JSONValue? {
-        guard case .object(var settings) = server(for: service) else { return nil }
+    /// With `bot`, the settings that bot's folder has, naming its own keys rather than the shared ones.
+    static func settings(for service: Service, bot: String? = nil) -> JSONValue? {
+        let variable = { (name: String) in bot.map { IntegrationKeys.variable(service.id, name, bot: $0) } ?? IntegrationKeys.variable(service.id, name) }
+        guard case .object(var settings) = server(for: service, variable: variable) else { return nil }
         settings["codemode"] = .bool(false)
         return .object(settings)
     }
@@ -94,6 +96,11 @@ nonisolated enum Integrations {
                case .array(let old)? = server["command"], old.first?.string == Launcher.name,
                let oldPackage = old.dropFirst().first?.string, Self.packageName(oldPackage) == Self.packageName(package) {
                 server["command"] = .array(([Launcher.name] + command).map(JSONValue.string))
+                // Run apart from the project, as one added now is.
+                if case .object(var environment) = server["environment"] ?? .object([:]), environment[Self.apart] == nil {
+                    environment[Self.apart] = .string("1")
+                    server["environment"] = .object(environment)
+                }
             }
             let updated = Self.keyFiles(in: .object(server))
             if updated != original { config.set(updated, at: MCPSettings.path + [id]) }
@@ -130,11 +137,12 @@ nonisolated enum Integrations {
         }
     }
 
-    /// Settings for a machine, whose engine gets the keys in its environment: each named there.
+    /// Settings for a machine, where the engine reads the keys from files of their own in its
+    /// folder (see `RemoteServer.launchScript`): each named there.
     nonisolated static func keyVariables(in value: Any) -> Any {
         switch value {
         case let text as String:
-            return text.replacingOccurrences(of: "{file:" + IntegrationKeys.folder.path + "/", with: "{env:")
+            return text.replacingOccurrences(of: "{file:" + IntegrationKeys.folder.path + "/", with: "{file:~/\(RemoteEngineInstaller.root)/keys/")
         case let object as [String: Any]: return object.mapValues(keyVariables)
         case let array as [Any]: return array.map(keyVariables)
         default: return value
@@ -147,15 +155,16 @@ nonisolated enum Integrations {
         return String(spec[..<at])
     }
 
-    private static func server(for service: Service) -> JSONValue? {
-        let env = { (name: String) in JSONValue.string(IntegrationKeys.reference(IntegrationKeys.variable(service.id, name))) }
+    /// `variable` names a key's variable (the shared key's, or a bot's own).
+    private static func server(for service: Service, variable: @escaping (String) -> String) -> JSONValue? {
+        let env = { (name: String) in JSONValue.string(IntegrationKeys.reference(variable(name))) }
         switch service.way {
         case .official(let url):
             return .object(["type": .string("remote"), "url": .string(url)])
         case .officialToken(let url, let key, _):
             return .object([
                 "type": .string("remote"), "url": .string(url), "oauth": .bool(false),
-                "headers": .object(["Authorization": .string("Bearer " + IntegrationKeys.reference(IntegrationKeys.variable(service.id, key.name)))]),
+                "headers": .object(["Authorization": .string("Bearer " + IntegrationKeys.reference(variable(key.name)))]),
             ])
         case .officialApp(let url, _):
             return .object([
@@ -165,6 +174,8 @@ nonisolated enum Integrations {
         case .package(let command, let keys, _, _, let fixed, _):
             var environment = fixed.mapValues(JSONValue.string)
             for key in keys { environment[key.name] = env(key.name) }
+            // Apart from the project it's used in (see `Launcher`).
+            environment[Self.apart] = .string("1")
             return .object([
                 "type": .string("local"),
                 "command": .array(([Launcher.name] + command).map(JSONValue.string)),
@@ -259,10 +270,14 @@ nonisolated enum Integrations {
         }
     }
 
+    /// What tells `kuvo-npx` to run an integration's server apart from the project.
+    static let apart = "KUVO_NPX_APART"
+
     /// Integrations whose servers keep their sign-in in files of their own, in their folder (see
-    /// `AppModel.syncSignInFiles`), by the files' names.
+    /// `AppModel.syncSignInFiles`), by the files' names, the sign-in itself first. They go together:
+    /// Outlook's is encrypted with the key in `.cache-key`, which each side makes for itself.
     static let signInFiles: [String: [String]] = [
-        "microsoft-365": ["token-cache.json", "selected-account.json"],
+        "microsoft-365": ["token-cache.json", "selected-account.json", ".cache-key"],
     ]
 
     // Checked 2026-10-16: the official servers with their makers' docs; the open-source ones on
@@ -274,7 +289,7 @@ nonisolated enum Integrations {
         Service(id: "microsoft-365", title: "Outlook and Microsoft 365", summary: "Mail, calendar, contacts and files; you sign in with a code the first time", kind: .mail, symbol: "envelope", site: "https://outlook.live.com",
                 // --discovery: its own way of keeping its 196 tools (about 280k tokens) out of every
                 // request; the agent searches them and runs the one it needs.
-                way: .package(command: ["@softeria/ms-365-mcp-server@0.170.1", "--discovery"], keys: [], help: nil, by: "Softeria's ms-365-mcp-server", environment: [
+                way: .package(command: ["@softeria/ms-365-mcp-server@0.170.2", "--discovery"], keys: [], help: nil, by: "Softeria's ms-365-mcp-server", environment: [
                     // Its sign-in, chosen account and logs in a folder of its own, not the home folder or the keychain.
                     "MS365_MCP_TOKEN_CACHE_PATH": "{env:KUVO_INTEGRATIONS}/microsoft-365/token-cache.json",
                     "MS365_MCP_SELECTED_ACCOUNT_PATH": "{env:KUVO_INTEGRATIONS}/microsoft-365/selected-account.json",
@@ -317,7 +332,7 @@ nonisolated enum Integrations {
         Service(id: "atlassian", title: "Jira and Confluence", summary: "Issues and pages at Atlassian", kind: .work, symbol: "square.stack.3d.up", site: "https://www.atlassian.com",
                 way: .official(url: "https://mcp.atlassian.com/v2/mcp")),
         Service(id: "todoist", title: "Todoist", summary: "Tasks and projects", kind: .work, symbol: "checkmark.circle", site: "https://app.todoist.com",
-                way: .package(command: ["@doist/todoist-mcp@13.6.0"], keys: [Key(name: "TODOIST_API_KEY", label: "API token", prompt: "From Settings › Integrations › Developer")], help: "https://app.todoist.com/app/settings/integrations/developer", by: "Doist's own todoist-mcp")),
+                way: .package(command: ["@doist/todoist-mcp@13.6.1"], keys: [Key(name: "TODOIST_API_KEY", label: "API token", prompt: "From Settings › Integrations › Developer")], help: "https://app.todoist.com/app/settings/integrations/developer", by: "Doist's own todoist-mcp")),
         Service(id: "calendly", title: "Calendly", summary: "Your event types, bookings and availability", kind: .work, symbol: "calendar.badge.plus", site: "https://calendly.com/app",
                 way: .official(url: "https://mcp.calendly.com")),
         Service(id: "figma", title: "Figma", summary: "Files and frames, to build designs from", kind: .work, symbol: "paintbrush", site: "https://www.figma.com",

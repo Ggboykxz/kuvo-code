@@ -110,7 +110,7 @@ import Testing
     let report = URL(filePath: "/Users/me/Desktop/research/Report.md")
     transcript.addLocal(id: "msg_1", text: "Read my reports", delivery: .steer, files: [report])
     transcript.apply(try event(#"""
-    {"id":"evt_1","created":1,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_1","item":{"type":"user","payload":{"text":"Read my reports","files":[{"uri":"file:///Users/me/Desktop/research/Report.md","name":"Report.md"}]},"delivery":"steer"}}}
+    {"id":"evt_1","created":1,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_1","item":{"type":"user","payload":{"text":"Read my reports","files":[{"data":"IyBSZXBvcnQ=","mime":"text/markdown","source":{"type":"uri","uri":"file:///Users/me/Desktop/research/Report.md"},"name":"Report.md"}]},"delivery":"steer"}}}
     """#))
     transcript.apply(try event(#"""
     {"id":"evt_2","created":2,"type":"session.inbox.delivered","data":{"sessionID":"ses_1","inboxID":"msg_1"}}
@@ -128,7 +128,7 @@ import Testing
     var transcript = Transcript(sessionID: "ses_1")
     transcript.load(messages: [], inbox: [], permissions: [], forms: [], isRunning: false)
     transcript.apply(try event(#"""
-    {"id":"evt_1","created":1,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_1","item":{"type":"user","payload":{"text":"Look","files":[{"uri":"data:image/jpeg;base64,/9j/4AAQ","name":"IMG_0001.jpeg"}]},"delivery":"steer"}}}
+    {"id":"evt_1","created":1,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_1","item":{"type":"user","payload":{"text":"Look","files":[{"data":"/9j/4AAQ","mime":"image/jpeg","source":{"type":"inline"},"name":"IMG_0001.jpeg"}]},"delivery":"steer"}}}
     """#))
     transcript.apply(try event(#"""
     {"id":"evt_2","created":2,"type":"session.inbox.delivered","data":{"sessionID":"ses_1","inboxID":"msg_1"}}
@@ -137,6 +137,8 @@ import Testing
     #expect(message.files?.count == 1)
     #expect(message.files?.first?.mime == "image/jpeg")
     #expect(message.files?.first?.name == "IMG_0001.jpeg")
+    // Its picture is there to show and open.
+    #expect(message.files?.first?.bytes == Data([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10]))
     // Not among the files a queued message shows or gives back to the composer.
     transcript.apply(try event(#"""
     {"id":"evt_3","created":3,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_2","item":{"type":"user","payload":{"text":"Again","files":[{"uri":"data:image/png;base64,AAAA"}]},"delivery":"queue"}}}
@@ -144,16 +146,60 @@ import Testing
     #expect(transcript.pending.first?.files == [])
     #expect(transcript.pending.first?.inlineFiles.map(\.mime) == ["image/png"])
 
-    // Sent from a phone, its local copy has the photo as a data: URL: the type comes from that.
+    // Sent from a phone, its local copy has the photo as a data: URL: the type comes from that,
+    // and the name it was sent with stays.
     transcript.addLocal(id: "msg_3", text: "Photo", delivery: .steer, files: [URL(string: "data:image/heic;base64,AAAA")!])
     transcript.apply(try event(#"""
-    {"id":"evt_4","created":4,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_3","item":{"type":"user","payload":{"text":"Photo","files":[{"uri":"data:image/heic;base64,AAAA"}]},"delivery":"steer"}}}
+    {"id":"evt_4","created":4,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_3","item":{"type":"user","payload":{"text":"Photo","files":[{"data":"AAAA","mime":"image/heic","source":{"type":"inline"},"name":"IMG_0002.heic"}]},"delivery":"steer"}}}
     """#))
     transcript.apply(try event(#"""
     {"id":"evt_5","created":5,"type":"session.inbox.delivered","data":{"sessionID":"ses_1","inboxID":"msg_3"}}
     """#))
     guard case .user(let photo) = transcript.messages.last else { Issue.record("no message"); return }
     #expect(photo.files?.map(\.mime) == ["image/heic"])
+    #expect(photo.files?.first?.name == "IMG_0002.heic")
+    #expect(photo.files?.first?.bytes == Data([0, 0, 0]))
+
+    // An engine's copy that names no files: the local copy's stand, nameless.
+    transcript.addLocal(id: "msg_4", text: "Note", delivery: .steer, files: [URL(string: "data:text/plain;base64,aGk=")!])
+    transcript.apply(try event(#"""
+    {"id":"evt_6","created":6,"type":"session.inbox.enqueued","data":{"sessionID":"ses_1","inboxID":"msg_4","item":{"type":"user","payload":{"text":"Note"},"delivery":"steer"}}}
+    """#))
+    transcript.apply(try event(#"""
+    {"id":"evt_7","created":7,"type":"session.inbox.delivered","data":{"sessionID":"ses_1","inboxID":"msg_4"}}
+    """#))
+    guard case .user(let note) = transcript.messages.last else { Issue.record("no message"); return }
+    #expect(note.files?.map(\.mime) == ["text/plain"])
+}
+
+/// A file that comes as a `data:` URL has its bytes from it, base64 or percent-encoded; a
+/// malformed one has none.
+@Test func decodesDataURLs() {
+    func bytes(_ uri: String) -> Data? { Message.User.Attachment(mime: "image/png", source: .uri(uri)).bytes }
+    #expect(bytes("data:image/png;base64,aGk=") == Data("hi".utf8))
+    #expect(bytes("DATA:image/png;BASE64,aGk=") == Data("hi".utf8))
+    #expect(bytes("data:text/plain;charset=utf-8;base64,aGk=") == Data("hi".utf8))
+    #expect(bytes("data:;base64,aGk%3D") == Data("hi".utf8))
+    #expect(bytes("data:,Hello%2C%20there") == Data("Hello, there".utf8))
+    #expect(bytes("data:text/plain,%FF%00a") == Data([0xFF, 0x00, 0x61]))
+    #expect(bytes("data:,") == Data())
+    // Without `;` before it, "base64" is the type, and the payload is as it is.
+    #expect(bytes("data:base64,aGk=") == Data("aGk=".utf8))
+
+    #expect(bytes("data:image/png;base64") == nil)
+    #expect(bytes("data:image/png;base64,!!!!") == nil)
+    #expect(bytes("data:image/png;base64,aGk%") == nil)
+    #expect(bytes("data:,100%") == nil)
+    #expect(bytes("data:,%G0") == nil)
+    #expect(bytes("file:///Users/me/a.png") == nil)
+    #expect(bytes("https://example.com/a.png") == nil)
+
+    // The engine's copy comes first; neither is taken for a file.
+    let both = Message.User.Attachment(mime: "image/png", data: "aGk=", source: .uri("data:,other"))
+    #expect(both.bytes == Data("hi".utf8))
+    #expect(both.fileURL == nil)
+    #expect(Message.User.Attachment(mime: "image/png", source: .uri("data:image/png;base64,aGk=")).size == 3)
+    #expect(Message.User.Attachment(mime: "text/plain", source: .uri("data:,abc")).size == 3)
 }
 
 /// What an MCP server asks belongs to no session in the engine; it shows in the conversation whose

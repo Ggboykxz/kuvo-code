@@ -48,7 +48,7 @@ import Testing
 
     @Test func routes() {
         for item in list("routes") {
-            #expect(EngineRoutes.allows(item["path"] as! String) == item["allowed"] as! Bool, "\(item["path"]!)")
+            #expect(EngineRoutes.allows(item["path"] as! String, method: item["method"] as? String ?? "GET") == item["allowed"] as! Bool, "\(item["path"]!) \(item["method"] ?? "GET")")
         }
     }
 

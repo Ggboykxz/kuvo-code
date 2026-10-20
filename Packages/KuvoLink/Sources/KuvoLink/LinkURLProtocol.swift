@@ -35,7 +35,7 @@ public final class LinkURLProtocol: URLProtocol, @unchecked Sendable {
               let address = url.host().flatMap({ Data(hex: $0) }).flatMap(LinkAddress.init(bytes:)),
               let host = route.hosts().first(where: { $0.linkAddress == address })
         else {
-            client?.urlProtocol(self, didFailWithError: URLError(.cannotFindHost))
+            client?.urlProtocol(self, didFailWithError: URLError(.cannotFindHost, userInfo: [NSLocalizedDescriptionKey: Self.notPaired]))
             return
         }
         var headers = request.allHTTPHeaderFields ?? [:]
@@ -61,15 +61,25 @@ public final class LinkURLProtocol: URLProtocol, @unchecked Sendable {
                 loader.finished()
             } catch {
                 guard !Task.isCancelled else { return }
-                let failure: URLError = switch error as? LinkError {
-                case .hostOffline?, .refused?: URLError(.cannotConnectToHost)
-                case .timedOut?: URLError(.timedOut)
-                case .relayUnavailable?: URLError(.notConnectedToInternet)
-                default: URLError(.networkConnectionLost)
-                }
-                loader.failed(failure)
+                loader.failed(Self.failure(for: error))
             }
         }
+    }
+
+    static let notPaired = "This phone isn’t paired with it."
+
+    /// The link's failure as URLSession's error, in the link's own words (and with the
+    /// `LinkError` under it, to tell "pair again" from "asleep"), rather than URLError's generic
+    /// "The operation couldn't be completed".
+    static func failure(for error: Error) -> URLError {
+        let link = error as? LinkError
+        let code: URLError.Code = switch link {
+        case .hostOffline?, .refused?: .cannotConnectToHost
+        case .timedOut?: .timedOut
+        case .relayUnavailable?: .notConnectedToInternet
+        default: .networkConnectionLost
+        }
+        return URLError(code, userInfo: [NSLocalizedDescriptionKey: error.localizedDescription, NSUnderlyingErrorKey: error])
     }
 
     public override func stopLoading() {

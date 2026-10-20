@@ -52,6 +52,12 @@ routes = [{"path": p, "allowed": a} for p, a in [
     ("api/sessions", False), ("api/eventual", False), ("api/session/../credential", False), ("kuvo/info", False), ("", False),
     ("api/pty", True), ("api/pty?location[directory]=x", True), ("api/pty/pty_1", True), ("api/pty/pty_1/connect-token", True),
     ("api/ptys", False), ("api/pty/%2e%2e/x", False), ("api/experimental/persistent-pty/pty_1", False),
+    ("api/shell", True), ("api/shell/sh_1", True), ("api/shell/sh_1/output?cursor=0&limit=1", True),
+    ("api/shell/../config", False), ("api/shell/sh_1/x", False), ("api/shells", False),
+]]
+# Read only: a phone lists and reads commands running for agents, but never runs or removes one.
+routes += [{"path": p, "allowed": a, "method": m} for p, a, m in [
+    ("api/shell", False, "POST"), ("api/shell/sh_1", False, "DELETE"), ("api/shell/sh_1/output", True, "GET"),
 ]]
 
 # The sockets a phone may open (PROTOCOL.md, "Sockets"): a terminal's.

@@ -12,7 +12,12 @@ struct RemoteEngineTests {
     @Test func runsAScriptWithShWhateverTheLoginShell() {
         let arguments = SSHConnection(destination: "box").arguments(running: "echo \"$HOME\"", extra: ["-L", "1:127.0.0.1:2"])
         #expect(arguments.contains("BatchMode=yes"))
-        #expect(arguments.suffix(4) == ["-L", "1:127.0.0.1:2", "box", #"sh -c 'echo "$HOME"'"#])
+        #expect(arguments.suffix(4) == ["-L", "1:127.0.0.1:2", "box", SSHConnection.command(running: "echo \"$HOME\"")])
+        // Only base64 between the quotes the login shell reads: nothing in it that fish, csh or sh
+        // would take as an escape.
+        let command = SSHConnection.command(running: "printf '%s\\n' \"a'b\\\\c\"")
+        #expect(command.hasPrefix("exec sh -c 'kuvo_script=$(printf %s "))
+        #expect(!command.dropFirst("exec sh -c '".count).dropLast().contains { $0 == "'" || $0 == "\\" })
         #expect(arguments.contains("ControlMaster=auto"))
         // The engine's connection never joins the shared one.
         #expect(SSHConnection(destination: "box").arguments(running: "true", shared: false).contains("ControlPath=none"))
@@ -25,8 +30,9 @@ struct RemoteEngineTests {
         #expect(script.contains("setsid"))
         #expect(script.contains("--hostname 127.0.0.1"))
         #expect(script.contains("engine/\(OpenCodeEngine.version)/opencode"))
-        // Nothing secret on its command line: those come over the input.
-        #expect(!script.contains("PASSWORD"))
+        // Nothing secret on its command line: those come over the input. (kuvo-wake, in it, only
+        // unsets the engine's password before running a check.)
+        #expect(!script.contains("PASSWORD="))
         // Only its user can read how to find it.
         #expect(script.contains("umask 077"))
     }
@@ -143,5 +149,71 @@ struct LiveRemoteEngineTests {
         // Nothing of the test's stays on the machine: its watchdog, and its folder.
         _ = try await connection.run("pkill -f '[/]\\.kuvo-code-test/run' || true; rm -rf \"$HOME/.kuvo-code-test\"")
         #expect(try await connection.run("[ -e \"$HOME/.kuvo-code-test\" ] && echo left || true").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    /// Settings that can hold secrets (a server's environment) reach the engine in a file only you
+    /// can read, never its environment, which the agent's `env` would print.
+    @Test func privateSettingsStayOutOfTheEnvironment() async throws {
+        let cache = FileManager.default.temporaryDirectory.appending(path: "opencodekit-remote-cache")
+        defer { try? FileManager.default.removeItem(at: cache) }
+        try await RemoteEngineInstaller(connection: connection, cache: cache).install()
+        try await RemoteServer.stop(on: connection)
+
+        let secret = "kuvo-test-secret-" + UUID().uuidString.prefix(8)
+        let settings = #"{"mcp":{"servers":{"private-test":{"type":"local","command":["true"],"disabled":true,"environment":{"TOKEN":"\#(secret)"}}}}}"#
+        let engine = try await RemoteServer.launch(on: connection, environment: [RemoteServer.privateSettingsVariable: settings])
+        let environment = try await connection.run("tr '\\0' '\\n' </proc/\(engine.pid)/environ")
+        #expect(!environment.isEmpty)
+        #expect(!environment.contains(secret))
+        #expect(!environment.contains(RemoteServer.privateSettingsVariable))
+        #expect(environment.contains("OPENCODE_CONFIG="))
+        // Bots' wake-ups are found under this root, not the app's own.
+        #expect(environment.contains("KUVO_BOTS=") && environment.contains("/.kuvo-code-test/bots"))
+        let file = "\"$HOME/.kuvo-code-test/keys/settings.json\""
+        #expect(try await connection.run("stat -c %a \(file)").trimmingCharacters(in: .whitespacesAndNewlines) == "600")
+
+        // The engine has them.
+        let server = try await RemoteServer.attach(to: engine, on: connection)
+        let client = HTTPClient(endpoint: server.endpoint)
+        let config = try await client.send(client.request("GET", "api/config"), as: JSONValue.self)
+        let text = String(decoding: try JSONEncoder().encode(config), as: UTF8.self)
+        #expect(text.contains("private-test"))
+        server.disconnect()
+
+        // And they go with it.
+        try await RemoteServer.stop(on: connection)
+        #expect(try await connection.run("[ -e \(file) ] && echo left || true").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        _ = try await connection.run("pkill -f '[/]\\.kuvo-code-test/run' || true; rm -rf \"$HOME/.kuvo-code-test\"")
+    }
+
+    /// The commands the agent runs there get the machine's own folders, not the engine's in
+    /// `~/.kuvo-code`.
+    @Test func commandsGetTheMachinesOwnFolders() async throws {
+        let cache = FileManager.default.temporaryDirectory.appending(path: "opencodekit-remote-cache")
+        defer { try? FileManager.default.removeItem(at: cache) }
+        try await RemoteEngineInstaller(connection: connection, cache: cache).install()
+        try await RemoteServer.stop(on: connection)
+        let home = try await connection.run("printf %s \"$HOME\"")
+        let project = home + "/.kuvo-code-test/test-project"
+        _ = try await connection.run("mkdir -p '\(project)'")
+
+        let engine = try await RemoteServer.launch(on: connection, environment: [:])
+        let server = try await RemoteServer.attach(to: engine, on: connection)
+        let api = OpenCodeAPI(endpoint: server.endpoint)
+        let session = try await api.createSession(directory: project)
+        try await api.runShell(session: session.id, command: #"printf '%s|%s' "${XDG_CONFIG_HOME:-unset}" "${KUVO_OWN_XDG_CONFIG_HOME-unset}" >seen"#)
+        var seen = ""
+        for _ in 0..<50 where seen.isEmpty {
+            seen = try await connection.run("cat '\(project)/seen' 2>/dev/null || true")
+            if seen.isEmpty { try await Task.sleep(for: .milliseconds(200)) }
+        }
+        let own = try await connection.run("printf %s \"${XDG_CONFIG_HOME:-unset}\"")
+        #expect(seen == own + "|unset")
+        // Only you can open its folder there.
+        #expect(try await connection.run("stat -c %a \"$HOME/.kuvo-code-test\"").trimmingCharacters(in: .whitespacesAndNewlines) == "700")
+        server.disconnect()
+
+        try await RemoteServer.stop(on: connection)
+        _ = try await connection.run("pkill -f '[/]\\.kuvo-code-test/run' || true; rm -rf \"$HOME/.kuvo-code-test\"")
     }
 }

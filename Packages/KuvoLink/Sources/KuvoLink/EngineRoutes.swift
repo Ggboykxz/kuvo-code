@@ -6,8 +6,13 @@ public enum EngineRoutes {
     /// Sessions and what's in them, live events, what the phone needs to show them, a project's
     /// files to read, and terminals. Never accounts, keys or integrations, the engine's settings,
     /// MCP servers or plugins.
-    public static func allows(_ path: String) -> Bool {
+    public static func allows(_ path: String, method: String = "GET") -> Bool {
         guard staysInProject(path) else { return false }
+        // Commands the engine runs for agents: read only (the list, one, its output); never run
+        // one or remove it.
+        if path.prefixMatch(of: #/api/shell(/|\?|$)/#) != nil {
+            return ["GET", "HEAD"].contains(method.uppercased()) && path.wholeMatch(of: #/api/shell(/[^/?]+(/output)?)?(\?.*)?/#) != nil
+        }
         return path.prefixMatch(of: #/api/session(/|\?|$)/#) != nil
             || path.prefixMatch(of: #/api/experimental/session/[^/]+/wait(\?|$)/#) != nil
             || path.prefixMatch(of: #/api/event(\?|$)/#) != nil
@@ -17,16 +22,43 @@ public enum EngineRoutes {
             || path.prefixMatch(of: #/api/pty(/|\?|$)/#) != nil
     }
 
+    /// What a phone may ask a Mac's coding agents' bridge for: what it may ask an engine for, and
+    /// their accounts (adding, naming, removing and signing in to them) and Auto's list. Never
+    /// where the engine is, nor updating an agent's program (that runs an installer on the Mac).
+    public static func allowsAgents(_ path: String, method: String = "GET") -> Bool {
+        guard staysInProject(path) else { return false }
+        let routed = routed(path)
+        if routed.prefixMatch(of: #/api/kuvo/engine(/|\?|$)/#) != nil { return false }
+        if routed.prefixMatch(of: #/api/integration/[^/?]+/update(/|\?|$)/#) != nil { return false }
+        return allows(path, method: method)
+            || path.prefixMatch(of: #/api/integration(/|\?|$)/#) != nil
+            || path.prefixMatch(of: #/api/kuvo/(auto|accounts)(/|\?|$)/#) != nil
+    }
+
+    /// `path` as the agents bridge routes it: split into parts, without empty ones or "." ones
+    /// (which its URL parser drops, "%2e" too), each decoded ("%75pdate" is "update"). So
+    /// "integration/x//update", ".../x/./update" and ".../x/%75pdate" are "integration/x/update".
+    static func routed(_ path: String) -> String {
+        let query = path.firstIndex(of: "?")
+        let parts = path[..<(query ?? path.endIndex)].split(separator: "/")
+            .filter { $0 != "." && $0.lowercased() != "%2e" }
+            .map { $0.removingPercentEncoding ?? String($0) }
+        return parts.joined(separator: "/") + (query.map { String(path[$0...]) } ?? "")
+    }
+
     /// The sockets a phone may open: a terminal's.
     public static func allowsSocket(_ path: String) -> Bool {
         staysInProject(path) && path.prefixMatch(of: #/api/pty/[^/?]+/connect(\?|$)/#) != nil
     }
 
     /// No way out of the project, written plainly or percent-encoded ("%2E%2E"): the engine
-    /// decodes it, and lists a folder above the project if asked.
+    /// decodes it, and lists a folder above the project if asked. Nor a fragment ("#…"), which
+    /// isn't sent: ".../update#x" would be checked as itself and reach ".../update". Nor tabs,
+    /// line breaks or other control characters, which URL parsers drop (".\t." is ".." to them).
     static func staysInProject(_ path: String) -> Bool {
-        guard let decoded = path.removingPercentEncoding else { return false }
-        return !decoded.contains("..") && !decoded.contains("\\") && !path.contains("..")
+        guard !path.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7f }),
+              let decoded = path.removingPercentEncoding else { return false }
+        return !decoded.contains("..") && !decoded.contains("\\") && !path.contains("..") && !path.contains("#")
     }
 
     static let requestHeaders = ["content-type", "accept", "x-opencode-directory", "last-event-id"]
@@ -82,9 +114,10 @@ public enum EngineRoutes {
 
     /// Passes `request` to the engine at `base` (its password added here), and its response back
     /// in pieces as they come: an event stream's events one by one.
-    public static func forward(_ request: LinkRequest, to base: URL, password: String?, session: URLSession = .shared) -> AsyncThrowingStream<LinkResponsePart, Error> {
+    public static func forward(_ request: LinkRequest, to base: URL, password: String?, session: URLSession = .shared,
+                               allowing: @Sendable (String, String) -> Bool = { allows($0, method: $1) }) -> AsyncThrowingStream<LinkResponsePart, Error> {
         AsyncThrowingStream { continuation in
-            guard allows(request.path) else {
+            guard allowing(request.path, request.method) else {
                 continuation.yield(.head(status: 403, headers: ["content-type": "text/plain"]))
                 continuation.yield(.body(Data("That isn’t available over the link.".utf8)))
                 continuation.finish()

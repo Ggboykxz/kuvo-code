@@ -223,6 +223,9 @@ public struct OAuthAttempt: Codable, Sendable, Hashable {
     public var url: String
     public var instructions: String
     public var mode: Mode
+    /// With `.auto`: the page may end on a code to paste instead, when it couldn't come back by
+    /// itself (Claude Code's sign-in, through the coding agents).
+    public var acceptsCode: Bool?
     public var time: Window
 
     public enum Mode: String, Codable, Sendable {
@@ -255,6 +258,9 @@ public struct OAuthAttempt: Codable, Sendable, Hashable {
 public struct OAuthStatus: Codable, Sendable, Hashable {
     public var status: Status
     public var message: String?
+    /// The page to sign in on, when it comes after the attempt started (the agents bridge has an
+    /// agent to download first); while pending, `message` says how it's going.
+    public var url: String?
 
     public enum Status: String, Codable, Sendable {
         case pending, complete, failed, expired

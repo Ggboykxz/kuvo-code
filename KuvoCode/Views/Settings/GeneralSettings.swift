@@ -99,11 +99,20 @@ struct GeneralSettings: View {
         reading = true
         Task {
             defer { reading = false }
-            let connected = Set(((try? await api.credentials()) ?? []).map(\.integrationID))
+            // What's connected already stays as it is: without knowing, nothing is planned (every
+            // key would be, and replace the one in use).
+            guard let credentials = try? await api.credentials() else {
+                importNote = "Couldn’t read your accounts here, so nothing was brought over. Try again in a moment."
+                return
+            }
+            let connected = Set(credentials.map(\.integrationID))
             do {
                 let plan = try await OpencodeImport.plan(engine: engine, config: app.engineConfig.settings, connected: connected)
-                if plan.isEmpty, plan.signIns.isEmpty {
-                    importNote = "Everything in your opencode setup is here already."
+                if plan.isEmpty {
+                    // Nothing to bring: no page to look over, only what's left to sign in to.
+                    let signIns = plan.signIns.map(catalog.signInName)
+                    importNote = (plan.settingsFailure.map { "Couldn’t read your opencode settings: \($0)" } ?? "Everything in your opencode setup is here already.")
+                        + (signIns.isEmpty ? "" : " Sign in to \(ListFormatter.localizedString(byJoining: signIns)) again in Settings › Accounts.")
                 } else {
                     importing = ImportRequest(plan: plan)
                 }
@@ -138,8 +147,11 @@ private struct OpencodeImportReview: View {
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("These aren’t in Kuvo Code yet; what it has already stays as it is. API keys are copied into Kuvo Code’s engine, and skills are found where opencode keeps them. The engine starts again to use them.")
+                    if let failure = plan.settingsFailure {
+                        Text("Your opencode settings couldn’t be read, so only its keys and skills are here: \(failure)")
+                    }
                     if !plan.signIns.isEmpty {
-                        Text("Sign in to \(ListFormatter.localizedString(byJoining: plan.signIns.map(names))) again in Settings › Accounts: a sign-in copied over would be refreshed by both apps, which can sign both out.")
+                        Text("Sign in to \(ListFormatter.localizedString(byJoining: plan.signIns.map { Catalog.planName($0) ?? names($0) })) again in Settings › Accounts: a sign-in copied over would be refreshed by both apps, which can sign both out.")
                     }
                 }
                 .foregroundStyle(.secondary)

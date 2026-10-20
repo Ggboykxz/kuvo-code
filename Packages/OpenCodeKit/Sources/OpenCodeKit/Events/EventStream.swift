@@ -53,10 +53,14 @@ public struct EventStream: Sendable {
     }
 
     private func connect(_ yield: @escaping @Sendable (Update) -> Void) async throws {
-        let bytes = try await client.stream(client.request("GET", "api/event"))
+        // Watching from the request on: one lost on the way (into a tunnel, or a phone link's
+        // session the other end has forgotten) would wait for its answer forever, and the feed
+        // would never come back by itself.
         let watchdog = Watchdog(timeout: idleTimeout)
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask {
+                let bytes = try await client.stream(client.request("GET", "api/event"))
+                watchdog.feed()
                 for try await sse in bytes.serverSentEvents(onLine: watchdog.feed) {
                     guard let data = sse.data.data(using: .utf8) else { continue }
                     guard let event = try? ServerEvent(json: data) else { continue }
@@ -99,7 +103,7 @@ private final class Watchdog: @unchecked Sendable {
 
     func run() async throws {
         while true {
-            try await Task.sleep(for: .seconds(5))
+            try await Task.sleep(for: min(.seconds(5), timeout / 3))
             let silent = lock.withLock { ContinuousClock.now - last }
             if silent > timeout { throw URLError(.timedOut) }
         }

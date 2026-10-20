@@ -83,15 +83,32 @@ side panel and the usage menu.
   HTTP API and follows its event stream to show live transcripts.
 - **Its data is kept apart** from any opencode you've installed. Sessions,
   accounts and settings live in
-  `~/Library/Application Support/run.kuvo.code/opencode`.
+  `~/Library/Application Support/run.kuvo.code/opencode`. The commands the
+  agent runs still get your own folders (`~/.config` and the like) back,
+  through a small plugin in the engine's `plugins` folder, so tools such as
+  `gh` find their sign-ins.
+- **The coding agents you already have** (Claude Code, Codex, Cursor, Grok,
+  Antigravity) run beside the engine, each as its maker built it and signed in
+  as you: a small bridge of Kuvo Code's own (`Agents/`, run by the engine's
+  Bun) drives them through the Claude Agent SDK and your `claude`, Codex's
+  app-server, Cursor's SDK, and the Agent Client Protocol for Grok and
+  Antigravity, and answers the app in the engine's own API. A session there can
+  move between agents (the next one gets the conversation as a handover) and
+  run the engine's models, and Custom Auto runs down your own lists of models as
+  each reaches its limit or fails. What it keeps is in
+  `~/Library/Application Support/run.kuvo.code/agents`. Each machine runs the
+  same bridge beside its engine, with the agents installed and signed in there
+  (in `~/.kuvo-code/agents`).
 - **On a machine you add**, Kuvo Code reaches it with `ssh` and your keys. It
   sends the same engine version's Linux build, downloaded and checked on the
   Mac, to `~/.kuvo-code` there, runs it on the machine's localhost only, and
-  talks to it through an SSH tunnel. The engine outlives the connection, so a
+  talks to it through an SSH tunnel, which closes with the app however it ends.
+  The engine outlives the connection, so a
   task carries on while the Mac is off; it stops when the app quits with
   nothing running, or after a day without the app, unless a bot's wake-up or
-  watch is waiting, which it sends or runs when it's due. API keys reach it in
-  memory, never written to the machine's disk.
+  watch is waiting, which it sends or runs when it's due. Your settings and
+  integrations' keys reach it in files only you can read, gone when it stops,
+  never in its environment.
 - **The agent's browser tools** are served by the app on `127.0.0.1`, with a
   new port and token each launch. They read a page the way
   [browser-use](https://github.com/browser-use/browser-use) does, as numbered

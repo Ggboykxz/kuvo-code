@@ -54,7 +54,7 @@ nonisolated enum GroupMentions {
             let length = plain.distance(from: range.lowerBound, to: range.upperBound)
             let lower = text.characters.index(text.startIndex, offsetBy: start)
             let upper = text.characters.index(lower, offsetBy: length)
-            text[lower..<upper].swiftUI.foregroundColor = .accentColor
+            text[lower..<upper].swiftUI.foregroundColor = Look.accent(UserDefaults.standard.string(forKey: Look.accentKey) ?? Look.Accent.system.rawValue)
             text[lower..<upper].inlinePresentationIntent = .stronglyEmphasized
         }
         let characters = String(text.characters)

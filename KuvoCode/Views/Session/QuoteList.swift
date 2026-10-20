@@ -53,6 +53,13 @@ struct QuoteList: View {
                                 .font(font)
                                 .lineLimit(1...10)
                                 .focused(answering, equals: quote.id)
+                                // As in the composer: Shift- or Option-Return starts a new line,
+                                // Return sends.
+                                .onKeyPress(.return, phases: .down) { press in
+                                    guard !Composer.isComposing, press.modifiers.contains(.shift) || press.modifiers.contains(.option) else { return .ignored }
+                                    Composer.newLine(in: response(to: quote.id))
+                                    return .handled
+                                }
                                 .onSubmit(onSubmit)
                                 .padding(.leading, 12)
                                 .padding(.bottom, 4)

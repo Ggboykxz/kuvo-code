@@ -19,4 +19,6 @@ if [ -z "$notes" ]; then
     echo "CHANGELOG.md has no notes for ${1:-any version}. Add a \"## ${1:-<version>}\" section." >&2
     exit 1
 fi
-printf '%s\n' "$notes"
+# An @word in the notes would mention that GitHub account and list it among the release's
+# contributors ("@User" named github.com/user): written as code, it's just text.
+printf '%s\n' "$notes" | perl -pe 's/(^|[^`\w])@([A-Za-z0-9-]+)/$1`\@$2`/g'

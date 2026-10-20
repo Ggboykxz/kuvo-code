@@ -146,6 +146,7 @@ private struct ModeThumbnail: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
@@ -205,7 +206,10 @@ private struct AccentSwatches: View {
                     Swatch(fill: option == .system ? AnyShapeStyle(AngularGradient(colors: [.red, .orange, .yellow, .green, .blue, .purple, .pink, .red], center: .center)) : AnyShapeStyle(option.color), isSelected: accent == option.rawValue)
                 }
                 .buttonStyle(.plain)
+                .clickablePointer()
                 .help(option.title)
+                .accessibilityLabel(option.title)
+                .accessibilityAddTraits(accent == option.rawValue ? .isSelected : [])
             }
             // Any color, from the system's color panel.
             Button {
@@ -224,6 +228,7 @@ private struct AccentSwatches: View {
                     }
             }
             .buttonStyle(.plain)
+            .clickablePointer()
             .help("Custom Color…")
         }
     }

@@ -121,7 +121,7 @@ with a mail frame, sealed with the sender's static key for the phone's. Its payl
 | `body` | What the Mac shows: the request, the question, the last words of a reply. |
 | `category` | What it's about, below. |
 | `thread` | What it's grouped under: the session's id, or the group chat's. |
-| `data` | Where it opens: `session` or `group`; `request` for a permission or a form, with `requestSession` when the session asking isn't the one shown (a subagent's); `ask` for a browser ask. |
+| `data` | Where it opens: `session` or `group`; `request` for a permission or a form, with `requestSession` when the session asking isn't the one shown (a subagent's), and `answerable: "0"` when its notification mustn't answer it from buttons (it can't show all it covers, or some of its text shows as dots); `ask` for a browser ask. |
 
 | Category | When |
 | --- | --- |
@@ -174,15 +174,80 @@ itself. A host serves:
 
 - `api/…`: passed to its engine, if the path is on the host's list (sessions, messages,
   prompts, permissions, questions, events, providers, agents, commands, a project's files,
-  terminals). Never accounts or keys.
+  terminals). Never accounts or keys. The commands the engine runs for agents are read only:
+  `GET api/shell` (those running in the folder `x-opencode-directory` names), `GET
+  api/shell/<id>` and `GET api/shell/<id>/output?cursor=&limit=`; running one or removing it is
+  refused. Their `shell.created`, `shell.exited` and `shell.deleted` come with `api/event`.
+  A subagent's session (`metadata.sessionID` of the `subagent` step that started it) is a session
+  like any other, which is how the phone watches and talks to one, as the Mac's subagent tab does:
+  read its messages, prompt it (`steer` while it works: it reads it at its next step; once it's
+  done, it carries on), `POST api/session/<id>/interrupt` to stop it (the agent waiting on it
+  hears it was cancelled, and carries on), and choose its model. Choose it without interrupting:
+  an interrupt, even with `resume`, ends that agent's wait, and it gives up on the subagent.
+- `POST kuvo/shell/<id>/stop` (`{"session": "ses_…"}`, which may be left out): stops a command an
+  agent left running, as Stop over the Mac's composer does: SIGTERM to its process group, so the
+  engine sees it end and tells the agent, with what it printed; only if that can't be sent, the
+  engine's own remove (which deletes the output, and the agent hears the command wasn't found).
+  Answers `200 {"stopped": "signal"}` or `200 {"stopped": "removed"}`, or `404 {}` when no such
+  command runs. A machine's bridge does it there (from 0.5.1), with the Mac closed too.
 - `kuvo/info`: what the host is and runs; a Mac also names its folder of chats (conversations of
-  no project), and `integrations`, each integration's name by its MCP server's (`{"microsoft-365":
+  no project), whether its coding agents' bridge is up (`agents`), and `integrations`, each integration's name by its MCP server's (`{"microsoft-365":
   "Outlook and Microsoft 365", …}`), for a card when one asks something.
+- On a Mac, `kuvo/agents/api/…`: the coding agents you already have (Claude Code, Codex,
+  Cursor, Grok, Antigravity), through the Mac's agents bridge, which answers the same paths as
+  the engine for them: sessions, messages, prompts, permissions, questions, events
+  (`kuvo/agents/api/event`) and models (`kuvo/agents/api/model`, only signed-in agents'). Its
+  sessions carry `metadata.kuvoAgent` and run on the Mac; a new session with one of their
+  models (providers `claude-code`, `codex-cli`, `cursor`, `grok-cli`, `antigravity`) is made
+  there, never on the engine. `kuvo/info` has `agents: true` while the bridge is up; otherwise
+  these answer 503.
+  - Accounts: besides each agent's own sign-in, ones you added, each its own provider
+    `<agent's provider>@<id>` (`claude-code@1f2e3d4c`), named `Claude Code · Work` in
+    `kuvo/agents/api/integration` (`metadata.accountID`, `metadata.accountLabel`). Their models
+    and sessions are theirs. `kuvo/agents/api/kuvo/accounts`: `POST {agent, label}` (agent:
+    `claude`, `codex`, `cursor`, `grok`, `antigravity`) → `{data: {providerID}}`, then sign in as
+    any; `PATCH …/accounts/<provider> {label}`; `DELETE …/accounts/<provider>`.
+    `metadata.signInEnded` true: its maker ended the sign-in; mark the account (the Mac says
+    "Sign-in ended") and offer to sign in again.
+  - Custom Auto: a session's model `{providerID: "auto", id: <list ID>}` runs down that list,
+    going on with the next model at a usage limit or an error. `kuvo/agents/api/kuvo/auto`: `GET`
+    and `PUT {lists}` → `{data: {entries, lists: [{id, name, entries: [{providerID, modelID,
+    variant?}]}], limits: [{key, until, scope, known}]}}` (the first list's ID is `auto`;
+    `entries` is the first list's; `key` is a provider for an account's limit, `provider/model`
+    for a model's; `until` in ms); `DELETE …/auto/limits` tries them all again. The event
+    `kuvo.auto.updated` says the lists or their limits changed. An account with a `provider`
+    limit whose `until` hasn't come is at its usage limit: mark it (the Mac says "Usage limit ·
+    Resets in …").
+  - A session with the agents may switch to any model (`…/session/<id>/model`), the engine's
+    too: it runs those through an engine session of its own, which carries
+    `metadata.kuvo.engineFor` and is never shown (hide it in the engine's session list).
+    `…/session/<id>/fork {before}` makes a new session from a message.
 - On a Mac, `kuvo/hosts`: the machines this phone may reach directly, with their addresses
   and static keys, so pairing once with the Mac reaches them all.
 - On a Mac, `kuvo/bots`: your bots by their session, wherever they live, with their name,
   look and job, and what only the Mac knows: paused, the next wake-up, how many things each
-  watches.
+  watches, and `agents`: its conversation is with the coding agents, so it's read and written
+  through `kuvo/agents/api/…` (a group chat's members carry the same flag).
+- On a Mac, `kuvo/named`: who you can name with `&` in a message, as the Mac's composer
+  offers them: `{"agents": [{session, name, kind, machine, project, about}]}`, every bot
+  (`kind: "bot"`, `about` its job) then the latest sessions with a title (`kind: "session"`,
+  `project` its project's name, `"Chats"` for a chat); `machine` is null on the Mac. Insert
+  `&` and the name, and send the message as it is: the Mac adds to a prompt it passes on
+  (`api/…` and `kuvo/agents/api/…`) a block naming each agent the text names, which the
+  agent reads, so a machine's bridge, with the Mac closed, sends it without. Show a message
+  without it: it ends the text, from a line `<named-agents>` (then a heading line, then
+  `- &<name> (<session>): <what it is>` lines) to a line `</named-agents>`, before the
+  `<review-comments>` and `<attached-files>` blocks. Show each `&<name>` it lists in bold
+  (a bot's in its color), opening that session.
+- On a Mac, `kuvo/wakes/<session>`: a session's (or chat's) wake-ups and watches, which its
+  agent sets with `kuvo-wake`, as the bar over the Mac's composer shows them: `{"wakes": [{id,
+  due, note, every}], "watches": [{letters, every, check, note}], "paused"}` (`due` in seconds
+  since 1970, `every` like `1d` or null; paused while it's archived). `POST
+  kuvo/wakes/<session>/cancel` with `{"wake": "<id>"}` or `{"watch": "<letters>"}` cancels one;
+  `POST kuvo/wakes/<session>/now` with `{"wake": "<id>"}` sends it now (one that repeats still
+  comes back at its time).
+  A bot's are in `kuvo/bots`. A wake-up reaches the conversation as a message starting with
+  `[Wake-up] `.
 - On a Mac, `kuvo/asks`: what agents ask you for while they browse, on the Mac or a machine: a
   sign-in (the fields the page has, and the accounts Passwords keeps for the site, never
   their passwords), a one-time code, or a step only you can do. `kuvo/asks/events` is the same

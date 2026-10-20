@@ -6,6 +6,18 @@ enum Quoting {
     /// The text selected in the window, copied as ⌘C would, with your clipboard put back as it
     /// was; nil when nothing's selected.
     static func selection() -> String? {
+        // Asked of what holds it, where that can say: copying through the clipboard and putting
+        // it back changes it twice, which clipboard histories keep and password managers notice.
+        if let responder = NSApp.keyWindow?.firstResponder {
+            if let stack = responder as? RowStackView { return trimmed(stack.selectedText()) }
+            if let text = responder as? NSTextView, !text.isEditable {
+                // One of its own, let go once read: a named one would keep the words readable.
+                let board = NSPasteboard.withUniqueName()
+                defer { board.releaseGlobally() }
+                guard text.writeSelection(to: board, types: [.string]) else { return nil }
+                return trimmed(board.string(forType: .string))
+            }
+        }
         let board = NSPasteboard.general
         let saved = (board.pasteboardItems ?? []).map { item in
             let copy = NSPasteboardItem()
@@ -20,6 +32,10 @@ enum Quoting {
         let text = board.string(forType: .string)
         board.clearContents()
         if !saved.isEmpty { board.writeObjects(saved) }
+        return trimmed(text)
+    }
+
+    private static func trimmed(_ text: String?) -> String? {
         let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? nil : trimmed
     }

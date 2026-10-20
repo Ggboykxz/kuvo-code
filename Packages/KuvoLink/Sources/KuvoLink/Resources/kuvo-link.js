@@ -9,11 +9,10 @@
 //   BUN_BE_BUN=1 opencode kuvo-link.js pair [relay]    a link to pair a phone with this machine
 //   BUN_BE_BUN=1 opencode kuvo-link.js selftest        checks the runtime has what it needs
 //
-// It keeps its state in ~/.kuvo-code/run/link.json (mode 600; on Windows the file modes are
-// no-ops, and what keeps the key private there is the profile folder's own permissions),
-// reads the engine's port and password from run/engine.json, and connects out to the relay;
-// it never listens. The protocol is in PROTOCOL.md beside this file's source (kuvo-ai's
-// Packages/KuvoLink), with the same in Swift for the Mac and the phone.
+// It keeps its state in ~/.kuvo-code/run/link.json (mode 600), reads the engine's port and
+// password from run/engine.json, and connects out to the relay; it never listens. The protocol
+// is in PROTOCOL.md beside this file's source (kuvo-ai's Packages/KuvoLink), with the same in
+// Swift for the Mac and the phone.
 
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -23,7 +22,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 // Goes up with every change, so `setup` replaces a running bridge that's older.
-export const BRIDGE_VERSION = "0.5.1";
+export const BRIDGE_VERSION = "0.5.2";
 const K = process.env.KUVO_HOME || path.join(os.homedir(), ".kuvo-code");
 const RUN = path.join(K, "run");
 export const LINK_FILE = path.join(RUN, "link.json");
@@ -306,9 +305,10 @@ export class LinkHost {
   // authorize(key, hello, address) → whether to let the phone in; handle(request, phone, signal) → an
   // async iterable of { head: { status, headers } } and { body }; connect(request, phone,
   // { open, text, binary, end }) → a socket's { send, close } (PROTOCOL.md, "Sockets");
-  // send(bytes) → to the relay.
-  constructor({ key, hello, authorize, handle, connect, send }) {
-    Object.assign(this, { key, hello, authorize, handle, connect, send });
+  // send(bytes) → to the relay; confirmed(phone) → its session proved its own: its first message
+  // opened with the handshake's keys, which a replayed first handshake message can't do.
+  constructor({ key, hello, authorize, handle, connect, send, confirmed }) {
+    Object.assign(this, { key, hello, authorize, handle, connect, send, confirmed });
     this.sessions = new Map();
   }
 
@@ -354,6 +354,10 @@ export class LinkHost {
           message = null;
         }
         if (!message || typeof message.head !== "object" || message.head === null) return this.end(session, true);
+        if (!session.confirmed) {
+          session.confirmed = true;
+          this.confirmed?.(session.phone);
+        }
         return this.message(session, message);
       }
       case Frame.close:
@@ -516,16 +520,27 @@ const REQUEST_HEADERS = ["content-type", "accept", "x-opencode-directory", "last
 const RESPONSE_HEADERS = ["content-type", "cache-control"];
 
 // No way out of the project, written plainly or percent-encoded ("%2E%2E"): the engine decodes
-// it, and lists a folder above the project if asked.
+// it, and lists a folder above the project if asked. Nor tabs, line breaks or other control
+// characters, which the URL parser drops (".\t." is ".." to it), nor a fragment ("#…"), which
+// isn't sent.
 const leavesProject = path => {
   try {
+    if (/[\u0000-\u001f\u007f#]/.test(path)) return true;
     const decoded = decodeURIComponent(path);
     return path.includes("..") || decoded.includes("..") || decoded.includes("\\");
   } catch {
     return true;
   }
 };
-export const allowed = path => !leavesProject(path) && ALLOWED.some(pattern => pattern.test(path));
+// Commands the engine runs for agents: read only (the list, one, its output); never run one or
+// remove it.
+const SHELL = /^api\/shell(\/|\?|$)/;
+const SHELL_READ = /^api\/shell(\/[^/?]+(\/output)?)?(\?.*)?$/;
+export const allowed = (path, method = "GET") => {
+  if (leavesProject(path)) return false;
+  if (SHELL.test(path)) return ["GET", "HEAD"].includes(method.toUpperCase()) && SHELL_READ.test(path);
+  return ALLOWED.some(pattern => pattern.test(path));
+};
 export const socketAllowed = path => !leavesProject(path) && SOCKETS.some(pattern => pattern.test(path));
 
 const readEngineFile = () => JSON.parse(fs.readFileSync(ENGINE_FILE, "utf8"));
@@ -541,7 +556,8 @@ export function engineHandler(readEngine = readEngineFile, info = {}) {
       yield { body: Buffer.from(JSON.stringify({ kind: "machine", bridge: BRIDGE_VERSION, engine: engine.version ?? null, ...info })) };
       return;
     }
-    if (!allowed(request.path)) return yield* text(403, "That isn't available over the link.");
+    const stop = request.path.match(/^kuvo\/shell\/([^/?]+)\/stop$/);
+    if (!stop && !allowed(request.path, request.method)) return yield* text(403, "That isn't available over the link.");
     let engine;
     try {
       engine = readEngine();
@@ -552,6 +568,10 @@ export function engineHandler(readEngine = readEngineFile, info = {}) {
     const headers = { authorization: `Basic ${Buffer.from(`opencode:${engine.password}`).toString("base64")}` };
     const given = Object.fromEntries(Object.entries(request.headers).map(([k, v]) => [k.toLowerCase(), v]));
     for (const name of REQUEST_HEADERS) if (given[name]) headers[name] = given[name];
+    if (stop) {
+      if (request.method.toUpperCase() !== "POST") return yield* text(405, "Stop it with POST.");
+      return yield* stopShell(decodeURIComponent(stop[1]), engine, headers, signal);
+    }
     const method = request.method.toUpperCase();
     const response = await fetch(`http://127.0.0.1:${engine.port}/${request.path}`, {
       method,
@@ -577,6 +597,32 @@ export function engineHandler(readEngine = readEngineFile, info = {}) {
       reader.cancel().catch(() => {});
     }
   };
+}
+
+// Stops a command the engine runs for an agent: SIGTERM to its process group, here on the
+// machine, so the engine sees it end and tells the agent, with what it printed. The engine's own
+// remove deletes the output too, and the agent hears the command was never found, so it's only
+// for when the signal can't be sent.
+async function* stopShell(id, engine, headers, signal) {
+  const json = (status, value) => [{ head: { status, headers: { "content-type": "application/json" } } }, { body: Buffer.from(JSON.stringify(value)) }];
+  const url = `http://127.0.0.1:${engine.port}/api/shell/${encodeURIComponent(id)}`;
+  let job;
+  try {
+    const response = await fetch(url, { headers, signal });
+    if (response.ok) job = (await response.json()).data;
+  } catch {}
+  if (!job || job.status !== "running") return yield* json(404, {});
+  if (Number.isInteger(job.pid) && job.pid > 1) {
+    try {
+      process.kill(-job.pid, "SIGTERM");
+      return yield* json(200, { stopped: "signal" });
+    } catch {}
+  }
+  try {
+    const response = await fetch(url, { method: "DELETE", headers, signal });
+    if (response.ok) return yield* json(200, { stopped: "removed" });
+  } catch {}
+  return yield* json(404, {});
 }
 
 // What LinkHost runs to open a socket: the engine's WebSocket at that path, with its password.
@@ -688,7 +734,14 @@ export function pushTo(phone, json, hostKey) {
   return relayPush(Buffer.from(phone.address, "base64url"), mail);
 }
 
-const plain = text => String(text ?? "").replace(/[*_`#>]+/g, "").replace(/\s+/g, " ").trim();
+// Markdown's marks taken off, not the words (as ReplyPreview does on the Mac): headings and
+// quotes at a line's start, emphasis around words, code ticks, a link's address.
+const plain = text => String(text ?? "")
+  .replace(/^[ \t]{0,3}(#{1,6}|>+)[ \t]+/gm, "")
+  .replace(/!?\[([^\]]*)\]\([^)\s]*\)/g, "$1")
+  .replace(/(?<![\w*_])[*_]{1,3}(?=\S)|(?<=\S)[*_]{1,3}(?![\w*_])/g, "")
+  .replace(/`/g, "")
+  .replace(/\s+/g, " ").trim();
 
 // "Wants to run a command: npm test", as the Mac says it.
 export function describePermission(request) {
@@ -726,6 +779,22 @@ export async function noticeFor(event, get) {
     for (let step = 0; step < 5 && current.parentID; step++) current = await session(current.parentID);
     return current;
   };
+  // A form an MCP server asks for is filed under no session ("global"): it's the running session
+  // of its folder with a tool of that server under way, as the Mac finds it; null for none.
+  const waitingOn = async (server, folder) => {
+    if (!server) return null;
+    const active = (await get("api/session/active").catch(() => null))?.data ?? {};
+    const name = String(server).replace(/[^\p{L}\p{N}_-]/gu, "_");
+    for (const id of Array.isArray(active) ? active : Object.keys(active)) {
+      const candidate = await session(id).catch(() => null);
+      if (!candidate || (folder && candidate.location?.directory !== folder)) continue;
+      const page = await get(`api/session/${encodeURIComponent(id)}/message?limit=8&order=desc`).catch(() => null);
+      const steps = (page?.data ?? []).filter(message => message.type === "assistant").flatMap(message => message.content ?? []);
+      if (steps.some(block => block.type === "tool" && block.state?.status === "running"
+        && (block.name?.startsWith(name + "_") || (block.name === "execute" && String(block.state.input?.code ?? "").includes(server))))) return id;
+    }
+    return null;
+  };
   const about = (shown, category, body, extra = {}) => {
     const bot = isBot(shown);
     const folder = shown.location?.directory ?? "";
@@ -746,7 +815,9 @@ export async function noticeFor(event, get) {
     case "form.created": {
       // The form comes under `form`, with its session.
       const form = data.form ?? data;
-      const where = await shown(form.sessionID);
+      const asker = form.sessionID === "global" ? await waitingOn(form.metadata?.server, event.location?.directory) : form.sessionID;
+      if (!asker) return null;
+      const where = await shown(asker);
       return about(where, "question", describeForm(form), { request: form.id, ...(where.id !== form.sessionID ? { requestSession: form.sessionID } : {}) });
     }
     case "session.execution.succeeded":
@@ -838,21 +909,15 @@ export function writeLink(link) {
   fs.renameSync(temporary, LINK_FILE);
 }
 
-// Lets in phones in link.json, and a new one showing the pairing token (once, in time). Notes
-// where each one is on the relay, for its notifications.
+// Lets in phones in link.json, and a new one showing the pairing token (once, in time), noting
+// where it is on the relay, for its notifications. Where a paired one is changes once its session
+// proves its own (confirmPhone): the first handshake message can be replayed from elsewhere.
 export function authorizePhone(key, hello, address) {
   const link = readLink();
   if (!link) return false;
   const encoded = key.toString("base64url");
   const where = address?.toString("base64url");
-  const known = link.phones?.find(phone => phone.key === encoded);
-  if (known) {
-    if (where && known.address !== where) {
-      known.address = where;
-      writeLink(link);
-    }
-    return true;
-  }
+  if (link.phones?.some(phone => phone.key === encoded)) return true;
   const pairing = link.pairing;
   if (!pairing || !hello.pair || Date.now() > pairing.expires) return false;
   const given = Buffer.from(String(hello.pair), "base64url");
@@ -862,6 +927,16 @@ export function authorizePhone(key, hello, address) {
   delete link.pairing;
   writeLink(link);
   return true;
+}
+
+// A phone's session proved its own: its notifications go where it is now.
+export function confirmPhone(phone) {
+  const link = readLink();
+  const known = link?.phones?.find(each => each.key === phone.key.toString("base64url"));
+  const where = phone.address?.toString("base64url");
+  if (!known || !where || known.address === where) return;
+  known.address = where;
+  writeLink(link);
 }
 
 // ---- The relay connection ----
@@ -1008,6 +1083,7 @@ async function run() {
       key: Buffer.from(link.key, "base64url"),
       hello: { v: 1, kind: "machine", name: link.name || os.hostname(), app: BRIDGE_VERSION, engine: engine.version ?? null },
       authorize: authorizePhone,
+      confirmed: confirmPhone,
       handle: engineHandler(readEngineFile, { name: link.name || os.hostname() }),
       connect: engineConnect(readEngineFile),
       send: () => {},

@@ -1,9 +1,11 @@
 import Foundation
 
 /// Settings' tabs, in the title bar, as the sessions have theirs: each a page of Settings, or a
-/// site you're signing in to for the agent (Settings › Integrations). Each page you open gets a
-/// tab of its own (or its tab comes forward, if it's open); ⌘-click, or Open in New Tab, opens one
-/// more even then.
+/// site you're signing in to for the agent (Settings › Integrations). A page you open comes in the
+/// preview tab, as VS Code's: the one you haven't done anything in yet, which the next page you
+/// open takes the place of; doing something in it (a click, typing) keeps it, and the next page
+/// gets a tab of its own. A page that's open already has its tab come forward; ⌘-click, or Open
+/// in New Tab, opens one more, kept, even then.
 /// The pages' tabs are kept for the next time; the sites' close when you leave Settings.
 @MainActor
 @Observable
@@ -66,20 +68,34 @@ final class SettingsTabs {
     var contentX: CGFloat = 0
     /// The page tab you were on last, for the sidebar while a site's tab is in view.
     private var lastPageTab = ""
-    /// The tab searching opened, which the next search changes to its first page instead of
-    /// opening another; it stays once you open a page yourself.
-    private var previewTab: String?
+    /// The preview tab: the page you opened last, if you haven't done anything in it, which the
+    /// next page you open (or searching finds) takes the place of.
+    private(set) var previewTab: String?
 
     private static let tabsKey = "settings.tabs"
+    /// Which of the pages' tabs is the preview tab, for the next time: its page, and which of that
+    /// page's tabs it is ("general#1", the second General tab).
+    private static let previewKey = "settings.previewTab"
 
     init() {
         let defaults = UserDefaults.standard
-        let pages = (defaults.string(forKey: Self.tabsKey) ?? "").split(separator: ",").compactMap { SettingsPage(rawValue: String($0)) }
-        let current = defaults.string(forKey: SettingsPage.storageKey).flatMap(SettingsPage.init) ?? pages.first ?? .general
+        // Only pages Settings still lists (Phone goes while the phone link is off).
+        let shown = SettingsPage.shown
+        let pages = (defaults.string(forKey: Self.tabsKey) ?? "").split(separator: ",").compactMap { SettingsPage(rawValue: String($0)) }.filter(shown.contains)
+        let current = defaults.string(forKey: SettingsPage.storageKey).flatMap(SettingsPage.init).flatMap { shown.contains($0) ? $0 : nil } ?? pages.first ?? .general
         tabs = (pages.isEmpty ? [current] : pages).map { Tab(id: UUID().uuidString, kind: .page($0)) }
         let selected = tabs.first { $0.page == current } ?? tabs[0]
         selectedID = selected.id
         lastPageTab = selected.id
+        // The first time, the page Settings opens on is one you've only looked at.
+        if pages.isEmpty {
+            previewTab = selected.id
+        } else if let saved = defaults.string(forKey: Self.previewKey) {
+            let parts = saved.split(separator: "#", maxSplits: 1)
+            let same = tabs.filter { $0.page == SettingsPage(rawValue: String(parts[0])) }
+            let index = parts.count > 1 ? Int(parts[1]) ?? 0 : 0
+            if index < same.count { previewTab = same[index].id }
+        }
     }
 
     var selected: Tab? { tabs.first { $0.id == selectedID } }
@@ -104,21 +120,19 @@ final class SettingsTabs {
         save()
     }
 
-    /// Shows `page` in a tab of its own, beside the one in view: its tab, if it's open (unless
-    /// `inNewTab` asks for one more), else a new one. A tab never changes to another page.
-    func show(_ page: SettingsPage, inNewTab: Bool = false) {
-        previewTab = nil
-        if !inNewTab, let open = tabs.first(where: { $0.page == page }) {
-            select(open.id)
-        } else {
+    /// Shows `page`: its tab, if it's open; else in the preview tab, unless `isBusy` says it has
+    /// something open in its page's place (an editor, with what you typed), which stays; else in
+    /// a new preview tab, beside the one in view. `inNewTab` (⌘-click) opens one more, kept.
+    func show(_ page: SettingsPage, inNewTab: Bool = false, isBusy: (String) -> Bool = { _ in false }) {
+        if inNewTab {
             insert(Tab(id: UUID().uuidString, kind: .page(page)))
+        } else {
+            preview(page, isBusy: isBusy)
         }
         Analytics.shared.track("settings_opened", ["tab": page.rawValue])
     }
 
-    /// What searching finds first: its tab, if it's open; else the tab searching opened, now on
-    /// this page, unless `isBusy` says it has something open in its page's place (an editor,
-    /// with what you typed), which stays; else a new one, which the next search changes in turn.
+    /// `page` as `show` has it, without counting it as opened: what searching finds first.
     func preview(_ page: SettingsPage, isBusy: (String) -> Bool = { _ in false }) {
         if let open = tabs.first(where: { $0.page == page }) {
             select(open.id)
@@ -128,7 +142,16 @@ final class SettingsTabs {
         } else {
             insert(Tab(id: UUID().uuidString, kind: .page(page)))
             previewTab = selectedID
+            save()
         }
+    }
+
+    /// Something was done in the tab in view (a click, typing): it's no longer a preview, and
+    /// stays when you open another page.
+    func keepSelected() {
+        guard previewTab == selectedID else { return }
+        previewTab = nil
+        save()
     }
 
     /// Signs in to `service` in a tab of its own (the one there is, if it's open).
@@ -154,6 +177,7 @@ final class SettingsTabs {
     func close(_ id: String, machines: Machines) {
         guard tabs.count > 1, let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         let tab = tabs.remove(at: index)
+        if previewTab == id { previewTab = nil }
         if case .site(let service) = tab.kind, let site = sites.removeValue(forKey: service) {
             for (machine, page) in site.machinePages { machines.engine(machine)?.browser.close(page) }
             site.pages.closeAll()
@@ -193,5 +217,9 @@ final class SettingsTabs {
         let defaults = UserDefaults.standard
         defaults.set(tabs.compactMap(\.page?.rawValue).joined(separator: ","), forKey: Self.tabsKey)
         defaults.set(page.rawValue, forKey: SettingsPage.storageKey)
+        let preview = tabs.first { $0.id == previewTab }?.page.map { page in
+            "\(page.rawValue)#\(tabs.prefix { $0.id != previewTab }.count { $0.page == page })"
+        }
+        defaults.set(preview, forKey: Self.previewKey)
     }
 }

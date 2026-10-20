@@ -217,7 +217,8 @@ struct WakesTests {
             }
             #expect(try String(contentsOf: watch.appending(path: "last"), encoding: .utf8) == last)
             #expect(!FileManager.default.fileExists(atPath: watch.appending(path: "seen").path))
-            #expect(!FileManager.default.fileExists(atPath: watch.appending(path: "status").path))
+            #expect(!FileManager.default.fileExists(atPath: watch.appending(path: "run-status").path))
+            #expect(!FileManager.default.fileExists(atPath: watch.appending(path: "run-failed").path))
         }
         try "cat state.txt".write(to: watch.appending(path: "check"), atomically: true, encoding: .utf8)
 
@@ -247,7 +248,11 @@ struct WakesTests {
             try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.appending(path: name).path)
         }
         try executable("date", "#!/bin/sh\nif [ \"$1\" = +%s ]; then cat \"$K/clock\"; else exec /bin/date \"$@\"; fi\n")
-        if gnuTimeout { try executable("timeout", "#!/bin/sh\nshift\nexec \"$@\"\n") }
+        // As GNU's takes them: its options (-k 5, -s KILL), then the time, then the command.
+        if gnuTimeout { try executable("timeout", "#!/bin/sh\nwhile [ \"$1\" = -k ] || [ \"$1\" = -s ]; do shift 2; done\nshift\nexec \"$@\"\n") }
+        // A curl that prints what it's given and exits with it: with the network down, `curl -s`
+        // prints nothing and exits 6 or 7, or prints 000 when asked for its status code.
+        try executable("curl", "#!/bin/sh\ncat \"$K/out\"\nexit \"$(cat \"$K/code\")\"\n")
         let bot = k.appending(path: "bots/bot_test")
         let watch = bot.appending(path: "watches/AbCd12")
         try fm.createDirectory(at: watch, withIntermediateDirectories: true)
@@ -303,15 +308,43 @@ struct WakesTests {
         #expect(try ["A", "X", "A", "A"].map { try step($0) } == [false, false, false, false], "\(label)")
         #expect(!fm.fileExists(atPath: watch.appending(path: "seen").path), "\(label)")
 
-        // An outage longer than the second look: curl -s failing (6, 7), grep given nothing (1).
+        // An outage longer than the second look: a check failing quietly (6, 7, as curl -s does).
         try reset()
         #expect(try step("A") == false)
         let heard = read(watch.appending(path: "last"))
-        for code in [6, 7, 1, 6] { #expect(try step("", code) == false, "\(code), \(label)") }
+        for code in [6, 7, 2, 6] { #expect(try step("", code) == false, "\(code), \(label)") }
         #expect(try step("A") == false, "\(label)")
         #expect(try step("A") == false, "\(label)")
         #expect(woke.isEmpty, "\(label)")
         #expect(read(watch.appending(path: "last")) == heard, "\(label)")
+
+        // Something appearing and going away: grep finding nothing (1, nothing printed) is a
+        // reading, while curl failing before it (grep's 1 too), or before sed or jq (0), isn't.
+        try write("curl -s https://example.com/shop | grep -o 'In stock'", watch.appending(path: "check"))
+        try reset()
+        let soldOut = ("<b>Sold out</b>", 0), inStock = ("<b>In stock</b>", 0), down = ("", 7)
+        let flips = [soldOut, soldOut, down, down, soldOut, inStock, inStock, down, inStock, soldOut, soldOut, soldOut]
+        #expect(try flips.map { try step($0.0, $0.1) } == [false, false, false, false, false, false, true, false, false, false, true, false], "\(label)")
+        #expect(woke.map { $0.message.contains("now prints:\nIn stock") } == [true, false], "\(label)")
+        #expect(woke.last?.message.contains("now prints nothing.") == true, "\(label)")
+        // Down from its very first run: no first reading until it's back.
+        try reset()
+        #expect(try [down, down, soldOut, inStock, inStock].map { try step($0.0, $0.1) } == [false, false, false, false, true], "\(label)")
+        for check in ["curl -s https://example.com/api | sed -n 's/.*\"price\":\\([0-9]*\\).*/\\1/p'", "echo \"$(curl -s https://example.com/api)\" | grep -c 42"] {
+            try write(check, watch.appending(path: "check"))
+            try reset()
+            let price = (#"{"price":42}"#, 0)
+            #expect(try [price, down, down, down, price].map { try step($0.0, $0.1) } == [false, false, false, false, false], "\(check), \(label)")
+            #expect(read(watch.appending(path: "last")) != nil, "\(label)")
+        }
+        // A curl that writes out its own result counts whatever happens: a site's status code,
+        // 000 when it can't be reached.
+        for check in ["curl -s -o /dev/null -w '%{http_code}' https://example.com", "curl -so /dev/null -w%{http_code} https://example.com"] {
+            try write(check, watch.appending(path: "check"))
+            try reset()
+            #expect(try [("200", 0), ("000", 7), ("000", 7), ("200", 0), ("200", 0)].map { try step($0.0, $0.1) } == [false, false, true, false, true], "\(check), \(label)")
+        }
+        try write(reads, watch.appending(path: "check"))
 
         // A change seen, then no reading for its second look: the next reading that differs too wakes it.
         try reset()
@@ -336,7 +369,7 @@ struct WakesTests {
         // No reading never becomes the first one: a check that fails, or is killed (on a Mac, its
         // status was the one of a check that worked).
         try reset()
-        #expect(try step("", 1) == false)
+        #expect(try step("", 2) == false)
         #expect(read(watch.appending(path: "last")) == nil, "\(label)")
         try write("printf partial; kill -9 $$", watch.appending(path: "check"))
         #expect(try step("") == false)
@@ -349,6 +382,66 @@ struct WakesTests {
         try write("123456789 1", watch.appending(path: "seen"))
         #expect(try step("B") == false, "\(label)")
         #expect(try step("B") == true, "\(label)")
+
+        // What an older kuvo-wake read (errors too) gives way to the first reading, silently,
+        // with a wake-up it hadn't delivered; from then on, changes wake the bot as before.
+        try reset()
+        try write("1234567890 12", watch.appending(path: "last"))
+        try write("1234567890 13", watch.appending(path: "pending"))
+        try write("Look\n\nYour watch saw a change.", watch.appending(path: "message"))
+        #expect(try ["B", "B", "C", "C"].map { try step($0) } == [false, false, false, true], "\(label)")
+        #expect(read(watch.appending(path: "last"))?.hasPrefix("2/") == true, "\(label)")
+    }
+
+    /// Check Now: `kuvo-wake <bot> try <letters>` runs a watch's check as its runs do and says why
+    /// a run like it wouldn't count, without counting it.
+    @Test(arguments: WakesTests.shells)
+    func checkNowRunsTheCheckAsTheWatchDoes(shell: String) throws {
+        let k = try folder()
+        defer { try? FileManager.default.removeItem(at: k) }
+        #expect(try sh(Wakes.installScript, in: k).status == 0)
+        let fm = FileManager.default
+        let bin = k.appending(path: "testbin")
+        try fm.createDirectory(at: bin, withIntermediateDirectories: true)
+        try "#!/bin/sh\ncat \"$K/out\"\nexit \"$(cat \"$K/code\")\"\n".write(to: bin.appending(path: "curl"), atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.appending(path: "curl").path)
+        let bot = k.appending(path: "bots/bot_test")
+        let watch = bot.appending(path: "watches/AbCd12")
+        try fm.createDirectory(at: watch, withIntermediateDirectories: true)
+        try "10m".write(to: watch.appending(path: "every"), atomically: true, encoding: .utf8)
+        try "Look".write(to: watch.appending(path: "note"), atomically: true, encoding: .utf8)
+        try "0".write(to: watch.appending(path: "next"), atomically: true, encoding: .utf8)
+        func tried(_ check: String, page: String = "", code: Int = 0, letters: String = "AbCd12") throws -> (status: Int32, output: String) {
+            try check.write(to: watch.appending(path: "check"), atomically: true, encoding: .utf8)
+            try page.write(to: k.appending(path: "out"), atomically: true, encoding: .utf8)
+            try String(code).write(to: k.appending(path: "code"), atomically: true, encoding: .utf8)
+            return try sh("PATH=\"$K/testbin:$PATH\" \(shell) \"$K/bin/kuvo-wake\" \"$K/bots/bot_test\" try '\(letters)'", in: k)
+        }
+        let shop = "curl -s https://example.com/shop | grep -o 'In stock'"
+        #expect(Wakes.tried(try tried(shop, page: "In stock").output)! == ("In stock", nil), "\(shell)")
+        // Nothing found counts; the network down doesn't, and says so.
+        #expect(Wakes.tried(try tried(shop, page: "Sold out").output)! == ("", nil), "\(shell)")
+        #expect(Wakes.tried(try tried(shop, code: 6).output)?.skipped == "curl failed (exit 6)", "\(shell)")
+        #expect(Wakes.tried(try tried("echo partial >&2; exit 3").output)?.skipped == "the check failed (exit 3) without printing anything", "\(shell)")
+        #expect(Wakes.tried(try tried("nosuchcommand-kuvo").output)?.skipped == "the check couldn't run (exit 127)", "\(shell)")
+        #expect(Wakes.tried(try tried("printf 'a\\nb'; exit 3").output)! == ("a\nb", nil), "\(shell)")
+        // In the folder the bot works in, its errors left out, with no arguments of its own.
+        try fm.createDirectory(at: k.appending(path: "project"), withIntermediateDirectories: true)
+        try k.appending(path: "project").path.write(to: bot.appending(path: "directory"), atomically: true, encoding: .utf8)
+        #expect(Wakes.tried(try tried("echo \"${PWD##*/} $#\"; echo oops >&2").output)! == ("project 0", nil), "\(shell)")
+        // With the computer's own folders, as the watchdog on a machine keeps them.
+        let own = "KUVO_OWN_XDG_CONFIG_HOME=/home/me/.config KUVO_OWN_XDG_DATA_HOME= XDG_CONFIG_HOME=\"$K/config\" XDG_DATA_HOME=\"$K/data\" "
+        try #"printf '%s|%s|%s' "$XDG_CONFIG_HOME" "${XDG_DATA_HOME-unset}" "${KUVO_OWN_XDG_CONFIG_HOME-unset}""#.write(to: watch.appending(path: "check"), atomically: true, encoding: .utf8)
+        let folders = try sh(own + "\(shell) \"$K/bin/kuvo-wake\" \"$K/bots/bot_test\" try AbCd12", in: k)
+        #expect(Wakes.tried(folders.output)?.output == "/home/me/.config|unset|unset", "\(shell)")
+        // It counts nothing, and leaves nothing behind.
+        #expect(try fm.contentsOfDirectory(atPath: watch.path).sorted() == ["check", "every", "next", "note"], "\(shell)")
+        #expect(try String(contentsOf: watch.appending(path: "next"), encoding: .utf8) == "0")
+        for letters in ["", "..", "../AbCd12", "AbCd12/..", "nope"] {
+            let result = try tried("echo hi", letters: letters)
+            #expect(result.status == 2 && Wakes.tried(result.output) == nil, "\(letters), \(shell)")
+        }
+        #expect(Wakes.tried("Usage:\n  kuvo-wake <bot> add") == nil)
     }
 
     /// The script's next time for a repeat (as a wake-up's name has it), from its own functions, at `now`.
@@ -478,6 +571,14 @@ struct WakesTests {
         #expect(Wakes.Repeat("4m") == nil)
         #expect(Wakes.Repeat("-1d") == nil)
         #expect(Wakes.Repeat("d") == nil)
+        // At most a year, and no leading zero: one past it made the app crash on every launch.
+        #expect(Wakes.Repeat("525600m") == .minutes(525_600))
+        #expect(Wakes.Repeat("8760h") == .hours(8760))
+        #expect(Wakes.Repeat("3000000000000000h") == nil)
+        #expect(Wakes.Repeat("367d") == nil)
+        #expect(Wakes.Repeat("53w") == nil)
+        #expect(Wakes.Repeat("08m") == nil)
+        #expect(Wakes.Pending(id: "1792080986-CkytYD-3000000000000000h", note: "")?.every == nil)
         let wake = Wakes.Pending(id: "1792080986-CkytYD-1d", note: "hi")
         #expect(wake?.every == .days(1))
         #expect(wake?.at == nil)
@@ -500,6 +601,39 @@ struct WakesTests {
         #expect(Wakes.Pending(id: "1792080986-CkytYD", note: "hi")?.nextID() == nil)
         let command = Wakes.command(in: #"kuvo-wake bot_abc add 2026-10-17T09:00 --every weekdays "standup""#)
         #expect(command == Wakes.Command(verb: .add, when: "2026-10-17T09:00", note: "standup", every: .weekdays))
+    }
+
+    /// Weekdays are Monday to Friday whatever the locale calls the weekend, as on a machine.
+    @Test func weekdaysAreMondayToFriday() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Jerusalem")!
+        calendar.locale = Locale(identifier: "he_IL")
+        let friday = Date(timeIntervalSince1970: 4_070_995_200)  // Fri, Jan 2, 2099, 00:00 UTC
+        #expect(!Wakes.isWeekend(friday.addingTimeInterval(12 * 3600), calendar: calendar))
+        #expect(Wakes.isWeekend(friday.addingTimeInterval(36 * 3600), calendar: calendar))
+        #expect(Wakes.isWeekend(friday.addingTimeInterval(60 * 3600), calendar: calendar))
+    }
+
+    /// The script takes a repeat within the same limits, and a time with its zone on any sh.
+    @Test func theScriptKeepsRepeatsAndTimesInBounds() throws {
+        for shell in Self.shells {
+            let k = try folder()
+            defer { try? FileManager.default.removeItem(at: k) }
+            #expect(try sh(Wakes.installScript, in: k).status == 0)
+            let wake = k.appending(path: "bin/kuvo-wake").path
+            let bot = k.appending(path: "bots/bot_test")
+            try FileManager.default.createDirectory(at: bot, withIntermediateDirectories: true)
+            for bad in ["3000000000000000h", "08m", "367d", "53w"] {
+                #expect(try sh("\"\(wake)\" \"\(bot.path)\" add +1h --every \(bad) 'x'", in: k, shell: shell).status != 0, "\(shell) \(bad)")
+            }
+            #expect(try sh("\"\(wake)\" \"\(bot.path)\" add +99999999h 'too far'", in: k, shell: shell).status != 0)
+            // The same moment, written in UTC and in another zone, is one time.
+            try? FileManager.default.removeItem(at: bot.appending(path: "wakes"))
+            #expect(try sh("TZ=America/New_York \"\(wake)\" \"\(bot.path)\" add 2099-01-05T06:00:00Z 'utc'", in: k, shell: shell).status == 0)
+            #expect(try sh("TZ=America/New_York \"\(wake)\" \"\(bot.path)\" add 2099-01-05T09:00:00+03:00 'offset'", in: k, shell: shell).status == 0)
+            let times = Set(try FileManager.default.contentsOfDirectory(atPath: bot.appending(path: "wakes").path).compactMap { Wakes.Pending(id: $0, note: "")?.due })
+            #expect(times == [Date(timeIntervalSince1970: 4_071_276_000)], "\(shell): \(times)")
+        }
     }
 
     @Test func aWakeUpsTimeComesFromItsName() {

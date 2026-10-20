@@ -67,7 +67,7 @@ struct GroupEditor: View {
         let weekday = meetsEvery?.keepsWeekday == true ? before?.weekday ?? calendar.component(.weekday, from: meetsAt) : nil
         var next = meetsAt
         if next <= .now, let every = meetsEvery { next = every.next(after: next, now: .now, at: at, weekday: weekday, calendar: calendar) }
-        while meetsEvery == .weekdays, calendar.isDateInWeekend(next), let day = calendar.date(byAdding: .day, value: 1, to: next) { next = day }
+        while meetsEvery == .weekdays, Wakes.isWeekend(next, calendar: calendar), let day = calendar.date(byAdding: .day, value: 1, to: next) { next = day }
         let topic = topic.trimmingCharacters(in: .whitespacesAndNewlines)
         return BotGroup.Meeting(next: next, every: meetsEvery?.text, topic: topic.isEmpty ? "Our regular meeting: where things stand, and what's next." : topic, at: at, weekday: weekday)
     }
@@ -341,6 +341,7 @@ private struct MemberRow: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovering)
         .accessibilityAddTraits(isOn ? .isSelected : [])

@@ -32,6 +32,8 @@ struct BotEditor: View {
     /// The project it works in; nil for a folder of its own.
     @State private var project: String?
     @State private var showsAddMachine = false
+    /// An integration it's being given a key of its own for, in the form's place.
+    @State private var keyFor: Integrations.Service?
     @State private var isWorking = false
     @State private var failure: String?
     /// Making it: waiting for its machine to connect first, if it's on its way.
@@ -42,6 +44,10 @@ struct BotEditor: View {
     /// The template a new bot started from.
     @State private var template: String?
     @State private var isHoveringAvatar = false
+    /// The shared bot's personality was looked for (once: the form appears again on coming back
+    /// from adding a machine), and the one added to yours for it, if it was.
+    @State private var adoptedRecipe = false
+    @State private var addedPersonality: String?
     @FocusState private var focus: Field?
 
     private enum Field { case name }
@@ -65,6 +71,11 @@ struct BotEditor: View {
     private let recipe: BotRecipe?
 
     /// The models of the engine where it lives.
+    /// The models it can use, by where it lives, as for any conversation (see `ModelScope.on`).
+    private var modelScope: ModelScope {
+        .on(machine: machine)
+    }
+
     private var placeCatalog: Catalog {
         machine.flatMap { app.machines.engine($0)?.catalog } ?? catalog
     }
@@ -73,6 +84,12 @@ struct BotEditor: View {
     private var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var body: some View {
+        // The editor as a whole, for what goes when it's closed, however that is.
+        ZStack { content }
+            .onDisappear(perform: dropAddedPersonality)
+    }
+
+    @ViewBuilder private var content: some View {
         if showsAddMachine {
             // A machine to live on, added right here: the bot's form is as it was on coming back.
             EditorDetail(back: isNew ? "New Bot" : "Edit \(trimmedName)", title: "Add a Machine", onBack: { withAnimation(.ui) { showsAddMachine = false } }) {
@@ -83,6 +100,11 @@ struct BotEditor: View {
                         showsAddMachine = false
                     }
                 }, cancel: { withAnimation(.ui) { showsAddMachine = false } })
+            }
+            .transition(.opacity)
+        } else if let service = keyFor, let bot {
+            EditorDetail(back: "Edit \(trimmedName)", title: "\(service.title) Key", onBack: { withAnimation(.ui) { keyFor = nil } }) {
+                BotKeyEntry(service: service, bot: bot) { withAnimation(.ui) { keyFor = nil } }
             }
             .transition(.opacity)
         } else {
@@ -123,9 +145,15 @@ struct BotEditor: View {
             if isNew, let machine = ProcessInfo.processInfo.environment["KUVO_DEMO_NEW_BOT_MACHINE"] { self.machine = machine }
             #endif
             // A shared bot's personality, found here (or added) once, not at every redraw.
-            if isNew, personality == nil, let recipe { personality = recipe.personalityHere() }
+            if isNew, !adoptedRecipe, let recipe {
+                adoptedRecipe = true
+                if personality == nil, let found = recipe.personalityHere() {
+                    personality = found.id
+                    if found.added { addedPersonality = found.id }
+                }
+            }
             // A bot made before bots had a model: the one its conversation uses.
-            if model == nil { model = bot.flatMap { workspace.session($0.sessionID)?.model } ?? placeCatalog.startingModel(lastModel) }
+            if model == nil { model = bot.flatMap { workspace.session($0.sessionID)?.model } ?? placeCatalog.startingModel(lastModel, scope: modelScope) }
         }
         .alert("Delete \(bot?.name ?? "This Bot")?", isPresented: $confirmsDelete) {
             Button("Delete", role: .destructive) {
@@ -149,8 +177,15 @@ struct BotEditor: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Its conversation, memory and wake-ups are deleted. This can’t be undone." + (bot?.project != nil ? " The project it worked in isn’t touched." : ""))
+            Text(deleteMessage)
         }
+    }
+
+    /// What deleting it does: its own folder (its memory and what it made there) goes to the Trash.
+    private var deleteMessage: String {
+        let folder = bot?.machine.map { "Its folder, with its memory and the files it made, goes to Kuvo Code’s trash folder on \($0)." }
+            ?? "Its folder, with its memory and the files it made, goes to the Trash."
+        return "Its conversation and wake-ups are deleted. " + folder + (bot?.project != nil ? " The project it worked in isn’t touched." : "")
     }
 
     private var form: some View {
@@ -173,7 +208,7 @@ struct BotEditor: View {
 
                 section("Model", note: "It uses this in group chats, and in its own conversation unless you pick another there.") {
                     WellGroup {
-                        ModelChip(selection: model, onSelect: { model = $0 }, opensBelow: true) { current, variant in
+                        ModelChip(selection: model, onSelect: { model = $0 }, opensBelow: true, scope: modelScope) { current, variant in
                             WellRow {
                                 if let current { ProviderLogo(id: current.makerLogoID, size: 16) } else { Image(systemName: "cpu") }
                             } content: {
@@ -222,7 +257,16 @@ struct BotEditor: View {
                         }
                     }
                     section("Wake-Ups", note: "The bot schedules these itself: wake-ups to carry on later, and watches, which check something without its model and wake it when that changes. Add a wake-up of your own, and at its time what it says to do arrives in its conversation.") {
-                        WakeList(bot: bot)
+                        WakeList(owner: bot.wakeOwner, name: bot.name)
+                    }
+                    if bot.project == nil {
+                        section("Keys", note: "A key of its own, like a GitHub token only it should use: its tools take it in place of your shared one, and no other bot or session gets it.") {
+                            BotKeysSection(bot: bot) { service in withAnimation(.ui) { keyFor = service } }
+                        }
+                    } else {
+                        section("Keys", note: "It works in a project, beside your sessions there, so it uses the keys they do, from Settings › Integrations. A bot with a folder of its own can have its own.") {
+                            EmptyView()
+                        }
                     }
                     section("Memory") {
                         WellGroup {
@@ -306,6 +350,9 @@ struct BotEditor: View {
             }
                 .keyboardShortcut(.cancelAction)
                 .buttonStyle(.glass)
+                // Its folder is going, or it's being made: the editor closes once that's done, or
+                // says why not. (Waiting for a machine, Cancel stops it.)
+                .disabled(isDeleting || (isWorking && !waitsForMachine))
             Button(isNew ? "Create Bot" : "Save", action: save)
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.glassProminent)
@@ -370,6 +417,8 @@ struct BotEditor: View {
             for engine in app.machines.list.compactMap({ app.machines.engine($0.id) }) {
                 menu.addItem(ActionItem(engine.machine.name, subtitle: engine.statusText, image: NSImage(systemSymbolName: "server.rack", accessibilityDescription: nil), checked: machine == engine.machine.id) {
                     machine = engine.machine.id
+                    // One it can't use there (a coding agent's): that machine's engine's.
+                    if let current = model, !modelScope.allows(current.providerID) { model = placeCatalog.startingModel(lastModel, scope: modelScope) }
                     project = nil
                     if case .failed = engine.state { app.connect(engine) }
                 })
@@ -415,6 +464,15 @@ struct BotEditor: View {
             }
             .contentShape(.rect)
         }
+    }
+
+    /// Opening a shared bot and not making it leaves none of its personality behind (one being
+    /// made keeps it).
+    private func dropAddedPersonality() {
+        guard !isWorking || waitsForMachine, let addedPersonality,
+              !bots.list.contains(where: { $0.personality == addedPersonality }),
+              let added = Personalities.shared.personality(addedPersonality) else { return }
+        Personalities.shared.delete(added)
     }
 
     // MARK: Saving
@@ -541,6 +599,7 @@ private struct TemplatePicker: View {
                 .contentShape(.rect(cornerRadius: 10))
             }
             .buttonStyle(.plain)
+            .clickablePointer()
             .onHover { isHovering = $0 }
             .animation(.easeOut(duration: 0.12), value: isHovering)
             .accessibilityAddTraits(isOn ? .isSelected : [])
@@ -573,6 +632,7 @@ private struct LookPicker: View {
                             .contentShape(.circle)
                     }
                     .buttonStyle(.plain)
+                    .clickablePointer()
                     .help(tint.title)
                     .accessibilityLabel(tint.title)
                     .accessibilityAddTraits(look.color == tint ? .isSelected : [])
@@ -630,6 +690,7 @@ private struct LookPicker: View {
                     .contentShape(.rect(cornerRadius: 10))
             }
             .buttonStyle(.plain)
+            .clickablePointer()
             .onHover { isHovering = $0 }
             .animation(.easeOut(duration: 0.12), value: isHovering)
             .help(help)
@@ -797,269 +858,10 @@ private struct PersonalityPicker: View {
                 .contentShape(.rect(cornerRadius: 8))
             }
             .buttonStyle(.plain)
+            .clickablePointer()
             .onHover { isHovering = $0 }
             .animation(.easeOut(duration: 0.12), value: isHovering)
             .accessibilityAddTraits(isOn ? .isSelected : [])
-        }
-    }
-}
-
-/// A bot's waiting wake-ups, each with a way to cancel it, and one of yours to add.
-private struct WakeList: View {
-    let bot: Bot
-    @Environment(Bots.self) private var bots
-    /// The wake-up you're adding, while you are.
-    @State private var draft: Draft?
-    @State private var failure: String?
-    @State private var isAdding = false
-    /// What a watch's check printed when you tried it, by its letters; nil while it runs.
-    @State private var tried: [String: String?] = [:]
-    @FocusState private var noteFocused: Bool
-
-    private struct Draft {
-        var due = Draft.nextHour
-        var every: Wakes.Repeat?
-        var note = ""
-
-        /// The next hour on the hour, at least a quarter of an hour away.
-        static var nextHour: Date {
-            let hour = Calendar.current.dateInterval(of: .hour, for: .now)?.end ?? .now.addingTimeInterval(3600)
-            return hour.timeIntervalSinceNow < 15 * 60 ? hour.addingTimeInterval(3600) : hour
-        }
-    }
-
-    /// The repeats to pick from.
-    private static let repeats: [Wakes.Repeat?] = [nil, .hours(1), .days(1), .weekdays, .weeks(1)]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            list
-            if draft != nil {
-                form
-            } else if let failure {
-                // Canceling or pausing on a machine that couldn't be reached (adding says so by its buttons).
-                Text(failure)
-                    .font(.callout)
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .animation(.ui, value: draft == nil)
-        #if DEBUG
-        // KUVO_DEMO_ADD_WAKE=<note>: opens adding a wake-up, every day, with that note;
-        // KUVO_DEMO_ADD_WAKE_NOW adds it too.
-        .task {
-            let environment = ProcessInfo.processInfo.environment
-            guard let note = environment["KUVO_DEMO_ADD_WAKE"] else { return }
-            draft = Draft(every: .days(1), note: note)
-            if environment["KUVO_DEMO_ADD_WAKE_NOW"] != nil {
-                try? await Task.sleep(for: .seconds(1))
-                add()
-            }
-        }
-        #endif
-    }
-
-    private var list: some View {
-        let wakes = bots.wakes[bot.id] ?? []
-        let watches = bots.watches[bot.id] ?? []
-        return WellGroup {
-            WellRow {
-                Image(systemName: "pause.circle")
-            } content: {
-                Toggle(isOn: Binding(get: { bots.paused.contains(bot.id) }, set: { pause in attempt { try await bots.setPaused(pause, bot) } })) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Pause Wake-Ups")
-                        Text("They wait until you turn this off; the ones that came due meanwhile go then.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .toggleStyle(.switch)
-                .padding(.vertical, 8)
-            }
-            WellDivider()
-            if wakes.isEmpty && watches.isEmpty {
-                WellRow {
-                    Image(systemName: "alarm")
-                } content: {
-                    Text("None waiting")
-                        .foregroundStyle(.secondary)
-                }
-            }
-            ForEach(Array(watches.enumerated()), id: \.element.id) { index, watch in
-                if index > 0 { WellDivider() }
-                WellRow {
-                    Image(systemName: "eye")
-                } content: {
-                    HStack(spacing: 10) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Watches " + (Wakes.Repeat(watch.every)?.words ?? "every \(watch.every)") + ", and wakes when this changes")
-                                .font(.system(size: 13, weight: .medium))
-                            Text(watch.check)
-                                .font(.system(.callout, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            Text(watch.note)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                            if let result = tried[watch.letters] {
-                                Group {
-                                    if let output = result {
-                                        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-                                        Text(trimmed.isEmpty ? "It printed nothing." : trimmed)
-                                            .font(.system(.callout, design: .monospaced))
-                                            .textSelection(.enabled)
-                                            .lineLimit(6)
-                                    } else {
-                                        HStack(spacing: 6) {
-                                            Spinner(size: 11)
-                                            Text("Checking…")
-                                        }
-                                        .font(.callout)
-                                        .foregroundStyle(.secondary)
-                                    }
-                                }
-                                .padding(8)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .recessedWell(RoundedRectangle(cornerRadius: 8))
-                                .padding(.top, 4)
-                            }
-                        }
-                        .padding(.vertical, 8)
-                        Spacer(minLength: 8)
-                        Button("Check Now") {
-                            tried[watch.letters] = .some(nil)
-                            Task { tried[watch.letters] = .some(await bots.tryCheck(watch, of: bot)) }
-                        }
-                        .buttonStyle(TextButtonStyle())
-                        .disabled(tried[watch.letters] == .some(nil))
-                        .help("Run its check now and see what it prints; it doesn’t count as a run, nor wake the bot")
-                        Button("Stop Watching", systemImage: "minus.circle.fill") {
-                            attempt { try await bots.cancelWatch(watch, of: bot) }
-                        }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(RemoveButtonStyle())
-                        .help("Stop this watch")
-                    }
-                }
-            }
-            if !watches.isEmpty && !wakes.isEmpty { WellDivider() }
-            ForEach(Array(wakes.enumerated()), id: \.element.id) { index, wake in
-                if index > 0 { WellDivider() }
-                WellRow {
-                    Image(systemName: wake.every == nil ? "alarm" : "repeat")
-                } content: {
-                    HStack(spacing: 10) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("\(wake.due, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute())\(wake.every.map { ", then \($0.words)" } ?? "")")
-                                .font(.system(size: 13, weight: .medium))
-                            Text(wake.note)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                        }
-                        .padding(.vertical, 8)
-                        Spacer(minLength: 8)
-                        Button("Wake Up Now") {
-                            Task { try? await bots.wakeNow(wake, of: bot) }
-                        }
-                        .buttonStyle(TextButtonStyle())
-                        .help(wake.every == nil ? "Send this wake-up now, to see the job run" : "Send this wake-up now, to see the job run; it still comes back at its time")
-                        Button("Cancel Wake-Up", systemImage: "minus.circle.fill") {
-                            attempt { try await bots.cancelWake(wake, of: bot) }
-                        }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(RemoveButtonStyle())
-                        .help("Cancel this wake-up")
-                    }
-                }
-            }
-            if draft == nil {
-                WellDivider()
-                HStack {
-                    Button {
-                        draft = Draft()
-                        failure = nil
-                        noteFocused = true
-                    } label: {
-                        Label("Add Wake-Up…", systemImage: "plus")
-                    }
-                    .buttonStyle(TextButtonStyle(outset: true))
-                    .help("Schedule a wake-up yourself: what the bot does, and when")
-                    Spacer()
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-            }
-        }
-        .task {
-            await bots.readWakes(bot)
-            #if DEBUG
-            // KUVO_DEMO_TRY_WATCH: Check Now on its first watch.
-            if ProcessInfo.processInfo.environment["KUVO_DEMO_TRY_WATCH"] != nil, let watch = bots.watches[bot.id]?.first {
-                tried[watch.letters] = .some(await bots.tryCheck(watch, of: bot))
-            }
-            #endif
-        }
-    }
-
-    /// When, how often, and what the bot does then.
-    private var form: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            WellGroup(isActive: noteFocused) {
-                WellRow {
-                    Image(systemName: "clock")
-                } content: {
-                    ScheduleRow(date: Binding(get: { draft?.due ?? .now }, set: { draft?.due = $0 }), from: .now,
-                                every: Binding(get: { draft?.every }, set: { draft?.every = $0 }), choices: Self.repeats, label: "When")
-                }
-                WellDivider()
-                TextField("What to do", text: Binding(get: { draft?.note ?? "" }, set: { draft?.note = $0 }),
-                          prompt: Text("What \(bot.name) does then, like Send me the morning digest"), axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .lineLimit(2...10)
-                    .focused($noteFocused)
-                    .padding(12)
-            }
-            HStack {
-                if let failure {
-                    Text(failure)
-                        .font(.callout)
-                        .foregroundStyle(.red)
-                }
-                Spacer()
-                Button("Cancel") { draft = nil }
-                    .buttonStyle(.glass)
-                Button("Add Wake-Up", action: add)
-                    .buttonStyle(.glassProminent)
-                    .disabled(isAdding || (draft?.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true))
-            }
-        }
-        .transition(.opacity.combined(with: .offset(y: -6)))
-    }
-
-    /// A change to its wake-ups, and what went wrong if it didn't happen.
-    private func attempt(_ change: @escaping @MainActor () async throws -> Void) {
-        failure = nil
-        Task {
-            do { try await change() } catch { failure = error.localizedDescription }
-        }
-    }
-
-    private func add() {
-        guard let draft, !isAdding else { return }
-        isAdding = true
-        Task {
-            defer { isAdding = false }
-            do {
-                try await bots.addWake(to: bot, at: draft.due, every: draft.every, note: draft.note)
-                self.draft = nil
-            } catch {
-                failure = error.localizedDescription
-            }
         }
     }
 }

@@ -135,6 +135,8 @@ struct UtilitiesPane: View {
         case .browser: utilities.browsers[tab.id]?.displayTitle ?? "New Tab"
         case .machinePage(let machine, let page):
             app.machines.engine(machine)?.browser.page(page)?.name ?? "New Tab"
+        case .subagent(let id, _):
+            app.workspace.subagentTitle(id) ?? "Subagent"
         }
     }
 
@@ -157,6 +159,7 @@ struct UtilitiesPane: View {
             } else {
                 .symbol("globe")
             }
+        case .subagent: .symbol("person.2")
         }
     }
 
@@ -215,6 +218,9 @@ struct UtilitiesPane: View {
                 } else {
                     placeholder("Machine Removed", symbol: "server.rack", detail: "\(machine) isn’t one of your machines anymore. Close this tab.")
                 }
+            case .subagent(let id, let folder):
+                SubagentPane(id: id, folder: folder)
+                    .id(tab.id)
             }
         }
     }
@@ -291,6 +297,13 @@ private struct UtilityTabButton: View {
         .onTapGesture(perform: select)
         .onHover { isHovering = $0 }
         .help(title)
+        // A tab to pick for VoiceOver, which has no tap to make, and Close Tab, whose button shows
+        // only on hover.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction(.default, select)
+        .accessibilityAction(named: "Close Tab", close)
     }
 }
 
@@ -308,6 +321,7 @@ struct PanelIconStyle: ButtonStyle {
             .opacity(configuration.isPressed ? 0.6 : 1)
             .contentShape(.rect)
             .onHover { isHovering = $0 }
+            .clickablePointer()
     }
 }
 

@@ -26,6 +26,10 @@ final class MachineEngine {
     /// Waiting to try again by itself, after the connection dropped.
     var isRetrying = false
     let catalog = Catalog()
+    /// The coding agents there: the agents bridge beside its engine, through the same tunnel.
+    let agents: OutsideAgents
+    /// Its engine started with the agents bridge beside it (an older one didn't).
+    var hasAgentsBridge: Bool { server?.agentsEndpoint != nil }
     /// Its browser, which its agents browse with, shown live in the panel.
     let browser: MachineBrowser
 
@@ -36,6 +40,10 @@ final class MachineEngine {
     /// Keeps its sign-ins in step with this Mac's while it's connected (`AppModel.syncSignIns`).
     @ObservationIgnored var signInSync: Task<Void, Never>?
     @ObservationIgnored var signInNudge: Task<Void, Never>?
+    /// Copying its sign-ins, now or last: the next waits for it.
+    @ObservationIgnored var signInTurn: Task<Void, Never>?
+    /// Starts it over with this Mac's settings once they've changed (`AppModel.keepSettingsCurrent`).
+    @ObservationIgnored var settingsUpdate: Task<Void, Never>?
     /// Keeps its agents' list of everyone current, and brings their messages for agents
     /// elsewhere (`AgentMail`).
     @ObservationIgnored var agentSync: Task<Void, Never>?
@@ -50,6 +58,9 @@ final class MachineEngine {
     init(machine: Machine) {
         self.machine = machine
         browser = MachineBrowser(machine: machine)
+        agents = OutsideAgents(machine: machine.id)
+        catalog.outsideAgents = agents
+        catalog.machine = machine.id
     }
 
     var isReady: Bool { state == .ready }
@@ -114,13 +125,15 @@ final class MachineEngine {
         var environment: [String: String]
         /// The browser helper the engine runs for the browser tools (`kuvo-browser.js`).
         var helper: (text: String, hash: String)
+        /// The agents bridge that starts beside it (`kuvo-agents.js`), for the coding agents there.
+        var agents: (text: String, hash: String)?
 
-        /// Changes when the accounts or settings do, so an engine started with older ones is known.
+        /// Changes when the settings do, so an engine started with older ones is known.
         /// The launch script's, the watchdog's and the browser helper's versions count too: an
         /// engine running older ones is started over the next time it's idle. (The launch script's
-        /// goes up when what it sets up changes: its folders, `kuvo-npx`.)
+        /// goes up when what it sets up changes: its folders, `kuvo-npx`, the commands' plugin.)
         var fingerprint: String {
-            let text = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n") + "\nlaunch=5\nwatchdog=wakes\nbrowser=\(helper.hash)"
+            let text = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n") + "\nlaunch=9\nwatchdog=wakes\nbrowser=\(helper.hash)\nagents=\(agents?.hash ?? "none")"
             return SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
         }
     }
@@ -134,15 +147,24 @@ final class MachineEngine {
         return id
     }()
 
+    /// This Mac started the engine running there with other settings than `launch`'s.
+    func isBehind(_ launch: Launch) -> Bool {
+        guard let engine = server?.engine, !isAnotherMacs(engine) else { return false }
+        return engine.notes["settings"] != launch.fingerprint
+    }
+
     /// Whether another Mac started this engine (engines from before Macs were noted count as
     /// this one's).
+    /// The engine there is another Mac's, which uses it too: it keeps it, and the accounts in it.
+    var isAnotherMacsEngine: Bool { server.map { isAnotherMacs($0.engine) } ?? false }
+
     private func isAnotherMacs(_ engine: RemoteServer.Engine) -> Bool {
         engine.notes["mac"].map { $0 != Self.macID } ?? false
     }
 
     /// Connects to the machine's engine: the one already running there (from an earlier launch,
     /// maybe still working on something), or a new one, installed first if needed. One this Mac
-    /// started with an older version, or older accounts and settings while nothing is running, is
+    /// started with an older version, or older settings while nothing is running, is
     /// replaced. One another Mac started is used as it is, unless it's an older version: two Macs
     /// with different settings would otherwise take turns starting it over, each dropping the
     /// other's connection, and an older app would put back an older engine.
@@ -175,8 +197,9 @@ final class MachineEngine {
                 if engine != nil { try await RemoteServer.stop(on: connection) }
                 engine = nil
             }
-            // The browser tools' helper, which an engine starts with.
+            // The browser tools' helper, and the agents bridge, which an engine starts with.
             try await MachineBrowserInstaller.installHelper(launch.helper, on: connection)
+            if let agents = launch.agents { try await Self.installAgents(agents, on: connection) }
             try check()
             let running: RemoteServer.Engine
             if let engine { running = engine } else { running = try await launchEngine(launch) }
@@ -186,7 +209,7 @@ final class MachineEngine {
             try check()
             let api = OpenCodeAPI(endpoint: server.endpoint, folderPrefix: RemoteFolder.prefix(for: machine.id))
             if server.engine.notes["settings"] != launch.fingerprint, !isAnotherMacs(server.engine), (try? await api.activeSessions())?.isEmpty == true {
-                // Started with older accounts or settings, and nothing to interrupt: start it over.
+                // Started with older settings, and nothing to interrupt: start it over.
                 try check()
                 server.disconnect()
                 attached = nil
@@ -200,6 +223,7 @@ final class MachineEngine {
             let current = OpenCodeAPI(endpoint: server.endpoint, folderPrefix: RemoteFolder.prefix(for: machine.id))
             self.api = current
             catalog.api = current
+            agents.connect(server.agentsEndpoint, folderPrefix: RemoteFolder.prefix(for: machine.id))
             state = .ready
             Analytics.shared.trackOnce("machine_connected")
             listen(to: current)
@@ -226,7 +250,32 @@ final class MachineEngine {
     private struct Superseded: Error {}
 
     private func launchEngine(_ launch: Launch) async throws -> RemoteServer.Engine {
-        try await RemoteServer.launch(on: machine.connection, environment: launch.environment, notes: ["settings": launch.fingerprint, "mac": Self.macID])
+        try await RemoteServer.launch(on: machine.connection, environment: launch.environment, notes: ["settings": launch.fingerprint, "mac": Self.macID], withAgents: launch.agents != nil)
+    }
+
+    /// `kuvo-agents.js` as it goes to a machine: the bundle, with a last line naming its contents,
+    /// to tell whether a machine has it. (Its first line is Bun's.)
+    static let agentsBridge: (text: String, hash: String)? = {
+        guard let url = Bundle.main.url(forResource: "kuvo-agents", withExtension: "js"),
+              let text = try? String(contentsOf: url, encoding: .utf8), !text.isEmpty else { return nil }
+        let hash = SHA256.hash(data: Data(text.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+        return (text + "\n// kuvo-agents \(hash)\n", hash)
+    }()
+
+    /// Puts the agents bridge in the machine's `~/.kuvo-code/bin`, unless it has this one already.
+    static func installAgents(_ bridge: (text: String, hash: String), on connection: SSHConnection) async throws {
+        let path = "$HOME/\(RemoteEngineInstaller.root)/bin/kuvo-agents.js"
+        let last = try await connection.run("tail -n 1 \"\(path)\" 2>/dev/null || true")
+        guard last.trimmingCharacters(in: .whitespacesAndNewlines) != "// kuvo-agents \(bridge.hash)" else { return }
+        let file = FileManager.default.temporaryDirectory.appending(path: "kuvo-agents-\(UUID().uuidString).js")
+        try Data(bridge.text.utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        try await connection.run("""
+            set -e
+            mkdir -p "$HOME/\(RemoteEngineInstaller.root)/bin"
+            cat >"\(path).new"
+            mv -f "\(path).new" "\(path)"
+            """, input: file)
     }
 
     private func attach(_ engine: RemoteServer.Engine, _ launch: Launch) async throws -> RemoteServer {
@@ -249,6 +298,8 @@ final class MachineEngine {
         server = nil
         api = nil
         catalog.api = nil
+        agents.disconnect()
+        catalog.forgetAgents()
         isLive = false
         state = .preparing
     }
@@ -257,6 +308,30 @@ final class MachineEngine {
     func stopEngine() async {
         disconnect()
         try? await RemoteServer.stop(on: machine.connection)
+    }
+
+    /// Signs out of every account the machine's engine has (copied from this Mac), and deletes
+    /// what integrations' servers kept there (a sign-in's tokens).
+    /// In its turn after a copying of sign-ins under way (which could store one after these went),
+    /// and with no more after it. Whether they all went.
+    @discardableResult
+    func forgetAccounts() async -> Bool {
+        signInSync?.cancel()
+        signInSync = nil
+        let previous = signInTurn
+        let turn = Task { [weak self] () -> Bool in
+            await previous?.value
+            guard let self, let api else { return false }
+            guard let credentials = try? await api.credentials() else { return false }
+            var removed = true
+            for credential in credentials where (try? await api.removeCredential(credential.id)) == nil { removed = false }
+            let kept = "\"$HOME/\(RemoteEngineInstaller.root)/integrations\""
+            let machine = machine.id
+            let cleared = await Task.detached { RemoteShell.run("rm -rf \(kept)", on: machine) }.value != nil
+            return removed && cleared
+        }
+        signInTurn = Task { _ = await turn.value }
+        return await turn.value
     }
 
     /// The machine's engine stops by itself after a day without the app: say it's still here.
@@ -284,7 +359,10 @@ final class MachineEngine {
                     downCheck?.cancel()
                     downCheck = nil
                     if !wasLive {
-                        await catalog.refresh()
+                        // Its models apart from this loop; its sessions in it, so the events that
+                        // come meanwhile apply after the refresh rather than being overwritten by
+                        // what it read before them.
+                        Task { [weak self] in await self?.catalog.refresh() }
                         await onReconnect()
                     }
                 case .disconnected:
@@ -341,7 +419,8 @@ final class MachineEngine {
     }
 
     private func exited(status: Int32) {
-        guard !isStopping else { return }
+        // Not yet connected: the start that's under way says what went wrong, in its own words.
+        guard !isStopping, server != nil else { return }
         let output = server?.recentOutput.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         log.error("\(self.machine.destination, privacy: .public) closed with status \(status): \(output, privacy: .public)")
         lost("The connection to \(machine.name) was lost.\(output.isEmpty ? "" : "\n\n" + String(output.suffix(400)))")
@@ -358,6 +437,140 @@ final class Machines {
 
     init() {
         for machine in list { engines[machine.id] = MachineEngine(machine: machine) }
+        // What waits for a machine to answer: tried a little after launch, then every 15 minutes.
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(30))
+            while !Task.isCancelled {
+                await self?.runWaiting()
+                try? await Task.sleep(for: .seconds(900))
+            }
+        }
+    }
+
+    // MARK: Clean-ups that wait
+
+    /// Clean-ups for machines that couldn't be reached when they were due (one removed, a bot
+    /// deleted, an integration removed), by machine: scripts run there, in order, the next time it
+    /// answers. One removed's are marked, to drop if it's added again.
+    private static let waitingKey = "machines.waiting"
+    static let removalMark = "# Kuvo Code: removed\n"
+
+    private static var waiting: [String: [String]] {
+        get { UserDefaults.standard.dictionary(forKey: waitingKey) as? [String: [String]] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: waitingKey) }
+    }
+
+    /// When each machine's first waiting clean-up was queued: one that hasn't answered in 30 days
+    /// is given up on.
+    private static let waitingSinceKey = "machines.waitingSince"
+
+    private static var waitingSince: [String: Date] {
+        get { UserDefaults.standard.dictionary(forKey: waitingSinceKey) as? [String: Date] ?? [:] }
+        set { UserDefaults.standard.set(newValue, forKey: waitingSinceKey) }
+    }
+
+    /// The mark on an integration's clean-up, to drop if it's added again.
+    static func integrationMark(_ id: String) -> String { "# Kuvo Code: integration \(id)\n" }
+
+    /// Runs `script` on the machine the next time it answers (tried at once too).
+    func runLater(_ script: String, on machine: String) {
+        Self.waiting[machine, default: []].append(script)
+        // Given up on 30 days after the last thing queued or run there, not the first.
+        Self.waitingSince[machine] = .now
+        Task { [weak self] in await self?.runWaiting(only: machine) }
+    }
+
+    /// Drops the clean-ups marked `mark` (whatever they were for came back), on every machine.
+    func dropWaiting(marked mark: String) {
+        for (machine, scripts) in Self.waiting {
+            let kept = scripts.filter { !$0.hasPrefix(mark) }
+            if kept.count != scripts.count { setWaiting(kept, on: machine) }
+        }
+    }
+
+    private func setWaiting(_ scripts: [String], on machine: String) {
+        Self.waiting[machine] = scripts.isEmpty ? nil : scripts
+        if scripts.isEmpty { Self.waitingSince[machine] = nil }
+    }
+
+    @ObservationIgnored private var runningWaiting = false
+    /// Machines a removal is running on now.
+    @ObservationIgnored private var removing: Set<String> = []
+
+    /// Until no removal runs on the machine (a minute at most): one added again starts after it.
+    func waitForRemoval(of machine: String) async {
+        for _ in 0..<240 where removing.contains(machine) { try? await Task.sleep(for: .milliseconds(250)) }
+    }
+    /// Machines asked for while a pass ran, for one more after it.
+    @ObservationIgnored private var askedWhileRunning: Set<String?> = []
+
+    /// Runs what waits, each machine's in order, for the machines that answer (`only` one, when
+    /// it just connected). The queue is read afresh for each, as it can change meanwhile, and only
+    /// the one that ran leaves it. A removal for a machine added again is dropped, never run.
+    func runWaiting(only: String? = nil) async {
+        guard !runningWaiting else {
+            askedWhileRunning.insert(only)
+            return
+        }
+        runningWaiting = true
+        await runWaitingPass(only: only)
+        // What was asked for meanwhile (a machine that just connected), once more.
+        while !askedWhileRunning.isEmpty {
+            let asked = askedWhileRunning
+            askedWhileRunning = []
+            if asked.contains(nil) {
+                await runWaitingPass(only: nil)
+            } else {
+                for machine in asked.compactMap({ $0 }) { await runWaitingPass(only: machine) }
+            }
+        }
+        runningWaiting = false
+    }
+
+    private func runWaitingPass(only: String?) async {
+        for machine in Self.waiting.keys where only == nil || only == machine {
+            if let since = Self.waitingSince[machine], since.timeIntervalSinceNow < -30 * 86_400 {
+                setWaiting([], on: machine)
+                continue
+            }
+            while let script = Self.waiting[machine]?.first {
+                let listed = list.contains { $0.id == machine }
+                let removal = script.hasPrefix(Self.removalMark)
+                if !(removal && listed) {
+                    // A removal under way: one added again meanwhile waits for it to end (see
+                    // `waitForRemoval`) rather than starting while it signs out and stops.
+                    if removal { removing.insert(machine) }
+                    let ran = (try? await Machine(destination: machine).connection.run(script)) != nil
+                    if removal { removing.remove(machine) }
+                    guard ran else { break }
+                }
+                var left = Self.waiting[machine] ?? []
+                if let index = left.firstIndex(of: script) { left.remove(at: index) }
+                setWaiting(left, on: machine)
+                if !left.isEmpty { Self.waitingSince[machine] = .now }
+            }
+        }
+    }
+
+    /// What removing a machine does there, without its engine: stops it (its bots stop waking),
+    /// signs out of the accounts it had (in its own database, with its own runtime) and of its
+    /// coding agents, and deletes what integrations kept there. Its sessions stay.
+    static var removalScript: String {
+        removalMark + """
+        K="$HOME/\(RemoteEngineInstaller.root)"
+        # Another Mac's engine there now: left to it, with what's in it.
+        case "$(cat "$K/run/engine.json" 2>/dev/null)" in *'"mac":"\(MachineEngine.macID)"'*) ;; *'"mac":"'*) exit 0 ;; esac
+        \(RemoteServer.stopCommand)
+        sleep 1
+        E=$(ls -d "$K"/engine/*/opencode 2>/dev/null | tail -n 1)
+        if [ -x "$E" ] && [ -f "$K/data/opencode/opencode.db" ]; then
+          KUVO_DB="$K/data/opencode/opencode.db" BUN_BE_BUN=1 "$E" -e 'const { Database } = require("bun:sqlite"); const db = new Database(process.env.KUVO_DB); db.run("DELETE FROM credential"); db.close()' || exit 1
+        fi
+        rm -rf "$K/integrations" "$K/keys"
+        # The coding agents' sign-ins there (their conversations stay, as the engine's sessions do).
+        [ -d "$K/agents" ] && find "$K/agents" -path "$K/agents/runtime" -prune -o \\( -name .credentials.json -o -name auth.json -o -name 'auth.json.*' -o -name acp_token.json -o -name 'acp_token.json.*' -o -name 'oauth-token.json*' \\) -type f -exec rm -f {} + 2>/dev/null
+        true
+        """
     }
 
     func engine(_ id: String?) -> MachineEngine? {
@@ -368,6 +581,10 @@ final class Machines {
     func add(_ destination: String) -> MachineEngine {
         let machine = Machine(destination: destination.trimmingCharacters(in: .whitespaces))
         if let engine = engines[machine.id] { return engine }
+        // Added again: not to be signed out of and stopped as one removed.
+        if let waiting = Self.waiting[machine.id] {
+            setWaiting(waiting.filter { !$0.hasPrefix(Self.removalMark) }, on: machine.id)
+        }
         list.append(machine)
         Analytics.shared.track("machine_added")
         let engine = MachineEngine(machine: machine)
@@ -377,7 +594,32 @@ final class Machines {
     }
 
     func remove(_ id: String) {
-        if let engine = engines[id] { Task { await engine.stopEngine() } }
+        // Its sessions stay there, for when it's added again; your accounts and integrations'
+        // sign-ins don't.
+        if let engine = engines[id] {
+            if engine.isReady {
+                // Another Mac's engine: it goes on for that Mac, with what's in it (whose accounts
+                // are whose can't be told there).
+                if engine.isAnotherMacsEngine {
+                    engine.disconnect()
+                } else {
+                    // A removal under way: added again meanwhile, it waits (see `waitForRemoval`).
+                    removing.insert(id)
+                    Task { [weak self] in
+                        let forgotten = await engine.forgetAccounts()
+                        await engine.stopEngine()
+                        self?.removing.remove(id)
+                        // What didn't go, the next time it answers.
+                        if !forgotten { self?.runLater(Self.removalScript, on: id) }
+                    }
+                }
+            } else {
+                // A start under way ends here; what it got to, and an engine there from before,
+                // go the next time the machine answers.
+                engine.disconnect()
+                runLater(Self.removalScript, on: id)
+            }
+        }
         engines[id] = nil
         list.removeAll { $0.id == id }
         save()
@@ -390,6 +632,64 @@ final class Machines {
     private static func load() -> [Machine] {
         guard let data = UserDefaults.standard.data(forKey: key) else { return [] }
         return (try? JSONDecoder().decode([Machine].self, from: data)) ?? []
+    }
+}
+
+/// A sign-in to an agent on a machine whose page sends your browser back to `localhost` there
+/// (Claude Code's, Codex's, Grok's): that port, forwarded from this Mac to the machine over SSH
+/// while the sign-in runs (a quarter of an hour at most), so the page reaches the agent there.
+@MainActor @Observable final class SignInForward {
+    @ObservationIgnored private var process: Process?
+    @ObservationIgnored private var timeout: Task<Void, Never>?
+    /// Its port couldn't be forwarded (something on this Mac has it): why, to say beside the sign-in.
+    private(set) var problem: String?
+
+    /// Forwards the port that `url`'s `redirect_uri` names on localhost, if it names one.
+    func start(for url: URL, on machine: String) {
+        guard let port = Self.callbackPort(in: url) else { return }
+        stop()
+        problem = nil
+        let process = Process()
+        process.executableURL = URL(filePath: "/usr/bin/ssh")
+        // (Not the shared connection: this one's forward ends with it.) What runs there reads this
+        // app's end of a pipe, so it ends as the connection does, as the engine's tunnel does.
+        process.arguments = Machine(destination: machine).connection.arguments(
+            running: "cat >/dev/null", extra: ["-o", "ExitOnForwardFailure=yes", "-L", "\(port):localhost:\(port)"], shared: false)
+        process.standardInput = Pipe.unshared()
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        process.terminationHandler = { [weak self] ended in
+            // Ended by itself right away: the port was taken here.
+            guard ended.terminationReason == .exit, ended.terminationStatus != 0 else { return }
+            Task { @MainActor in
+                guard let self, self.process === ended else { return }
+                self.problem = "Something on this Mac is using port \(port), where the sign-in page comes back, so it can't reach \(machine). Quit what uses it (another sign-in, say), then try again."
+                self.process = nil
+            }
+        }
+        guard (try? process.run()) != nil else { return }
+        self.process = process
+        timeout = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(900))
+            if !Task.isCancelled { self?.stop() }
+        }
+    }
+
+    func stop() {
+        timeout?.cancel()
+        timeout = nil
+        process?.terminationHandler = nil
+        if process?.isRunning == true { process?.terminate() }
+        process = nil
+    }
+
+    /// The port a sign-in page sends your browser back to on `localhost`, if it does.
+    nonisolated static func callbackPort(in url: URL) -> Int? {
+        guard let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+              let redirect = items.first(where: { $0.name == "redirect_uri" })?.value,
+              let target = URL(string: redirect), ["localhost", "127.0.0.1"].contains(target.host ?? ""),
+              let port = target.port, port > 1024 else { return nil }
+        return port
     }
 }
 
@@ -540,6 +840,14 @@ nonisolated extension RemoteShell {
     static func read(_ url: URL, limit: Int) -> Data? {
         guard let (machine, path) = RemoteFolder.parse(url) else { return nil }
         return run("head -c \(limit) -- \(SSHConnection.quoted(path))", on: machine)
+    }
+
+    /// Whether a folder (not a link to one) is at `url` on its machine; nil when it can't say.
+    static func isFolder(_ url: URL) -> Bool? {
+        guard let (machine, path) = RemoteFolder.parse(url) else { return nil }
+        let quoted = SSHConnection.quoted(path)
+        guard let data = run("if [ -d \(quoted) ] && [ ! -L \(quoted) ]; then echo yes; else echo no; fi", on: machine) else { return nil }
+        return String(decoding: data, as: UTF8.self).hasPrefix("yes")
     }
 
     /// Moves a file on a machine into `~/.kuvo-code/trash`, where it can still be found: nil

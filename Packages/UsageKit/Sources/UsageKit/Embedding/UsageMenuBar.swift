@@ -25,6 +25,13 @@ public final class UsageMenuBar {
         started = true
         openHost = openHostApp
         AppLog.bootstrap()
+        // Snapshots refreshed during a pass are saved together at its end; save what's pending when
+        // the host quits mid-pass (upstream does this in its app delegate's `applicationWillTerminate`).
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { UsageMenuBar.shared.container?.dataStore.flushPendingSnapshotWork() }
+        }
 
         // The host's settings domain is never empty, so a missing schema stamp is what marks a first
         // run. Stamp it directly: the migrations convert old OpenUsage installs and must not run here.
@@ -49,12 +56,14 @@ public final class UsageMenuBar {
         }
     }
 
-    /// Refreshes the given providers now, skipping the cache: the host's accounts changed. Providers
-    /// that are off stay off.
+    /// Refreshes the given providers now, every account card of each, skipping the cache: the host's
+    /// accounts changed. Providers that are off stay off.
     func refresh(providerIDs: [String]) {
         guard let container, !FirstLaunchSetup.isPending() else { return }
+        let families = Set(providerIDs)
+        let cards = container.providers.map(\.provider.id).filter { families.contains(ProviderAccountID.family(of: $0)) }
         Task {
-            for id in providerIDs where container.enablement.isEnabled(id) {
+            for id in cards where container.enablement.isEnabled(id) {
                 await container.dataStore.refresh(providerID: id, force: true)
             }
         }
@@ -71,6 +80,8 @@ public final class UsageMenuBar {
         for card in container.providers.map(\.provider.id) where added.contains(ProviderAccountID.family(of: card)) {
             container.enablement.setEnabled(true, for: card)
         }
+        // Ones turned on before their account was connected, refreshed now that it is.
+        if !added.isEmpty { Task { await container.dataStore.refreshAll() } }
     }
 
     private var pendingConnected: Set<String>?
@@ -118,8 +129,24 @@ public final class UsageMenuBar {
         if showsWelcome {
             controller.clickInterceptor = { [weak self] in self?.showWelcome() ?? false }
         } else {
-            container.startRefreshing()
+            startRefreshing(container)
         }
+    }
+
+    /// Refreshing starts once the host has handed over its accounts (`HostAccounts.update`), which
+    /// its engine has only once it's up: before, Codex and Grok would read the logins their apps
+    /// keep on the Mac in place of the host's sign-ins, and could renew them.
+    private func startRefreshing(_ container: AppContainer) {
+        if HostAccounts.haveArrived { container.startRefreshing() } else { refreshesOnHostAccounts = true }
+    }
+
+    private var refreshesOnHostAccounts = false
+
+    /// The host's accounts are in: refreshing starts, if it was waiting for them.
+    func hostAccountsArrived() {
+        guard refreshesOnHostAccounts, let container else { return }
+        refreshesOnHostAccounts = false
+        container.startRefreshing()
     }
 
     /// While the welcome is pending, a click on the menu bar item opens it instead of the panel.
@@ -154,7 +181,7 @@ public final class UsageMenuBar {
         if container.enablement.enabledIDs?.isEmpty == true {
             container.onboarding.dismissCustomizeHint()
         }
-        container.startRefreshing()
+        startRefreshing(container)
         MenuBarPopover.showHandler?()
     }
 }

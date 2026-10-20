@@ -1,11 +1,14 @@
 import AppKit
 import SwiftUI
+import WebKit
 
 /// Over what you select in the conversation: Add to Chat (it goes over the composer as a quote
 /// to answer) or Copy. It shows when a drag or a double click leaves text selected, and goes
 /// at the next click, scroll or key.
 struct SelectionMenu: ViewModifier {
     let addToChat: (String) -> Void
+    /// A conversation kept hidden (see `SessionView`) has none.
+    @Environment(\.isConversationShown) private var isShown
     /// Where it shows, in the conversation's own space; nil while it doesn't.
     @State private var point: CGPoint?
     @State private var frame: CGRect = .zero
@@ -14,6 +17,9 @@ struct SelectionMenu: ViewModifier {
     @State private var windowBox = WindowBox()
     /// Where the button went down, to tell a drag from a click.
     @State private var downAt: CGPoint?
+    /// What's selected in a page in the conversation (a widget), read as the menu shows: a page
+    /// copies only a moment later, too late for Add to Chat.
+    @State private var pageSelection: String?
 
     func body(content: Content) -> some View {
         content
@@ -48,7 +54,7 @@ struct SelectionMenu: ViewModifier {
     private var menu: some View {
         HStack(spacing: 2) {
             Button {
-                if let text = Quoting.selection() { addToChat(text) }
+                if let text = pageSelection ?? Quoting.selection() { addToChat(text) }
                 point = nil
             } label: {
                 Label("Add to Chat", systemImage: "text.quote")
@@ -78,6 +84,10 @@ struct SelectionMenu: ViewModifier {
     }
 
     private func handle(_ event: NSEvent) {
+        guard isShown else {
+            point = nil
+            return
+        }
         guard let window = windowBox.window, event.window === window, let view = window.contentView else { return }
         let location = view.convert(event.locationInWindow, from: nil)
         let inWindow = view.isFlipped ? location : CGPoint(x: location.x, y: view.bounds.height - location.y)
@@ -96,12 +106,30 @@ struct SelectionMenu: ViewModifier {
             // Once the text has its selection.
             Task {
                 try? await Task.sleep(for: .milliseconds(60))
-                if Self.hasSelection(in: window) { point = at }
+                // A page says it can copy whether or not anything is selected (a drag in a
+                // widget's drawing selects nothing): it's asked what is.
+                if let page = Self.page(in: window) {
+                    let text = (try? await page.evaluateJavaScript("String(getSelection())", in: nil, contentWorld: .defaultClient) as? String)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    guard !text.isEmpty else { return }
+                    pageSelection = text
+                    point = at
+                } else if Self.hasSelection(in: window) {
+                    pageSelection = nil
+                    point = at
+                }
             }
         default:
             point = nil
             menuFrame = .zero
         }
+    }
+
+    /// The page that has the keyboard, if one does.
+    private static func page(in window: NSWindow) -> WKWebView? {
+        var view = window.firstResponder as? NSView
+        while let current = view, !(current is WKWebView) { view = current.superview }
+        return view as? WKWebView
     }
 
     /// Text is selected in the conversation: what has the keyboard can copy (asked without
@@ -117,4 +145,9 @@ struct SelectionMenu: ViewModifier {
         var action: Selector? { #selector(NSText.copy(_:)) }
         var tag: Int { 0 }
     }
+}
+
+extension EnvironmentValues {
+    /// The conversation is the one in view, not one kept hidden for going back to.
+    @Entry var isConversationShown = true
 }

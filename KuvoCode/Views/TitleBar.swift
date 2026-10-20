@@ -23,6 +23,9 @@ struct TabItem: Identifiable, Equatable {
     var symbol: String?
     /// One that stays (Settings' page) has no close button.
     var closes = true
+    /// A page you've only looked at, which the next one you open takes the place of (Settings'):
+    /// its title in italics, as VS Code shows its preview tab.
+    var isPreview = false
     /// The session beside it in split view, shown with it as one tab (none, or one).
     var companion: [TabItem] = []
 
@@ -75,12 +78,67 @@ struct TabStrip: View {
     @Namespace private var pill
     @Environment(\.colorScheme) private var scheme
     @AppStorage(PairStyle.key) private var style = PairStyle.halves
+    /// How wide the tabs are, each as wide as its title, and whether some are out of sight at
+    /// either end.
+    @State private var tracksWidth: CGFloat = 0
+    @State private var hidden = HiddenEnds()
+
+    struct HiddenEnds: Equatable {
+        var leading = false
+        var trailing = false
+    }
+
+    /// Room above and below the tabs, in the scroll view, for the raised pill's shadow.
+    private static let shadowRoom: CGFloat = 8
 
     var body: some View {
+        // As many tabs as fit, each as wide as its title; past that, the track scrolls, with the
+        // tab in view kept in sight, as VS Code's and a browser's do, rather than squeezing the
+        // titles and running off the window.
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal) {
+                track
+                    .padding(3)
+                    .padding(.vertical, Self.shadowRoom)
+                    .onGeometryChange(for: CGFloat.self, of: \.size.width) { tracksWidth = $0 }
+            }
+            .scrollIndicators(.never)
+            .onScrollGeometryChange(for: HiddenEnds.self) { geometry in
+                HiddenEnds(
+                    leading: geometry.contentOffset.x > 1,
+                    trailing: geometry.contentOffset.x + geometry.containerSize.width < geometry.contentSize.width - 1
+                )
+            } action: { _, ends in hidden = ends }
+            // Tabs out of sight fade at the end they're past.
+            .mask {
+                HStack(spacing: 0) {
+                    LinearGradient(colors: [hidden.leading ? .clear : .black, .black], startPoint: .leading, endPoint: .trailing)
+                        .frame(width: 24)
+                    Color.black
+                    LinearGradient(colors: [.black, hidden.trailing ? .clear : .black], startPoint: .leading, endPoint: .trailing)
+                        .frame(width: 24)
+                }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, -Self.shadowRoom)
+            .frame(maxWidth: tracksWidth > 0 ? tracksWidth : nil)
+            // Once it's laid out too: before, the room it has, and so where the tab is, isn't known.
+            .onAppear { DispatchQueue.main.async { proxy.scrollTo(selection) } }
+            .onGeometryChange(for: CGFloat.self, of: \.size.width) { _ in proxy.scrollTo(selection) }
+            .onChange(of: tracksWidth) { proxy.scrollTo(selection) }
+            .onChange(of: selection) { _, id in withAnimation(.ui) { proxy.scrollTo(id) } }
+            .onChange(of: tabs.map(\.id)) { withAnimation(.ui) { proxy.scrollTo(selection) } }
+        }
+        .glassEffect(.regular, in: .capsule)
+        .animation(.ui, value: tabs.map(\.id))
+    }
+
+    private var track: some View {
         HStack(spacing: 0) {
             ForEach(Array(tabs.enumerated()), id: \.element.id) { index, tab in
                 let isActive = tab.id == selection
                 tabView(tab, isActive: isActive)
+                    .id(tab.id)
                 // Hairlines between inactive neighbours, like Rex; none next to the pill. They
                 // fade out at both ends, so they read as a crease in the glass, not a drawn line.
                 if index < tabs.count - 1, !isActive, tabs[index + 1].id != selection {
@@ -99,9 +157,6 @@ struct TabStrip: View {
                 }
             }
         }
-        .padding(3)
-        .glassEffect(.regular, in: .capsule)
-        .animation(.ui, value: tabs.map(\.id))
     }
 
     /// The session beside a tab's, in its half of the tab.
@@ -218,6 +273,7 @@ private struct TabButton: View {
             .padding(.trailing, behind == nil ? 0 : 9)
             Text(tab.title)
                 .font(.system(size: 13, weight: isActive ? .medium : .regular))
+                .italic(tab.isPreview)
                 .foregroundStyle(isActive ? .primary : .secondary)
                 .fixedSize()
                 .onGeometryChange(for: CGFloat.self, of: \.size.width) { textWidth = $0 }
@@ -311,13 +367,14 @@ struct TabIcon: View {
 private struct StatusBadge: View {
     let status: TabItem.Status
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accent) private var accent
 
     var body: some View {
         ZStack {
             Circle().fill(scheme == .dark ? Color(white: 0.2) : .white)
             switch status {
             case .working:
-                disc(.accentColor)
+                disc(accent)
                 Spinner(size: 8)
                     .foregroundStyle(.white, .white)
             case .waiting:
@@ -325,7 +382,7 @@ private struct StatusBadge: View {
             case .failed:
                 disc(.red).overlay { mark("exclamationmark") }
             case .unread:
-                disc(.accentColor).padding(1.5)
+                disc(accent).padding(1.5)
             case .idle:
                 EmptyView()
             }
@@ -473,6 +530,7 @@ private struct BranchLabel: View {
             if isMenu {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 7, weight: .bold))
+                    .accessibilityHidden(true)
             }
         }
         .font(.system(size: 11))
@@ -642,6 +700,69 @@ struct WindowXReader: NSViewRepresentable {
             reported = x
             // After the layout pass that moved it, not during it.
             DispatchQueue.main.async { [changed] in changed(x) }
+        }
+    }
+}
+
+/// The window, as the title bar follows it: being resized by a drag. It also keeps the window
+/// out of full screen: the green button fills the screen with the window as it is. (In full
+/// screen, AppKit painted a strip of its own at the top, a gray band unlike the rest of the
+/// window, which nothing here could reach.)
+struct WindowStateReader: NSViewRepresentable {
+    struct State: Equatable {
+        var isResizing = false
+    }
+
+    let changed: (State) -> Void
+
+    func makeNSView(context: Context) -> Reader { Reader(changed: changed) }
+
+    func updateNSView(_ view: Reader, context: Context) {
+        view.changed = changed
+    }
+
+    final class Reader: NSView {
+        var changed: (State) -> Void
+        private var observers: [NSObjectProtocol] = []
+        private var state = State()
+
+        init(changed: @escaping (State) -> Void) {
+            self.changed = changed
+            super.init(frame: .zero)
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            observers.forEach(NotificationCenter.default.removeObserver)
+            observers = []
+            guard let window else { return }
+            Self.keepOutOfFullScreen(window)
+            // Again whenever it comes forward, in case SwiftUI set the window up anew.
+            observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { [weak window] _ in
+                MainActor.assumeIsolated { if let window { Self.keepOutOfFullScreen(window) } }
+            })
+            for name in [NSWindow.willStartLiveResizeNotification, NSWindow.didEndLiveResizeNotification] {
+                observers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] note in
+                    let isResizing = note.name == NSWindow.willStartLiveResizeNotification
+                    MainActor.assumeIsolated { self?.report(State(isResizing: isResizing)) }
+                })
+            }
+        }
+
+        private static func keepOutOfFullScreen(_ window: NSWindow) {
+            guard !window.collectionBehavior.contains(.fullScreenNone) else { return }
+            window.collectionBehavior.remove(.fullScreenPrimary)
+            window.collectionBehavior.insert(.fullScreenNone)
+        }
+
+        private func report(_ next: State) {
+            guard next != state else { return }
+            state = next
+            DispatchQueue.main.async { [changed] in changed(next) }
         }
     }
 }

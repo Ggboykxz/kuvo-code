@@ -9,6 +9,22 @@ enum Pressable {
     static let pressedFill = Color.primary.opacity(0.13)
 }
 
+extension View {
+    /// The pointing hand over something you can click, while you can: with the hover fill, it's
+    /// how a control without a border says so.
+    func clickablePointer() -> some View {
+        modifier(ClickablePointer())
+    }
+}
+
+private struct ClickablePointer: ViewModifier {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func body(content: Content) -> some View {
+        content.pointerStyle(isEnabled ? .link : nil)
+    }
+}
+
 /// A small icon button: the copy, undo and branch icons under messages, a card's actions.
 struct IconButtonStyle: ButtonStyle {
     var width: CGFloat = 24
@@ -60,6 +76,7 @@ private struct PressableLabel<Label: View>: View {
             .contentShape(.rect(cornerRadius: cornerRadius))
             .opacity(isEnabled ? 1 : 0.45)
             .onHover { isHovering = $0 }
+            .clickablePointer()
             .animation(.easeOut(duration: 0.12), value: isHovering)
     }
 
@@ -86,6 +103,7 @@ struct ClearFieldButtonStyle: ButtonStyle {
                 .foregroundStyle(configuration.isPressed ? AnyShapeStyle(.primary) : isHovering ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
                 .contentShape(.circle)
                 .onHover { isHovering = $0 }
+                .clickablePointer()
         }
     }
 }
@@ -107,6 +125,7 @@ struct RemoveButtonStyle: ButtonStyle {
                 .opacity(configuration.isPressed ? 0.7 : 1)
                 .contentShape(.circle)
                 .onHover { isHovering = $0 }
+                .clickablePointer()
         }
     }
 }
@@ -128,6 +147,7 @@ struct BadgeButtonStyle: ButtonStyle {
                 .foregroundStyle(.white, isHovering || configuration.isPressed ? Color(white: 0.35) : .gray)
                 .contentShape(.circle)
                 .onHover { isHovering = $0 }
+                .clickablePointer()
         }
     }
 }
@@ -153,6 +173,7 @@ struct ListRowButtonStyle: ButtonStyle {
                 .background(fill, in: .rect(cornerRadius: cornerRadius))
                 .contentShape(.rect(cornerRadius: cornerRadius))
                 .onHover { isHovering = $0 }
+                .clickablePointer()
         }
 
         private var fill: AnyShapeStyle {
@@ -184,6 +205,7 @@ struct FilledButtonStyle<S: Shape>: ButtonStyle {
                 .background(Color.primary.opacity(configuration.isPressed ? rest + 0.1 : isHovering ? rest + 0.05 : rest), in: shape)
                 .contentShape(shape)
                 .onHover { isHovering = $0 }
+                .clickablePointer()
                 .animation(.easeOut(duration: 0.12), value: isHovering)
         }
     }
@@ -195,6 +217,8 @@ struct MenuChevron: View {
         Image(systemName: "chevron.down")
             .font(.system(size: 8, weight: .bold))
             .foregroundStyle(.secondary)
+            // It only says there's a menu, which VoiceOver says itself ("Go Down" otherwise).
+            .accessibilityHidden(true)
     }
 }
 
@@ -214,6 +238,7 @@ struct AccentBadgeButtonStyle: ButtonStyle {
                 .brightness(configuration.isPressed ? -0.15 : isHovering ? -0.07 : 0)
                 .scaleEffect(isHovering ? 1.12 : 1)
                 .onHover { isHovering = $0 }
+                .clickablePointer()
                 .animation(.easeOut(duration: 0.12), value: isHovering)
         }
     }

@@ -23,10 +23,10 @@ struct SettingsView: View {
 
     var body: some View {
         HStack(spacing: Metrics.paneGap) {
-            SettingsSidebar(selection: Binding(get: { tabs.page }, set: { page in withAnimation(.ui) { tabs.show(page) } }), search: $search) { page in
+            // A tab with an editor open keeps it, and what's typed in it.
+            SettingsSidebar(selection: Binding(get: { tabs.page }, set: { page in withAnimation(.ui) { tabs.show(page) { navigators[$0]?.detail != nil } } }), search: $search) { page in
                 withAnimation(.ui) { tabs.show(page, inNewTab: true) }
             } preview: { page in
-                // A tab with an editor open keeps it, and what's typed in it.
                 withAnimation(.ui) { tabs.preview(page) { navigators[$0]?.detail != nil } }
             }
                 .padding(.top, topInset)
@@ -68,6 +68,8 @@ struct SettingsView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(WindowXReader { tabs.contentX = $0 })
+            // Doing something in the page in view keeps its tab (see `SettingsTabs`).
+            .background(InteractionWatcher { tabs.keepSelected() })
             .background(Surface.cardFill(scheme, focused: true), in: .rect(cornerRadius: Metrics.cardRadius))
             .clipShape(.rect(cornerRadius: Metrics.cardRadius))
             .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
@@ -133,7 +135,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     static let storageKey = "settings.tab"
 
     case general, appearance, notifications, phone, shortcuts, privacy, storage
-    case accounts, usage
+    case accounts, auto, usage
     case agents, permissions, commands, skills, integrations, mcp, engine
     case git, worktrees, archived, machines
     case panel, browser, passwords
@@ -156,7 +158,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     var group: Group {
         switch self {
         case .general, .appearance, .notifications, .phone, .shortcuts, .privacy, .storage: .app
-        case .accounts, .usage: .models
+        case .accounts, .auto, .usage: .models
         case .agents, .permissions, .commands, .skills, .integrations, .mcp, .engine: .agent
         case .git, .worktrees, .archived, .machines: .projects
         case .panel, .browser, .passwords: .panel
@@ -173,6 +175,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .privacy: "Privacy"
         case .storage: "Storage"
         case .accounts: "Accounts"
+        case .auto: "Custom Auto"
         case .usage: "Usage"
         case .agents: "Agents"
         case .permissions: "Permissions"
@@ -201,6 +204,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .privacy: "hand.raised"
         case .storage: "internaldrive"
         case .accounts: "person.crop.circle"
+        case .auto: "list.number"
         case .usage: "gauge.with.dots.needle.50percent"
         case .agents: "person.2"
         case .permissions: "checkmark.shield"
@@ -229,7 +233,8 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .shortcuts: "Every keyboard shortcut in Kuvo Code."
         case .privacy: "What Kuvo Code shares, and what stays on this Mac."
         case .storage: "What Kuvo Code keeps on this Mac, and room you can get back."
-        case .accounts: "Sign in with a subscription you already have, or add an API key. Credentials stay on this Mac."
+        case .accounts: "Sign in with a subscription you already have, or add an API key. Credentials stay on this Mac and the machines you add."
+        case .auto: "Your own lists of models to go through, in order, when one reaches a usage limit: one for bugfixes, one for features. Pick one in the model picker."
         case .usage: nil
         case .agents: "The agents you pick in the composer, and the subagents they hand work to."
         case .permissions: "What the agent may do without asking you first."
@@ -259,6 +264,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .privacy: "analytics anonymous usage data"
         case .storage: "disk space size clean up delete old sessions logs cache"
         case .accounts: "providers sign in api key login models openai anthropic copilot"
+        case .auto: "auto fallback failover rate usage limit order chain switch models lists presets"
         case .usage: "limits spend menu bar plan"
         case .agents: "modes build plan subagents default model title"
         case .permissions: "allow ask deny approve rules"
@@ -293,6 +299,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .privacy: PrivacySettings()
         case .storage: StorageSettings()
         case .accounts: ProvidersView()
+        case .auto: AutoSettings()
         case .usage: UsageSettings()
         case .agents: AgentsSettings()
         case .permissions: PermissionsSettings()
@@ -368,6 +375,7 @@ private struct SettingsSidebar: View {
                                     .modifier(RowHighlight(isSelected: page == selection))
                                 }
                                 .buttonStyle(.plain)
+                                .clickablePointer()
                                 .contextMenu {
                                     Button("Open in New Tab") { openInNewTab(page) }
                                 }
@@ -378,6 +386,7 @@ private struct SettingsSidebar: View {
                 .padding(.bottom, 12)
             }
             .scrollIndicators(.never)
+            .fadingScrollEdges()
             // Searching opens the first page it finds.
             .onChange(of: search) {
                 let pages = SettingsPage.shown.filter { $0.matches(search) }
@@ -460,5 +469,59 @@ private struct SettingsColumnInset: ViewModifier {
         content
             .environment(\.settingsInset, SettingsMetrics.inset(forWidth: width))
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+    }
+}
+
+/// Calls `onInteraction` when you do something in its frame: a click (the left button or the
+/// right), or a key typed with the focus there. Scrolling and shortcuts (⌘, ⌃) don't count, nor do
+/// keys that move around (Tab, Escape, the arrows, Page Up and Down, Home and End).
+struct InteractionWatcher: NSViewRepresentable {
+    let onInteraction: () -> Void
+
+    func makeNSView(context: Context) -> WatcherView {
+        let view = WatcherView()
+        view.onInteraction = onInteraction
+        return view
+    }
+
+    func updateNSView(_ view: WatcherView, context: Context) {
+        view.onInteraction = onInteraction
+    }
+
+    static func dismantleNSView(_ view: WatcherView, coordinator: ()) {
+        view.stop()
+    }
+
+    final class WatcherView: NSView {
+        var onInteraction: () -> Void = {}
+        private var monitor: Any?
+        private static let movingKeys: Set<UInt16> = [48, 53, 115, 116, 119, 121, 123, 124, 125, 126]
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            stop()
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
+                if let self, self.counts(event) { self.onInteraction() }
+                return event
+            }
+        }
+
+        func stop() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+        }
+
+        private func counts(_ event: NSEvent) -> Bool {
+            guard let window, event.window === window, !isHiddenOrHasHiddenAncestor else { return false }
+            if event.type == .keyDown {
+                guard event.modifierFlags.isDisjoint(with: [.command, .control]), !Self.movingKeys.contains(event.keyCode),
+                      let focused = window.firstResponder as? NSView, focused !== window.contentView else { return false }
+                return bounds.contains(convert(NSPoint(x: focused.bounds.midX, y: focused.bounds.midY), from: focused))
+            }
+            return bounds.contains(convert(event.locationInWindow, from: nil))
+        }
     }
 }

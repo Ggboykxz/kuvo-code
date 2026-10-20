@@ -11,6 +11,8 @@ import os
 /// architecture, memory (as a range) and language, and events like "a session started with
 /// Anthropic's Claude Sonnet 5.5" or "the Changes tab opened". Also a run that ended without
 /// quitting, and the crashes and hangs macOS reports: their kind, never what was on the stack.
+/// While it's open and has sent nothing else for two minutes, a batch with no events in it, so
+/// the dashboard can tell how many installs are open right now.
 /// Never prompts, replies, code, file names, folders, account details or custom names: providers
 /// outside the public list, models not in the public catalog and agents other than Build and Plan
 /// go out as "other" and "custom". Sizes and durations go out as ranges, and what went wrong as a
@@ -73,6 +75,9 @@ final class Analytics {
     private var backoff: Duration?
     private var isQuitting = false
     private var dayTimer: Timer?
+    private var heartbeatTimer: Timer?
+    /// When a batch last went through, so a heartbeat goes only when nothing else has lately.
+    private var lastSent = Date.distantPast
     private var sentOnce: Set<String> = []
     private let log = Logger(subsystem: AppInfo.bundleID, category: "analytics")
 
@@ -154,6 +159,9 @@ final class Analytics {
                 Analytics.shared.markActiveDay()
             }
         }
+        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: Self.heartbeatInterval, repeats: true) { _ in
+            Task { @MainActor in Analytics.shared.heartbeat() }
+        }
         // Crashes and hangs, as macOS reports them (a day or so later, at a launch).
         MXMetricManager.shared.add(CrashReports.shared)
         // The usage panel reads its providers in the first minutes.
@@ -192,7 +200,11 @@ final class Analytics {
         let providers = UsageMenuBar.shared.trackedProviderIDs
         guard defaults.string(forKey: Self.usageDayKey) != Self.today, !providers.isEmpty else { return }
         defaults.set(Self.today, forKey: Self.usageDayKey)
-        for provider in providers { track("usage_tracked", ["provider": provider]) }
+        // The tool only: an account's own ID ("codex@1a2b3c4d", a hash of who it is) would be the
+        // same on every Mac it's used on.
+        for provider in Set(providers.map { String($0.split(separator: "@").first ?? Substring($0)) }).sorted() {
+            track("usage_tracked", ["provider": provider])
+        }
     }
 
     private func markActiveDay() {
@@ -380,6 +392,22 @@ final class Analytics {
 
     // MARK: Sending
 
+    /// How often an open app says it's still open, when it has sent nothing else since.
+    private static let heartbeatInterval: TimeInterval = 120
+
+    /// A batch with no events: the app is open. The collector stores no event for it, only that
+    /// the install was seen, which is how the admin dashboard counts installs open right now.
+    private func heartbeat() {
+        guard isEnabled, !isQuitting, backoff == nil, queue.isEmpty, flushTask == nil,
+              Date.now.timeIntervalSince(lastSent) >= Self.heartbeatInterval - 20,
+              let request = request(for: [], heartbeat: true) else { return }
+        Task {
+            guard let (_, response) = try? await URLSession.shared.data(for: request),
+                  ((response as? HTTPURLResponse)?.statusCode ?? 0) < 500 else { return }
+            lastSent = .now
+        }
+    }
+
     /// The most events one send carries.
     private static let batchSize = 100
 
@@ -411,7 +439,7 @@ final class Analytics {
                 // Refused outright (a bad batch): dropped. Server trouble: tried again later.
                 delivered = status < 500 && status != 429
             } catch {}
-            if delivered { sent() } else { requeue(batch) }
+            if delivered { lastSent = .now; sent() } else { requeue(batch) }
         }
     }
 
@@ -456,8 +484,8 @@ final class Analytics {
         _ = done.wait(timeout: .now() + 2)
     }
 
-    private func request(for events: [[String: Any]]) -> URLRequest? {
-        guard let target, !events.isEmpty else { return nil }
+    private func request(for events: [[String: Any]], heartbeat: Bool = false) -> URLRequest? {
+        guard let target, heartbeat || !events.isEmpty else { return nil }
         let os = ProcessInfo.processInfo.operatingSystemVersion
         let language = Locale.current.language
         var body: [String: Any] = [

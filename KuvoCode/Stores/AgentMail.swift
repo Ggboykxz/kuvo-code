@@ -3,10 +3,11 @@ import OpenCodeKit
 import os
 
 /// Agents writing to each other. Any session or bot, on this Mac or a machine, can ask who else
-/// there is (list_agents) and send one of them a message (send_message). The message reaches that
-/// conversation as input that says who sent it, as a wake-up says what it is, and the agent there
-/// takes it up; with `wait`, the sender gets its answer back. Machines get the list of everyone,
-/// and leave messages for this Mac or other machines in an outbox it empties.
+/// there is (list_agents), send one of them a message (send_message) and read its conversation
+/// (read_conversation). The message reaches that conversation as input that says who sent it, as
+/// a wake-up says what it is, and the agent there takes it up; with `wait`, the sender gets its
+/// answer back. Machines get the list of everyone, and leave messages for this Mac or other
+/// machines in an outbox it empties. You name one in a message with "&" (`AgentReferences`).
 @MainActor
 final class AgentMail {
     static let shared = AgentMail()
@@ -26,7 +27,7 @@ final class AgentMail {
     weak var app: AppModel?
 
     /// A message waiting for its agent's machine to be back, kept until then (across launches).
-    struct Waiting: Codable {
+    struct Waiting: Codable, Equatable {
         var from: String?
         var name: String
         var to: String
@@ -37,16 +38,36 @@ final class AgentMail {
     private static var waitingFile: URL { AppInfo.supportDirectory.appending(path: "agent-messages.json") }
     private var waiting: [Waiting] = JSONFile.read([Waiting].self, from: AgentMail.waitingFile) ?? []
 
-    /// Delivers what waited for `engine`'s machine, now it's back.
+    /// Delivers what waited for `engine`'s machine, now it's back, straight to its engine (its
+    /// session needn't be among the latest the list names). Each leaves the list once it's there:
+    /// one that doesn't get there (the machine went again) waits for the next time, unless its
+    /// session is gone. It was counted against its sender's messages when it was sent.
     func deliverWaiting(to engine: MachineEngine) async {
         let machine = engine.machine.id
-        let due = waiting.filter { $0.machine == machine }
-        guard !due.isEmpty else { return }
-        waiting.removeAll { $0.machine == machine }
-        save()
-        for letter in due {
-            let result = await send(from: letter.from, name: letter.name, to: letter.to, text: letter.text, waits: false)
-            if result.isError { log.error("A message for \(machine, privacy: .public) didn't go: \(result.text, privacy: .public)") }
+        for letter in waiting where letter.machine == machine {
+            guard engine.api != nil else { return }
+            // Where its session is: known, or its engine's, else its coding agents' (their bridge
+            // there); gone only when both say so.
+            let known = app?.workspace.session(letter.to).flatMap { app?.workspace.api(for: $0) }
+            let places = known.map { [$0] } ?? [engine.api, engine.agents.api].compactMap(\.self)
+            var gone = !places.isEmpty
+            var sent = false
+            for api in places where !sent {
+                do {
+                    try await api.prompt(session: letter.to, id: Identifier.message(),
+                                         text: Self.compose(from: letter.name, session: letter.from ?? "unknown", text: letter.text, waits: false), delivery: .steer)
+                    sent = true
+                    Analytics.shared.track("agent_message_sent", ["waits": false, "bot": app?.bots.bot(forSession: letter.to) != nil])
+                } catch {
+                    log.error("A message for \(machine, privacy: .public) didn't go: \(error.localizedDescription, privacy: .public)")
+                    if (error as? ServerError)?.status != 404 { gone = false }
+                }
+            }
+            // Not there yet (its bridge starting, the connection dropped): next time. While its
+            // coding agents' bridge can't be reached, it can't say a session of theirs is gone.
+            if !sent && (!gone || engine.hasAgentsBridge && engine.agents.api == nil && known == nil) { continue }
+            if let index = waiting.firstIndex(of: letter) { waiting.remove(at: index) }
+            save()
         }
     }
 
@@ -125,30 +146,44 @@ final class AgentMail {
     static func describe(_ agents: [Agent], caller: String?, here machine: String?) -> String {
         let others = agents.filter { $0.session != caller }
         guard !others.isEmpty else { return "No other agents yet." }
-        func place(_ agent: Agent) -> String {
-            switch agent.machine {
-            case machine: machine == nil ? "on the Mac" : "here"
-            case nil: "on the Mac"
-            case let other?: "on \(other)"
-            }
-        }
         let lines = others.map { agent in
-            var line = "- \(agent.name) (\(agent.kind), \(place(agent))"
-            if let project = agent.project { line += ", in \(project)" }
-            line += ") address: \(agent.session)"
+            var line = "- \(agent.name) (\(what(agent, here: machine))) address: \(agent.session)"
             if let about = agent.about, !about.isEmpty { line += ": \(about)" }
             return line
         }
-        return "Agents you can write to with send_message (by name or address):\n" + lines.joined(separator: "\n")
+        return "Agents you can write to with send_message, or whose conversation you can read with read_conversation (by name or address):\n" + lines.joined(separator: "\n")
+    }
+
+    /// What an agent is, for one `here` (nil: this Mac) to read: "bot, on the Mac",
+    /// "session, on lokum, in api".
+    static func what(_ agent: Agent, here machine: String?) -> String {
+        let place = switch agent.machine {
+        case machine: machine == nil ? "on the Mac" : "here"
+        case nil: "on the Mac"
+        case let other?: "on \(other)"
+        }
+        return "\(agent.kind), \(place)" + (agent.project.map { ", in \($0)" } ?? "")
     }
 
     // MARK: Sending
 
     /// The tools' calls from this Mac's conversations.
     func call(_ name: String, arguments: [String: Any], caller: String?) async -> (text: String, isError: Bool) {
+        // A subagent writes, reads and starts sessions as its conversation: its name, its
+        // folder, its approval, where answers go.
+        let caller = caller.map { app?.workspace.root(of: $0) ?? $0 }
+        // A bot's seat in a group chat only talks and looks things up, whatever agent it runs on:
+        // the work happens in each bot's own conversation, handed out after the wrap-up.
+        if let caller, app?.workspace.seats.contains(caller) == true, name == "send_message" || name == "start_session" {
+            return ("Not from a group chat: talk it through here; the work is handed out after the wrap-up.", true)
+        }
         switch name {
         case "list_agents":
             return (Self.describe(directory(), caller: caller, here: nil), false)
+        case "read_conversation":
+            guard let of = (arguments["of"] as? String)?.trimmingCharacters(in: .whitespaces), !of.isEmpty else { return ("Say whose conversation to read (of).", true) }
+            let query = (arguments["query"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return await read(of, query: query?.isEmpty == false ? query : nil, caller: caller)
         case "send_message":
             guard let to = arguments["to"] as? String, !to.trimmingCharacters(in: .whitespaces).isEmpty else { return ("Say who to write to (to).", true) }
             guard let text = arguments["text"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return ("Say what to write (text).", true) }
@@ -164,43 +199,175 @@ final class AgentMail {
     /// Delivers `text` from the conversation `caller` (named `name`) to the agent `to` (a name or
     /// an address), wherever it runs; with `waits`, waits for its answer and returns it.
     func send(from caller: String?, name: String, to: String, text: String, waits: Bool) async -> (text: String, isError: Bool) {
+        switch await deliver(from: caller, name: name, to: to, text: text, waits: waits) {
+        case .done(let text): (text, false)
+        case .unknown(let text), .refused(let text), .limited(let text), .failed(let text): (text, true)
+        }
+    }
+
+    /// How a message went: there (or waiting for its machine), to no agent this Mac knows (one
+    /// another Mac does may take it), not one to send (too many), or not there now, and worth
+    /// sending again.
+    private enum Outcome {
+        /// `limited`: too many lately; it can go in a while.
+        case done(String), unknown(String), refused(String), limited(String), failed(String)
+
+        var text: String {
+            switch self {
+            case .done(let text), .unknown(let text), .refused(let text), .limited(let text), .failed(let text): text
+            }
+        }
+    }
+
+    /// Who a message or a read is for: the agent, or why there's none to take.
+    private enum Lookup {
+        case found(Agent), missing(Outcome)
+    }
+
+    /// The agent `wanted` names (its address, or its name, with or without the "&" you name it
+    /// with), or why there's none to take.
+    private func find(_ wanted: String, caller: String?) -> Lookup {
         let agents = directory()
-        let wanted = to.trimmingCharacters(in: .whitespaces)
+        var wanted = wanted.trimmingCharacters(in: .whitespaces)
+        if wanted.hasPrefix(String(AgentReferences.trigger)), !agents.contains(where: { $0.name == wanted }) { wanted.removeFirst() }
         let matches = agents.filter { $0.session == wanted } .nilIfEmpty
             ?? agents.filter { $0.name.compare(wanted, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }
         guard let target = matches.first else {
-            return ("There's no agent called \(wanted). Use list_agents to see who there is.", true)
+            // Part of a name ("Release" for "Release notes"): those it could be.
+            let close = agents.filter { $0.name.range(of: wanted, options: [.caseInsensitive, .diacriticInsensitive]) != nil }.prefix(8)
+            let hint = close.isEmpty ? "Use list_agents to see who there is." : "Did you mean one of these?\n" + Self.describe(Array(close), caller: caller, here: nil)
+            return .missing(.unknown("There's no agent called \(wanted). " + hint))
         }
         guard matches.count == 1 else {
-            return ("More than one agent is called \(wanted): use one's address.\n" + Self.describe(matches, caller: caller, here: nil), true)
+            return .missing(.refused("More than one agent is called \(wanted): use one's address.\n" + Self.describe(matches, caller: caller, here: nil)))
         }
-        guard target.session != caller else { return ("That's you.", true) }
-        // A few at a time: two agents shouldn't keep writing to each other unattended.
-        let key = caller ?? "outside"
+        return .found(target)
+    }
+
+    /// `limitKey`: what the few-at-a-time limit counts by, when not the caller (a machine's
+    /// letters, whose sender anything there could claim).
+    private func deliver(from caller: String?, name: String, to: String, text: String, waits: Bool, limitKey: String? = nil) async -> Outcome {
+        let target: Agent
+        switch find(to, caller: caller) {
+        case .found(let found): target = found
+        case .missing(let outcome): return outcome
+        }
+        guard target.session != caller else { return .refused("That's you.") }
+        // A few at a time: two agents shouldn't keep writing to each other unattended. Counted as
+        // it starts, before anything's awaited, so messages sent at once count each other; taken
+        // back if it doesn't go, so one tried again isn't counted twice.
+        let key = limitKey ?? caller ?? "outside"
         let lately = (sent[key] ?? []).filter { $0.timeIntervalSinceNow > -600 }
         guard lately.count < 20 else {
-            return ("You've sent a lot of messages in the last few minutes. Wait a while, or ask the user how to go on.", true)
+            return .limited("You've sent a lot of messages in the last few minutes. Wait a while, or ask the user how to go on.")
         }
-        sent[key] = lately + [.now]
+        let counted = Date.now
+        sent[key] = lately + [counted]
         guard let app, let api = app.workspace.api(forSession: target.session) else {
             // Its machine is away: it goes when it's back.
-            guard let machine = target.machine else { return ("\(target.name) can't be reached now. Try again later.", true) }
+            guard let machine = target.machine else {
+                sent[key]?.removeAll { $0 == counted }
+                return .failed("\(target.name) can't be reached now. Try again later.")
+            }
             waiting.append(Waiting(from: caller, name: name, to: target.session, machine: machine, text: text))
             save()
-            return ("\(target.name)'s machine (\(machine)) is away: the message goes to it as soon as it's back\(waits ? ", and its answer comes to you as a message" : "").", false)
+            return .done("\(target.name)'s machine (\(machine)) is away: the message goes to it as soon as it's back\(waits ? ", and its answer comes to you as a message" : "").")
         }
         let id = Identifier.message()
+        // What it had said already, so its answer is what comes after. Unknown (it couldn't be
+        // read), there's no telling its answer from those: it comes as a message instead.
+        let known = waits ? await Self.replies(in: target.session, api: api) : []
+        let waits = waits && known != nil
         do {
             try await api.prompt(session: target.session, id: id, text: Self.compose(from: name, session: caller ?? "unknown", text: text, waits: waits), delivery: .steer)
         } catch {
-            return ("It didn't reach \(target.name): \(error.localizedDescription)", true)
+            sent[key]?.removeAll { $0 == counted }
+            return .failed("It didn't reach \(target.name): \(error.localizedDescription)")
         }
         Analytics.shared.track("agent_message_sent", ["waits": waits, "bot": target.kind == "bot"])
-        guard waits else { return ("Sent to \(target.name). Its answer, if it writes one, comes to you as a message.", false) }
-        if let reply = await reply(in: target.session, after: id, api: api) {
-            return ("\(target.name) answered:\n\n" + reply, false)
+        guard waits else { return .done("Sent to \(target.name). Its answer, if it writes one, comes to you as a message.") }
+        if let reply = await reply(in: target.session, to: id, known: known ?? [], api: api) {
+            return .done("\(target.name) answered:\n\n" + reply)
         }
-        return ("\(target.name) hasn't answered yet. It may still write back with send_message.", false)
+        return .done("\(target.name) hasn't answered yet. It may still write back with send_message.")
+    }
+
+    // MARK: Reading another's conversation
+
+    /// About how much of a conversation goes back at once, in characters.
+    private static let readLimit = 24_000
+
+    /// The conversation of the agent `wanted` (a name or an address), as you'd read it: what the
+    /// user and others wrote, its replies and a line for each step, as the export words them. A
+    /// long one gives its start and its latest part; with `query`, the parts that mention it.
+    func read(_ wanted: String, query: String?, caller: String?) async -> (text: String, isError: Bool) {
+        let target: Agent
+        switch find(wanted, caller: caller) {
+        case .found(let found): target = found
+        case .missing(let outcome): return (outcome.text, true)
+        }
+        guard target.session != caller else { return ("That's this conversation: you have it already.", true) }
+        guard let app, let api = app.workspace.api(forSession: target.session) else {
+            return ("\(target.name)'s conversation can't be read now" + (target.machine.map { ": its machine (\($0)) isn't connected" } ?? "") + ". Try again later, or write to it with send_message.", true)
+        }
+        let session: Session
+        let messages: [Message]
+        do {
+            if let known = app.workspace.session(target.session) { session = known } else { session = try await api.session(target.session) }
+            messages = try await ConversationExport.messages(of: session, api: api)
+        } catch {
+            return ("Couldn't read \(target.name)'s conversation: \(error.localizedDescription)", true)
+        }
+        Analytics.shared.track("agent_conversation_read", ["bot": target.kind == "bot", "query": query != nil])
+        let markdown = ConversationExport.markdown(title: target.name, messages: messages, directory: session.location.directory,
+                                                   you: "User", agent: target.name)
+        let intro = "\(target.name)'s conversation (\(Self.what(target, here: nil)), address \(target.session)), oldest first. What's under **User** is the user's; under **\(target.name)**, its agent's.\n\n"
+        return (intro + Self.excerpt(markdown, query: query, limit: Self.readLimit), false)
+    }
+
+    /// As much of `text` as `limit` allows: all of it; with `query`, the paragraphs around each
+    /// mention of it; else its first part (how it began) and its latest. What's left out is marked.
+    nonisolated static func excerpt(_ text: String, query: String?, limit: Int) -> String {
+        let paragraphs = text.components(separatedBy: "\n\n")
+        if let query {
+            let hits = paragraphs.indices.filter { paragraphs[$0].range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
+            guard !hits.isEmpty else { return "Nothing in it mentions \"\(query)\". Read it without query for its latest part." }
+            // Each with the paragraph before and after it (who's speaking, and what came next),
+            // the latest first as room runs out.
+            var shown = Set<Int>()
+            var used = 0
+            for hit in hits.reversed() {
+                let around = (max(0, hit - 1)...min(paragraphs.count - 1, hit + 1)).filter { !shown.contains($0) }
+                let size = around.reduce(0) { $0 + paragraphs[$1].count + 2 }
+                if used + size > limit, !shown.isEmpty { break }
+                shown.formUnion(around)
+                used += size
+            }
+            var parts: [String] = []
+            var last: Int?
+            for index in shown.sorted() {
+                if let last, index > last + 1 { parts.append("[…]") }
+                parts.append(String(paragraphs[index].prefix(limit)))
+                last = index
+            }
+            let found = hits.count == 1 ? "1 place mentions" : "\(hits.count) places mention"
+            return "\(found) \"\(query)\"" + (shown.count < paragraphs.count ? " (the rest left out as […])" : "") + ":\n\n" + parts.joined(separator: "\n\n")
+        }
+        guard text.count > limit else { return text }
+        // How it began: the title and the first message.
+        var head = paragraphs.prefix(3).joined(separator: "\n\n")
+        if head.count > limit / 4 { head = String(head.prefix(limit / 4)) + "…" }
+        var tail: [String] = []
+        var used = head.count
+        for paragraph in paragraphs.dropFirst(3).reversed() {
+            if used + paragraph.count + 2 > limit {
+                if tail.isEmpty { tail.append("…" + String(paragraph.suffix(limit - used))) }
+                break
+            }
+            tail.insert(paragraph, at: 0)
+            used += paragraph.count + 2
+        }
+        return head + "\n\n[… the middle is left out; read it with query, to find a part …]\n\n" + tail.joined(separator: "\n\n")
     }
 
     // MARK: Starting another
@@ -209,7 +376,8 @@ final class AgentMail {
     private var started: [String: [Date]] = [:]
 
     /// A new session from the conversation `caller`: an agent of its own, in the caller's folder
-    /// (or the one given), on the caller's model, with your usual approval. It gets `task` as a
+    /// (or the one given), on the caller's model, with the caller's approval (yours by default for
+    /// one from outside a session), so Ask First isn't got around. It gets `task` as a
     /// message from the caller, so it knows who to report to, and its metadata says who started it,
     /// for the window to show it beside them.
     func start(_ arguments: [String: Any], caller: String?) async -> (text: String, isError: Bool) {
@@ -228,7 +396,7 @@ final class AgentMail {
             guard path.hasPrefix("/"), FileManager.default.fileExists(atPath: path, isDirectory: &isFolder), isFolder.boolValue else {
                 return ("\(given) isn't a folder on this Mac. Give a full path to one.", true)
             }
-            folder = path
+            folder = Workspace.isBotFolder(path) ? Workspace.chatsFolder : path
         }
         guard let folder else { return ("Give the folder it works in (folder), as a full path.", true) }
         // A few at a time: an agent shouldn't fill the window with sessions unattended.
@@ -238,7 +406,7 @@ final class AgentMail {
             return ("You've started several sessions in the last few minutes. Write to those (send_message), or ask the user before starting more.", true)
         }
         started[key] = lately + [.now]
-        let approval = UserDefaults.standard.string(forKey: ToolApproval.key).flatMap(ToolApproval.init) ?? .approveAll
+        let approval = parent.map { ToolApproval(rules: $0.permissions) } ?? UserDefaults.standard.string(forKey: ToolApproval.key).flatMap(ToolApproval.init) ?? .approveAll
         let session: Session
         do {
             session = try await workspace.createSession(in: folder, model: parent?.model, agent: nil, approval: approval)
@@ -264,18 +432,35 @@ final class AgentMail {
         guard waits else {
             return ("Started \(name)\(place)\(shown) (address \(session.id)). It's on it now. Write to it with send_message; it can write back to you the same way.", false)
         }
-        if let reply = await reply(in: session.id, after: id, api: api) {
+        // A new session: anything it says is its answer.
+        if let reply = await reply(in: session.id, to: id, known: [], api: api) {
             return ("Started \(name)\(place) (address \(session.id)). It answered:\n\n" + reply, false)
         }
         return ("Started \(name)\(place) (address \(session.id)). It hasn't answered yet; it may still write back with send_message.", false)
     }
 
-    /// The answer in `session` to the message `id`: its words once it's done, ten minutes at most.
-    private func reply(in session: String, after id: String, api: OpenCodeAPI) async -> String? {
+    /// The replies `session` has given so far, to tell its answer to a message sent now from them;
+    /// nil when they can't be read (tried a few times, as the engine may be reconnecting).
+    private static func replies(in session: String, api: OpenCodeAPI) async -> Set<String>? {
+        for attempt in 0..<3 {
+            if attempt > 0 { try? await Task.sleep(for: .seconds(1)) }
+            guard let messages = try? await api.messages(session: session, limit: 20).data else { continue }
+            return Set(messages.compactMap { if case .assistant(let assistant) = $0 { assistant.id } else { nil } })
+        }
+        return nil
+    }
+
+    /// The answer in `session` to the message `id` sent to it: its words once it's done, ten
+    /// minutes at most, or until the caller stops. What it says after `id` once that's there
+    /// (not what a turn already under way said, nor while it still waits to go in); what isn't
+    /// among the replies `known` from before when it's further back than the latest. (Not by
+    /// comparing IDs' order, nor where they come in the list: a machine's are made from its own
+    /// clock.)
+    private func reply(in session: String, to id: String, known: Set<String>, api: OpenCodeAPI) async -> String? {
         let began = Date.now
         var started = false
-        while Date.now.timeIntervalSince(began) < 600 {
-            try? await Task.sleep(for: .seconds(2))
+        while Date.now.timeIntervalSince(began) < 600, !Task.isCancelled {
+            guard (try? await Task.sleep(for: .seconds(2))) != nil else { return nil }
             if app?.workspace.running.contains(session) == true {
                 started = true
                 continue
@@ -283,8 +468,19 @@ final class AgentMail {
             // Done; or not seen at work (a quick one, between looks): its words after ours.
             guard started || Date.now.timeIntervalSince(began) > 6 else { continue }
             guard let messages = try? await api.messages(session: session, limit: 20).data else { continue }
-            let words = messages.compactMap { message -> String? in
-                guard case .assistant(let assistant) = message, assistant.id > id else { return nil }
+            let after: ArraySlice<Message>
+            if let ours = messages.firstIndex(where: { $0.id == id }) {
+                after = messages[(ours + 1)...]
+            } else if messages.count >= 20, messages.allSatisfy({ if case .assistant(let step) = $0 { !known.contains(step.id) } else { true } }) {
+                // A long answer: ours is further back.
+                after = messages[...]
+            } else {
+                // Still waiting to go in, after the turn it found under way.
+                started = false
+                continue
+            }
+            let words = after.compactMap { message -> String? in
+                guard case .assistant(let assistant) = message, !known.contains(assistant.id) else { return nil }
                 let text = assistant.content.compactMap { if case .text(let part) = $0 { part.text } else { nil } }.joined(separator: "\n")
                 return text.isEmpty ? nil : text
             }
@@ -306,7 +502,11 @@ final class AgentMail {
     /// Puts the list of everyone on `engine`'s machine, for its agents, when it's changed.
     func share(with engine: MachineEngine) async {
         let machine = engine.machine.id
-        guard let data = try? JSONEncoder().encode(Directory(machine: machine, agents: directory())), shared[machine] != data else { return }
+        // Sorted: JSONEncoder writes a struct's keys in another order almost every time, and an
+        // unchanged list would go again each minute.
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        guard let data = try? encoder.encode(Directory(machine: machine, agents: directory())), shared[machine] != data else { return }
         let encoded = data.base64EncodedString()
         let file = "\"$HOME/\(RemoteEngineInstaller.root)/run/agents.json\""
         let script = "umask 077; mkdir -p \"$HOME/\(RemoteEngineInstaller.root)/run\" && printf %s '\(encoded)' | base64 -d >\(file).new && mv -f \(file).new \(file)"
@@ -316,18 +516,69 @@ final class AgentMail {
     /// What each machine was last given.
     private var shared: [String: Data] = [:]
 
-    /// Delivers what `engine`'s machine's agents left for agents elsewhere.
+    /// Delivers what `engine`'s machine's agents left for agents elsewhere. Each letter's file
+    /// there goes once it's delivered, or can't ever be; one that can't go now (the engine it's
+    /// for is starting over, or the machine sent many lately), or whose reading was cut off, goes
+    /// next time. One for an agent this Mac doesn't know waits two days, for another Mac connected
+    /// to the machine that may, and so does one held back that long.
     func collect(from engine: MachineEngine) async {
+        // One at a time for a machine, or two would deliver the same letters; one asked for
+        // meanwhile runs once after.
+        let machine = engine.machine.id
+        guard collecting.insert(machine).inserted else {
+            collectAgain.insert(machine)
+            return
+        }
+        defer { collecting.remove(machine) }
+        repeat {
+            collectAgain.remove(machine)
+            await collectOnce(from: engine)
+        } while collectAgain.contains(machine)
+    }
+
+    /// Machines whose letters are being collected, and those to collect again after.
+    private var collecting: Set<String> = []
+    private var collectAgain: Set<String> = []
+
+    private func collectOnce(from engine: MachineEngine) async {
         let machine = engine.machine.id
         let folder = "\"$HOME/\(RemoteEngineInstaller.root)/run/outbox\""
-        let script = "cd \(folder) 2>/dev/null || exit 0; for f in *.json; do [ -f \"$f\" ] || continue; cat \"$f\"; printf '\\n'; rm -f \"$f\"; done"
-        let output = await Task.detached { RemoteShell.run(script, on: machine) }.value ?? Data()
+        // Each as its file's name, when it was written and its letter (on one line, as it's
+        // written), between tabs.
+        let script = "cd \(folder) 2>/dev/null || exit 0; for f in *.json; do [ -f \"$f\" ] || continue; printf '%s\\t%s\\t' \"$f\" \"$(stat -c %Y \"$f\" 2>/dev/null || echo 0)\"; tr -d '\\n' <\"$f\"; printf '\\n'; done"
+        guard let output = await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value else { return }
         struct Letter: Decodable { var from: String?; var name: String?; var to: String; var text: String; var wait: Bool? }
+        var done: [String] = []
         for line in String(decoding: output, as: UTF8.self).split(separator: "\n") {
-            guard let letter = try? JSONDecoder().decode(Letter.self, from: Data(line.utf8)) else { continue }
-            let result = await send(from: letter.from, name: letter.name ?? "an agent on \(machine)", to: letter.to, text: letter.text, waits: false)
-            if result.isError { log.error("A message from \(machine, privacy: .public) didn't go: \(result.text, privacy: .public)") }
+            let fields = line.split(separator: "\t", maxSplits: 2, omittingEmptySubsequences: false)
+            guard fields.count == 3 else { continue }
+            let file = String(fields[0])
+            let written = Date(timeIntervalSince1970: Double(fields[1]) ?? 0)
+            guard let letter = try? JSONDecoder().decode(Letter.self, from: Data(fields[2].utf8)) else {
+                log.error("A message from \(machine, privacy: .public) couldn't be read")
+                done.append(file)
+                continue
+            }
+            // Anything on the machine can write a letter, so who it's from is taken only from an
+            // agent that is there; else it's "an agent on" it. Counted by the machine.
+            let sender = letter.from.flatMap { from in directory().first { $0.session == from && $0.machine == machine } }
+            switch await deliver(from: sender?.session, name: sender?.name ?? "an agent on \(machine)", to: letter.to, text: letter.text, waits: false, limitKey: "machine:" + machine) {
+            case .done:
+                done.append(file)
+            case .unknown(let why), .limited(let why):
+                guard written.timeIntervalSinceNow < -2 * 86_400 else { continue }
+                log.error("A message from \(machine, privacy: .public) didn't go: \(why, privacy: .public)")
+                done.append(file)
+            case .refused(let why):
+                log.error("A message from \(machine, privacy: .public) didn't go: \(why, privacy: .public)")
+                done.append(file)
+            case .failed(let why):
+                log.error("A message from \(machine, privacy: .public) didn't go yet: \(why, privacy: .public)")
+            }
         }
+        guard !done.isEmpty else { return }
+        let names = done.map(SSHConnection.quoted).joined(separator: " ")
+        _ = await Task.detached(operation: { RemoteShell.run("cd \(folder) && rm -f -- \(names)", on: machine) }).value
     }
 }
 

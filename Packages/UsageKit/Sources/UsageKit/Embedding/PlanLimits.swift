@@ -18,10 +18,15 @@ public struct PlanLimits: Sendable, Hashable {
 
     /// The snapshot's bounded rows, in the provider's order; `nil` for a failed read or one
     /// without limits.
-    init?(_ snapshot: ProviderSnapshot) {
+    init?(_ snapshot: ProviderSnapshot, now: Date = .now) {
         guard snapshot.errorCategory == nil else { return nil }
+        // Not a reading from before refreshes stopped (a login that ran out, days offline) shown
+        // as now's: the panel calls it Outdated from the same age.
+        guard now.timeIntervalSince(snapshot.refreshedAt) < RefreshSetting.interval * 2 else { return nil }
         let limits = snapshot.lines.compactMap { line -> Limit? in
             guard case .progress(let label, let used, let limit, _, let resetsAt, _, _) = line, limit > 0 else { return nil }
+            // Its window ended since: it started over, at an amount not read yet.
+            if let resetsAt, resetsAt <= now { return nil }
             return Limit(label: label, fraction: min(max(used / limit, 0), 1), resetsAt: resetsAt)
         }
         guard !limits.isEmpty else { return nil }

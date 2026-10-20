@@ -173,6 +173,8 @@ final class SignInPages {
             return window.webView
         }
         session.onClose = { [weak self, weak session] in
+            // Closed, a dialog it shows answered: WebKit stops the app over one left unanswered.
+            session?.close()
             self?.stack.removeAll { $0 === session }
         }
         if let address { session.load(address) }
@@ -180,6 +182,7 @@ final class SignInPages {
     }
 
     func closeAll() {
+        for page in stack { page.close() }
         stack = []
     }
 }

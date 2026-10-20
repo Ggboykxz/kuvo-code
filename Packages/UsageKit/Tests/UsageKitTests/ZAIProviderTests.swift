@@ -113,7 +113,7 @@ final class ZAIAuthStoreTests: XCTestCase {
         XCTAssertEqual(store.currentAPIKey(), "zai-file")
     }
 
-    func testDeleteClearsEveryConfigPathAndPreservesEnvironmentFallback() throws {
+    func testDeleteClearsItsOwnKeyAndLeavesOtherToolsFile() throws {
         for environment in [[:], ["ZAI_API_KEY": "zai-env"]] as [[String: String]] {
             let files = FakeFiles([
                 ZAIAuthStore.configPaths[0]: #"{"apiKey":"zai-primary"}"#,
@@ -125,12 +125,11 @@ final class ZAIAuthStoreTests: XCTestCase {
             try store.deleteAPIKey()
 
             XCTAssertNil(secrets.values["zai"])
-
-            for path in ZAIAuthStore.configPaths {
-                XCTAssertNil(files.files[path], path)
-            }
-            XCTAssertEqual(store.loadAPIKey()?.apiKey, environment["ZAI_API_KEY"])
-            XCTAssertEqual(store.keyStatus(), environment.isEmpty ? .notSet : .fromEnvironment)
+            XCTAssertNil(files.files[ZAIAuthStore.configPaths[0]])
+            // Another tool's key file is the user's own: kept, and used as theirs.
+            XCTAssertEqual(files.files[ZAIAuthStore.configPaths[1]], "zai-alt")
+            XCTAssertEqual(store.loadAPIKey()?.apiKey, "zai-alt")
+            XCTAssertEqual(store.keyStatus(), .fromEnvironment)
         }
     }
 

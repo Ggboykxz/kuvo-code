@@ -35,9 +35,11 @@ struct SkillsSettings: View {
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
                                 Text(skill.name)
-                                Text(source(of: skill))
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
+                                if let source = source(of: skill) {
+                                    Text(source)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                             if let description = skill.description {
                                 Text(description)
@@ -60,6 +62,8 @@ struct SkillsSettings: View {
                             .toggleStyle(.switch)
                             .controlSize(.small)
                     }
+                    // Where it is, for one found in a folder of its own.
+                    .help(place(of: skill) ?? "")
                 }
                 Button("New Skill…") { writing = SkillDraft(name: nil) }
             } header: {
@@ -152,11 +156,19 @@ struct SkillsSettings: View {
         installed[skill.id] == nil && skill.path?.hasPrefix(folder.path + "/") == true
     }
 
-    private func source(of skill: Skill) -> String {
+    /// Where a skill comes from, when that's short to say: built in, added here, or the GitHub
+    /// repository it came from. One found in a folder (~/.claude/skills) goes without.
+    private func source(of skill: Skill) -> String? {
         if let source = installed[skill.id] { return source.repository }
-        guard let path = skill.path else { return "" }
+        guard let path = skill.path else { return nil }
         if path.hasPrefix("/builtin/") { return "Built in" }
         if path.hasPrefix(folder.path + "/") { return "Added here" }
+        return nil
+    }
+
+    /// The folder a skill found elsewhere is in, for its row's tip.
+    private func place(of skill: Skill) -> String? {
+        guard source(of: skill) == nil, let path = skill.path else { return nil }
         return (path as NSString).abbreviatingWithTildeInPath
             .components(separatedBy: "/").dropLast(2).joined(separator: "/")
     }
@@ -190,8 +202,9 @@ struct SkillsSettings: View {
             defer { isOpening = false }
             do {
                 let repository = try await SkillLibrary.repository(named: name)
-                // A skill you started writing meanwhile stays in view, and the name stays typed.
-                guard writing == nil else { return }
+                // A skill you started writing, or a repository you opened, meanwhile stays in view,
+                // and the name stays typed.
+                guard writing == nil, browsing == nil else { return }
                 browsing = repository
                 repositoryName = ""
             } catch {
@@ -227,7 +240,13 @@ private struct SkillEditor: View {
     private var id: String { name ?? SkillFile.name(from: newName) }
     private var file: URL { folder.appending(path: id).appending(path: "SKILL.md") }
     private var canSave: Bool {
-        !id.isEmpty && !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (name != nil || !taken.contains(id))
+        !id.isEmpty && !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (name != nil || !isTaken)
+    }
+
+    /// A new skill's name is one there is already: in the engine's list, or as a folder here
+    /// (while the list loads, or when it couldn't be read), which saving would write over.
+    private var isTaken: Bool {
+        taken.contains(id) || FileManager.default.fileExists(atPath: folder.appending(path: id).path)
     }
 
     /// What's under a new skill's name: the name it's saved as when that isn't what you typed,
@@ -235,7 +254,7 @@ private struct SkillEditor: View {
     private var nameNote: (text: String, isProblem: Bool) {
         let typed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         if !typed.isEmpty, id.isEmpty { return ("Names use the letters a to z and digits, and this one has none.", true) }
-        if taken.contains(id) { return ("There's a skill called \(id) already.", true) }
+        if !id.isEmpty, isTaken { return ("There's a skill called \(id) already.", true) }
         if !typed.isEmpty, id != typed { return ("It's saved as \(id).", false) }
         return ("Names use lowercase letters a to z, digits and hyphens.", false)
     }
@@ -304,6 +323,10 @@ private struct SkillEditor: View {
     }
 
     private func save() {
+        guard name != nil || !isTaken else {
+            failure = "There's a skill called \(id) already."
+            return
+        }
         do {
             try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             // A skill's own file keeps whatever else its header has.
@@ -329,9 +352,13 @@ private struct SkillEditor: View {
 /// A SKILL.md: a header with its name and description, then its instructions.
 nonisolated enum SkillFile {
     /// A skill's name as skills want it: lowercase letters, digits and hyphens.
+    /// A skill's name from what's typed: its words in a to z and digits, joined by single
+    /// hyphens (words in other scripts left out, so none at the start, the end or doubled).
     static func name(from text: String) -> String {
-        let words = text.lowercased().split { !$0.isLetter && !$0.isNumber }
-        return String(words.joined(separator: "-").filter { $0.isASCII }.prefix(64))
+        let words = text.lowercased().split { !$0.isLetter && !$0.isNumber }.map { $0.filter(\.isASCII) }.filter { !$0.isEmpty }
+        var name = String(words.joined(separator: "-").prefix(64))
+        while name.hasSuffix("-") { name.removeLast() }
+        return name
     }
 
     static func parse(_ text: String) -> (description: String, body: String) {
@@ -480,7 +507,7 @@ private struct RepositorySkills: View {
 
     /// Its files, saying so when some are scripts.
     static func summary(of skill: SkillLibrary.RemoteSkill) -> String {
-        let names = skill.files.map { String($0.dropFirst(skill.path.count + 1)) }
+        let names = skill.files.map { skill.relative($0) }
         let scripts = names.filter { ["sh", "py", "js", "ts", "rb", "pl", "bash", "zsh"].contains(($0 as NSString).pathExtension.lowercased()) }
         var lines = names.prefix(12).map { "• " + $0 }
         if names.count > 12 { lines.append("and \(names.count - 12) more") }
@@ -534,6 +561,7 @@ private struct RemoteSkillRow: View {
             } else if let installed {
                 if installed.repository == skill.repository.id, installed.path == skill.path {
                     Button("Remove", action: remove)
+                        .accessibilityLabel("Remove \(skill.name)")
                 } else {
                     // Another skill by this name is installed (they'd share a folder).
                     Text("Another \(skill.name) is added, from \(installed.repository)")
@@ -543,6 +571,7 @@ private struct RemoteSkillRow: View {
                 }
             } else {
                 Button("Add", action: add)
+                    .accessibilityLabel("Add \(skill.name)")
             }
         }
         .task { about = await SkillLibrary.about(skill) }

@@ -159,6 +159,7 @@ struct CardActionStyle: ButtonStyle {
             .background(configuration.isPressed ? Pressable.pressedFill : isHovering ? Pressable.hoverFill : .clear, in: .rect(cornerRadius: 6))
             .contentShape(.rect)
             .onHover { isHovering = $0 }
+            .clickablePointer()
     }
 }
 
@@ -180,6 +181,8 @@ struct WindowDragArea: View {
             .onTapGesture(count: 2) { TitleBarDoubleClick.perform() }
             .gesture(WindowDragGesture())
             .allowsWindowActivationEvents(true)
+            // The title bar moves the window only while the pointer is on it (see TitleBarMoveGate).
+            .background(TitleBarMoveGateInstaller())
     }
 }
 
