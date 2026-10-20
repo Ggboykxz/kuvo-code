@@ -64,7 +64,7 @@ const sessions = new Sessions(
   auto,
   engineAgent,
   (directory) => link.policies(directory),
-  (name, directory) => link.agentPrompt(name, directory),
+  (name, directory) => link.agent(name, directory),
   new Snapshots(join(home, "snapshots")),
 )
 

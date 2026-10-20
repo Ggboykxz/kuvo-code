@@ -286,6 +286,7 @@ class EngineLink {
     this.authorization = authorization;
     this.names.clear();
     this.catalog = undefined;
+    this.reads.clear();
     const generation = ++this.generation;
     if (this.url)
       this.feed(generation);
@@ -333,22 +334,50 @@ class EngineLink {
     }
     return this.names.get(providerID2);
   }
-  settings = new Map;
+  reads = new Map;
+  async read(path, directory, usable = () => true) {
+    const key = `${path}
+${directory}`;
+    const kept = this.reads.get(key);
+    if (!this.url)
+      return kept?.value;
+    if (kept && Date.now() - kept.at < (kept.failed ? 1e4 : 30000))
+      return kept.value;
+    if (kept?.pending)
+      return kept.pending;
+    const pending = this.request("GET", path, undefined, 4000, directory).then((value) => {
+      if (usable(value))
+        this.reads.set(key, { at: Date.now(), value });
+      else
+        this.reads.set(key, { at: 0, value: kept?.value });
+      return usable(value) ? value : kept?.value;
+    }, () => {
+      this.reads.set(key, { at: Date.now(), value: kept?.value, failed: true });
+      return kept?.value;
+    });
+    this.reads.set(key, { at: 0, value: kept?.value, pending });
+    return pending;
+  }
   async settingsFiles(directory) {
-    const kept = this.settings.get(directory);
-    if (!this.url || kept && Date.now() - kept.at < 30000)
-      return kept?.sources ?? [];
-    try {
-      const answer = await this.request("GET", "/api/config", undefined, 1e4, directory);
-      const sources = Array.isArray(answer) ? answer : Array.isArray(answer?.data) ? answer.data : [{ info: answer?.data ?? answer }];
-      this.settings.set(directory, { at: Date.now(), sources });
-      return sources;
-    } catch {
-      return kept?.sources ?? [];
-    }
+    const answer = await this.read("/api/config", directory);
+    if (answer === undefined)
+      return;
+    return Array.isArray(answer) ? answer : Array.isArray(answer?.data) ? answer.data : [{ info: answer?.data ?? answer }];
+  }
+  async agent(name, directory) {
+    const answer = await this.read("/api/agent", directory, (value) => Array.isArray(value?.data) && value.data.length > 0);
+    if (answer === undefined)
+      return name === "build" || name === "plan" ? undefined : { system: await this.agentPrompt(name, directory) };
+    const found = (answer?.data ?? []).find((agent) => agent?.id === name || agent?.name === name);
+    if (!found)
+      return;
+    return { system: typeof found.system === "string" && found.system.trim() ? found.system.trim() : undefined, permissions: Array.isArray(found.permissions) ? found.permissions : undefined };
   }
   async policies(directory) {
-    const policies = (await this.settingsFiles(directory)).flatMap((source) => Array.isArray(source?.info?.policies) ? source.info.policies : []);
+    const files = await this.settingsFiles(directory);
+    if (!files)
+      return;
+    const policies = files.flatMap((source) => Array.isArray(source?.info?.policies) ? source.info.policies : []);
     const rules = [];
     for (const policy of policies) {
       if (policy?.action !== "tool.use" || typeof policy.resource !== "string")
@@ -362,7 +391,7 @@ class EngineLink {
   }
   async commandTemplate(name, directory) {
     let template;
-    for (const source of await this.settingsFiles(directory)) {
+    for (const source of await this.settingsFiles(directory) ?? []) {
       const own = source?.info?.commands?.[name]?.template ?? source?.info?.command?.[name]?.template;
       if (typeof own === "string" && own.trim())
         template = own;
@@ -371,7 +400,7 @@ class EngineLink {
   }
   async agentPrompt(name, directory) {
     let prompt;
-    for (const source of await this.settingsFiles(directory)) {
+    for (const source of await this.settingsFiles(directory) ?? []) {
       const own = source?.info?.agents?.[name]?.system ?? source?.info?.agent?.[name]?.prompt;
       if (typeof own === "string" && own.trim())
         prompt = own.trim();
@@ -533,7 +562,7 @@ class EngineThread {
       title: this.session.title ? `Kuvo Code: ${this.session.title}` : "Kuvo Code",
       location: { directory: this.session.location.directory },
       model: input.model,
-      agent: input.plan ? "plan" : "build",
+      agent: input.plan ? "plan" : this.session.agent ?? "build",
       permissions: this.session.permissions ?? [],
       metadata: { kuvo: { engineFor: this.session.id } }
     });
@@ -563,8 +592,8 @@ class EngineThread {
     const path = `/api/session/${encodeURIComponent(id)}`;
     await this.link.request("PATCH", path, { permissions: this.session.permissions ?? [] });
     await this.link.request("POST", `${path}/model`, { model: input.model });
-    await this.link.request("POST", `${path}/agent`, { agent: input.plan ? "plan" : "build" });
-    const instructions = hooks.instructions();
+    await this.link.request("POST", `${path}/agent`, { agent: input.plan ? "plan" : this.session.agent ?? "build" });
+    const instructions = hooks.instructions(false);
     if (instructions !== (this.state.engineInstructions ?? "")) {
       if (instructions)
         await this.link.request("PUT", `/api/experimental/session/${encodeURIComponent(id)}/instructions/entries/kuvo`, { value: instructions });
@@ -2836,6 +2865,7 @@ class ClaudeThread {
         forwardSubagentText: true,
         permissionMode: plan ? "plan" : "default",
         canUseTool: (name, input, options) => this.canUseTool(name, input, options),
+        hooks: { PreToolUse: [{ hooks: [async (hookInput) => this.preToolUse(hookInput)] }] },
         systemPrompt: { type: "preset", preset: "claude_code", ...append ? { append } : {} },
         ...resume ? { resume: id } : { sessionId: id },
         env: this.agent.env(),
@@ -3090,6 +3120,18 @@ class ClaudeThread {
     active.hooks.saveState();
     if (spent > 0 && this.agent.usesKey())
       active.turn.addUsage(undefined, spent);
+  }
+  async preToolUse(input) {
+    const hooks = this.active?.hooks;
+    if (!hooks || input?.hook_event_name !== "PreToolUse")
+      return {};
+    const verdict = hooks.check(permissionAsk(String(input.tool_name ?? ""), input.tool_input ?? {}));
+    if (verdict === "deny") {
+      return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "Kuvo Code's settings don't allow this (Settings \u203A Permissions, or this session's rules)." } };
+    }
+    if (verdict === "ask")
+      return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask" } };
+    return {};
   }
   async canUseTool(name, input, options) {
     const active = this.active;
@@ -4419,7 +4461,7 @@ class CursorThread {
     const apiKey = await this.owner.apiKey(sdk);
     if (!apiKey || hooks.signal.aborted)
       return;
-    if (hooks.approvesAll())
+    if (hooks.approvesAll(false))
       await this.owner.prime(sdk, apiKey, this.session.location.directory);
     await this.ensureAgent(sdk, this.options(sdk, input, hooks, apiKey), hooks);
     const fresh = this.startedOver;
@@ -4427,7 +4469,7 @@ class CursorThread {
     return { fresh };
   }
   options(sdk, input, hooks, apiKey) {
-    const approvesAll = hooks.approvesAll();
+    const approvesAll = hooks.approvesAll(false);
     const selection = { id: input.model.id, ...input.model.variant ? { params: [{ id: "effort", value: input.model.variant }] } : {} };
     const mode = input.plan ? "plan" : "agent";
     const cwd = this.session.location.directory;
@@ -4447,7 +4489,7 @@ class CursorThread {
     };
   }
   async ensureAgent(sdk, options, hooks) {
-    const approvesAll = hooks.approvesAll();
+    const approvesAll = hooks.approvesAll(false);
     if (this.agent && this.startedApproving !== approvesAll) {
       try {
         this.agent.close?.();
@@ -4480,7 +4522,7 @@ class CursorThread {
     if (hooks.signal.aborted)
       return { outcome: "interrupted" };
     const cwd = this.session.location.directory;
-    const approvesAll = hooks.approvesAll();
+    const approvesAll = hooks.approvesAll(false);
     const selection = { id: input.model.id, ...input.model.variant ? { params: [{ id: "effort", value: input.model.variant }] } : {} };
     const mode = input.plan ? "plan" : "agent";
     const options = this.options(sdk, input, hooks, apiKey);
@@ -5053,11 +5095,10 @@ ${text}` : text;
 function matches(pattern, value) {
   if (pattern === "*" || pattern === value)
     return true;
+  if (pattern.endsWith(" *") && value === pattern.slice(0, -2))
+    return true;
   const expression = "^" + pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$";
   return new RegExp(expression).test(value);
-}
-function evaluate(rules, action, resources2) {
-  return ruled(rules, action, resources2) ?? "allow";
 }
 function ruled(rules, action, resources2) {
   let effect;
@@ -5408,13 +5449,30 @@ var timing = { stopGrace: 8000, idleClose: 15 * 60000 };
 var changes = new Set(["edit", "write", "patch"]);
 var shellTimeout = 10 * 60000;
 var shellOutputLimit = 50000;
-function readsSecrets(ask) {
-  if (ask.action !== "read")
-    return false;
-  return ask.resources.some((resource) => {
-    const name = resource.split("/").pop() ?? "";
-    return /^\.env(\..+)?$/.test(name) && !/\.example$/.test(name);
-  });
+var engineDefaults = [
+  { action: "read", resource: "*.env", effect: "ask" },
+  { action: "read", resource: "*.env.*", effect: "ask" },
+  { action: "read", resource: "*.env.example", effect: "allow" }
+];
+function commandParts(line) {
+  const parts = line.split(/&&|\|\||[;|\n]|\$\(|`|[()]/).map((part) => part.trim()).filter(Boolean);
+  return [line.trim(), ...parts.filter((part) => part !== line.trim())];
+}
+function partsOf(ask) {
+  return ask.action === "shell" || ask.action === "bash" ? ask.resources.flatMap(commandParts) : ask.resources;
+}
+function strictest(rules, action, parts) {
+  let result;
+  for (const part of parts.length ? parts : ["*"]) {
+    const effect = ruled(rules, action, [part]);
+    if (effect === "deny")
+      return "deny";
+    if (effect === "ask")
+      result = "ask";
+    else if (effect === "allow" && !result)
+      result = "allow";
+  }
+  return result;
 }
 function didWork(message) {
   return message.type === "assistant" && message.content.some((content) => content.type === "tool" || content.type === "text" && content.text.trim() !== "");
@@ -5426,17 +5484,17 @@ class Sessions {
   auto;
   engine;
   policies;
-  agentPrompt;
+  agentInfo;
   snapshots;
   live = new Map;
   removing = new Set;
-  constructor(store, roster, auto, engine, policies, agentPrompt, snapshots) {
+  constructor(store, roster, auto, engine, policies, agentInfo, snapshots) {
     this.store = store;
     this.roster = roster;
     this.auto = auto;
     this.engine = engine;
     this.policies = policies;
-    this.agentPrompt = agentPrompt;
+    this.agentInfo = agentInfo;
     this.snapshots = snapshots;
     for (const session of store.all())
       this.repair(session.id);
@@ -5454,7 +5512,7 @@ class Sessions {
   state(id) {
     let live = this.live.get(id);
     if (!live) {
-      live = { threads: new Map, permissions: new Map, forms: new Map, always: [], subagents: new Map, blocks: [] };
+      live = { threads: new Map, permissions: new Map, forms: new Map, always: [], subagents: new Map, blocks: this.policies ? undefined : [] };
       this.live.set(id, live);
     }
     return live;
@@ -5951,11 +6009,17 @@ class Sessions {
         this.store.save(id);
       }
     }
-    live.blocks = await this.policies?.(directory).catch(() => {
+    const blocks = this.policies ? await this.policies(directory).catch(() => {
       return;
-    }) ?? live.blocks;
+    }) : [];
+    if (blocks !== undefined)
+      live.blocks = blocks;
+    const info = this.agentInfo ? await this.agentInfo(session.agent ?? "build", directory).catch(() => {
+      return;
+    }) : undefined;
+    live.agentRules = info?.permissions ?? live.agentRules;
     const own = session.agent && session.agent !== "build" && session.agent !== "plan" ? session.agent : undefined;
-    live.agentPrompt = own ? await this.agentPrompt?.(own, directory).catch(() => live.agentPrompt) : undefined;
+    live.agentPrompt = own ? info?.system : undefined;
     let result;
     try {
       const attached = withTextFiles(input.text, input.files.map(promptFile));
@@ -6183,15 +6247,16 @@ class Sessions {
       signal,
       state: slot.state,
       saveState: () => this.store.save(id, true),
-      instructions: () => [
+      instructions: (withAgent = true) => [
         ...Object.values(record.agent.kuvoInstructions ?? {}),
-        live.agentPrompt ? `You work as the "${record.session.agent}" agent here. Its instructions:
+        withAgent && live.agentPrompt ? `You work as the "${record.session.agent}" agent here. Its instructions:
 
 ${live.agentPrompt}` : ""
       ].filter(Boolean).join(`
 
 `),
-      approvesAll: () => !plan && !(record.session.permissions ?? []).some((rule) => rule.effect === "ask" || rule.effect === "deny") && !live.blocks.some((rule) => rule.effect === "deny"),
+      approvesAll: (canAsk = true) => !plan && !(record.session.permissions ?? []).some((rule) => rule.effect === "ask" || rule.effect === "deny") && (!canAsk || live.blocks !== undefined && !live.blocks.some((rule) => rule.effect === "deny")),
+      check: (ask) => this.checkPermission(live, record.session, ask, plan),
       permission: (ask) => this.askPermission(id, live, turn, ask, plan),
       question: (ask) => this.askQuestion(id, live, turn, ask),
       subagent: (toolCallID, task) => this.startSubagent(id, live, turn, toolCallID, task)
@@ -6246,13 +6311,26 @@ ${live.agentPrompt}` : ""
       }
     };
   }
+  checkPermission(live, session, ask, plan) {
+    const parts = partsOf(ask);
+    if (live.blocks && strictest(live.blocks, ask.action, parts) === "deny")
+      return "deny";
+    if (plan && changes.has(ask.action))
+      return "deny";
+    const effect = strictest([...live.agentRules ?? engineDefaults, ...session.permissions ?? []], ask.action, parts);
+    if (effect === "deny")
+      return "deny";
+    const allowedBefore = live.always.some((rule) => rule.action === ask.action && ask.resources.every((resource) => rule.patterns.some((pattern) => matches(pattern, resource))));
+    return effect === "ask" && !allowedBefore ? "ask" : undefined;
+  }
   askPermission(id, live, turn, ask, plan) {
     const session = this.record(id).session;
-    if (ruled(live.blocks, ask.action, ask.resources) === "deny")
+    const parts = partsOf(ask);
+    if (live.blocks && strictest(live.blocks, ask.action, parts) === "deny")
       return Promise.resolve("reject");
     if (plan && changes.has(ask.action))
       return Promise.resolve("reject");
-    const effect = ask.weighed || readsSecrets(ask) ? ruled(session.permissions, ask.action, ask.resources) : evaluate(session.permissions, ask.action, ask.resources);
+    const effect = ask.weighed ? strictest(session.permissions ?? [], ask.action, parts) : strictest([...live.agentRules ?? engineDefaults, ...session.permissions ?? []], ask.action, parts) ?? "allow";
     if (effect === "deny")
       return Promise.resolve("reject");
     const allowedBefore = live.always.some((rule) => rule.action === ask.action && ask.resources.every((resource) => rule.patterns.some((pattern) => matches(pattern, resource))));
@@ -6942,7 +7020,7 @@ function engineAgent(providerID2) {
     engineAgents.set(providerID2, agent = new EngineAgent(link, providerID2));
   return agent;
 }
-var sessions = new Sessions(store, roster, auto, engineAgent, (directory) => link.policies(directory), (name, directory) => link.agentPrompt(name, directory), new Snapshots(join14(home, "snapshots")));
+var sessions = new Sessions(store, roster, auto, engineAgent, (directory) => link.policies(directory), (name, directory) => link.agent(name, directory), new Snapshots(join14(home, "snapshots")));
 var server2 = Bun.serve({
   hostname: "127.0.0.1",
   port: 0,

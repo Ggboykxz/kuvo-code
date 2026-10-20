@@ -219,7 +219,7 @@ class CursorThread implements Thread {
     const sdk = await this.owner.sdk()
     const apiKey = await this.owner.apiKey(sdk)
     if (!apiKey || hooks.signal.aborted) return undefined
-    if (hooks.approvesAll()) await this.owner.prime(sdk, apiKey, this.session.location.directory)
+    if (hooks.approvesAll(false)) await this.owner.prime(sdk, apiKey, this.session.location.directory)
     await this.ensureAgent(sdk, this.options(sdk, input, hooks, apiKey), hooks)
     const fresh = this.startedOver
     this.startedOver = false
@@ -227,7 +227,7 @@ class CursorThread implements Thread {
   }
 
   private options(sdk: any, input: RunInput, hooks: TurnHooks, apiKey: string) {
-    const approvesAll = hooks.approvesAll()
+    const approvesAll = hooks.approvesAll(false)
     const selection = { id: input.model.id, ...(input.model.variant ? { params: [{ id: "effort", value: input.model.variant }] } : {}) }
     const mode = input.plan ? "plan" : "agent"
     const cwd = this.session.location.directory
@@ -249,7 +249,7 @@ class CursorThread implements Thread {
 
   /** Cursor's agent for this session: the one it had, or a new one (said by `startedOver`). */
   private async ensureAgent(sdk: any, options: any, hooks: TurnHooks) {
-    const approvesAll = hooks.approvesAll()
+    const approvesAll = hooks.approvesAll(false)
     // Its sandbox and review are set as it starts: another approval mode starts it again.
     if (this.agent && this.startedApproving !== approvesAll) {
       try {
@@ -280,7 +280,7 @@ class CursorThread implements Thread {
     if (!apiKey) return { outcome: "failed", error: { type: "auth", message: "Sign in to Cursor in Settings › Accounts." } }
     if (hooks.signal.aborted) return { outcome: "interrupted" }
     const cwd = this.session.location.directory
-    const approvesAll = hooks.approvesAll()
+    const approvesAll = hooks.approvesAll(false)
     const selection = { id: input.model.id, ...(input.model.variant ? { params: [{ id: "effort", value: input.model.variant }] } : {}) }
     const mode = input.plan ? "plan" : "agent"
     const options = this.options(sdk, input, hooks, apiKey)

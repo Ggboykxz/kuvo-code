@@ -418,11 +418,16 @@ describe("asks and conversations", () => {
       { action: "shell", resource: "git push *", effect: "deny" },
     ])
     let approvesAll: boolean | undefined
+    let checked: unknown[] = []
     const decided: string[] = []
     a.script = async (_input, turn, hooks) => {
       approvesAll = hooks.approvesAll()
       decided.push(await hooks.permission({ action: "shell", resources: ["git push origin main"] }))
       decided.push(await hooks.permission({ action: "shell", resources: ["git status"] }))
+      // A command line's commands each count.
+      decided.push(await hooks.permission({ action: "shell", resources: ["git add -A && git commit -m x && git push origin main"] }))
+      decided.push(await hooks.permission({ action: "shell", resources: ["cd /tmp/project; git push"] }))
+      checked = [hooks.check({ action: "shell", resources: ["ls | git push"] }), hooks.check({ action: "shell", resources: ["ls"] })]
       turn.startStep()
       turn.text("done")
       turn.endStep()
@@ -432,18 +437,21 @@ describe("asks and conversations", () => {
     send(id, "push it")
     await settled(id, 1)
     expect(approvesAll).toBe(false)
-    expect(decided).toEqual(["reject", "once"])
+    expect(decided).toEqual(["reject", "once", "reject", "reject"])
+    expect(checked).toEqual(["deny", undefined])
     expect(sessions.permissions(id)).toHaveLength(0)
   })
 
   test("an agent of yours (Settings › Agents) keeps its name, and its agent is told what it's told", async () => {
     const agents = new Map([a, b].map((agent) => [agent.providerID, agent]))
     sessions = new Sessions(store, { find: (provider: string | undefined) => (provider ? agents.get(provider) : undefined) } as unknown as Roster, auto, undefined, undefined, async (name) =>
-      name === "reviewer" ? "Review the code; change nothing." : undefined,
+      name === "reviewer" ? { system: "Review the code; change nothing.", permissions: [{ action: "*", resource: "*", effect: "allow" }, { action: "edit", resource: "*", effect: "deny" }] } : undefined,
     )
     let told = ""
+    let edit: string | undefined
     a.script = async (input, turn, hooks, thread) => {
       told = hooks.instructions()
+      edit = await hooks.permission({ action: "edit", resources: ["/tmp/project/a.ts"] })
       return replies(input, turn, hooks, thread)
     }
     const id = sessions.create({ model: { providerID: "alpha", id: "one" }, agent: "reviewer", location: { directory: "/tmp/project" } }).id
@@ -451,11 +459,27 @@ describe("asks and conversations", () => {
     send(id, "look at it")
     await settled(id, 1)
     expect(told).toContain("Review the code; change nothing.")
+    // Its own rules hold: it may not edit.
+    expect(edit).toBe("reject")
     // Back to Build: it isn't told any more.
     sessions.selectAgent(id, "build")
     send(id, "now fix it")
     await settled(id, 2)
     expect(told).not.toContain("Review the code")
+  })
+
+  test("Blocks not known (the engine can't be reached): the agent asks, rather than run on its own", async () => {
+    const agents = new Map([a, b].map((agent) => [agent.providerID, agent]))
+    sessions = new Sessions(store, { find: (provider: string | undefined) => (provider ? agents.get(provider) : undefined) } as unknown as Roster, auto, undefined, async () => undefined)
+    let approvesAll: boolean | undefined
+    a.script = async (input, turn, hooks, thread) => {
+      approvesAll = hooks.approvesAll()
+      return replies(input, turn, hooks, thread)
+    }
+    const id = create()
+    send(id, "go")
+    await settled(id, 1)
+    expect(approvesAll).toBe(false)
   })
 
   test("reading a .env file asks first, as on the engine; an example of one doesn't", async () => {

@@ -373,6 +373,8 @@ class ClaudeThread implements Thread {
         forwardSubagentText: true,
         permissionMode: plan ? "plan" : "default",
         canUseTool: (name: string, input: Record<string, unknown>, options: any) => this.canUseTool(name, input, options),
+        // Before any tool runs, even one Claude Code's own settings allow (yours, or a project's).
+        hooks: { PreToolUse: [{ hooks: [async (hookInput: any) => this.preToolUse(hookInput)] }] },
         systemPrompt: { type: "preset", preset: "claude_code", ...(append ? { append } : {}) },
         ...(resume ? { resume: id } : { sessionId: id }),
         env: this.agent.env(),
@@ -623,6 +625,18 @@ class ClaudeThread implements Thread {
     this.state.claudeCost = total
     active.hooks.saveState()
     if (spent > 0 && this.agent.usesKey()) active.turn.addUsage(undefined, spent)
+  }
+
+  /** Your Blocks refuse a tool; what your rules ask first about is asked (canUseTool then asks you). */
+  private async preToolUse(input: any): Promise<any> {
+    const hooks = this.active?.hooks
+    if (!hooks || input?.hook_event_name !== "PreToolUse") return {}
+    const verdict = hooks.check(permissionAsk(String(input.tool_name ?? ""), input.tool_input ?? {}))
+    if (verdict === "deny") {
+      return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: "Kuvo Code's settings don't allow this (Settings › Permissions, or this session's rules)." } }
+    }
+    if (verdict === "ask") return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask" } }
+    return {}
   }
 
   private async canUseTool(name: string, input: Record<string, any>, options: any): Promise<any> {

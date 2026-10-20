@@ -5,6 +5,8 @@ import type { PermissionRule } from "./wire"
 
 export function matches(pattern: string, value: string): boolean {
   if (pattern === "*" || pattern === value) return true
+  // "git push *" is git push with anything after it, or nothing, as the engine reads it.
+  if (pattern.endsWith(" *") && value === pattern.slice(0, -2)) return true
   const expression = "^" + pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$"
   return new RegExp(expression).test(value)
 }

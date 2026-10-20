@@ -44,6 +44,7 @@ export class EngineLink {
     this.authorization = authorization
     this.names.clear()
     this.catalog = undefined
+    this.reads.clear()
     const generation = ++this.generation
     if (this.url) void this.feed(generation)
     for (const set of this.listeners.values()) for (const listener of set) listener.reconnected()
@@ -92,28 +93,60 @@ export class EngineLink {
     return this.names.get(providerID)
   }
 
-  private settings = new Map<string, { at: number; sources: any[] }>()
+  private reads = new Map<string, { at: number; value?: any; failed?: boolean; pending?: Promise<any> }>()
 
-  /** The engine's settings files for a folder (yours, the project's), each as written; as last known when it doesn't answer. */
-  private async settingsFiles(directory: string): Promise<any[]> {
-    const kept = this.settings.get(directory)
-    if (!this.url || (kept && Date.now() - kept.at < 30_000)) return kept?.sources ?? []
-    try {
-      const answer = await this.request("GET", "/api/config", undefined, 10_000, directory)
-      const sources: any[] = Array.isArray(answer) ? answer : Array.isArray(answer?.data) ? answer.data : [{ info: answer?.data ?? answer }]
-      this.settings.set(directory, { at: Date.now(), sources })
-      return sources
-    } catch {
-      return kept?.sources ?? []
-    }
+  /**
+   * One of the engine's lists for a folder, kept a while (one read at a time, a failure kept a
+   * moment too, so a stalled engine doesn't hold up each message); as last known when it doesn't
+   * answer, and undefined when it never has. `usable` says whether an answer is (a folder the
+   * engine hasn't loaded yet answers with nothing at first).
+   */
+  private async read(path: string, directory: string, usable: (value: any) => boolean = () => true): Promise<any> {
+    const key = `${path}\n${directory}`
+    const kept = this.reads.get(key)
+    if (!this.url) return kept?.value
+    if (kept && Date.now() - kept.at < (kept.failed ? 10_000 : 30_000)) return kept.value
+    if (kept?.pending) return kept.pending
+    const pending = this.request("GET", path, undefined, 4_000, directory).then(
+      (value) => {
+        if (usable(value)) this.reads.set(key, { at: Date.now(), value })
+        else this.reads.set(key, { at: 0, value: kept?.value })
+        return usable(value) ? value : kept?.value
+      },
+      () => {
+        this.reads.set(key, { at: Date.now(), value: kept?.value, failed: true })
+        return kept?.value
+      },
+    )
+    this.reads.set(key, { at: 0, value: kept?.value, pending })
+    return pending
+  }
+
+  /** The engine's settings files for a folder (yours, the project's), each as written; undefined when never read. */
+  private async settingsFiles(directory: string): Promise<any[] | undefined> {
+    const answer = await this.read("/api/config", directory)
+    if (answer === undefined) return undefined
+    return Array.isArray(answer) ? answer : Array.isArray(answer?.data) ? answer.data : [{ info: answer?.data ?? answer }]
+  }
+
+  /** The session's agent as the engine has it (yours, from Settings or a file): what it's told, and its permissions. */
+  async agent(name: string, directory: string): Promise<{ system?: string; permissions?: PermissionRule[] } | undefined> {
+    const answer = await this.read("/api/agent", directory, (value) => Array.isArray(value?.data) && value.data.length > 0)
+    // Not known: what its settings say it's told, for one of yours.
+    if (answer === undefined) return name === "build" || name === "plan" ? undefined : { system: await this.agentPrompt(name, directory) }
+    const found = (answer?.data ?? []).find((agent: any) => agent?.id === name || agent?.name === name)
+    if (!found) return undefined
+    return { system: typeof found.system === "string" && found.system.trim() ? found.system.trim() : undefined, permissions: Array.isArray(found.permissions) ? found.permissions : undefined }
   }
 
   /**
    * Settings › Permissions' Blocks for tools and commands (the engine's `policies`, "shell:git push
-   * *"), as rules: what nothing allows.
+   * *"), as rules: what nothing allows. Undefined when they aren't known (the engine never answered).
    */
-  async policies(directory: string): Promise<PermissionRule[]> {
-    const policies = (await this.settingsFiles(directory)).flatMap((source) => (Array.isArray(source?.info?.policies) ? source.info.policies : []))
+  async policies(directory: string): Promise<PermissionRule[] | undefined> {
+    const files = await this.settingsFiles(directory)
+    if (!files) return undefined
+    const policies = files.flatMap((source) => (Array.isArray(source?.info?.policies) ? source.info.policies : []))
     const rules: PermissionRule[] = []
     for (const policy of policies as { action?: string; resource?: string; effect?: string }[]) {
       if (policy?.action !== "tool.use" || typeof policy.resource !== "string") continue
@@ -127,7 +160,7 @@ export class EngineLink {
   /** A command of yours (Settings › Commands): what it says, from the last file that has it. */
   async commandTemplate(name: string, directory: string): Promise<string | undefined> {
     let template: string | undefined
-    for (const source of await this.settingsFiles(directory)) {
+    for (const source of (await this.settingsFiles(directory)) ?? []) {
       const own = source?.info?.commands?.[name]?.template ?? source?.info?.command?.[name]?.template
       if (typeof own === "string" && own.trim()) template = own
     }
@@ -137,7 +170,7 @@ export class EngineLink {
   /** What an agent of yours (Settings › Agents) is told to be: its prompt, from the last file that has it. */
   async agentPrompt(name: string, directory: string): Promise<string | undefined> {
     let prompt: string | undefined
-    for (const source of await this.settingsFiles(directory)) {
+    for (const source of (await this.settingsFiles(directory)) ?? []) {
       // `agents.<name>.system` (as Kuvo Code writes it); `agent.<name>.prompt` in older settings.
       const own = source?.info?.agents?.[name]?.system ?? source?.info?.agent?.[name]?.prompt
       if (typeof own === "string" && own.trim()) prompt = own.trim()
@@ -301,7 +334,7 @@ class EngineThread implements Thread {
       title: this.session.title ? `Kuvo Code: ${this.session.title}` : "Kuvo Code",
       location: { directory: this.session.location.directory },
       model: input.model,
-      agent: input.plan ? "plan" : "build",
+      agent: input.plan ? "plan" : (this.session.agent ?? "build"),
       permissions: this.session.permissions ?? [],
       metadata: { kuvo: { engineFor: this.session.id } },
     })
@@ -333,8 +366,9 @@ class EngineThread implements Thread {
     // What it runs with: this session's rules, model, mode and the app's added instructions.
     await this.link.request("PATCH", path, { permissions: this.session.permissions ?? [] })
     await this.link.request("POST", `${path}/model`, { model: input.model })
-    await this.link.request("POST", `${path}/agent`, { agent: input.plan ? "plan" : "build" })
-    const instructions = hooks.instructions()
+    // As the session's agent (one of yours too), which the engine runs as it would its own.
+    await this.link.request("POST", `${path}/agent`, { agent: input.plan ? "plan" : (this.session.agent ?? "build") })
+    const instructions = hooks.instructions(false)
     if (instructions !== (this.state.engineInstructions ?? "")) {
       if (instructions) await this.link.request("PUT", `/api/experimental/session/${encodeURIComponent(id)}/instructions/entries/kuvo`, { value: instructions })
       else await this.link.request("DELETE", `/api/experimental/session/${encodeURIComponent(id)}/instructions/entries/kuvo`).catch(() => {})

@@ -17,7 +17,7 @@ import { emit } from "./events"
 import { handover, withHandover } from "./handover"
 import { messageID, newID } from "./ids"
 import type { Roster } from "./roster"
-import { evaluate, matches, ruled } from "./rules"
+import { matches, ruled } from "./rules"
 import type { Record_, Store } from "./store"
 import { Turn, type Outcome } from "./turn"
 import type { AssistantMessage, Attachment, Decision, FormAnswer, FormRequest, Message, ModelRef, PermissionRequest, PermissionRule, Session, ShellMessage, FileDiff } from "./wire"
@@ -55,10 +55,12 @@ interface Live {
   last?: Slot
   /** Its subagents at work, each a session of its own: their turns, by session. */
   subagents: Map<string, Turn>
-  /** Settings › Permissions' Blocks as the turn began: what nothing allows. */
-  blocks: PermissionRule[]
+  /** Settings › Permissions' Blocks as the turn began: what nothing allows (undefined: not known). */
+  blocks?: PermissionRule[]
   /** The session's agent of yours (Settings › Agents), as the turn began: what it's told to be. */
   agentPrompt?: string
+  /** The session's agent's permissions as the engine has them (its defaults, Settings', the agent's own). */
+  agentRules?: PermissionRule[]
 }
 
 /** What the bridge keeps of each agent's conversation in a session. */
@@ -85,13 +87,40 @@ const changes = new Set(["edit", "write", "patch"])
 const shellTimeout = 10 * 60_000
 const shellOutputLimit = 50_000
 
-/** Reading a .env file (not an example of one), which the engine asks first about. */
-function readsSecrets(ask: PermissionAsk): boolean {
-  if (ask.action !== "read") return false
-  return ask.resources.some((resource) => {
-    const name = resource.split("/").pop() ?? ""
-    return /^\.env(\..+)?$/.test(name) && !/\.example$/.test(name)
-  })
+/** What the engine asks first about whatever else you've set (reading a .env file), for when it can't say its own. */
+const engineDefaults: PermissionRule[] = [
+  { action: "read", resource: "*.env", effect: "ask" },
+  { action: "read", resource: "*.env.*", effect: "ask" },
+  { action: "read", resource: "*.env.example", effect: "allow" },
+]
+
+/**
+ * A command line's commands, each checked on its own as the engine does (`a && b`, `a | b`,
+ * `a; b`, `$(b)`), with the whole line: a rule for one of them holds in any line.
+ */
+export function commandParts(line: string): string[] {
+  const parts = line
+    .split(/&&|\|\||[;|\n]|\$\(|`|[()]/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+  return [line.trim(), ...parts.filter((part) => part !== line.trim())]
+}
+
+/** What an ask is about, a command line's commands one by one. */
+function partsOf(ask: PermissionAsk): string[] {
+  return ask.action === "shell" || ask.action === "bash" ? ask.resources.flatMap(commandParts) : ask.resources
+}
+
+/** What rules say of each part (the last rule that matches it), the strictest of them: deny, then ask, then allow. */
+export function strictest(rules: PermissionRule[], action: string, parts: string[]): "allow" | "deny" | "ask" | undefined {
+  let result: "allow" | "ask" | undefined
+  for (const part of parts.length ? parts : ["*"]) {
+    const effect = ruled(rules, action, [part])
+    if (effect === "deny") return "deny"
+    if (effect === "ask") result = "ask"
+    else if (effect === "allow" && !result) result = "allow"
+  }
+  return result
 }
 
 /** A step of the agent's that did something: wrote to you, or used a tool. */
@@ -111,9 +140,9 @@ export class Sessions {
     /** Runs a model of the engine's own providers in a session here (Auto's, or one you picked). */
     private readonly engine?: (providerID: string) => Agent | undefined,
     /** Settings › Permissions' Blocks for a folder, from the engine. */
-    private readonly policies?: (directory: string) => Promise<PermissionRule[]>,
-    /** An agent of yours (Settings › Agents): its prompt, from the engine. */
-    private readonly agentPrompt?: (name: string, directory: string) => Promise<string | undefined>,
+    private readonly policies?: (directory: string) => Promise<PermissionRule[] | undefined>,
+    /** The session's agent as the engine has it: what it's told, and its permissions. */
+    private readonly agentInfo?: (name: string, directory: string) => Promise<{ system?: string; permissions?: PermissionRule[] } | undefined>,
     /** What the project's files were before each of your messages, for undo. */
     private readonly snapshots?: Snapshots,
   ) {
@@ -135,7 +164,8 @@ export class Sessions {
   private state(id: string): Live {
     let live = this.live.get(id)
     if (!live) {
-      live = { threads: new Map(), permissions: new Map(), forms: new Map(), always: [], subagents: new Map(), blocks: [] }
+      // Blocks aren't known until the engine says (none, without an engine to ask).
+      live = { threads: new Map(), permissions: new Map(), forms: new Map(), always: [], subagents: new Map(), blocks: this.policies ? undefined : [] }
       this.live.set(id, live)
     }
     return live
@@ -655,9 +685,12 @@ export class Sessions {
     }
     // Blocks as they are now (once the message is in: one sent again meanwhile is known), and
     // what an agent of yours is told to be.
-    live.blocks = (await this.policies?.(directory).catch(() => undefined)) ?? live.blocks
+    const blocks = this.policies ? await this.policies(directory).catch(() => undefined) : []
+    if (blocks !== undefined) live.blocks = blocks
+    const info = this.agentInfo ? await this.agentInfo(session.agent ?? "build", directory).catch(() => undefined) : undefined
+    live.agentRules = info?.permissions ?? live.agentRules
     const own = session.agent && session.agent !== "build" && session.agent !== "plan" ? session.agent : undefined
-    live.agentPrompt = own ? await this.agentPrompt?.(own, directory).catch(() => live.agentPrompt) : undefined
+    live.agentPrompt = own ? info?.system : undefined
 
     let result: RunResult
     try {
@@ -906,17 +939,21 @@ export class Sessions {
       signal,
       state: slot.state,
       saveState: () => this.store.save(id, true),
-      instructions: () =>
+      instructions: (withAgent = true) =>
         [
           ...Object.values((record.agent.kuvoInstructions as Record<string, string> | undefined) ?? {}),
-          live.agentPrompt ? `You work as the "${record.session.agent}" agent here. Its instructions:\n\n${live.agentPrompt}` : "",
+          withAgent && live.agentPrompt ? `You work as the "${record.session.agent}" agent here. Its instructions:\n\n${live.agentPrompt}` : "",
         ]
           .filter(Boolean)
           .join("\n\n"),
       // Nothing to ask, and nothing refused: an agent may run its tools on its own. With a
-      // rule or a block that refuses something, or in plan mode, it asks here, and they answer.
-      approvesAll: () =>
-        !plan && !(record.session.permissions ?? []).some((rule) => rule.effect === "ask" || rule.effect === "deny") && !live.blocks.some((rule) => rule.effect === "deny"),
+      // rule or a block that refuses something (or Blocks not known), or in plan mode, it asks
+      // here, and they answer.
+      approvesAll: (canAsk = true) =>
+        !plan &&
+        !(record.session.permissions ?? []).some((rule) => rule.effect === "ask" || rule.effect === "deny") &&
+        (!canAsk || (live.blocks !== undefined && !live.blocks.some((rule) => rule.effect === "deny"))),
+      check: (ask) => this.checkPermission(live, record.session, ask, plan),
       permission: (ask) => this.askPermission(id, live, turn, ask, plan),
       question: (ask) => this.askQuestion(id, live, turn, ask),
       subagent: (toolCallID, task) => this.startSubagent(id, live, turn, toolCallID, task),
@@ -974,14 +1011,29 @@ export class Sessions {
     }
   }
 
+  /** What Blocks and rules say of an action without asking you: refused, or to ask first. */
+  private checkPermission(live: Live, session: Session, ask: PermissionAsk, plan: boolean): "deny" | "ask" | undefined {
+    const parts = partsOf(ask)
+    if (live.blocks && strictest(live.blocks, ask.action, parts) === "deny") return "deny"
+    if (plan && changes.has(ask.action)) return "deny"
+    const effect = strictest([...(live.agentRules ?? engineDefaults), ...(session.permissions ?? [])], ask.action, parts)
+    if (effect === "deny") return "deny"
+    const allowedBefore = live.always.some((rule) => rule.action === ask.action && ask.resources.every((resource) => rule.patterns.some((pattern) => matches(pattern, resource))))
+    return effect === "ask" && !allowedBefore ? "ask" : undefined
+  }
+
   private askPermission(id: string, live: Live, turn: Turn, ask: PermissionAsk, plan: boolean): Promise<Decision> {
     const session = this.record(id).session
-    // Blocks win over everything, approvals included.
-    if (ruled(live.blocks, ask.action, ask.resources) === "deny") return Promise.resolve("reject")
+    const parts = partsOf(ask)
+    // Blocks win over everything, approvals included; each command of a command line counts.
+    if (live.blocks && strictest(live.blocks, ask.action, parts) === "deny") return Promise.resolve("reject")
     if (plan && changes.has(ask.action)) return Promise.resolve("reject")
     // The engine's asks were weighed by it already: without a rule of yours, they're yours to
-    // answer. So is reading a .env file, as the engine asks first about it.
-    const effect = ask.weighed || readsSecrets(ask) ? ruled(session.permissions, ask.action, ask.resources) : evaluate(session.permissions, ask.action, ask.resources)
+    // answer. Others go by the session's agent's permissions as the engine has them (its own
+    // defaults, reading a .env file asks first), with the session's rules over them.
+    const effect = ask.weighed
+      ? strictest(session.permissions ?? [], ask.action, parts)
+      : (strictest([...(live.agentRules ?? engineDefaults), ...(session.permissions ?? [])], ask.action, parts) ?? "allow")
     if (effect === "deny") return Promise.resolve("reject")
     const allowedBefore = live.always.some((rule) => rule.action === ask.action && ask.resources.every((resource) => rule.patterns.some((pattern) => matches(pattern, resource))))
     if (effect === "allow" || allowedBefore) return Promise.resolve("once")
