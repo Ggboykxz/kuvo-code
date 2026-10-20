@@ -305,9 +305,10 @@ export class LinkHost {
   // authorize(key, hello, address) → whether to let the phone in; handle(request, phone, signal) → an
   // async iterable of { head: { status, headers } } and { body }; connect(request, phone,
   // { open, text, binary, end }) → a socket's { send, close } (PROTOCOL.md, "Sockets");
-  // send(bytes) → to the relay.
-  constructor({ key, hello, authorize, handle, connect, send }) {
-    Object.assign(this, { key, hello, authorize, handle, connect, send });
+  // send(bytes) → to the relay; confirmed(phone) → its session proved its own: its first message
+  // opened with the handshake's keys, which a replayed first handshake message can't do.
+  constructor({ key, hello, authorize, handle, connect, send, confirmed }) {
+    Object.assign(this, { key, hello, authorize, handle, connect, send, confirmed });
     this.sessions = new Map();
   }
 
@@ -353,6 +354,10 @@ export class LinkHost {
           message = null;
         }
         if (!message || typeof message.head !== "object" || message.head === null) return this.end(session, true);
+        if (!session.confirmed) {
+          session.confirmed = true;
+          this.confirmed?.(session.phone);
+        }
         return this.message(session, message);
       }
       case Frame.close:
@@ -515,9 +520,12 @@ const REQUEST_HEADERS = ["content-type", "accept", "x-opencode-directory", "last
 const RESPONSE_HEADERS = ["content-type", "cache-control"];
 
 // No way out of the project, written plainly or percent-encoded ("%2E%2E"): the engine decodes
-// it, and lists a folder above the project if asked.
+// it, and lists a folder above the project if asked. Nor tabs, line breaks or other control
+// characters, which the URL parser drops (".\t." is ".." to it), nor a fragment ("#…"), which
+// isn't sent.
 const leavesProject = path => {
   try {
+    if (/[\u0000-\u001f\u007f#]/.test(path)) return true;
     const decoded = decodeURIComponent(path);
     return path.includes("..") || decoded.includes("..") || decoded.includes("\\");
   } catch {
@@ -901,21 +909,15 @@ export function writeLink(link) {
   fs.renameSync(temporary, LINK_FILE);
 }
 
-// Lets in phones in link.json, and a new one showing the pairing token (once, in time). Notes
-// where each one is on the relay, for its notifications.
+// Lets in phones in link.json, and a new one showing the pairing token (once, in time), noting
+// where it is on the relay, for its notifications. Where a paired one is changes once its session
+// proves its own (confirmPhone): the first handshake message can be replayed from elsewhere.
 export function authorizePhone(key, hello, address) {
   const link = readLink();
   if (!link) return false;
   const encoded = key.toString("base64url");
   const where = address?.toString("base64url");
-  const known = link.phones?.find(phone => phone.key === encoded);
-  if (known) {
-    if (where && known.address !== where) {
-      known.address = where;
-      writeLink(link);
-    }
-    return true;
-  }
+  if (link.phones?.some(phone => phone.key === encoded)) return true;
   const pairing = link.pairing;
   if (!pairing || !hello.pair || Date.now() > pairing.expires) return false;
   const given = Buffer.from(String(hello.pair), "base64url");
@@ -925,6 +927,16 @@ export function authorizePhone(key, hello, address) {
   delete link.pairing;
   writeLink(link);
   return true;
+}
+
+// A phone's session proved its own: its notifications go where it is now.
+export function confirmPhone(phone) {
+  const link = readLink();
+  const known = link?.phones?.find(each => each.key === phone.key.toString("base64url"));
+  const where = phone.address?.toString("base64url");
+  if (!known || !where || known.address === where) return;
+  known.address = where;
+  writeLink(link);
 }
 
 // ---- The relay connection ----
@@ -1048,6 +1060,7 @@ async function run() {
       key: Buffer.from(link.key, "base64url"),
       hello: { v: 1, kind: "machine", name: link.name || os.hostname(), app: BRIDGE_VERSION, engine: engine.version ?? null },
       authorize: authorizePhone,
+      confirmed: confirmPhone,
       handle: engineHandler(readEngineFile, { name: link.name || os.hostname() }),
       connect: engineConnect(readEngineFile),
       send: () => {},

@@ -143,7 +143,7 @@ function phoneFor(host, hostKey) {
 test("the host lets in a phone with the pairing token once, then by its key", async () => {
   const hostKey = link.newKey();
   link.writeLink({ relay: "wss://relay.test", secret: "", key: hostKey.toString("base64url"), phones: [], pairing: { token: Buffer.alloc(16, 7).toString("base64url"), expires: Date.now() + 60_000 } });
-  const host = new link.LinkHost({ key: hostKey, hello: { v: 1, kind: "machine", name: "my-server", app: "0", engine: "2.0.30" }, authorize: link.authorizePhone, handle: async function* () {} });
+  const host = new link.LinkHost({ key: hostKey, hello: { v: 1, kind: "machine", name: "my-server", app: "0", engine: "2.0.30" }, authorize: link.authorizePhone, confirmed: link.confirmPhone, handle: async function* () {} });
 
   const stranger = phoneFor(host, hostKey);
   assert.deepEqual(await stranger.open({ pair: Buffer.alloc(16, 8).toString("base64url") }), { refused: true });
@@ -165,6 +165,12 @@ test("the host lets in a phone with the pairing token once, then by its key", as
   const returning = phoneFor(host, hostKey);
   returning.key.set(phone.key);
   assert.equal((await returning.open({})).name, "my-server");
+  // Somewhere else now: its notifications go there once its session proves its own (a replayed
+  // first handshake message can't), not on the handshake.
+  assert.equal(link.readLink().phones[0].address, phone.address.toString("base64url"));
+  returning.send({ t: "ping" });
+  assert.equal((await returning.receive()).head.t, "pong");
+  assert.equal(link.readLink().phones[0].address, returning.address.toString("base64url"));
 });
 
 // An engine on a free port that answers like opencode does, and records what it was asked.

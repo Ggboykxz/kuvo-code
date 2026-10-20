@@ -266,6 +266,22 @@
       "allowed": false
     },
     {
+      "path": "api/session/.\t./.\t./api/credential",
+      "allowed": false
+    },
+    {
+      "path": "api/session/.\n./.\r./api/config",
+      "allowed": false
+    },
+    {
+      "path": "api/session/x\u007f",
+      "allowed": false
+    },
+    {
+      "path": "api/session#/../credential",
+      "allowed": false
+    },
+    {
       "path": "api/fs/read/..%5c..%5csecret",
       "allowed": false
     },
