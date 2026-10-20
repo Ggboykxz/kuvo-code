@@ -3010,6 +3010,40 @@ function lastLines(text) {
 `).slice(-4).join(`
 `).trim();
 }
+function afterInstall(installing2, instructions, acceptsCode, start) {
+  let inner;
+  let failed;
+  let cancelled = false;
+  start().then((attempt) => {
+    if (cancelled)
+      attempt.cancel();
+    else
+      inner = attempt;
+  }, (error) => failed = failure(error).message);
+  return {
+    url: "",
+    instructions,
+    mode: "auto",
+    acceptsCode,
+    status: () => {
+      if (failed)
+        return { status: "failed", message: failed };
+      if (!inner)
+        return { status: "pending", message: installing2 };
+      const status = inner.status();
+      return status.status === "pending" ? { ...status, url: status.url || inner.url } : status;
+    },
+    complete: acceptsCode ? async (code) => {
+      if (!inner?.complete)
+        throw new Error("It's still getting ready. Paste the code once the page has opened.");
+      await inner.complete(code);
+    } : undefined,
+    cancel: () => {
+      cancelled = true;
+      inner?.cancel();
+    }
+  };
+}
 
 // Agents/src/agents/antigravity.ts
 var version = "1.3.0";
@@ -3992,6 +4026,13 @@ class ClaudeAgent {
     }
   }
   async signIn(methodID) {
+    if (onMachine && !this.executable()) {
+      return afterInstall("Installing Claude Code on this machine\u2026", "Finish signing in on Claude's page.", true, async () => {
+        if (!await this.installedProgram())
+          throw new Error("Claude Code couldn't be installed on this machine. Try again.");
+        return this.signIn(methodID);
+      });
+    }
     const executable = await this.installedProgram();
     if (!executable)
       throw new Error(onMachine ? "Claude Code couldn't be installed on this machine. Try again." : "Install Claude Code first: curl -fsSL https://claude.ai/install.sh | bash");
@@ -5508,6 +5549,11 @@ class CodexAgent {
     return account;
   }
   async signIn() {
+    if (onMachine && !codexProgram(this.context.deps))
+      return afterInstall("Installing Codex on this machine\u2026", "Finish signing in with ChatGPT in your browser.", false, async () => {
+        await installCodex(this.context.deps);
+        return this.signIn();
+      });
     const rpc = await this.rpc();
     const result = await rpc.request("account/login/start", { type: "chatgpt" }, 30000);
     let status = { status: "pending" };
@@ -7457,6 +7503,12 @@ class GrokAgent {
     return { installed: true, signedIn: true, label: process.env.XAI_API_KEY ? "xAI API key" : "grok.com" };
   }
   async signIn() {
+    if (onMachine && !this.executable())
+      return afterInstall("Installing Grok's CLI on this machine\u2026", "Finish signing in to Grok in your browser.", false, async () => {
+        if (!await this.installedProgram())
+          throw new Error("Grok's CLI couldn't be installed on this machine. Try again.");
+        return this.signIn();
+      });
     const executable = await this.installedProgram();
     if (!executable)
       throw new Error("Install Grok's CLI first: npm install -g @xai-official/grok");

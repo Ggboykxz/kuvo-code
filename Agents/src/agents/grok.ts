@@ -11,7 +11,7 @@ import { AcpThread, questionFields } from "../acp"
 import { grokProgram, installGrok, managedNote, onMachine, withOwnFolders } from "../machine"
 import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
 import { plain, run, which } from "../proc"
-import { commandSignIn } from "../signin"
+import { afterInstall, commandSignIn } from "../signin"
 import type { Model, Session } from "../wire"
 
 const places = [join(homedir(), ".grok/bin"), join(homedir(), ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin"]
@@ -134,6 +134,11 @@ export class GrokAgent implements Agent {
   }
 
   async signIn(): Promise<SignInAttempt> {
+    // On a machine without it yet: installed first, said at once.
+    if (onMachine && !this.executable()) return afterInstall("Installing Grok's CLI on this machine…", "Finish signing in to Grok in your browser.", false, async () => {
+      if (!(await this.installedProgram())) throw new Error("Grok's CLI couldn't be installed on this machine. Try again.")
+      return this.signIn()
+    })
     const executable = await this.installedProgram()
     if (!executable) throw new Error("Install Grok's CLI first: npm install -g @xai-official/grok")
     return commandSignIn({

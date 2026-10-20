@@ -61,6 +61,8 @@ struct ConnectView: View {
     @State private var forward = SignInForward()
     /// The way you signed in, to offer the same on your machines.
     @State private var usedMethod: String?
+    /// The way being started now.
+    @State private var startedID: String?
 
     struct Highlight: Hashable {
         let symbol: String
@@ -153,11 +155,21 @@ struct ConnectView: View {
         return VStack(spacing: 10) {
             ForEach(Array(primary.enumerated()), id: \.element.id) { index, method in
                 Button { start(method) } label: {
-                    Label(label(for: method), systemImage: symbol(for: method))
+                    // The one getting ready (an agent installed first): no more taps meanwhile.
+                    if isWorking, startedID == method.id {
+                        HStack(spacing: 8) {
+                            Spinner(size: 14)
+                            Text(label(for: method))
+                        }
                         .frame(maxWidth: .infinity)
+                    } else {
+                        Label(label(for: method), systemImage: symbol(for: method))
+                            .frame(maxWidth: .infinity)
+                    }
                 }
                 .buttonStyle(index == 0 ? AnyPrimitiveButtonStyle(.glassProminent) : AnyPrimitiveButtonStyle(.glass))
                 .controlSize(.extraLarge)
+                .disabled(isWorking)
             }
             if !legacy.isEmpty {
                 DisclosureGroup("Other ways to sign in") {
@@ -448,6 +460,8 @@ struct ConnectView: View {
     }
 
     private func start(_ method: Integration.Method) {
+        guard !isWorking else { return }
+        startedID = method.id
         if case .oauth(let id, _, _) = method { usedMethod = id }
         answers = FormFieldsView.defaults(for: method.form)
         switch method {

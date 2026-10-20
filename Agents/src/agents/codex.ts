@@ -19,6 +19,7 @@ import { installCodex, codexProgram, managedNote, onMachine, ownFoldersConfig } 
 import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
 import { which } from "../proc"
 import { RPC, RPCError } from "../rpc"
+import { afterInstall } from "../signin"
 import type { Turn } from "../turn"
 import type { FileDiff, FormField, Model, ModelRef, OAuthStatus, Session, TokenUsage } from "../wire"
 
@@ -288,6 +289,11 @@ export class CodexAgent implements Agent {
   }
 
   async signIn(): Promise<SignInAttempt> {
+    // On a machine without it yet: installed first, said at once.
+    if (onMachine && !codexProgram(this.context.deps)) return afterInstall("Installing Codex on this machine…", "Finish signing in with ChatGPT in your browser.", false, async () => {
+      await installCodex(this.context.deps)
+      return this.signIn()
+    })
     const rpc = await this.rpc()
     const result: any = await rpc.request("account/login/start", { type: "chatgpt" }, 30_000)
     let status: OAuthStatus = { status: "pending" }

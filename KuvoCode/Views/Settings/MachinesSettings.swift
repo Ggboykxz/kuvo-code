@@ -54,11 +54,17 @@ struct MachinesSettings: View {
             MachineForm(style: .settings, added: { _ in showsAdd = false }, cancel: { showsAdd = false })
         }
         #if DEBUG
-        // KUVO_DEMO_ADD_MACHINE: Add a Machine, open.
+        // KUVO_DEMO_ADD_MACHINE: Add a Machine, open. KUVO_DEMO_MACHINE_AGENTS=<machine>: that
+        // machine's coding agents, once it's connected.
         .task {
-            if ProcessInfo.processInfo.environment["KUVO_DEMO_ADD_MACHINE"] != nil {
+            let environment = ProcessInfo.processInfo.environment
+            if environment["KUVO_DEMO_ADD_MACHINE"] != nil {
                 try? await Task.sleep(for: .seconds(1))
                 showsAdd = true
+            }
+            if let id = environment["KUVO_DEMO_MACHINE_AGENTS"], let engine = app.machines.engine(id) {
+                for _ in 0..<600 where !(engine.isReady && engine.agents.api != nil) { try? await Task.sleep(for: .seconds(1)) }
+                agentsOf = engine.machine
             }
         }
         #endif

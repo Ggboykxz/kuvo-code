@@ -16,7 +16,7 @@ import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
 import { emit } from "../events"
 import { run, which } from "../proc"
 import { Queue } from "../queue"
-import { commandSignIn } from "../signin"
+import { afterInstall, commandSignIn } from "../signin"
 import { newID } from "../ids"
 import { kuvoTools } from "../kuvotools"
 import { claudeProgram, managedNote, onMachine, ownFoldersScript } from "../machine"
@@ -164,6 +164,13 @@ export class ClaudeAgent implements Agent {
   }
 
   async signIn(methodID: string): Promise<SignInAttempt> {
+    // On a machine without it yet: installed first, said at once.
+    if (onMachine && !this.executable()) {
+      return afterInstall("Installing Claude Code on this machine…", "Finish signing in on Claude's page.", true, async () => {
+        if (!(await this.installedProgram())) throw new Error("Claude Code couldn't be installed on this machine. Try again.")
+        return this.signIn(methodID)
+      })
+    }
     const executable = await this.installedProgram()
     if (!executable) throw new Error(onMachine ? "Claude Code couldn't be installed on this machine. Try again." : "Install Claude Code first: curl -fsSL https://claude.ai/install.sh | bash")
     return commandSignIn({
