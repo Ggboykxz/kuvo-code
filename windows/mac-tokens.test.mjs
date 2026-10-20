@@ -513,6 +513,18 @@ const checks = [
     assert.match(css, /\.search-clear:hover \{ background: var\(--hover\); color: var\(--ink-soft\); \}/);
   }],
 
+  ["the actions under a message are the Mac's (YourMessage.swift:41-64)", ({ app, css, rule }) => {
+    assert.match(app, /className="entry-actions"/);
+    assert.match(app, /title="Copy"/);
+    assert.match(app, /title="New Session From Here"/);
+    assert.match(app, /title="Undo From Here…"/);
+    assert.match(app, /sentAt\(entry\.created\)/);
+    // Always laid out, so nothing moves when they appear, and shown under the pointer.
+    assert.match(rule(".entry-actions {\n  display: flex;"), /opacity: 0/);
+    assert.match(rule(".entry-actions {\n  display: flex;"), /min-height: 22px/);
+    assert.match(css, /\.entry\.user:hover \.entry-actions,[\s\S]*?opacity: 1;/);
+  }],
+
   ["the window is built by Next.js, and exported as the static files the harness serves", ({ next, page, build }) => {
     // The app talks to the engine over the harness's API: there is no server to render
     // it, so the export is the whole app.

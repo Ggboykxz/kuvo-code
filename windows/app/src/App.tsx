@@ -301,6 +301,36 @@ function FindBar() {
   );
 }
 
+/// A new session, from a message and the ones before it (the Mac's "New Session From
+/// Here"): the session is forked at that message, and the fork is opened.
+async function forkSessionFrom(entry: TranscriptEntry) {
+  if (!state.session) return;
+  try {
+    const { session: branched } = await api<{ session: SessionSummary }>(`/api/sessions/${encodeURIComponent(state.session.id)}/fork`, {
+      method: "POST",
+      body: { before: entry.id },
+    });
+    state.transcripts.delete(branched.id);
+    await loadSessions();
+    await openSession(branched.id);
+  } catch (error) {
+    complain(error);
+  }
+}
+
+/// When a message was sent, the Mac's way (MessageTime.sentAt): the time today, "Yesterday"
+/// for the day before, and the date and the time further back.
+export function sentAt(created?: number) {
+  if (!created) return "";
+  const then = new Date(created);
+  const now = new Date();
+  const time = then.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  const yesterday = new Date(now.getTime() - 86_400_000);
+  if (then.toDateString() === now.toDateString()) return time;
+  if (then.toDateString() === yesterday.toDateString()) return `Yesterday ${time}`;
+  return `${then.toLocaleDateString(undefined, { day: "numeric", month: "short" })} ${time}`;
+}
+
 /// The words of a message, as the find reads them.
 function entryText(entry: { text?: string; parts?: { type: string; text?: string }[] }) {
   if (entry.text) return entry.text;
@@ -401,22 +431,10 @@ function AssistantEntry({ entry }: { entry: TranscriptEntry }) {
       ) : null}
       <button
         className="small entry-action"
-        onClick={async () => {
-          if (!state.session) return;
-          try {
-            const { session: branched } = await api<{ session: SessionSummary }>(`/api/sessions/${encodeURIComponent(state.session.id)}/fork`, {
-              method: "POST",
-              body: { before: entry.id },
-            });
-            state.transcripts.delete(branched.id);
-            await loadSessions();
-            await openSession(branched.id);
-          } catch (error) {
-            complain(error);
-          }
-        }}
+        title="New Session From Here"
+        onClick={() => void forkSessionFrom(entry)}
       >
-        Fork here
+        New Session From Here
       </button>
       {entry.retry ? <div className="entry-meta retry">retrying{entry.retry.attempt ? ` (attempt ${entry.retry.attempt})` : ""}…</div> : null}
       {entry.error ? <div className="entry-error">{errorText(entry.error)}</div> : null}
@@ -455,11 +473,47 @@ function EntryNodes({ transcript }: { transcript: Transcript }) {
             <article key={key} className="entry user">
               <div className="text">{entry.text}</div>
               {(entry.files ?? []).map((file, i) => <AttachmentNode key={i} file={file} />)}
-              {entry.id ? (
-                <button className="small entry-action" title="Undo" onClick={() => void undoFromHere(entry)}>
-                  Undo from here
-                </button>
-              ) : null}
+              {/* The Mac's actions under your words (YourMessage.swift:41-64): the time it
+                  was sent, Copy, a new session from here, and undo — always laid out, and
+                  shown under the pointer, so nothing moves when they appear. */}
+              <div className="entry-actions">
+                <span className="entry-time">{sentAt(entry.created)}</span>
+                {entry.text ? (
+                  <button
+                    className="entry-action"
+                    title="Copy"
+                    aria-label="Copy"
+                    onClick={async () => {
+                      await navigator.clipboard?.writeText(entry.text ?? "").catch(() => {});
+                    }}
+                  >
+                    <Symbol name="doc" size={12} />
+                    <span className="entry-action-text">Copy</span>
+                  </button>
+                ) : null}
+                {entry.id ? (
+                  <button
+                    className="entry-action"
+                    title="New Session From Here"
+                    aria-label="New Session From Here"
+                    onClick={() => void forkSessionFrom(entry)}
+                  >
+                    <Symbol name="arrow.triangle.branch" size={12} />
+                    <span className="entry-action-text">New Session From Here</span>
+                  </button>
+                ) : null}
+                {entry.id ? (
+                  <button
+                    className="entry-action"
+                    title="Undo From Here…"
+                    aria-label="Undo From Here"
+                    onClick={() => void undoFromHere(entry)}
+                  >
+                    <Symbol name="arrow.uturn.backward" size={12} />
+                    <span className="entry-action-text">Undo From Here…</span>
+                  </button>
+                ) : null}
+              </div>
             </article>
           );
         }

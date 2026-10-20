@@ -3157,3 +3157,36 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
 }
 .search-clear:hover { background: var(--hover); color: var(--ink-soft); }
 .search-clear:active { color: var(--ink); }
+
+/* The actions under your words (YourMessage.swift:41-64): always laid out, so nothing
+   moves when they appear, and shown under the pointer. */
+.entry-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  min-height: 22px;
+  opacity: 0;
+  transition: opacity var(--motion-hover) var(--ease-hover);
+}
+.entry.user:hover .entry-actions,
+.entry.user:focus-within .entry-actions { opacity: 1; }
+.entry-time {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  padding-right: 6px;
+}
+.entry-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-button);
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: var(--text-xs);
+}
+.entry-action:hover { background: var(--hover); color: var(--ink); }
+.entry-action-text { white-space: nowrap; }
