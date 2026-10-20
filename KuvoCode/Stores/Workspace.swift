@@ -821,7 +821,11 @@ final class Workspace {
             throw OutsideAgents.Failure.onlyOnThisMac(model.providerID == OutsideAgents.autoProvider ? "Auto" : OutsideAgents.name(model.providerID))
         }
         guard let bridge = agents?.api else { throw OutsideAgents.Failure.notRunning(agents?.failure) }
-        // What waits stays waiting (it comes along), rather than starting as the run ends.
+        // What waits stays waiting (it comes along), rather than starting as the run ends; if the
+        // session can't move after all, it goes on as before.
+        let wasPaused = models[id]?.isQueuePaused ?? true
+        var moving = true
+        defer { if moving, !wasPaused { models[id]?.resumeQueue() } }
         await models[id]?.holdQueue()
         // Not partway through a turn.
         if running.contains(id) {
@@ -845,6 +849,7 @@ final class Workspace {
         let waiting = (try? await engine.inbox(session: id)) ?? []
         let moved = try await bridge.importSession(directory: session.location.directory, title: session.title, agent: session.agent, model: model,
                                                    permissions: current.permissions, messages: messages)
+        moving = false
         let extra = extraFolders(session.location.directory)
         if !extra.isEmpty {
             try? await bridge.setInstruction(session: moved.id, key: ProjectFolders.instructionKey, text: ProjectFolders.instructions(primary: session.location.directory, folders: extra))
@@ -1858,10 +1863,13 @@ final class Workspace {
     /// wasn't listening (before launch, or while a machine was away) show too.
     func readShellJobs(in directory: String) async {
         guard let api = api(forFolder: directory), let engineJobs = try? await api.shells(directory: directory) else { return }
-        // The coding agents' too (commands Claude Code left running), for their sessions.
-        let agentJobs = RemoteFolder.isRemote(directory) ? [] : ((try? await agents?.api?.shells(directory: directory)) ?? [])
-        let jobs = engineJobs + agentJobs
+        // The coding agents' too (commands Claude Code left running), for their sessions; when their
+        // list can't be read, those sessions keep what they showed.
+        var agentJobs: [ShellJob]? = []
+        if !RemoteFolder.isRemote(directory), let bridge = agents?.api { agentJobs = try? await bridge.shells(directory: directory) }
+        let jobs = engineJobs + (agentJobs ?? [])
         for session in sessions where session.location.directory == directory {
+            if agentJobs == nil, OutsideAgents.isAgentSession(session) { continue }
             let own = jobs.filter { $0.sessionID == session.id && $0.status == "running" }
             if (shellJobs[session.id] ?? []) != own { shellJobs[session.id] = own.isEmpty ? nil : own }
             // Ones started a while ago show at once.
