@@ -1,4 +1,5 @@
-// Auto: your own order of models to work with. A session on Auto runs each message on the first
+// Auto: your own orders of models to work with, each a list with a name (one for bugfixes, one
+// for features); a session on Auto runs on one of them, named by its model's ID. A session on Auto runs each message on the first
 // one in your list that isn't at a limit; when one reaches a usage limit partway, the message goes
 // on with the next (the conversation carried over). A limit on a whole account (a plan's 5-hour
 // window) skips every model of that provider; a limit on one model (Claude's weekly Opus
@@ -16,6 +17,16 @@ export interface AutoEntry {
   /** Its effort (thinking) level, if you chose one. */
   variant?: string
 }
+
+/** One of your lists: its ID (a session's model names it), its name, and its models in order. */
+export interface AutoList {
+  id: string
+  name: string
+  entries: AutoEntry[]
+}
+
+/** The first list's ID, which Auto had before there were lists. */
+export const firstList = "auto"
 
 export interface Limit {
   /** A whole account or plan (`provider`), or one model of it (`model`). */
@@ -39,29 +50,61 @@ const unknownReset = 30 * 60_000
 const briefReset = 3 * 60_000
 
 export class Auto {
-  private entries: AutoEntry[] = []
+  private lists: AutoList[] = [{ id: firstList, name: "Auto", entries: [] }]
   private held: Held[] = []
 
   constructor(private readonly root: string) {
     try {
       const saved = JSON.parse(readFileSync(this.file, "utf8"))
-      this.entries = (saved.entries ?? []).filter((entry: AutoEntry) => entry?.providerID && entry?.modelID)
+      // (One list, as Auto had before: the first.)
+      const lists = Array.isArray(saved.lists) ? saved.lists : [{ id: firstList, name: "Auto", entries: saved.entries ?? [] }]
+      const read = Auto.clean(lists)
+      if (read.length) this.lists = read
       this.held = (saved.limits ?? []).filter((held: Held) => held?.key && held.until > Date.now())
     } catch {}
+  }
+
+  /** Lists as given, kept to what one can be: an ID, a name, models (not Auto itself). */
+  private static clean(lists: any[]): AutoList[] {
+    const seen = new Set<string>()
+    return lists
+      .filter((list) => list && typeof list.id === "string" && /^[\w-]{1,64}$/.test(list.id) && !seen.has(list.id) && seen.add(list.id))
+      .map((list) => ({
+        id: list.id,
+        name: typeof list.name === "string" && list.name.trim() ? list.name.trim().slice(0, 60) : "Auto",
+        entries: (Array.isArray(list.entries) ? list.entries : [])
+          .filter((entry: AutoEntry) => entry && typeof entry.providerID === "string" && typeof entry.modelID === "string" && entry.providerID !== autoProvider)
+          .map((entry: AutoEntry) => ({ providerID: entry.providerID, modelID: entry.modelID, ...(entry.variant ? { variant: entry.variant } : {}) })),
+      }))
   }
 
   private get file() {
     return join(this.root, "auto.json")
   }
 
-  list(): AutoEntry[] {
-    return this.entries.map((entry) => ({ ...entry }))
+  /** A list's models, in order: the one with that ID, or the first (one deleted since). */
+  list(id?: string): AutoEntry[] {
+    const list = this.lists.find((list) => list.id === id) ?? this.lists[0]
+    return (list?.entries ?? []).map((entry) => ({ ...entry }))
   }
 
+  /** Every list, in your order. */
+  all(): AutoList[] {
+    return this.lists.map((list) => ({ ...list, entries: list.entries.map((entry) => ({ ...entry })) }))
+  }
+
+  /** The first list's models (Auto as it was before there were lists). */
   set(entries: AutoEntry[]) {
-    this.entries = entries
-      .filter((entry) => entry && typeof entry.providerID === "string" && typeof entry.modelID === "string" && entry.providerID !== autoProvider)
-      .map((entry) => ({ providerID: entry.providerID, modelID: entry.modelID, ...(entry.variant ? { variant: entry.variant } : {}) }))
+    const [first, ...rest] = this.lists
+    this.lists = [...Auto.clean([{ ...first, entries }]), ...rest]
+    this.save()
+  }
+
+  /** Your lists, as they are now (one at least). */
+  setLists(lists: unknown[]) {
+    const kept = Auto.clean(lists)
+    if (!kept.length) throw new Error("Keep one list at least.")
+    this.lists = kept
     this.save()
   }
 
@@ -107,7 +150,7 @@ export class Auto {
 
   private save() {
     mkdirSync(this.root, { recursive: true })
-    writeFileSync(this.file + ".new", JSON.stringify({ entries: this.entries, limits: this.held }, null, 2))
+    writeFileSync(this.file + ".new", JSON.stringify({ lists: this.lists, limits: this.held }, null, 2))
     renameSync(this.file + ".new", this.file)
   }
 }

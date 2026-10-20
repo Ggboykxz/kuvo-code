@@ -683,9 +683,9 @@ export class Sessions {
     return this.roster.find(providerID) ?? this.engine?.(providerID)
   }
 
-  private runs(providerID: string | undefined): boolean {
-    if (providerID === autoProvider) return this.auto.list().length > 0
-    return Boolean(this.agent(providerID))
+  private runs(model: ModelRef | undefined): boolean {
+    if (model?.providerID === autoProvider) return this.auto.list(model.id).length > 0
+    return Boolean(this.agent(model?.providerID))
   }
 
   private state(id: string): Live {
@@ -819,8 +819,8 @@ export class Sessions {
   // MARK: Sessions
 
   create(body: { title?: string; agent?: string; model?: ModelRef; location: { directory: string }; permissions?: PermissionRule[] }): Session {
-    if (body.model?.providerID === autoProvider && !this.auto.list().length) throw new BadRequest("Your Auto list is empty: add models to it in Settings › Auto.")
-    if (!body.model?.id || !this.runs(body.model.providerID)) throw new BadRequest("Pick a model of an agent you've connected.")
+    if (body.model?.providerID === autoProvider && !this.auto.list(body.model.id).length) throw new BadRequest("That Auto list is empty: add models to it in Settings › Auto.")
+    if (!body.model?.id || !this.runs(body.model)) throw new BadRequest("Pick a model of an agent you've connected.")
     const now = Date.now()
     const directory = body.location.directory
     const session: Session = {
@@ -1167,8 +1167,8 @@ export class Sessions {
     const session = record.session
     const previous = session.model
     if (!model?.providerID || !model.id) throw new BadRequest("That isn't a model.")
-    if (model.providerID === autoProvider && !this.auto.list().length) throw new BadRequest("Your Auto list is empty: add models to it in Settings › Auto.")
-    if (!this.runs(model.providerID)) throw new BadRequest("That model's agent isn't connected.")
+    if (model.providerID === autoProvider && !this.auto.list(model.id).length) throw new BadRequest("That Auto list is empty: add models to it in Settings › Auto.")
+    if (!this.runs(model)) throw new BadRequest("That model's agent isn't connected.")
     if (previous && previous.providerID === model.providerID && previous.id === model.id && previous.variant === model.variant) return
     // What the session's agent kept, moved to its own slot while it's still the session's.
     this.slots(record)
@@ -1383,7 +1383,7 @@ export class Sessions {
     if (model.providerID !== autoProvider) candidates.push(model)
     else {
       const tried = new Set<string>()
-      for (let entry = await this.nextEntry(tried); entry; entry = await this.nextEntry(tried)) {
+      for (let entry = await this.nextEntry(tried, model.id); entry; entry = await this.nextEntry(tried, model.id)) {
         tried.add(Auto.modelKey(entry))
         candidates.push({ providerID: entry.providerID, id: entry.modelID, ...(entry.variant ? { variant: entry.variant } : {}) })
       }
@@ -1673,7 +1673,7 @@ export class Sessions {
       return await this.runAutoList(id, record, live, input, turn, signal, userMessage, heldBefore)
     } finally {
       record.agent.autoHeld = this.auto
-        .list()
+        .list(input.model.id)
         .filter((entry) => this.auto.isHeld(entry))
         .map((entry) => Auto.modelKey(entry))
       this.store.save(id)
@@ -1686,7 +1686,7 @@ export class Sessions {
     let note: string | undefined
     for (;;) {
       if (signal.aborted) return { outcome: "interrupted" }
-      const entry = await this.nextEntry(tried)
+      const entry = await this.nextEntry(tried, input.model.id)
       if (signal.aborted) return { outcome: "interrupted" }
       if (!entry) {
         if (note) turn.notice(note)
@@ -1726,9 +1726,9 @@ export class Sessions {
     }
   }
 
-  /** The first entry of your list not at a limit, not tried for this message, and signed in. */
-  private async nextEntry(tried: Set<string>): Promise<AutoEntry | undefined> {
-    for (const entry of this.auto.list()) {
+  /** The first entry of the Auto list `list` not at a limit, not tried for this message, and signed in. */
+  private async nextEntry(tried: Set<string>, list: string): Promise<AutoEntry | undefined> {
+    for (const entry of this.auto.list(list)) {
       if (tried.has(Auto.modelKey(entry)) || this.auto.isHeld(entry)) continue
       const agent = this.agent(entry.providerID)
       if (!agent) continue

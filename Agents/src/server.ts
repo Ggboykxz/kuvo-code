@@ -435,12 +435,19 @@ export function handler(context: Context) {
           return json({})
         }
         if (!b && method === "PUT") {
-          const { entries } = await body()
-          if (!Array.isArray(entries)) return error(400, "Send the list as entries.")
-          auto.set(entries)
+          const { entries, lists } = await body()
+          // Your lists; or, as before there were lists, the first one's models.
+          if (Array.isArray(lists)) {
+            try {
+              auto.setLists(lists)
+            } catch (problem) {
+              return error(400, (problem as Error).message)
+            }
+          } else if (Array.isArray(entries)) auto.set(entries)
+          else return error(400, "Send the lists, or the first one's entries.")
           emit("kuvo.auto.updated", {})
         }
-        if (!b && (method === "GET" || method === "PUT")) return json({ data: { entries: auto.list(), limits: auto.limits() } })
+        if (!b && (method === "GET" || method === "PUT")) return json({ data: { entries: auto.list(), lists: auto.all(), limits: auto.limits() } })
       }
 
       if (area === "experimental" && a === "session" && b) {
