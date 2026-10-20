@@ -31,36 +31,64 @@ nonisolated enum MCPCatalog {
         .object(["type": .string("remote"), "url": .string(url)])
     }
 
-    /// Run through `kuvo-npx`, pinned. In the project's folder, not apart from it: a file it's
-    /// asked to save at a path (a screenshot) goes where the project is.
-    private static func local(_ command: [String]) -> JSONValue {
-        .object(["type": .string("local"), "command": .array(([Launcher.name] + command).map(JSONValue.string))])
+    /// Run through `kuvo-npx`, pinned, with `environment`.
+    private static func local(_ command: [String], environment: [String: String] = [:]) -> JSONValue {
+        var settings: [String: JSONValue] = ["type": .string("local"), "command": .array(([Launcher.name] + command).map(JSONValue.string))]
+        if !environment.isEmpty { settings["environment"] = .object(environment.mapValues(JSONValue.string)) }
+        return .object(settings)
     }
 
     /// Chrome DevTools' server, and how it's run: with a profile of its own for each copy, in the
     /// temporary folder and gone when it closes (not one in your home folder, which a second
-    /// project's copy couldn't open).
-    private static let chromeDevTools = ["chrome-devtools-mcp@1.11.0", "--isolated"]
+    /// project's copy couldn't open), and nothing sent to Google about its use.
+    private static let chromeDevTools = ["chrome-devtools-mcp@1.11.0", "--isolated", "--no-usage-statistics"]
+    /// Its package got apart from the project (its .npmrc, .env), run in it (where a screenshot it
+    /// saves goes); no update checks or usage statistics, which it keeps in your home folder.
+    private static let chromeDevToolsEnvironment = [
+        Integrations.apart: "fetch",
+        "CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS": "1",
+        "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1",
+    ]
 
     /// Servers that use this Mac's own apps (its Chrome), left out of machines' settings.
     static let macOnly = ["chrome-devtools"]
 
-    /// Chrome DevTools as an older version added it (through npx, unpinned, another version): as
-    /// it's offered now, with the options you gave it and anything else set on it.
+    /// Chrome DevTools as an older version added it (through npx, unpinned, an older version), as
+    /// it's offered now: a newer version you chose stays, and so do your options (--no-isolated
+    /// keeps a profile of its own) and anything else set on it.
     @MainActor static func upgrade(_ config: EngineConfig) {
         guard case .object(var server)? = config.value(at: MCPSettings.path + ["chrome-devtools"]),
               case .array(let old)? = server["command"] else { return }
         let words = old.compactMap(\.string)
         guard let at = words.firstIndex(where: { $0 == "chrome-devtools-mcp" || $0.hasPrefix("chrome-devtools-mcp@") }) else { return }
-        let options = words[(at + 1)...].filter { !chromeDevTools.contains($0) }
-        let command = [Launcher.name] + chromeDevTools + options
+        let version = words[at].split(separator: "@", maxSplits: 1).dropFirst().first.map(String.init)
+        let package = isOlder(version, than: chromeDevTools[0]) ? chromeDevTools[0] : words[at]
+        var options = Array(words[(at + 1)...])
+        for (flag, opposite) in [("--no-usage-statistics", "--usage-statistics"), ("--isolated", "--no-isolated")]
+        where !options.contains(where: { $0 == flag || $0 == opposite || $0.hasPrefix(opposite + "=") }) {
+            options.insert(flag, at: 0)
+        }
+        let command = [Launcher.name, package] + options
         var environment = server["environment"]?.object ?? [:]
-        // Set by a build that ran it apart from the project.
-        let wasApart = environment.removeValue(forKey: Integrations.apart) != nil
-        guard command != words || wasApart else { return }
+        for (name, value) in chromeDevToolsEnvironment where environment[name] == nil || name == Integrations.apart {
+            environment[name] = .string(value)
+        }
+        guard command != words || environment != (server["environment"]?.object ?? [:]) else { return }
         server["command"] = .array(command.map(JSONValue.string))
-        server["environment"] = environment.isEmpty ? nil : .object(environment)
+        server["environment"] = .object(environment)
         config.set(.object(server), at: MCPSettings.path + ["chrome-devtools"])
+    }
+
+    /// Whether `version` ("1.10.2"; nil or "latest", as unpinned) is before `pinned`'s.
+    private static func isOlder(_ version: String?, than pinned: String) -> Bool {
+        guard let version, version != "latest", let wanted = pinned.split(separator: "@").last else { return true }
+        func numbers(_ text: Substring) -> [Int] { text.split(separator: ".").map { Int($0.prefix { $0.isNumber }) ?? 0 } }
+        let mine = numbers(Substring(version)), theirs = numbers(wanted)
+        for index in 0..<max(mine.count, theirs.count) {
+            let a = index < mine.count ? mine[index] : 0, b = index < theirs.count ? theirs[index] : 0
+            if a != b { return a < b }
+        }
+        return false
     }
 
     static let servers: [Server] = [
@@ -74,6 +102,6 @@ nonisolated enum MCPCatalog {
         Server(id: "context7", title: "Context7", summary: "Current docs and examples for libraries", access: .open, settings: remote("https://mcp.context7.com/mcp")),
         Server(id: "cloudflare-docs", title: "Cloudflare Docs", summary: "Cloudflare's documentation", access: .open, settings: remote("https://docs.mcp.cloudflare.com/mcp")),
         Server(id: "huggingface", title: "Hugging Face", summary: "Models, datasets, Spaces and papers", access: .open, settings: remote("https://huggingface.co/mcp")),
-        Server(id: "chrome-devtools", title: "Chrome DevTools", summary: "Inspect and debug pages in Google Chrome", access: .local, settings: local(chromeDevTools)),
+        Server(id: "chrome-devtools", title: "Chrome DevTools", summary: "Inspect and debug pages in Google Chrome", access: .local, settings: local(chromeDevTools, environment: chromeDevToolsEnvironment)),
     ]
 }

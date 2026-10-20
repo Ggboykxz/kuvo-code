@@ -25,8 +25,12 @@ public enum Launcher {
         # Nor the engine's password or settings, which it has no use for.
         unset OPENCODE_PASSWORD OPENCODE_SERVER_PASSWORD OPENCODE_CONFIG_CONTENT 2>/dev/null
         # An integration's server runs apart from the project (KUVO_NPX_APART): its .env, .npmrc
-        # and bunfig.toml aren't its.
+        # and bunfig.toml aren't its. With "fetch", only getting the package is: Node runs the server
+        # in the project, where a file it's asked to save goes (npx and Bun, which get and run it at
+        # once, stay apart).
+        here=
         if [ -n "$KUVO_NPX_APART" ]; then
+          [ "$KUVO_NPX_APART" = fetch ] && here=$PWD
           apart="${XDG_CACHE_HOME:-${TMPDIR:-/tmp}}/kuvo-npx"
           mkdir -p "$apart" 2>/dev/null && cd "$apart" 2>/dev/null
           unset KUVO_NPX_APART
@@ -58,7 +62,10 @@ public enum Launcher {
             fi
             rmdir "$folder.lock" 2>/dev/null
           fi
-          [ -s "$folder/.main" ] && exec node "$folder/node_modules/$name/$(cat "$folder/.main")" "$@"
+          if [ -s "$folder/.main" ]; then
+            [ -n "$here" ] && cd "$here" 2>/dev/null
+            exec node "$folder/node_modules/$name/$(cat "$folder/.main")" "$@"
+          fi
           exec npx -y "$spec" "$@"
         fi
         if command -v npx >/dev/null 2>&1; then exec npx -y "$@"; fi
