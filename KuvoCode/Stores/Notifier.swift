@@ -124,13 +124,14 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             // A path or a name made of words (a branch, a package, a test, web3Provider,
             // parseHTML5Document): each long part reads as words and numbers, a few letters
             // each on average, where a key's change case or turn to digits every letter or two.
-            // UUIDs, a hash that's a whole part of a path (a commit, an object), macOS's temporary
+            // UUIDs, a hash on its own, in a path, after a dash or after a name for one (a commit,
+            // an object, a cache key; not after a key's name, see maskedNamed), macOS's temporary
             // folders and short hex names (a crate's registry, a container) are names too; a
             // longer run of hex digits with letters in it is a key's. A number (a timestamp) is a
             // word.
             let plain = run
                 .replacingOccurrences(of: #"(?<![0-9A-Fa-f])[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![0-9A-Fa-f])"#, with: "u", options: .regularExpression)
-                .replacingOccurrences(of: #"(?:(?<![^/+])|(?<=(?i:commit|sha|rev|revision|hash|ref|head)[=:_-]))([0-9a-f]{40}|[0-9a-f]{64})(?![0-9A-Za-z])"#, with: "h", options: .regularExpression)
+                .replacingOccurrences(of: #"(?:(?<![^/+-])|(?<=(?i:commit|sha|sha1|sha256|sha512|rev|revision|hash|ref|head|onto|checksum|digest)[=:_-]))([0-9a-f]{40}|[0-9a-f]{64})(?![0-9A-Za-z])"#, with: "h", options: .regularExpression)
                 .replacingOccurrences(of: #"/var/folders/[^/]+/[^/]+"#, with: "/var/folders/t/t", options: .regularExpression)
             let wordy = plain.split(whereSeparator: { "/-_.".contains($0) }).allSatisfy { part in
                 if part.count < 12 { return true }
@@ -157,7 +158,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// `text` cut to what a notification shows, at a space, so a key isn't cut short of looking like one.
     private nonisolated static func cut(_ text: String) -> String {
         let start = text.prefix(shownLength)
-        let end = start.lastIndex(where: \.isWhitespace) ?? start.endIndex
+        let end = start.suffix(100).lastIndex(where: \.isWhitespace) ?? start.endIndex
         return String(start[..<end]) + "…"
     }
 
@@ -167,11 +168,15 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// webhook's), curl -u user:pass and mysql -pPASS.
     nonisolated static func maskedNamed(_ text: String) -> String {
         var text = text
-        let named = #"(?i)((?:api[_-]?key|secret(?:[_-]?access[_-]?key)?|password|passwd|authorization)["']?\s*[:=]\s*["']?(?:bearer\s+|basic\s+)?+|bearer\s+|--(?:password|passwd|secret|api-key)[=\s]+)[^\s"'&;]{3,}"#
+        let named = #"(?i)((?:api[_-]?key|secret(?:[_-]?access[_-]?key)?|password|passwd|authorization)["']?\s*[:=]\s*["']?(?:bearer\s+|basic\s+|token\s+)?+|bearer\s+|--(?:password|passwd|secret|api-key)[=\s]+)[^\s"'&;]{3,}"#
         text = text.replacingOccurrences(of: named, with: "$1•••", options: .regularExpression)
         // --key and --token take other things too: a field (sort --key 2,3), a count.
         let flag = #"(?i)(--(?:token|key)[=\s]+)(?![0-9][^\s"'&;]{0,7}(?:[\s"'&;]|$))[^\s"'&;]{3,}"#
         text = text.replacingOccurrences(of: flag, with: "$1•••", options: .regularExpression)
+        // A run of hex digits after a name for a key or secret (ENCRYPTION_KEY="…", "signingKey": …),
+        // however it's quoted: as a commit's hash would look, but it's one.
+        let hexSecret = #"(?i)((?:key|secret|token|password|passwd|pwd)["']?\s*[:=]\s*["']?)[0-9a-f]{32,}"#
+        text = text.replacingOccurrences(of: hexSecret, with: "$1•••", options: .regularExpression)
         // After a token's name, a number is a count (max_tokens=4096), not one.
         let token = #"(?i)(token["']?\s*[:=]\s*["']?(?:bearer\s+|basic\s+)?+)(?![0-9]+(?:[\s"'&;,}]|$))[^\s"'&;]{3,}"#
         text = text.replacingOccurrences(of: token, with: "$1•••", options: .regularExpression)
