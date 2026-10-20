@@ -19,7 +19,8 @@ export type SymbolName =
   | "arrow.down"
   | "arrow.up"
   | "arrow.clockwise"
-  | "tray.and.arrow.down";
+  | "tray.and.arrow.down"
+  | "list.bullet";
 
 /// The paths, on the 16 pt grid, in the Mac's own order.
 const PATHS: Record<SymbolName, string[]> = {
@@ -31,6 +32,7 @@ const PATHS: Record<SymbolName, string[]> = {
   "arrow.up": ["M8 13V3.5", "M4.5 7L8 3.5 11.5 7"],
   "arrow.clockwise": ["M4 9.5A4.5 4.5 0 1 1 12 8", "M12 8l-2-1.6", "M12 8l2-1.6"],
   "tray.and.arrow.down": ["M2.5 9.5v3h11v-3", "M8 2.5v5", "M5.5 5L8 7.5 10.5 5"],
+  "list.bullet": ["M6 4.2h7.5", "M6 8h7.5", "M6 11.8h7.5", "M3 4.2h.01", "M3 8h.01", "M3 11.8h.01"],
 };
 
 export interface SymbolProps {

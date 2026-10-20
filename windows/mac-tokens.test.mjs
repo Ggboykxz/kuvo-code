@@ -27,6 +27,7 @@ const sources = {
   motion: read("app", "src", "motion.ts"),
   symbols: read("app", "src", "components", "symbols.tsx"),
   changes: read("app", "src", "Changes.tsx"),
+  styles: read("harness", "ui", "style.css"),
   shimmer: read("app", "src", "components", "ai-elements", "shimmer.tsx"),
   tailwind: read("app", "app", "globals.css"),
   postcss: read("app", "postcss.config.mjs"),
@@ -368,11 +369,11 @@ const checks = [
     assert.match(build, /fs\.copyFileSync/);
   }],
 
-  ["no text glyph stands in for a mark: the Mac's symbols are drawn", ({ app, overlays, settings, changes, symbols }) => {
+  ["no text glyph stands for a mark: the Mac's symbols are drawn", ({ app, overlays, settings, changes, styles, symbols }) => {
     // The Mac draws its symbols; a letter, an arrow or a cross standing in for one is a
     // defect (docs/MAC-UI-MAP.md §7).
     const marks = /[✕✖▾▸▴▵↺↻⇩⇧↑↓⋯]/g;
-    for (const [name, source] of Object.entries({ app, overlays, settings, changes })) {
+    for (const [name, source] of Object.entries({ app, overlays, settings, changes, styles })) {
       const found = source.match(marks);
       assert.equal(found, null, `${name} has no glyph standing in for a mark (${found?.join(" ") ?? ""})`);
     }
@@ -391,6 +392,41 @@ const checks = [
     assert.match(symbols, /viewBox="0 0 690 530"/);
     assert.match(symbols, /M77 74L267 262 77 450/);
     assert.match(symbols, /M377 450h230/);
+  }],
+
+  ["the gauge is the Mac's: a ring with its number, in a 24 pt pill", ({ css, rule }) => {
+    // ContextGauge.swift:13-40: a 12 pt ring with a 2.5 stroke, the number beside it in
+    // the secondary ink, and orange once the window is more than eight parts full.
+    const gauge = rule(".context-gauge {");
+    assert.match(gauge, /height: 24px/);
+    assert.match(gauge, /padding: 0 6px/);
+    assert.match(gauge, /border-radius: 7px/);
+    assert.match(rule(".context-gauge::before {"), /width: 12px; height: 12px/);
+    assert.match(rule(".context-gauge::before {"), /border: 2\.5px solid/);
+    assert.match(rule(".context-gauge.warn {"), /color: var\(--warn\)/);
+    // And the details, 320 pt wide with 16 pt of padding.
+    assert.match(css, /\.gauge-pop \{[^}]*width: 320px;/s);
+    assert.match(css, /\.gauge-pop \{[\s\S]*?padding: 16px;/);
+  }],
+
+  ["the working line says what the Mac's says, and shimmers", ({ app, css }) => {
+    // TranscriptView.swift:598-610: "Working…", the time it has been at it, and the way
+    // to stop it — the words shimmering.
+    assert.match(app, /Working…/);
+    assert.match(app, /· Esc to stop/);
+    // And the time it has been at it, the Mac's way: 45s, 2m 5s, 1h 5m.
+    assert.match(app, /`\$\{Math\.floor\(seconds \/ 60\)\}m \$\{seconds % 60\}s`/);
+    assert.match(app, /`\$\{Math\.floor\(seconds \/ 3600\)\}h \$\{Math\.floor\(\(seconds % 3600\) \/ 60\)\}m`/);
+    assert.match(app, /className="thinking-shimmer"/);
+    assert.match(css, /\.working-line \{/);
+  }],
+
+  ["the steps row is the Mac's: the mark, the summary, the chevron that turns", ({ app, css, symbols }) => {
+    // StepsRow.swift:37-48.
+    assert.match(app, /<Symbol name="list\.bullet"/);
+    assert.match(app, /<Symbol name="chevron\.right" size=\{11\} className=\{open \? "turned" : ""\} \/>/);
+    assert.match(css, /\.turned \{ transform: rotate\(90deg\); \}/);
+    assert.match(symbols, /"list\.bullet":/);
   }],
 
   ["the window is built by Next.js, and exported as the static files the harness serves", ({ next, page, build }) => {

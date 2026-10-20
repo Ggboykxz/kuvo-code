@@ -677,14 +677,18 @@ aside {
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 /* ---- Context gauge (the Mac app's ContextGauge ring) ---- */
+/* The Mac's gauge (ContextGauge.swift:13-40): a ring with its number, in a 24 pt pill, the
+   fill in the secondary ink — and orange once the window is more than eight parts full. */
 .context-gauge {
   display: flex; align-items: center; gap: 5px;
   font-size: var(--text-xs); font-weight: 500; font-variant-numeric: tabular-nums;
   color: var(--ink-soft);
-  padding: 0 8px; height: 24px;
-  border: 1px solid var(--line); border-radius: var(--radius-pill);
+  padding: 0 6px; height: 24px;
+  border: 0; border-radius: 7px;
   cursor: default;
+  transition: background var(--motion-hover) var(--ease-hover), color var(--motion-hover) var(--ease-hover);
 }
+.context-gauge:hover { background: color-mix(in oklab, var(--ink) 8%, transparent); }
 .context-gauge::before {
   content: "";
   width: 12px; height: 12px; border-radius: 50%;
@@ -692,6 +696,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   border-top-color: var(--ink-soft);
   transform: rotate(-90deg);
 }
+.context-gauge.warn { color: var(--warn); }
+.context-gauge.warn::before { border-top-color: var(--warn); }
 .context-gauge[hidden] { display: none; }
 
 /* ---- Header find ---- */
@@ -704,7 +710,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   font-size: var(--text-sm); color: var(--ink-soft);
   display: flex; align-items: center; gap: var(--space-2);
 }
-.steps-row::before { content: "☰"; font-size: 12px; }
+/* The Mac's row: the mark, the summary, and the chevron that turns (StepsRow.swift:37-48). */
+.steps-summary { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-soft); }
+.steps-summary:hover { color: var(--ink); }
 .steps-row[hidden] { display: none; }
 
 /* ---- Markdown (the Mac app renders markdown; so does this) ---- */
@@ -996,12 +1004,12 @@ body.dropping::after {
 /* ---- Context gauge details (the Mac app's gauge popover) ---- */
 .gauge-pop {
   position: fixed; top: 46px; right: 12px; z-index: 50;
-  min-width: 260px;
+  width: 320px;
   background: var(--panel-glass);
   border: 1px solid var(--line); border-radius: var(--radius);
   box-shadow: var(--shadow-lifted);
   backdrop-filter: blur(14px);
-  padding: var(--space-3);
+  padding: 16px;
   display: flex; flex-direction: column; gap: var(--space-1);
 }
 .gauge-pop[hidden] { display: none; }
@@ -2905,4 +2913,15 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
 @keyframes kuvo-mark-fade {
   0%, 78% { opacity: 1; }
   100% { opacity: 0.35; }
+}
+
+/* The line while the agent is working (TranscriptView.swift:598-610): the Mac's words,
+   shimmering, with the time it has been at it. */
+.working-line {
+  max-width: var(--readable-width);
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+  color: var(--ink-soft);
+  font-size: var(--text-md);
 }

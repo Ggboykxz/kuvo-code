@@ -31,6 +31,8 @@ export interface MessagePart {
 export interface TranscriptEntry {
   kind: "user" | "assistant" | "notice" | "shell" | "idle";
   id?: string;
+  /** When the message began, in milliseconds — the Mac's "Working…" counts from it. */
+  created?: number;
   text?: string;
   parts?: MessagePart[];
   files?: Attachment[];

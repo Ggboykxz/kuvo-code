@@ -177,12 +177,12 @@ const stepPhrase = (kind: string, count: number) => {
   }
 };
 
+/// The Mac's own way of saying how long (MessageTime.duration, TranscriptView.swift:1119).
 const duration = (seconds: number) => {
   if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.round(seconds / 60);
-  if (minutes < 60) return `${minutes} min`;
-  return `${Math.round(minutes / 60)} h`;
-};
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+};;
 
 function stepsSummary(entry: TranscriptEntry): string {
   const parts = entry.parts ?? [];
@@ -211,6 +211,25 @@ function stepsSummary(entry: TranscriptEntry): string {
   return text ? text[0].toUpperCase() + text.slice(1) : "";
 }
 
+/// The Mac's line while the agent is working (TranscriptView.swift:598-610): "Working…",
+/// the time it has been at it, and the way to stop it. The words shimmer, as the Mac's do.
+function WorkingLine({ transcript }: { transcript: Transcript }) {
+  const [now, setNow] = useState(0);
+  useEffect(() => {
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const last = [...transcript.entries].reverse().find(entry => entry.kind === "assistant");
+  const seconds = last?.created && now ? Math.floor((now - last.created) / 1000) : 0;
+  const elapsed = seconds >= 2 ? ` ${duration(seconds)} · Esc to stop` : "";
+  return (
+    <div className="working-line">
+      <Shimmer as="span" className="thinking-shimmer" duration={1.6}>{`Working…${elapsed}`}</Shimmer>
+    </div>
+  );
+}
+
 /// The row itself: the summary, and each step when it is opened.
 function StepsRow({ entry }: { entry: TranscriptEntry }) {
   const [open, setOpen] = useState(false);
@@ -220,8 +239,9 @@ function StepsRow({ entry }: { entry: TranscriptEntry }) {
   return (
     <div className="steps-row">
       <button className="steps-summary" onClick={() => setOpen(value => !value)} title={open ? "Hide the steps" : "Show each step"}>
-        <span className="where"><Symbol name="chevron.right" size={12} className={open ? "turned" : ""} /></span>
+        <Symbol name="list.bullet" size={13} />
         <span>{summary}</span>
+        <Symbol name="chevron.right" size={11} className={open ? "turned" : ""} />
       </button>
       {open ? (
         <ul className="steps-list">
@@ -494,9 +514,9 @@ function ContextGauge() {
     <>
       <div
         id="context-gauge"
-        className="context-gauge"
+        className={`context-gauge ${fraction !== null && fraction > 0.8 ? "warn" : ""}`}
         hidden={!total}
-        title="Context window"
+        title={limit ? `Context window: ${compactTokens(total)} of ${compactTokens(limit)} tokens` : "Context window"}
         onClick={event => { event.stopPropagation(); setGaugeOpen(open => !open); }}
       >
         {fraction !== null ? `${Math.round(fraction * 100)}%` : compactTokens(total)}
@@ -1482,6 +1502,7 @@ export function App() {
             }}
           >
             {state.transcript ? <EntryNodes transcript={state.transcript} /> : null}
+            {state.transcript?.running ? <WorkingLine transcript={state.transcript} /> : null}
           </div>
           <button
             id="jump-latest"

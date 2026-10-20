@@ -116,7 +116,7 @@ is a material (or a solid colour in Settings › Appearance); every pane is an o
 | Composer | radius 14, opaque; inner padding 16 / 10 / 7 | `Composer.swift:249-253,489-511` | radius 12, glass | 2 |
 | Your message | radius 18; padding 14 / 10; leading 80; max width 680 of the 760 column | `TranscriptView.swift:613-681,1500-1513` | max-width 80 %, radius 12 | 2 |
 | Palette | 600 wide; search 48; list padding 6; row 30; radius 18; regular glass | `CommandPalette.swift:81-111,165-168` | Palette card, different width/radius | 2, 6 |
-| Context gauge | 12 pt ring, 24 pt pill, popover 320 wide with 16 pt padding | `ContextGauge.swift:25-31,156-157` | Exists; geometry to check | 6 |
+| Context gauge | 12 pt ring, 24 pt pill, popover 320 wide with 16 pt padding | `ContextGauge.swift:25-31,156-157` | The Mac's: the ring, the pill, the popover, and orange past eight parts | 6 ✅ (0.5.44) |
 | Image viewer | corner 10 when fitted, 0 when zoomed; capsule glass toolbar; toolbar max 560 | `ImageViewer.swift:90-91,200-206` | Exists; geometry to check | 6 |
 | Pane resizer | 8 pt hit area; 3 pt tint capsule, 40 pt vertical inset, 50 % opacity on hover/drag; 0.15 s easeOut; `column-resize` cursor | `WindowGlass.swift:43-81` | No Mac-style grabber; pane widths are fixed | 2, 7 |
 
@@ -620,7 +620,7 @@ interpretation of it.
 | **— The platform** | The window is built by Next.js (a static export the harness serves) and the page is read in a real browser in CI; the look and the behaviour do not move | — | 0.5.41 |
 | **4. Icons** | 89 symbols → drawn SVGs; FolderIcon; PromptMark; provider logos; remove text glyphs and the naked `@` | §7 | 0.5.42 ✅ |
 | **5. Wording** | 1 208 sites compared; menus, tooltips, accessibility labels; punctuation | §8 | 0.5.43 ✅ (the shell's words; the rest with the screens) |
-| **6. Screens** | Sidebar + title bar; transcript; composer + queue + gauge; palette + drawer; settings (14 existing + 3 missing: Notifications, Privacy, Panel; Worktrees maps to Projects); files/changes/terminal | §6.1–6.3 | 0.5.44 → 0.5.49 |
+| **6. Screens** | Sidebar + title bar; transcript; composer + queue + gauge; palette + drawer; settings (14 existing + 3 missing: Notifications, Privacy, Panel; Worktrees maps to Projects); files/changes/terminal | §6.1–6.3 | 0.5.44 ✅ (the transcript, the gauge, the steps row) → 0.5.49 |
 | **7. Gestures & micro-UX** | Rename, double-click, resize grabber, history, popover flip, clear/remove/badge behaviours, find and search field shape | §9 | 0.5.50 |
 | **8. Verification** | Full capture matrix, computed-value checks, close every ◐; final side-by-side | all in-scope rows | 0.5.51 |
 
