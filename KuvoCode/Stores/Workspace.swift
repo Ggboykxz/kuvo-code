@@ -973,7 +973,9 @@ final class Workspace {
         guard let api = engine.api else { return true }
         let machine = engine.machine.id
         // Still the connection it started with: a newer one (or none) takes over from here.
-        let isCurrent = { engine.isReady && engine.api?.client.endpoint == api.client.endpoint }
+        let isCurrent = { [weak self] in
+            engine.isReady && engine.api?.client.endpoint == api.client.endpoint && self?.machines.contains(machine) == true
+        }
         do {
             let listed = try await api.allSessions()
             guard isCurrent() else { return true }
@@ -990,6 +992,15 @@ final class Workspace {
             Self.saveRemoteSessions(remoteSessions)
             SessionCopies.saveSessions(theirs, of: machine)
             connectedMachines.insert(machine)
+            // Read while it was away: so here, and told there now.
+            for (id, idle) in unsentViews where sessionMachines[id] == machine {
+                unsentViews[id] = nil
+                if let index = sessions.firstIndex(where: { $0.id == id }), (sessions[index].time.viewed ?? 0) < idle { sessions[index].time.viewed = idle }
+                Task { try? await api.markViewed(id, idle: idle) }
+            }
+            // Commands its agents left running, as it lists them now (a restart ended some).
+            let folders = Set(models.values.map(\.session.location.directory).filter { RemoteFolder.machine(of: $0) == machine })
+            Task { [weak self] in for folder in folders { await self?.readShellJobs(in: folder) } }
             if let active = try? await api.activeSessions(), isCurrent() {
                 // A subagent's session has no row: its machine is the one its events came from.
                 running = running.filter { id in (session(id).map { RemoteFolder.machine(of: $0.location.directory) } ?? sessionMachines[id]) != machine }.union(active)
@@ -1202,6 +1213,8 @@ final class Workspace {
 
     /// An event from this Mac's engine, or from `machine`'s.
     func handle(_ event: ServerEvent, machine: String? = nil) {
+        // A machine removed while its engine stops: what it still says isn't kept.
+        if let machine, !machines.contains(machine) { return }
         #if DEBUG
         // KUVO_DEMO_LOG_EVENTS: each session event in the log, to see their order.
         if Self.logsEvents, event.sessionID != nil {
@@ -1249,6 +1262,9 @@ final class Workspace {
         case "session.created", "session.renamed", "session.moved", "session.metadata.updated", "session.revert.staged", "session.revert.cleared", "session.revert.committed":
             Task { await reload(id) }
         case "session.deleted":
+            // Deleted elsewhere (another Mac, the phone): its panel's tabs go too, a terminal's
+            // connection with them.
+            onDeleted?(id)
             sessions.removeAll { $0.id == id }
             if let machine { keepList(of: machine) }
             if remoteSessions.removeValue(forKey: id) != nil { Self.saveRemoteSessions(remoteSessions) }
@@ -1559,11 +1575,15 @@ final class Workspace {
         Notifier.shared.clear(session: id)
         // Read: its next news is read afresh.
         if replyPreviews[id] != nil { replyPreviews[id] = nil }
-        guard let index = sessions.firstIndex(where: { $0.id == id }), sessions[index].isUnread, let idle = sessions[index].time.idle,
-              api(forSession: id) != nil else { return }
+        guard let index = sessions.firstIndex(where: { $0.id == id }), sessions[index].isUnread, let idle = sessions[index].time.idle else { return }
         sessions[index].time.viewed = idle
-        Task { try? await api(forSession: id)?.markViewed(id, idle: idle) }
+        // Its engine away (a machine out of reach): told once it's back (see `refresh`).
+        guard let api = api(forSession: id) else { return unsentViews[id] = idle }
+        Task { try? await api.markViewed(id, idle: idle) }
     }
+
+    /// Sessions read while their machine was away, with what was read, to tell it when it's back.
+    @ObservationIgnored private var unsentViews: [String: Milliseconds] = [:]
 
     private func reload(_ id: String) async {
         guard let session = try? await api(forSession: id)?.session(id) else { return }
@@ -1667,10 +1687,10 @@ final class Workspace {
     func stopShellJob(_ job: ShellJob, in session: String) async -> String {
         let directory = self.session(session)?.location.directory ?? ""
         let engine = api(forSession: session)
-        // Announced as it started, before it had a process: the engine knows it now.
-        var pid = job.pid
-        if pid == nil { pid = (try? await engine?.shell(job.id, directory: directory))?.pid }
-        if let pid, pid > 1 {
+        // Its process as the engine knows it now: one noted earlier (announced before it had one,
+        // or from before a machine restarted, when it can be another process's) isn't signalled.
+        let current = try? await engine?.shell(job.id, directory: directory)
+        if let current, current.status == "running", let pid = current.pid, pid > 1 {
             let machine = RemoteFolder.machine(of: directory)
             let sent = await Task.detached { () -> Bool in
                 guard let machine else { return kill(-pid_t(pid), SIGTERM) == 0 }
