@@ -5,6 +5,10 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- The usage item in the menu bar is compact (Bars) by default; a style you picked stays.
+- In full screen with the tab bar hidden, there's no empty row at the top; ⌘0 shows the sidebar. Tabs in the title bar no longer flicker while you make the window narrower.
+- Find in a conversation goes straight to each place, in the middle of the view, instead of jumping back and forth.
+- Expanding a big search's output with context lines no longer freezes the window for a few seconds.
 - In dark mode, the sidebar stays dark and easy to read when a bright window is behind Kuvo Code.
 - Settings › Skills no longer shows the folder each skill is in; hover over one to see it.
 - Settings › Accounts splits Coding Agents from Plans. A menu next to Coding Agents picks This Mac or one of your machines, to see that machine's agents and sign in to each there (each machine signs in on its own); plans and API keys stay as they are, since your machines get them too. A conversation on a machine that needs a sign-in says which machine, with Sign In on it. Signing in on a machine says it's installing the agent there first.
