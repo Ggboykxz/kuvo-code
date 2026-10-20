@@ -644,7 +644,8 @@ class ClaudeThread implements Thread {
         hooks: { PreToolUse: [{ hooks: [async (hookInput: any) => this.preToolUse(hookInput)] }] },
         systemPrompt: { type: "preset", preset: "claude_code", ...(append ? { append } : {}) },
         ...(resume ? { resume: id } : { sessionId: id }),
-        env: this.agent.env(),
+        // Its commands know their conversation, as the engine's do (kuvo-wake schedules for it).
+        env: { ...this.agent.env(), OPENCODE_SESSION_ID: this.session.id },
         stderr: () => {},
       },
     })

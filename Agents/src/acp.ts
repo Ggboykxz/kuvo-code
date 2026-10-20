@@ -183,7 +183,8 @@ export class AcpThread implements Thread {
     let asksSignIn = false
     const rpc: RPC = new RPC(launch.argv, {
       cwd: launch.cwd ?? this.session.location.directory,
-      env: launch.env,
+      // Its commands know their conversation, as the engine's do (kuvo-wake schedules for it).
+      env: { ...launch.env, OPENCODE_SESSION_ID: this.session.id },
       cleanEnv: launch.cleanEnv,
       jsonrpc: true,
       firstID: 2 ** 30,

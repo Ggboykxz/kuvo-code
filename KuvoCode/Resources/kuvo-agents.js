@@ -1816,7 +1816,7 @@ class AcpThread {
     let asksSignIn = false;
     const rpc = new RPC(launch.argv, {
       cwd: launch.cwd ?? this.session.location.directory,
-      env: launch.env,
+      env: { ...launch.env, OPENCODE_SESSION_ID: this.session.id },
       cleanEnv: launch.cleanEnv,
       jsonrpc: true,
       firstID: 2 ** 30,
@@ -4233,7 +4233,7 @@ class ClaudeThread {
         hooks: { PreToolUse: [{ hooks: [async (hookInput) => this.preToolUse(hookInput)] }] },
         systemPrompt: { type: "preset", preset: "claude_code", ...append ? { append } : {} },
         ...resume ? { resume: id } : { sessionId: id },
-        env: this.agent.env(),
+        env: { ...this.agent.env(), OPENCODE_SESSION_ID: this.session.id },
         stderr: () => {}
       }
     });
@@ -5496,8 +5496,8 @@ class CodexThread {
     this.instructions = instructions;
     const timeout = tools ? { tool_timeout_sec: Math.ceil(tools.timeout / 1000) } : {};
     const server2 = tools?.kind === "http" ? { url: tools.url, http_headers: tools.headers, ...timeout } : tools?.kind === "stdio" ? { command: tools.command, args: tools.args, env: tools.env, ...timeout } : undefined;
-    const config = tools && server2 ? { [`mcp_servers.${tools.name}`]: server2 } : undefined;
-    const common = { cwd: this.session.location.directory, model: input.model.id, developerInstructions: instructions, ...config ? { config } : {} };
+    const config = { "shell_environment_policy.set.OPENCODE_SESSION_ID": this.session.id, ...tools && server2 ? { [`mcp_servers.${tools.name}`]: server2 } : {} };
+    const common = { cwd: this.session.location.directory, model: input.model.id, developerInstructions: instructions, config };
     if (this.nativeID) {
       try {
         await rpc.request("thread/resume", { threadId: this.nativeID, excludeTurns: true, ...common }, 60000);

@@ -506,8 +506,9 @@ class CodexThread implements Thread {
     // Kuvo Code's own tools, as the engine's models have them (a setting for this thread alone).
     const timeout = tools ? { tool_timeout_sec: Math.ceil(tools.timeout / 1000) } : {}
     const server = tools?.kind === "http" ? { url: tools.url, http_headers: tools.headers, ...timeout } : tools?.kind === "stdio" ? { command: tools.command, args: tools.args, env: tools.env, ...timeout } : undefined
-    const config = tools && server ? { [`mcp_servers.${tools.name}`]: server } : undefined
-    const common = { cwd: this.session.location.directory, model: input.model.id, developerInstructions: instructions, ...(config ? { config } : {}) }
+    // Its commands know their conversation, as the engine's do (kuvo-wake schedules for it).
+    const config = { "shell_environment_policy.set.OPENCODE_SESSION_ID": this.session.id, ...(tools && server ? { [`mcp_servers.${tools.name}`]: server } : {}) }
+    const common = { cwd: this.session.location.directory, model: input.model.id, developerInstructions: instructions, config }
     if (this.nativeID) {
       try {
         await rpc.request("thread/resume", { threadId: this.nativeID, excludeTurns: true, ...common }, 60_000)
