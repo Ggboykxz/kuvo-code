@@ -1155,13 +1155,15 @@ class Snapshots {
     return join6(this.root, createHash("sha1").update(repository.top).digest("hex").slice(0, 20));
   }
   git(repository, args, options = {}) {
-    const settings = ["-c", "core.autocrlf=false", "-c", "core.fsmonitor=false", "-c", "core.quotepath=false", "-c", "core.symlinks=true", "-c", "core.longpaths=true", "-c", "gc.auto=0"];
+    const settings = ["-c", "core.autocrlf=false", "-c", "core.fsmonitor=false", "-c", "core.quotepath=false", "-c", "core.symlinks=true", "-c", "core.longpaths=true", "-c", "gc.pruneExpire=never", "-c", "gc.worktreePruneExpire=never"];
+    if (!options.packs)
+      settings.push("-c", "gc.auto=0");
     if (repository.exclude)
       settings.push("-c", `core.excludesFile=${repository.exclude}`);
     return run("git", ["--git-dir", this.storeOf(repository), "--work-tree", repository.top, ...settings, ...args], {
       cwd: repository.top,
       timeout: options.timeout ?? 120000,
-      env: quiet,
+      env: options.patterns ? { ...quiet, GIT_LITERAL_PATHSPECS: "0" } : quiet,
       input: options.input
     });
   }
@@ -1192,7 +1194,7 @@ class Snapshots {
       if (tree.code !== 0 || !tree.stdout.trim())
         throw new Error("Kuvo Code couldn't keep this project's files.");
       if (++this.taken % 50 === 0)
-        this.git(repository, ["gc", "--auto", "--quiet"], { timeout: 600000 }).catch(() => {});
+        this.git(repository, ["gc", "--auto", "--quiet"], { timeout: 600000, packs: true }).catch(() => {});
       return tree.stdout.trim();
     });
   }
@@ -1201,10 +1203,18 @@ class Snapshots {
     if (!repository || from === to)
       return [];
     return this.exclusive(repository, async () => {
-      const ran = await this.git(repository, ["diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", from, to, "--", repository.prefix || "."]);
+      const ran = await this.git(repository, ["diff", "--raw", "-z", "--no-renames", "--no-ext-diff", "--no-abbrev", from, to, "--", repository.prefix || "."]);
       if (ran.code !== 0)
         throw new Error("Kuvo Code couldn't tell which files changed.");
-      return ran.stdout.split("\x00").filter(Boolean);
+      const fields = ran.stdout.split("\x00");
+      const paths = [];
+      for (let i = 0;i + 1 < fields.length; i += 2) {
+        const [oldMode, newMode] = fields[i].replace(/^:/, "").split(" ");
+        if (oldMode === "160000" || newMode === "160000" || !fields[i + 1])
+          continue;
+        paths.push(fields[i + 1]);
+      }
+      return paths;
     });
   }
   async changes(directory, from, to, paths) {
@@ -1231,27 +1241,55 @@ class Snapshots {
     if (!repository || !paths.length)
       return;
     await this.exclusive(repository, async () => {
-      const listed = await this.git(repository, ["ls-tree", "-r", "-z", "--name-only", "--full-tree", tree]);
+      const listed = await this.git(repository, ["ls-tree", "-r", "-z", "--full-tree", tree]);
       if (listed.code !== 0)
         throw new Error("Kuvo Code couldn't read what the files were.");
       const wanted = new Set(paths);
-      const there = new Set(listed.stdout.split("\x00").filter((path) => path && wanted.has(path)));
-      const gone = paths.filter((path) => !there.has(path)).sort((a, b) => b.length - a.length);
-      for (const path of gone)
-        this.remove(repository.top, path);
-      const back = paths.filter((path) => there.has(path));
-      if (back.length) {
-        for (const path of back) {
-          const full = join6(repository.top, path);
-          if (this.isInside(repository.top, full) && existsSync2(full) && lstatSync(full).isDirectory())
-            rmSync2(full, { recursive: true, force: true });
-        }
-        const checked = await this.git(repository, ["checkout", tree, "--pathspec-from-file=-", "--pathspec-file-nul"], { input: back.join("\x00") });
-        if (checked.code !== 0)
-          throw new Error(`Kuvo Code couldn't put the files back: ${checked.stderr.trim().split(`
-`).pop() ?? "git failed"}`);
+      const there = new Set;
+      const repositories = new Set;
+      for (const entry of listed.stdout.split("\x00")) {
+        const tab = entry.indexOf("\t");
+        if (tab < 0)
+          continue;
+        const path = entry.slice(tab + 1);
+        if (!wanted.has(path))
+          continue;
+        if (entry.startsWith("160000 "))
+          repositories.add(path);
+        else
+          there.add(path);
       }
+      const isRules = (path) => /(^|\/)\.gitignore$/.test(path);
+      const goneRules = paths.filter((path) => isRules(path) && !there.has(path) && !repositories.has(path));
+      for (const path of goneRules)
+        this.remove(repository.top, path);
+      await this.checkout(repository, tree, paths.filter((path) => isRules(path) && there.has(path)));
+      let gone = paths.filter((path) => !isRules(path) && !there.has(path) && !repositories.has(path));
+      if (gone.length && paths.some(isRules)) {
+        const ignored = await this.git(repository, ["check-ignore", "--no-index", "-z", "--stdin"], { input: gone.join("\x00"), patterns: true });
+        if (ignored.code !== 0 && ignored.code !== 1)
+          throw new Error("Kuvo Code couldn't tell which files the ignore rules left out.");
+        const left = new Set(ignored.stdout.split("\x00").filter(Boolean));
+        gone = gone.filter((path) => !left.has(path));
+      }
+      for (const path of gone.sort((a, b) => b.length - a.length))
+        this.remove(repository.top, path);
+      const back = paths.filter((path) => !isRules(path) && there.has(path));
+      for (const path of back) {
+        const full = join6(repository.top, path);
+        if (this.isInside(repository.top, full) && existsSync2(full) && lstatSync(full).isDirectory() && !existsSync2(join6(full, ".git")))
+          rmSync2(full, { recursive: true, force: true });
+      }
+      await this.checkout(repository, tree, back);
     });
+  }
+  async checkout(repository, tree, paths) {
+    if (!paths.length)
+      return;
+    const checked = await this.git(repository, ["checkout", tree, "--pathspec-from-file=-", "--pathspec-file-nul"], { input: paths.join("\x00") });
+    if (checked.code !== 0)
+      throw new Error(`Kuvo Code couldn't put the files back: ${checked.stderr.trim().split(`
+`).pop() ?? "git failed"}`);
   }
   isInside(top, full) {
     const target = resolve(full);
@@ -1275,6 +1313,8 @@ class Snapshots {
       return;
     try {
       const stat = lstatSync(full);
+      if (stat.isDirectory() && !stat.isSymbolicLink() && existsSync2(join6(full, ".git")))
+        return;
       rmSync2(full, { recursive: stat.isDirectory() && !stat.isSymbolicLink(), force: true });
     } catch {
       return;
@@ -5986,35 +6026,45 @@ var engineDefaults = [
 ];
 function commandParts(line) {
   const whole = line.trim();
-  const parts = [];
-  splitCommands(whole, parts);
-  return [whole, ...new Set(parts.filter((part) => part !== whole))];
+  const { commands, sure } = parseCommands(whole);
+  const parts = new Set(commands.filter((part) => part !== whole));
+  if (!sure)
+    for (const part of whole.split(/&&|\|\||[;|&\n`()]|\$\(/)) {
+      const trimmed = part.trim();
+      if (trimmed && trimmed !== whole)
+        parts.add(trimmed);
+    }
+  return [whole, ...parts];
+}
+function parseCommands(line) {
+  const state = { sure: true };
+  const out = [];
+  scanCommands(line.replace(/\\\n/g, ""), 0, "", out, state);
+  return { commands: [...new Set(out)], sure: state.sure };
 }
 var shellKeywords = new Set(["if", "then", "else", "elif", "do", "while", "until", "!", "time", "{", "}", "fi", "done", "esac"]);
-function splitCommands(text, out) {
+function scanCommands(text, start, close, out, state) {
   let current = "";
+  let depth = 0;
+  const heredocs = [];
   const push = () => {
-    const words = current.trim().split(/\s+/);
-    while (words.length && shellKeywords.has(words[0]))
-      words.shift();
-    const part = words.join(" ");
-    if (part && !/^(for|case|select|function)\s/.test(part))
-      out.push(part);
+    addCommand(current, out);
     current = "";
   };
-  const inner = (start, open) => {
-    const end = open === -1 ? backtickEnd(text, start) : parenEnd(text, start);
-    splitCommands(text.slice(start, end), out);
-    return end;
-  };
-  let i = 0;
+  let i = start;
   while (i < text.length) {
     const ch = text[i];
+    if (close && ch === close && (close !== ")" || depth === 0)) {
+      push();
+      return i;
+    }
     if (ch === "\\") {
       current += text.slice(i, i + 2);
       i += 2;
     } else if (ch === "'") {
       const end = text.indexOf("'", i + 1);
+      if (end < 0)
+        state.sure = false;
       const stop = end < 0 ? text.length : end + 1;
       current += text.slice(i, stop);
       i = stop;
@@ -6024,59 +6074,68 @@ function splitCommands(text, out) {
         if (text[j] === "\\")
           j += 2;
         else if (text.startsWith("$(", j))
-          j = inner(j + 2, 0) + 1;
+          j = scanCommands(text, j + 2, ")", out, state) + 1;
         else if (text[j] === "`")
-          j = inner(j + 1, -1) + 1;
+          j = scanCommands(text, j + 1, "`", out, state) + 1;
         else
           j++;
       }
+      if (j >= text.length)
+        state.sure = false;
       current += text.slice(i, j + 1);
       i = j + 1;
-    } else if (text.startsWith("$(", i) || text.startsWith("<(", i) || text.startsWith(">(", i)) {
-      const end = inner(i + 2, 0);
+    } else if (text.startsWith("$(", i) || text.startsWith("<(", i) || text.startsWith(">(", i) || ch === "`") {
+      const from = ch === "`" ? i + 1 : i + 2;
+      const end = scanCommands(text, from, ch === "`" ? "`" : ")", out, state);
+      if (end >= text.length)
+        state.sure = false;
       current += text.slice(i, end + 1);
       i = end + 1;
-    } else if (ch === "`") {
-      const end = inner(i + 1, -1);
-      current += text.slice(i, end + 1);
-      i = end + 1;
-    } else if (ch === "<" && text.startsWith("<<", i) && text[i + 2] !== "<") {
-      const match = /^<<-?\s*(['"]?)([\w.-]+)\1/.exec(text.slice(i));
-      if (!match) {
-        current += "<<";
-        i += 2;
-        continue;
-      }
-      current += match[0];
-      i += match[0].length;
+    } else if (ch === "#" && (current === "" || /\s$/.test(current))) {
       const lineEnd = text.indexOf(`
 `, i);
-      if (lineEnd < 0)
-        continue;
-      current += text.slice(i, lineEnd);
-      let at = lineEnd + 1;
-      let found = -1;
-      while (at <= text.length) {
-        const next = text.indexOf(`
-`, at);
-        const body = text.slice(at, next < 0 ? text.length : next);
-        if (body.trim() === match[2]) {
-          found = next < 0 ? text.length : next;
-          break;
+      i = lineEnd < 0 ? text.length : lineEnd;
+    } else if (ch === "<" && text.startsWith("<<", i) && text[i + 2] !== "<") {
+      const match = /^<<(-?)\s*(['"]?)([^\s'"<>;&|()]+)\2/.exec(text.slice(i));
+      if (match)
+        heredocs.push({ word: match[3], tabs: match[1] === "-" });
+      const taken = match ? match[0].length : 2;
+      current += text.slice(i, i + taken);
+      i += taken;
+    } else if (ch === `
+`) {
+      push();
+      i++;
+      for (const doc of heredocs.splice(0)) {
+        let found = false;
+        while (i < text.length) {
+          const lineEnd = text.indexOf(`
+`, i);
+          const body = text.slice(i, lineEnd < 0 ? text.length : lineEnd);
+          i = lineEnd < 0 ? text.length : lineEnd + 1;
+          if ((doc.tabs ? body.replace(/^\t+/, "") : body) === doc.word) {
+            found = true;
+            break;
+          }
         }
-        if (next < 0)
-          break;
-        at = next + 1;
+        if (!found)
+          state.sure = false;
       }
-      i = found < 0 ? text.length : found;
     } else if (ch === "&" && (text[i + 1] === ">" || /[<>]$/.test(current))) {
       current += ch;
       i++;
     } else if (ch === "|" && /[>]$/.test(current)) {
       current += ch;
       i++;
-    } else if (ch === "&" || ch === "|" || ch === ";" || ch === `
-` || ch === "(" || ch === ")") {
+    } else if (ch === "&" || ch === "|" || ch === ";" || ch === "(" || ch === ")") {
+      if (ch === "(")
+        depth++;
+      else if (ch === ")") {
+        if (depth > 0)
+          depth--;
+        else
+          state.sure = false;
+      }
       push();
       i += text[i + 1] === ch || ch === "|" && text[i + 1] === "&" ? 2 : 1;
     } else {
@@ -6085,39 +6144,105 @@ function splitCommands(text, out) {
     }
   }
   push();
-}
-function parenEnd(text, start) {
-  let depth = 1;
-  let i = start;
-  while (i < text.length) {
-    const ch = text[i];
-    if (ch === "\\")
-      i += 2;
-    else if (ch === "'") {
-      const end = text.indexOf("'", i + 1);
-      i = end < 0 ? text.length : end + 1;
-    } else if (ch === '"') {
-      let j = i + 1;
-      while (j < text.length && text[j] !== '"')
-        j += text[j] === "\\" ? 2 : 1;
-      i = j + 1;
-    } else if (ch === "(") {
-      depth++;
-      i++;
-    } else if (ch === ")") {
-      if (--depth === 0)
-        return i;
-      i++;
-    } else
-      i++;
-  }
+  if (close || heredocs.length || depth)
+    state.sure = false;
   return text.length;
 }
-function backtickEnd(text, start) {
-  let i = start;
-  while (i < text.length && text[i] !== "`")
-    i += text[i] === "\\" ? 2 : 1;
-  return Math.min(i, text.length);
+function addCommand(raw, out) {
+  const words = shellWords(raw.trim());
+  while (words.length && shellKeywords.has(words[0]))
+    words.shift();
+  if (!words.length || /^(for|case|select|function)$/.test(words[0]))
+    return;
+  out.push(words.join(" "));
+  const bare = withoutPrefix(words);
+  if (!bare.length)
+    return;
+  out.push(bare.join(" "));
+  if (bare[0] === "git") {
+    const rest = bare.slice(1);
+    while (rest.length) {
+      if (rest[0] === "-C" || rest[0] === "-c" || rest[0] === "--git-dir" || rest[0] === "--work-tree" || rest[0] === "--namespace")
+        rest.splice(0, 2);
+      else if (rest[0].startsWith("-"))
+        rest.shift();
+      else
+        break;
+    }
+    out.push(["git", ...rest].join(" "));
+  }
+  const program = bare[0].split("/").pop() ?? "";
+  if (/^(ba|z|da|k|fi)?sh$/.test(program)) {
+    const at = bare.findIndex((word, index) => index > 0 && /^-[a-z]*c[a-z]*$/.test(word));
+    if (at > 0 && bare[at + 1])
+      out.push(...parseCommands(unquote(bare[at + 1])).commands);
+  }
+}
+var wrappers = new Set(["env", "command", "exec", "nohup", "builtin", "sudo", "doas", "time", "nice", "caffeinate"]);
+function withoutPrefix(words) {
+  let i = 0;
+  while (i < words.length) {
+    const word = words[i];
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word))
+      i++;
+    else if (/^\d*(>>?|<|&>|>&|<&|&>>)$/.test(word))
+      i += 2;
+    else if (/^\d*(>>?|<|&>|>&|<&|&>>)\S/.test(word))
+      i++;
+    else if (wrappers.has(word.split("/").pop() ?? "")) {
+      i++;
+      while (i < words.length && words[i].startsWith("-")) {
+        i += /^-[ugCDhprtUn]$/.test(words[i]) ? 2 : 1;
+      }
+    } else
+      break;
+  }
+  return words.slice(i);
+}
+function shellWords(text) {
+  const words = [];
+  let word = "";
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i];
+    if (/\s/.test(ch)) {
+      if (word)
+        words.push(word);
+      word = "";
+      i++;
+    } else if (ch === "\\") {
+      word += text.slice(i, i + 2);
+      i += 2;
+    } else if (ch === "'" || ch === '"' || ch === "`") {
+      let j = i + 1;
+      while (j < text.length && text[j] !== ch)
+        j += ch !== "'" && text[j] === "\\" ? 2 : 1;
+      word += text.slice(i, j + 1);
+      i = j + 1;
+    } else if (text.startsWith("$(", i)) {
+      let depth = 0;
+      let j = i + 1;
+      for (;j < text.length; j++) {
+        if (text[j] === "(")
+          depth++;
+        else if (text[j] === ")" && --depth === 0)
+          break;
+      }
+      word += text.slice(i, j + 1);
+      i = j + 1;
+    } else {
+      word += ch;
+      i++;
+    }
+  }
+  if (word)
+    words.push(word);
+  return words;
+}
+function unquote(word) {
+  if (word.length >= 2 && (word[0] === "'" || word[0] === '"') && word.at(-1) === word[0])
+    return word.slice(1, -1);
+  return word;
 }
 function partsOf(ask) {
   return isShell(ask.action) ? ask.resources.flatMap(commandParts) : ask.resources;
@@ -6131,7 +6256,9 @@ function coveredBy(patterns, action, resources2) {
       return true;
     if (!isShell(action))
       return patterns.some((pattern) => matches(pattern, resource));
-    const [, ...commands] = commandParts(resource);
+    const { commands, sure } = parseCommands(resource.trim());
+    if (!sure)
+      return false;
     return (commands.length ? commands : [resource.trim()]).every((command) => patterns.some((pattern) => matches(pattern, command)));
   });
 }
@@ -6276,6 +6403,32 @@ class Sessions {
     }
     if (changed)
       this.store.save(id, true);
+    if (this.snapshots && Object.values(this.notes(record)).some((note) => note.before && !note.files && !note.failed))
+      this.finishNotes(id);
+  }
+  async finishNotes(id) {
+    const record = this.store.get(id);
+    if (!record || !this.snapshots)
+      return;
+    const open = Object.values(this.notes(record)).filter((note) => note.before && !note.files && !note.failed);
+    const directory = record.session.location.directory;
+    this.busy.add(id);
+    try {
+      const now = await this.snapshots.take(directory);
+      if (!now)
+        throw new Error("not kept");
+      for (const note of open)
+        note.files = await this.snapshots.changed(directory, note.before, now);
+    } catch {
+      for (const note of open)
+        if (!note.files)
+          note.failed = true;
+    } finally {
+      this.busy.delete(id);
+      if (this.store.get(id))
+        this.store.save(id);
+      this.afterBusy(id);
+    }
   }
   create(body) {
     if (body.model?.providerID === autoProvider && !this.auto.list().length)
@@ -6458,7 +6611,7 @@ class Sessions {
     const files = new Set;
     let kept2 = false;
     for (const message of record.messages.slice(at)) {
-      const note = message.type === "user" ? notes[message.id] : undefined;
+      const note = notes[message.id];
       if (!note)
         continue;
       kept2 = true;
@@ -6473,8 +6626,13 @@ class Sessions {
     let diffs2 = [];
     if (first?.before && files.size && this.snapshots) {
       this.busy.add(id);
+      if (!record.session.revert) {
+        delete record.agent.revertNow;
+        delete record.agent.revertFiles;
+      }
+      let now;
       try {
-        const now = await this.snapshots.take(directory);
+        now = await this.snapshots.take(directory);
         if (!now)
           throw new Error("Kuvo Code couldn't keep the files as they are now.");
         record.agent.revertNow ??= now;
@@ -6482,15 +6640,25 @@ class Sessions {
         this.store.save(id);
         diffs2 = await this.snapshots.changes(directory, first.before, now, [...files]);
         await this.snapshots.restore(directory, first.before, [...files]);
-      } finally {
+      } catch (error) {
+        if (now)
+          await this.snapshots.restore(directory, now, [...files]).catch(() => {});
+        if (!record.session.revert) {
+          delete record.agent.revertNow;
+          delete record.agent.revertFiles;
+        }
+        this.store.save(id);
         this.busy.delete(id);
+        this.afterBusy(id);
+        throw error;
       }
+      this.busy.delete(id);
     }
     const revert = { messageID: messageID2, files: diffs2 };
     record.session.revert = revert;
     this.store.save(id, true);
     emit("session.revert.staged", { sessionID: id, revert }, directory);
-    this.next(id, "succeeded");
+    this.afterBusy(id);
     return revert;
   }
   async clearRevert(id) {
@@ -6506,16 +6674,28 @@ class Sessions {
       this.busy.add(id);
       try {
         await this.snapshots.restore(directory, now, files);
-      } finally {
+      } catch (error) {
         this.busy.delete(id);
+        this.afterBusy(id);
+        throw error;
       }
+      this.busy.delete(id);
     }
     delete record.session.revert;
     delete record.agent.revertNow;
     delete record.agent.revertFiles;
     this.store.save(id, true);
     emit("session.revert.cleared", { sessionID: id }, directory);
-    this.next(id, "succeeded");
+    this.afterBusy(id);
+  }
+  afterBusy(id) {
+    const live = this.live.get(id);
+    if (!live || this.isRunning(id))
+      return;
+    const later = live.wakeLater;
+    live.wakeLater = false;
+    if (later || live.adopting)
+      this.wake(id);
   }
   commitRevert(id, record, live) {
     const revert = record.session.revert;
@@ -6609,7 +6789,8 @@ class Sessions {
       return;
     const running = this.live.get(id)?.running;
     const steers = this.isRunning(id) && input.delivery !== "queue" && Boolean(running?.thread.steer);
-    const delivery = steers || !this.isRunning(id) && input.delivery !== "queue" ? "steer" : "queue";
+    const onlyBusy = this.busy.has(id) && !this.live.get(id)?.turn;
+    const delivery = steers || (!this.isRunning(id) || onlyBusy) && input.delivery !== "queue" ? "steer" : "queue";
     queue.push({ ...input, delivery });
     this.store.save(id, true);
     emit("session.inbox.enqueued", { sessionID: id, inboxID: input.id, item: { type: "user", payload: { text: input.text, files: input.files }, delivery } }, record.session.location.directory);
@@ -6666,7 +6847,7 @@ class Sessions {
     const attachments = input.files.map((file) => ({ mime: mime(file.uri), name: file.name, source: { type: "uri", uri: file.uri } }));
     record.messages.push({ type: "user", id: input.id, time: { created: Date.now() }, text: input.text, files: attachments.length ? attachments : undefined });
     record.session.time.updated = Date.now();
-    if (note && turn && live.turn === turn) {
+    if (note?.before && turn && live.turn === turn) {
       this.notes(record)[input.id] = note;
       live.steeredNotes.push(note);
     }
@@ -6704,8 +6885,14 @@ class Sessions {
     emit("session.inbox.cancelled", { sessionID: id, inboxID: inputID }, record.session.location.directory);
   }
   wake(id) {
-    if (this.isRunning(id) || this.removing.has(id))
+    if (this.removing.has(id))
       return;
+    if (this.isRunning(id)) {
+      const live = this.live.get(id);
+      if (live && !live.turn && this.busy.has(id))
+        live.wakeLater = true;
+      return;
+    }
     const record = this.store.get(id);
     if (!record)
       return;
@@ -6722,8 +6909,9 @@ class Sessions {
     if (this.removing.has(id) || !this.store.get(id))
       return;
     const live = this.state(id);
-    const resume = live.resume;
+    const resume = live.resume || live.wakeLater;
     live.resume = false;
+    live.wakeLater = false;
     const record = this.store.get(id);
     if (!record || this.isRunning(id))
       return;
@@ -7829,9 +8017,9 @@ function handler(context) {
 function expandCommand(template, written) {
   const all = written.trim();
   const words = all ? all.split(/\s+/) : [];
-  const named = /\$ARGUMENTS|\$\d+/.test(template);
-  const highest = Math.max(0, ...[...template.matchAll(/\$(\d+)/g)].map((match) => Number(match[1])));
-  const filled = template.replace(/\$ARGUMENTS|\$(\d+)/g, (_, index) => {
+  const named = /\$ARGUMENTS|\$[1-9]/.test(template);
+  const highest = Math.max(0, ...[...template.matchAll(/\$([1-9]\d*)/g)].map((match) => Number(match[1])));
+  const filled = template.replace(/\$ARGUMENTS|\$([1-9]\d*)/g, (_, index) => {
     if (index === undefined)
       return all;
     return Number(index) === highest ? words.slice(highest - 1).join(" ") : words[Number(index) - 1] ?? "";
