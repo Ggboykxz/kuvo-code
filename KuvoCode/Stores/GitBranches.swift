@@ -58,11 +58,11 @@ nonisolated extension Git {
 
     /// Changes that aren't committed, new files included; and, when git can't say (a machine's
     /// connection dropped), as if there were, so nothing is thrown away on a guess.
-    /// `includingHidden`: also new files and submodules git's settings leave out
-    /// (`status.showUntrackedFiles=no`, a submodule's `ignore`), for before a worktree is removed,
-    /// which would delete them unasked.
+    /// New files count whatever git's settings say, as the Changes panel lists them.
+    /// `includingHidden`: also changes in submodules their `ignore` setting leaves out, for
+    /// before a worktree is removed, which would delete them unasked.
     static func hasUncommittedChanges(in directory: String, includingHidden: Bool = false) -> Bool {
-        let hidden = includingHidden ? ["--untracked-files=normal", "--ignore-submodules=none"] : []
+        let hidden = ["--untracked-files=normal"] + (includingHidden ? ["--ignore-submodules=none"] : [])
         guard let status = run(["status", "--porcelain"] + hidden, in: directory) else { return true }
         return !status.isEmpty
     }
