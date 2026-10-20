@@ -835,7 +835,8 @@ struct MainView: View {
                         // This editor's, not one opened since (a delete that took a while).
                         if botEditor?.id == request.id { withAnimation(.ui) { botEditor = nil } }
                     } created: { bot in
-                        openTab(bot.sessionID)
+                        // Its tab opens in place of this editor, not of one opened since.
+                        if botEditor?.id == request.id { openTab(bot.sessionID) }
                     }
                 }
                 .id(request.id)

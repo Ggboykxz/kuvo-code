@@ -350,8 +350,9 @@ struct BotEditor: View {
             }
                 .keyboardShortcut(.cancelAction)
                 .buttonStyle(.glass)
-                // Its folder is going: the editor closes once it's gone, or says why not.
-                .disabled(isDeleting)
+                // Its folder is going, or it's being made: the editor closes once that's done, or
+                // says why not. (Waiting for a machine, Cancel stops it.)
+                .disabled(isDeleting || (isWorking && !waitsForMachine))
             Button(isNew ? "Create Bot" : "Save", action: save)
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.glassProminent)

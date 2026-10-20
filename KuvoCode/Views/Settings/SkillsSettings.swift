@@ -228,7 +228,13 @@ private struct SkillEditor: View {
     private var id: String { name ?? SkillFile.name(from: newName) }
     private var file: URL { folder.appending(path: id).appending(path: "SKILL.md") }
     private var canSave: Bool {
-        !id.isEmpty && !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (name != nil || !taken.contains(id))
+        !id.isEmpty && !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && (name != nil || !isTaken)
+    }
+
+    /// A new skill's name is one there is already: in the engine's list, or as a folder here
+    /// (while the list loads, or when it couldn't be read), which saving would write over.
+    private var isTaken: Bool {
+        taken.contains(id) || FileManager.default.fileExists(atPath: folder.appending(path: id).path)
     }
 
     /// What's under a new skill's name: the name it's saved as when that isn't what you typed,
@@ -236,7 +242,7 @@ private struct SkillEditor: View {
     private var nameNote: (text: String, isProblem: Bool) {
         let typed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         if !typed.isEmpty, id.isEmpty { return ("Names use the letters a to z and digits, and this one has none.", true) }
-        if taken.contains(id) { return ("There's a skill called \(id) already.", true) }
+        if !id.isEmpty, isTaken { return ("There's a skill called \(id) already.", true) }
         if !typed.isEmpty, id != typed { return ("It's saved as \(id).", false) }
         return ("Names use lowercase letters a to z, digits and hyphens.", false)
     }
@@ -305,6 +311,10 @@ private struct SkillEditor: View {
     }
 
     private func save() {
+        guard name != nil || !isTaken else {
+            failure = "There's a skill called \(id) already."
+            return
+        }
         do {
             try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             // A skill's own file keeps whatever else its header has.
