@@ -506,9 +506,7 @@ final class Bots {
     /// first line in a few words, for under the bot's name. Nil when it has none.
     static func job(inMemory text: String) -> (line: String, section: String)? {
         let lines = text.components(separatedBy: "\n")
-        guard let start = lines.firstIndex(where: isJobHeading) else { return nil }
-        let rest = lines[(start + 1)...]
-        let end = rest.firstIndex { $0.hasPrefix("#") } ?? lines.endIndex
+        guard let (start, end) = jobLines(lines) else { return nil }
         let section = lines[(start + 1)..<end].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
         let first = section.components(separatedBy: "\n").lazy.map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? ""
         var line = first
@@ -521,6 +519,43 @@ final class Bots {
         // A sentence's end, not a line's: "Keeps the build green." shows as "Keeps the build green".
         if line.hasSuffix("."), !line.hasSuffix("..") { line.removeLast() }
         return (line, section)
+    }
+
+    /// Where the job section is: its heading's line, and the line it ends before. It goes on to the
+    /// next heading of its level or above (its own sub-headings, "### Rules", are part of it), not
+    /// counting a line in a code block ("# run the tests") or one that isn't a heading ("#1 first").
+    private static func jobLines(_ lines: [String]) -> (heading: Int, end: Int)? {
+        guard let start = lines.firstIndex(where: isJobHeading) else { return nil }
+        let level = headingLevel(lines[start]) ?? 1
+        var inCode = false
+        for index in (start + 1)..<lines.endIndex {
+            let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") { inCode.toggle(); continue }
+            if !inCode, let other = headingLevel(lines[index]), other <= level { return (start, index) }
+        }
+        return (start, lines.endIndex)
+    }
+
+    /// A Markdown heading's level ("## Job" is 2), nil for a line that isn't one.
+    private static func headingLevel(_ line: String) -> Int? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let marks = trimmed.prefix { $0 == "#" }.count
+        guard (1...6).contains(marks) else { return nil }
+        let after = trimmed.dropFirst(marks)
+        return after.isEmpty || after.first == " " ? marks : nil
+    }
+
+    /// `memory` with `details` at the end of its job section (one with nothing under its heading
+    /// too).
+    static func addingDetails(_ details: String, toJobIn memory: String) -> String {
+        var lines = memory.components(separatedBy: "\n")
+        guard let (_, end) = jobLines(lines) else { return memory }
+        // After its last line with words, with a blank line before the next section.
+        var at = end
+        while at > 0, lines[at - 1].trimmingCharacters(in: .whitespaces).isEmpty, !isJobHeading(lines[at - 1]) { at -= 1 }
+        let blankAfter = at == lines.count || lines[at].trimmingCharacters(in: .whitespaces).isEmpty
+        lines.insert(contentsOf: ["", details] + (blankAfter ? [] : [""]), at: at)
+        return lines.joined(separator: "\n")
     }
 
     private static func isJobHeading(_ line: String) -> Bool {
@@ -577,7 +612,7 @@ final class Bots {
                 if let kept = Self.job(inMemory: text) {
                     // It wrote one of its own: what Edit Bot said goes under it, if it isn't there.
                     let missing = old[1].isEmpty || Self.flat(kept.section).contains(Self.flat(old[1])) ? "" : old[1]
-                    if !missing.isEmpty { text = text.replacingOccurrences(of: kept.section, with: kept.section + "\n\n" + missing) }
+                    if !missing.isEmpty { text = Self.addingDetails(missing, toJobIn: text) }
                 } else {
                     text = Self.addingJob(old[0], details: old[1], to: text)
                 }

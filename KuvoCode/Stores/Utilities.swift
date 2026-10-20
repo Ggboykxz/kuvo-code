@@ -795,8 +795,9 @@ final class Utilities {
         chosen = [:]
         selection = nil
         let place = place
+        // Back on this Mac for the start tab (going there may have made it already).
         self.place = nil
-        startOver()
+        if !visibleTabs.contains(where: { $0.owner == panelKey }) { startOver() }
         self.place = place
     }
 

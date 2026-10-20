@@ -6,6 +6,9 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A bot's job keeps all of its section in its memory, its own sub-headings and code included; it used to stop at the first line starting with #. A job written in Edit Bot by an older version is no longer lost when the bot's memory has an empty Job heading.
+- In a group chat, a bot's message that only starts with "Pass" ("Pass rate is 98% on main.") is no longer taken as passing its turn and left out.
+- Closing the window with a machine's conversation in view no longer leaves two start tabs in its panel.
 - A message with comments on the changes that didn't go, or was on its way when Kuvo Code quit, comes back to its composer with its comments.
 - Notifications hide AWS access key IDs (AKIA…) too, and no longer hide names that only start like a key (npm_config_…), which also took their answer buttons away.
 

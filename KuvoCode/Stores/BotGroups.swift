@@ -832,9 +832,16 @@ final class BotGroups {
         return call
     }
 
-    /// "PASS", "Pass.", "[pass] nothing to add": a bot with nothing to say.
+    /// "PASS", "Pass.", "[pass] nothing to add": a bot with nothing to say. Not a message that
+    /// starts with the word ("Pass rate is 98% on main."): PASS as it's told to write it, first, or
+    /// "pass" alone or with words that say there's nothing.
     static func isPass(_ text: String) -> Bool {
-        text.count < 80 && text.range(of: #"^\W*pass\b"#, options: [.regularExpression, .caseInsensitive]) != nil
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.count < 80 else { return false }
+        if text.range(of: #"^\W*PASS\b"#, options: .regularExpression) != nil { return true }
+        guard text.range(of: #"^\W*pass\b"#, options: [.regularExpression, .caseInsensitive]) != nil else { return false }
+        let rest = text.replacingOccurrences(of: #"^\W*pass\W*"#, with: "", options: [.regularExpression, .caseInsensitive])
+        return rest.isEmpty || rest.range(of: #"(?i)^(nothing|no (new|more|comment|further)|i('| ha)ve nothing|skip|n/a)"#, options: .regularExpression) != nil
     }
 
     /// What a bot is told at its turn: what was said since it last spoke.
