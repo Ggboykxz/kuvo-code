@@ -59,9 +59,11 @@ final class Drafts {
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     private static let key = "composerDrafts"
     private static let sendingKey = "composerDraftsSending"
+    /// Where they're kept: the app's settings (a test's own).
+    @ObservationIgnored private let defaults: UserDefaults
 
-    private init() {
-        let defaults = UserDefaults.standard
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         let stored = defaults.data(forKey: Self.key).flatMap { try? JSONDecoder().decode([String: Draft].self, from: $0) } ?? [:]
         drafts = Dictionary(uniqueKeysWithValues: stored.map { key, draft in
             var draft = draft
@@ -85,8 +87,8 @@ final class Drafts {
             save()
         }
         // Typing saves after a pause; quitting right after shouldn't lose the last words.
-        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
-            MainActor.assumeIsolated { Drafts.shared.save() }
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.save() }
         }
     }
 
@@ -117,11 +119,13 @@ final class Drafts {
 
     private func putBack(_ sent: Draft, in key: String) {
         let since = drafts[key] ?? Draft()
-        let draft = Draft(
+        var draft = Draft(
             text: [sent.text, since.text].filter { !$0.isEmpty }.joined(separator: "\n\n"),
             files: sent.files + since.files.filter { !sent.files.contains($0) },
             quotes: sent.quotes + since.quotes
         )
+        // Its comments on the changes too, which go with it.
+        draft.comments = sent.comments + since.comments.filter { comment in !sent.comments.contains { $0.id == comment.id } }
         drafts[key] = draft.isEmpty ? nil : draft
     }
 
@@ -161,13 +165,13 @@ final class Drafts {
         }
     }
 
-    private func saveNow() {
+    /// Saves at once (typing saves after a pause).
+    func saveNow() {
         saveTask?.cancel()
         save()
     }
 
     private func save() {
-        let defaults = UserDefaults.standard
         defaults.set(try? JSONEncoder().encode(drafts), forKey: Self.key)
         if sending.isEmpty {
             defaults.removeObject(forKey: Self.sendingKey)

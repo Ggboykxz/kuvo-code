@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A message with comments on the changes that didn't go, or was on its way when Kuvo Code quit, comes back to its composer with its comments.
 - Notifications hide AWS access key IDs (AKIA…) too, and no longer hide names that only start like a key (npm_config_…), which also took their answer buttons away.
 
 ## 0.6.1
