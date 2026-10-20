@@ -4,8 +4,9 @@ import SwiftUI
 /// Accounts' first sections: what you may already pay for, each signed in as you. The coding
 /// agents (Claude Code, Codex, Cursor, Grok, Antigravity) run as their makers built them, on this
 /// Mac or a machine, and each signs in to them on its own (picked in their section); the plans
-/// (GitHub Copilot, GitLab Duo, Poe, OpenCode) bring their models to Kuvo Code's own agent, and
-/// your machines get a copy of their sign-ins, as of every account on the page.
+/// (GitHub Copilot, GitLab Duo, Poe, OpenCode) bring their models to Kuvo Code's own agent, signed
+/// in to on this Mac or a machine too. A machine gets a copy of the keys and of GitHub Copilot's
+/// sign-in; a sign-in that renews itself can't be shared (AppModel.renewsItself).
 ///
 /// What you use is in a card, a product to a block: its name with what it needs from you on the
 /// right (an update), and under it your accounts with it, side by side (none is the main one). The
@@ -13,7 +14,7 @@ import SwiftUI
 struct SubscriptionsSection: View {
     enum Shows { case agents, plans }
     let shows: Shows
-    /// For the agents: the machine whose they are (nil: this Mac's).
+    /// The machine whose they are (nil: this Mac's).
     var machine: MachineEngine?
     /// Opens a sign-in, in the page's place.
     let connect: (Integration) -> Void
@@ -109,7 +110,8 @@ struct SubscriptionsSection: View {
             if let machine { return "Signed in on \(machine.machine.name) on its own. Signing in finishes in your browser here." }
             return app.machines.list.isEmpty ? "Sign in with a plan or account you already have." : "Sign in with a plan or account you already have. Each of your machines signs in to these on its own."
         case .plans:
-            return app.machines.list.isEmpty ? "Their models, in Kuvo Code's own agent." : "Their models, in Kuvo Code's own agent, on this Mac and your machines."
+            if let machine { return "Their models, in Kuvo Code's own agent on \(machine.machine.name), which signs in on its own. GitHub Copilot comes from this Mac." }
+            return app.machines.list.isEmpty ? "Their models, in Kuvo Code's own agent." : "Their models, in Kuvo Code's own agent. Your machines sign in to them on their own, but for GitHub Copilot, which they get from here."
         }
     }
 
@@ -573,8 +575,13 @@ private struct PlanAccountRow: View {
     /// The agents shown: this Mac's, or a machine's (`agentsBridge`).
     @Environment(\.agentsBridge) private var bridge
     private var agents: OutsideAgents { bridge ?? app.agents }
+    /// Where it's signed in: this Mac's engine, or a machine's.
+    @Environment(Catalog.self) private var catalog
 
-    private var needsSignIn: Bool { connection.status?.status == "needs_auth" }
+    /// Its sign-in ended: the engine says so, or a run was refused it (the one in use).
+    private var needsSignIn: Bool {
+        connection.status?.status == "needs_auth" || (isInUse && catalog.endedSignIns.contains(plan.id))
+    }
 
     private var who: String {
         if connection.type == "env" { return "From \(connection.name ?? "the environment")" }
@@ -592,7 +599,7 @@ private struct PlanAccountRow: View {
             if connection.type == "credential" {
                 if !isInUse, let id = connection.credentialID {
                     Button("Use This Account") {
-                        Task { try? await app.api?.activateCredential(id) }
+                        Task { try? await catalog.api?.activateCredential(id) }
                         app.releaseLimit(plan.id)
                     }
                 }
@@ -605,13 +612,15 @@ private struct PlanAccountRow: View {
         }
     }
 
-    /// The last of your accounts with it goes from your machines too (they have a copy of it);
-    /// with others left, the machines get the one in use next (the sync knows which account each
-    /// machine's copy was made of).
+    /// The last of your accounts with it goes from your machines too, when they have a copy of it
+    /// (GitHub Copilot's); with others left, the machines get the one in use next (the sync knows
+    /// which account each machine's copy was made of). On a machine, its own goes.
     private func remove() {
         guard let id = connection.credentialID else { return }
         let accounts = plan.connections.filter { $0.type == "credential" }
-        if accounts.count <= 1 {
+        if catalog.machine != nil {
+            Task { try? await catalog.api?.removeCredential(id) }
+        } else if accounts.count <= 1 {
             app.forgetSignIn(plan.id)
         } else {
             Task { try? await app.api?.removeCredential(id) }

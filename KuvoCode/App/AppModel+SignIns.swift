@@ -2,8 +2,8 @@ import Foundation
 import OpenCodeKit
 
 extension AppModel {
-    /// Your accounts (API keys, sign-ins like ChatGPT's or GitHub Copilot's) and the integrations
-    /// you signed in to here (Notion, Linear…) work on your machines too: each is copied between
+    /// Your accounts (API keys, sign-ins like GitHub Copilot's) and the integrations you signed in
+    /// to here (Notion, Linear…) work on your machines too: each is copied between
     /// this Mac's engine and a machine's, the newer one winning (a service may hand out a new
     /// refresh token each time it's used, and the other copy then stops working). The older copy
     /// goes, so they don't pile up. Sign-outs it hasn't taken yet go first.
@@ -41,12 +41,16 @@ extension AppModel {
             case nil: break
             }
         }
-        // Accounts, each the one in use here: keys and sign-ins alike. (Integrations the catalog
-        // names as an account's, not a server's.)
+        // Accounts, each the one in use here: keys, and sign-ins that stay the same. (Integrations
+        // the catalog names as an account's, not a server's.)
         let integrations = catalog.integrations.isEmpty ? ((try? await mac.integrations()) ?? []) : catalog.integrations
         let accounts = Set(integrations.filter { !$0.isMCP }.map(\.id))
-        for mine in ours where mine.active && accounts.contains(mine.integrationID) {
+        await removeRenewingCopies(ours: ours, theirs: theirs, accounts: accounts, remote: remote, machine: engine.machine.id)
+        for mine in ours where mine.active && accounts.contains(mine.integrationID) && !Self.renewsItself(mine) {
             let yours = theirs.first { $0.integrationID == mine.integrationID && $0.active }
+            // The machine signed in on its own (a ChatGPT sign-in where this Mac has a key): its own
+            // stays, neither replaced by this Mac's nor shared back.
+            if let yours, Self.renewsItself(yours) { continue }
             // Two of your accounts with one label here (two GitLab accounts on one host): the label
             // can't say which the machine's copy is of.
             let byLabel = ours.filter { $0.integrationID == mine.integrationID && $0.label == mine.label }.count == 1
@@ -100,6 +104,36 @@ extension AppModel {
         let stored = await Self.entry(like: mine, for: far, in: remote)
         Self.noteCopy(stored.map { Copy(mac: mine.id, machine: $0.id) }, on: machine, of: far)
         return true
+    }
+
+    /// A sign-in that gets a new refresh token each time it's renewed (ChatGPT's, GitLab's…), the
+    /// old one then refused. Two engines can't share one: whichever renews second (a machine whose
+    /// bots ran while it was apart from this Mac) is refused, and the service may end the sign-in
+    /// everywhere. Each machine signs in to these on its own. GitHub Copilot's keeps its token.
+    static func renewsItself(_ entry: CredentialEntry) -> Bool {
+        guard entry.value["refresh"]?.string?.isEmpty == false else { return false }
+        return !["github-copilot"].contains(entry.integrationID)
+    }
+
+    /// Takes off a machine the copies this Mac made there of its sign-ins that renew themselves
+    /// (before they were kept apart): the copy noted, or one with this Mac's very refresh token.
+    /// One the machine signed in to on its own stays.
+    private func removeRenewingCopies(ours: [CredentialEntry], theirs: [CredentialEntry], accounts: Set<String>, remote: OpenCodeAPI, machine: String) async {
+        for integration in accounts {
+            let mine = ours.filter { $0.integrationID == integration && Self.renewsItself($0) }
+            let copy = Self.copy(on: machine, of: integration)
+            guard !mine.isEmpty || copy != nil else { continue }
+            let copies = theirs.filter { yours in
+                yours.integrationID == integration && Self.renewsItself(yours)
+                    && (yours.id == copy?.machine || mine.contains { Self.lasting($0) == Self.lasting(yours) })
+            }
+            var removed = true
+            for yours in copies where (try? await remote.removeCredential(yours.id)) == nil { removed = false }
+            // Noted while there was a copy to note: a key copied since keeps its note.
+            if removed, copy != nil, !ours.contains(where: { $0.integrationID == integration && $0.active && !Self.renewsItself($0) }) {
+                Self.noteCopy(nil, on: machine, of: integration)
+            }
+        }
     }
 
     /// The sign-in `api` keeps for `integration` that is `entry` (or a copy of it), as stored.
@@ -168,9 +202,16 @@ extension AppModel {
     func forgetSignIn(_ integration: String) {
         let mac = api
         Task {
+            var copied = true
             if let mac, let entries = try? await mac.credentialEntries() {
-                for entry in entries where entry.integrationID == integration { try? await mac.removeCredential(entry.id) }
+                let removing = entries.filter { $0.integrationID == integration }
+                // An account's sign-ins that renew themselves aren't copied: a machine's is its own,
+                // and stays. (An integration's server's are, as its keys are.)
+                let isAccount = catalog.integrations.contains { $0.id == integration && !$0.isMCP }
+                copied = !isAccount || removing.isEmpty || removing.contains { !Self.renewsItself($0) }
+                for entry in removing { try? await mac.removeCredential(entry.id) }
             }
+            guard copied else { return }
             // Only after this Mac's is gone: one it still has counts as signed in to again.
             var pending = Self.pendingSignOuts.filter { id, _ in machines.list.contains { $0.id == id } }
             for machine in machines.list where !(pending[machine.id] ?? []).contains(integration) {

@@ -6,6 +6,9 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Requests to a model whose sign-in ran out and couldn't be renewed (shown only as "Request failed: 400") now say so, with Sign In Again, and Accounts and the sidebar mark that account.
+- Sign-ins that renew themselves with a new token each time (an older ChatGPT sign-in, GitLab Duo) are no longer copied to your machines, where two copies ended the sign-in everywhere; each machine signs in to its plans on its own, in Accounts with the machine picked. Copies made before are taken off the machines. API keys and GitHub Copilot still go to all of them.
+
 ## 0.6.0
 
 - With Find open, Esc closes it first; press Esc again to stop the agent.
