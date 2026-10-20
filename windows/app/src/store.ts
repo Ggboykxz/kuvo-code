@@ -83,7 +83,7 @@ export function useStore(): number {
 // ---- The look ----
 
 export const lookAccents: Record<string, { color: string; title: string }> = {
-  system: { color: "", title: "Default" },
+  system: { color: "", title: "macOS Accent" },
   blue: { color: "#0a84ff", title: "Blue" },
   purple: { color: "#bf5af2", title: "Purple" },
   pink: { color: "#ff375f", title: "Pink" },
@@ -109,9 +109,10 @@ export function applyLook() {
     root.style.removeProperty("--accent-hover");
   }
   root.dataset.theme = look.theme === "system" ? "" : look.theme;
-  root.style.setProperty("--text-base", `${look.textSize}px`);
+  // The Mac's text size applies to the conversation, not to the chrome.
+  root.style.setProperty("--message-size", `${look.textSize}px`);
   root.style.setProperty("--motion-base", look.motion === "reduced" ? "1ms" : "320ms");
-  root.style.setProperty("--motion-fast", look.motion === "reduced" ? "1ms" : "200ms");
+  root.style.setProperty("--motion-fast", look.motion === "reduced" ? "1ms" : "120ms");
   try { localStorage.setItem("kuvo-look", JSON.stringify(look)); } catch {}
   for (const swatch of document.querySelectorAll("#accent-swatches .swatch")) {
     swatch.classList.toggle("selected", (swatch as HTMLElement).dataset.accent === look.accent);
@@ -122,7 +123,7 @@ export function loadLook() {
   try {
     const stored = JSON.parse(localStorage.getItem("kuvo-look") ?? "{}");
     if (stored.accent in lookAccents) look.accent = stored.accent;
-    if (["13", "14", "16"].includes(stored.textSize)) look.textSize = stored.textSize;
+    if (["13", "14", "15.5", "17"].includes(stored.textSize)) look.textSize = stored.textSize;
     if (["full", "reduced"].includes(stored.motion)) look.motion = stored.motion;
     if (["system", "light", "dark"].includes(stored.theme)) look.theme = stored.theme;
   } catch {}

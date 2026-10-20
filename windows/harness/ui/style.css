@@ -1,13 +1,9 @@
 /* Kuvo Code harness UI — the design this app is bound to.
-   Bound to OpenDesign's design direction `modern-minimal` ("Modern minimal — Linear / Vercel"),
-   read with the tool that ships it:
-     od tools directions --id modern-minimal --json
-   The mood: quiet, precise, software-native — system fonts, crisp neutral foundations, a
-   small but visible palette so the interface feels shipped rather than greyscale. The posture:
-   hairline borders only and no shadows except dropdowns and modals; tight tracking on
-   display sizes; tabular numerals; one primary action colour, one secondary signal, and the
-   status colours. The binding itself is in DESIGN.md beside this file; what follows is it.
-   The Mac app's structure and wording are unchanged — only the look moves to this system. */
+   Phase 1 retired OpenDesign's `modern-minimal`. The binding is now the Mac app's own design
+   layer (KuvoCode/Design), written down in DESIGN.md beside this file. The Mac binding block
+   at the end of this file wins the cascade; the direction below is kept only until Phase 2
+   moves its rules into the components and deletes it.
+   The Mac app's structure and wording are unchanged — only the look moves to its system. */
 
 :root {
   /* Canvas — the direction's own neutrals, in oklch. */
@@ -1493,3 +1489,265 @@ li.unread .session { position: relative; padding-left: 16px; }
 .entry-failed { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); }
 .entry-failed .small { color: var(--ink-soft); }
 .entry-failed .small:hover { color: var(--accent); border-color: var(--line); }
+
+/* ==========================================================================
+   The Mac binding (Phase 1)
+
+   The values below are the Mac app's own, read from KuvoCode/Design/:
+   Surfaces.swift (canvas, ambient, card fills, accent wash, wells, rim),
+   Theme.swift (metrics, spring), Look.swift (type sizes, typefaces) and
+   Card.swift / Composer.swift / TranscriptView.swift (the surfaces).
+
+   They come after the direction's block on purpose: same specificity, later
+   wins, so the page changes without a second stylesheet. Phase 2 moves these
+   rules into the components above and deletes the old direction.
+   ========================================================================== */
+
+:root {
+  /* The canvas: the Mac's glass tint, flattened; its ambient is a warm-to-cool
+     linear gradient, 7 % at the corners and 1.75 % through the middle. */
+  --bg: #F6F4EE;
+  --bg-ambient: linear-gradient(135deg,
+    rgba(255, 158, 107, 0.07) 0%,
+    rgba(255, 158, 107, 0.0175) 40%,
+    rgba(107, 140, 255, 0.0175) 60%,
+    rgba(107, 140, 255, 0.07) 100%);
+
+  /* Cards: white focused, warm ivory unfocused (Surfaces.swift:59-71). */
+  --surface: #FFFFFF;
+  --panel: #FFFFFF;
+  --panel-2: #F9F7F1;
+  --panel-glass: rgba(246, 244, 238, 0.72);
+
+  /* System ink, not slate: slate is the hairline (Surfaces.swift:12-22). */
+  --fg: #1D1D1F;
+  --ink: #1D1D1F;
+  --muted: rgba(29, 29, 31, 0.62);
+  --ink-soft: rgba(29, 29, 31, 0.62);
+  --ink-faint: rgba(29, 29, 31, 0.38);
+  --border: rgba(15, 23, 42, 0.07);
+  --line: rgba(15, 23, 42, 0.07);
+  --line-soft: rgba(15, 23, 42, 0.05);
+  --lit: rgba(255, 255, 255, 0.8);
+  --hover: rgba(15, 23, 42, 0.06);
+
+  /* Recessed wells: code, search, fields (Surfaces.swift:79-87). */
+  --code-bg: rgba(15, 23, 42, 0.035);
+  --well: rgba(15, 23, 42, 0.035);
+  --well-border: rgba(15, 23, 42, 0.07);
+
+  /* Accent: the user's pick; the wash is 10 % in light, 22 % in dark. */
+  --accent: #007AFF;
+  --accent-hover: #0062CC;
+  --accent-soft: color-mix(in oklab, var(--accent), transparent 90%);
+  --bubble-fill: color-mix(in oklab, var(--accent), transparent 90%);
+  --bubble-edge: color-mix(in srgb, var(--accent) 28%, white 72%);
+
+  /* macOS system colours, the Mac's semantic set. */
+  --danger: #FF3B30;
+  --danger-soft: color-mix(in oklab, var(--danger), transparent 90%);
+  --ok: #34C759;
+  --ok-soft: color-mix(in oklab, var(--ok), transparent 90%);
+  --warn: #FF9500;
+  --warn-soft: color-mix(in oklab, var(--warn), transparent 90%);
+
+  /* Radii: 14 card/composer, 18 bubble/palette, 10 well, 8 row, 7 list,
+     6 button, 5 text. Theme.swift:5-19, Surfaces.swift:179-191. */
+  --radius: 10px;
+  --radius-card: 14px;
+  --radius-panel: 14px;
+  --radius-bubble: 18px;
+  --radius-palette: 18px;
+  --radius-well: 10px;
+  --radius-row: 8px;
+  --radius-list: 7px;
+  --radius-button: 6px;
+  --radius-text: 5px;
+  --radius-sm: 6px;
+  --radius-lg: 14px;
+  --radius-xs: 5px;
+  --radius-pill: 9999px;
+
+  /* Shadows: soft, from the fill; the rim is a 1 px inset highlight. */
+  --shadow-card: 0 2px 6px rgba(15, 23, 42, 0.07);
+  --shadow-card-focused: 0 6px 16px rgba(15, 23, 42, 0.10);
+  --shadow-composer: inset 0 1px 0 rgba(255, 255, 255, 0.80), 0 2px 8px rgba(0, 0, 0, 0.07);
+  --shadow-lifted: 0 16px 48px rgba(15, 23, 42, 0.14), 0 1px 2px rgba(15, 23, 42, 0.08);
+
+  /* Motion: the hover beat is 120 ms; the app's spring is Phase 3. */
+  --motion-quick: 120ms;
+  --motion-fast: 120ms;
+  --motion-base: 320ms;
+  --motion-slow: 500ms;
+  --motion-hover: 120ms;
+  --ease-hover: cubic-bezier(0, 0, 0.2, 1);
+
+  /* Type: the Mac's message sizes and code size (Look.swift:48-83). */
+  --message-size: 14px;
+  --text-code: 12.5px;
+  --tracking-display: 0;
+}
+
+/* The Mac's dark card fills and wells (Surfaces.swift:59-87). */
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) {
+    --bg: #131417;
+    --bg-ambient: linear-gradient(135deg,
+      rgba(255, 158, 107, 0.06) 0%,
+      rgba(255, 158, 107, 0.015) 40%,
+      rgba(107, 140, 255, 0.015) 60%,
+      rgba(107, 140, 255, 0.06) 100%);
+    --surface: #181A1F;
+    --panel: #181A1F;
+    --panel-2: #202228;
+    --panel-glass: rgba(24, 26, 31, 0.72);
+    --fg: #F5F5F7;
+    --ink: #F5F5F7;
+    --muted: rgba(245, 245, 247, 0.62);
+    --ink-soft: rgba(245, 245, 247, 0.62);
+    --ink-faint: rgba(245, 245, 247, 0.38);
+    --border: rgba(255, 255, 255, 0.08);
+    --line: rgba(255, 255, 255, 0.08);
+    --line-soft: rgba(255, 255, 255, 0.06);
+    --lit: rgba(255, 255, 255, 0.13);
+    --hover: rgba(255, 255, 255, 0.06);
+    --code-bg: rgba(0, 0, 0, 0.30);
+    --well: rgba(0, 0, 0, 0.30);
+    --well-border: rgba(255, 255, 255, 0.07);
+    --accent: #0A84FF;
+    --accent-hover: #409CFF;
+    --accent-soft: color-mix(in oklab, var(--accent), transparent 78%);
+    --bubble-fill: color-mix(in oklab, var(--accent), transparent 78%);
+    --bubble-edge: color-mix(in srgb, var(--accent) 45%, rgba(255, 255, 255, 0.35));
+    --danger: #FF453A;
+    --danger-soft: color-mix(in oklab, var(--danger), transparent 90%);
+    --ok: #30D158;
+    --ok-soft: color-mix(in oklab, var(--ok), transparent 90%);
+    --warn: #FF9F0A;
+    --warn-soft: color-mix(in oklab, var(--warn), transparent 90%);
+    --shadow-card: 0 2px 6px rgba(0, 0, 0, 0.22);
+    --shadow-card-focused: 0 6px 16px rgba(0, 0, 0, 0.36);
+    --shadow-composer: inset 0 1px 0 rgba(255, 255, 255, 0.13), 0 1px 3px rgba(0, 0, 0, 0.25);
+    --shadow-lifted: 0 16px 48px rgba(0, 0, 0, 0.55), 0 1px 2px rgba(0, 0, 0, 0.35);
+  }
+}
+
+html[data-theme="dark"] {
+  --bg: #131417;
+  --bg-ambient: linear-gradient(135deg,
+    rgba(255, 158, 107, 0.06) 0%,
+    rgba(255, 158, 107, 0.015) 40%,
+    rgba(107, 140, 255, 0.015) 60%,
+    rgba(107, 140, 255, 0.06) 100%);
+  --surface: #181A1F;
+  --panel: #181A1F;
+  --panel-2: #202228;
+  --panel-glass: rgba(24, 26, 31, 0.72);
+  --fg: #F5F5F7;
+  --ink: #F5F5F7;
+  --muted: rgba(245, 245, 247, 0.62);
+  --ink-soft: rgba(245, 245, 247, 0.62);
+  --ink-faint: rgba(245, 245, 247, 0.38);
+  --border: rgba(255, 255, 255, 0.08);
+  --line: rgba(255, 255, 255, 0.08);
+  --line-soft: rgba(255, 255, 255, 0.06);
+  --lit: rgba(255, 255, 255, 0.13);
+  --hover: rgba(255, 255, 255, 0.06);
+  --code-bg: rgba(0, 0, 0, 0.30);
+  --well: rgba(0, 0, 0, 0.30);
+  --well-border: rgba(255, 255, 255, 0.07);
+  --accent: #0A84FF;
+  --accent-hover: #409CFF;
+  --accent-soft: color-mix(in oklab, var(--accent), transparent 78%);
+  --bubble-fill: color-mix(in oklab, var(--accent), transparent 78%);
+  --bubble-edge: color-mix(in srgb, var(--accent) 45%, rgba(255, 255, 255, 0.35));
+  --danger: #FF453A;
+  --danger-soft: color-mix(in oklab, var(--danger), transparent 90%);
+  --ok: #30D158;
+  --ok-soft: color-mix(in oklab, var(--ok), transparent 90%);
+  --warn: #FF9F0A;
+  --warn-soft: color-mix(in oklab, var(--warn), transparent 90%);
+  --shadow-card: 0 2px 6px rgba(0, 0, 0, 0.22);
+  --shadow-card-focused: 0 6px 16px rgba(0, 0, 0, 0.36);
+  --shadow-composer: inset 0 1px 0 rgba(255, 255, 255, 0.13), 0 1px 3px rgba(0, 0, 0, 0.25);
+  --shadow-lifted: 0 16px 48px rgba(0, 0, 0, 0.55), 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+/* ---- The surfaces, in the Mac's materials ---- */
+
+.card {
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+.card:focus-within { box-shadow: var(--shadow-card-focused); }
+
+/* The composer is opaque: card fill, a rim, a soft shadow (Composer.swift:489-511). */
+.composer {
+  background: var(--panel);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-composer);
+  padding: 10px 16px 7px;
+}
+/* The Mac's composer keeps its rim when it is focused; the caret says where you are. */
+.composer:focus-within {
+  border-color: var(--line);
+  box-shadow: var(--shadow-composer);
+}
+/* The editor is the card, not a well inside it. */
+.composer textarea {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+  font-size: var(--message-size, 14px);
+}
+.composer textarea:focus {
+  border: 0;
+  box-shadow: none;
+}
+
+/* Your words: accent glass, radius 18, no blur, 14 × 10, 80 pt leading. */
+.entry .text { font-size: var(--message-size, 14px); }
+.entry.user .text {
+  background: var(--bubble-fill);
+  border-color: var(--bubble-edge);
+  border-radius: var(--radius-bubble);
+  padding: 10px 14px;
+  max-width: min(680px, calc(100% - 80px));
+  box-shadow: inset 0 1px 0 var(--lit);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* The palette is the Mac's 600 pt card, 18 pt corner. */
+.palette-card { width: min(600px, 92vw); border-radius: var(--radius-palette); }
+.palette-item { border-radius: var(--radius-row); }
+
+/* Sheets and the settings card are cards, not glass. */
+.settings-card {
+  border-radius: var(--radius-panel);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.modal-card, .picker-card, .analytics-card { border-radius: var(--radius-panel); }
+
+/* Fields sit in a well (Surfaces.swift:179-191). */
+input, textarea, select {
+  background: var(--well);
+  border-color: var(--well-border);
+  border-radius: var(--radius-well);
+}
+input:focus, textarea:focus, select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.markdown pre { border-radius: var(--radius-well); }
+.markdown code { border-radius: var(--radius-text); background: var(--well); }
+/* Code is the message size less 1.5 pt, the Mac's MessageFont.code (Look.swift:82). */
+.markdown code, .markdown pre { font-size: calc(var(--message-size, 14px) - 1.5px); }
+#sessions li, .file-tree li, .drawer-tab { border-radius: var(--radius-row); }
+button { border-radius: var(--radius-button); }
+

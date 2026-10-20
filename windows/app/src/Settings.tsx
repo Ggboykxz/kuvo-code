@@ -201,7 +201,8 @@ function AppearancePage() {
         <select id="setting-text-size" value={look.textSize} onChange={event => { look.textSize = event.target.value; applyLook(); render(); }}>
           <option value="13">Small</option>
           <option value="14">Default</option>
-          <option value="16">Large</option>
+          <option value="15.5">Large</option>
+          <option value="17">Larger</option>
         </select>
       </div>
       <div className="settings-row">
@@ -211,7 +212,6 @@ function AppearancePage() {
           <option value="reduced">Reduced</option>
         </select>
       </div>
-      <div className="settings-note">The look is bound to OpenDesign's design direction "modern minimal — Linear / Vercel": system fonts, hairline borders, one accent. The accent you pick here is the one colour the app uses; everything else stays quiet.</div>
     </>
   );
 }

@@ -117,8 +117,9 @@ or noted:
 
 ## The design
 
-The view is bound to **OpenDesign's design direction `modern-minimal`** ("Modern minimal —
-Linear / Vercel"), read with OpenDesign's own tool (`od tools directions --id
-modern-minimal --json`); the binding is written down in `windows/harness/ui/DESIGN.md`.
-The motion layer is the direction's own, with the Mac's spring kept for the palette.
+The view is bound to the **Mac app's own design layer** (`KuvoCode/Design/`), extracted in
+`docs/MAC-UI-MAP.md` and written down in `windows/harness/ui/DESIGN.md`. Phase 1 retired
+OpenDesign's `modern-minimal`: the Mac's warm canvas, card fills, accent glass, radii, shadows
+and type sizes are the binding. The motion layer still uses the CSS approximation until Phase 3
+converts it to the Mac's analytic spring.
 The contrast of every text/surface pair passes AA in both themes.

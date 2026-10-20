@@ -22,7 +22,7 @@ const browser = await chromium.launch({
   executablePath,
   args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--font-render-hinting=none"],
 });
-const page = await browser.newPage({ viewport: { width, height }, colorScheme: dark, deviceScaleFactor: 2 });
+const page = await browser.newPage({ viewport: { width, height }, colorScheme: dark ? "dark" : "light", deviceScaleFactor: 2 });
 const problems = [];
 page.on("pageerror", error => problems.push(String(error)));
 await page.goto(url, { waitUntil: "domcontentloaded" });

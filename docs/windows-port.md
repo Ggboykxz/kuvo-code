@@ -239,9 +239,10 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
   - **2.21. The look is bound to OpenDesign's design direction `modern-minimal`
     ("Modern minimal — Linear / Vercel"), read with the tool that ships it
     (`od tools directions --id modern-minimal --json`): system fonts, hairline borders, no
-    shadows except what floats, tabular numerals, one accent. The binding is written down in
-    `windows/harness/ui/DESIGN.md`. Also: the settings pages belong to the settings — they
-    had slipped inside the navigation, which broke every page of it.
+    shadows except what floats, tabular numerals, one accent. The binding was written down in
+    `windows/harness/ui/DESIGN.md`; Phase 1 retired it for the Mac's own design layer. Also:
+    the settings pages belong to the settings — they had slipped inside the navigation, which
+    broke every page of it.
   - **2.20. What other tools write into opencode's own settings is now
     visible and can be brought over: the MCP servers the CLI, another agent, or a tool
     like OpenDesign put in `~/.config/opencode/opencode.json` are listed in Settings ▸

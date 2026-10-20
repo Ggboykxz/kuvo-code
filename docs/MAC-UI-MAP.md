@@ -35,13 +35,15 @@ Shape/Canvas declarations plus the drawn avatar faces, 20 view files deliberatel
 
 ## 1. The finding that resets the look
 
-The Windows client is currently bound to **OpenDesign's `modern-minimal` direction**, not to
-the Mac's design:
+The Windows client was bound to **OpenDesign's `modern-minimal` direction** until 0.5.36, not
+to the Mac's design:
 
-- `windows/harness/ui/DESIGN.md:7` — *"Source: OpenDesign's design direction `modern-minimal`"*.
+- `windows/harness/ui/DESIGN.md:7` — *"Source: OpenDesign's design direction `modern-minimal`"*
+  (replaced in Phase 1 by the Mac's own design layer).
 - `DESIGN.md:10` — *"The Mac app's structure and wording are unchanged — only the look moves to
-  this system."*
-- `docs/PARITY.md:120` — *"The view is bound to OpenDesign's design direction `modern-minimal`"*.
+  this system."* (the retired sentence).
+- `docs/PARITY.md:120` — *"The view is bound to OpenDesign's design direction `modern-minimal`"*
+  (replaced in Phase 1).
 
 That was a deliberate reinterpretation, and it is the opposite of the current brief: reproduce
 the Mac's UI, UX, motions, design and icons *à la lettre près*. The difference is not a few
@@ -49,7 +51,7 @@ colours; it is a different system — cool flat neutrals, 8/12 px radii, hairlin
 shadows, against the Mac's warm ivory canvas, opaque cards at 14 px, specular rims, soft
 shadows, and accent glass.
 
-| # | Element | Mac (source) | Windows at 0.5.36 | Phase |
+| # | Element | Mac (source) | Windows before Phase 1 (0.5.36) | Phase |
 | ---: | --- | --- | --- | --- |
 | 1 | Light canvas | `#F6F4EE` at 86 % over `.regularMaterial`, warm-to-cool ambient (`Surfaces.swift:28-55`) | `oklch(99% 0.002 240)` flat, indigo/teal radial washes (`style.css:14-17`) | 1 |
 | 2 | Dark canvas | white 6 % at 25 % over material, ambient 6 % (`Surfaces.swift:28-55`) | `#08090a` flat, indigo/teal washes (`style.css:137-141`) | 1 |
@@ -68,11 +70,16 @@ shadows, and accent glass.
 | 15 | Header | Session **tabs**, project identity, traffic-light inset, Hide Sessions / Hide Panel, split (`TitleBar.swift:218-251,579-599`) | Flat row: Files / Hide sessions / Split / `@` / Appearance / Export, find field always on (`App.tsx`) | 2, 6 |
 | 16 | Sidebar | One search well, project tree, 32 pt rows, 18 pt icons, unread and bot avatars (`SidebarView.swift:675-726`) | Two stacked search fields; flat list (`App.tsx`) | 2, 6 |
 
-**Decision.** Phase 1 replaces the `modern-minimal` binding. `DESIGN.md` will be rewritten
-around the Mac's own system — `Theme.swift`, `Look.swift`, `Surfaces.swift`, `Card.swift`,
-`WindowGlass.swift` — and `style.css` will take its values from that document. `modern-minimal`
-stays recorded only as the origin of the current CSS, not as the target. Until that rebind, any
-screenshot comparison is measuring the wrong design.
+**After 0.5.37:** rows 1–3, 6, 7, 9, 10, 12 and 13 are bound to the Mac's values; rows 4, 5,
+8, 11, 14–16 remain for Phases 2–6. The table is the baseline the release is measured against,
+not a description of the current page.
+
+**Decision, taken and executed in Phase 1.** `DESIGN.md` is rewritten around the Mac's own
+system — `Theme.swift`, `Look.swift`, `Surfaces.swift`, `Card.swift`, `WindowGlass.swift` — and
+the Mac binding block at the end of `style.css` takes its values from that document. Phase 2
+merges the block into the components and deletes the old direction. `modern-minimal` stays
+recorded only as the origin of the pre-Phase-1 CSS, not as the target. The 0.5.37 capture is
+the first one measured against the Mac's design rather than the reinterpretation.
 
 ---
 

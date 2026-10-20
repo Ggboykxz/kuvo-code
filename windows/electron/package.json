@@ -1,6 +1,6 @@
 {
   "name": "kuvo-code",
-  "version": "0.5.36",
+  "version": "0.5.37",
   "description": "Kuvo Code for Windows: a native shell around the engine and the conversation view.",
   "author": "Ggboykxz",
   "main": "main.js",

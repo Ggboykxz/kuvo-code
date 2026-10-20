@@ -33,7 +33,7 @@ The per-feature ledger is `docs/PARITY.md`; this document is the plan that follo
 | The Changes panel: git in four scopes, folded files, notes on a line, a commit, a pull request | ported |
 | The settings: Appearance, Keyboard, MCP, Agents, Skills, Commands, Permissions, Providers, Git, Archived sessions, Engine & storage, General | ported |
 | The shell: window, tray, single instance, terminal (ConPTY), auto-update wiring | ported |
-| The design: bound to OpenDesign's `modern-minimal` direction, with the Mac's glass and motions | ported |
+| The design: bound to the Mac app's own design layer; the materials and motion are being converted phase by phase | in progress |
 
 ## The plan, in order
 

@@ -1713,7 +1713,7 @@ $("palette").addEventListener("click", event => { if (event.target === $("palett
 
 const LOOK_KEY = "kuvo-look";
 const lookAccents = {
-  system: { color: "", title: "Default" },
+  system: { color: "", title: "macOS Accent" },
   blue: { color: "#0a84ff", title: "Blue" },
   purple: { color: "#bf5af2", title: "Purple" },
   pink: { color: "#ff375f", title: "Pink" },
@@ -1742,7 +1742,7 @@ function applyLook() {
     root.style.removeProperty("--accent");
     root.style.removeProperty("--accent-hover");
   }
-  root.style.setProperty("--text-base", `${look.textSize}px`);
+  root.style.setProperty("--message-size", `${look.textSize}px`);
   root.classList.toggle("reduced-motion", look.motion === "reduced");
   if (look.theme === "system") document.documentElement.removeAttribute("data-theme");
   else document.documentElement.dataset.theme = look.theme;
@@ -2755,7 +2755,7 @@ $("setting-theme").addEventListener("change", event => { look.theme = event.targ
 try {
   const stored = JSON.parse(localStorage.getItem(LOOK_KEY) || "{}");
   if (stored.accent in lookAccents) look.accent = stored.accent;
-  if (["13", "14", "16"].includes(stored.textSize)) look.textSize = stored.textSize;
+  if (["13", "14", "15.5", "17"].includes(stored.textSize)) look.textSize = stored.textSize;
   if (["full", "reduced"].includes(stored.motion)) look.motion = stored.motion;
   if (["system", "light", "dark"].includes(stored.theme)) look.theme = stored.theme;
 } catch {}
