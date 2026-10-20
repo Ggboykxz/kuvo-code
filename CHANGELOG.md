@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Cursor sessions work when they don't approve everything, instead of failing with "sandboxing is not supported in this environment". You can pick thinking effort for every Cursor and Grok model that has it. When your settings (a mode, the session's agent, Permissions) don't allow a tool, Grok and Antigravity carry on without it instead of stopping the turn.
 - Kuvo Code no longer crashes when it shows a conversation in which drawing a widget failed; the failed step shows instead.
 - Notifications hide a hex key after a name again (like ENCRYPTION_KEY=…), and show short --key values, like sort --key 2,3.
 - Colored search output highlights patterns with | or ) in them, and skips searches that could slow the conversation down.
