@@ -870,7 +870,7 @@ final class Workspace {
             }
             beforeEngine = beforeEngine.filter { id in !listed.contains { $0.id == id } }
             if let active = try? await api.activeSessions() {
-                running = running.filter { id in !(session(id).map(OutsideAgents.isAgentSession) ?? false) }.union(active)
+                running = running.filter { !isBridgeSession($0) }.union(active)
             }
             // Questions it asked before starting over went with it (it keeps them in memory): only
             // those it still asks stay.
@@ -911,13 +911,19 @@ final class Workspace {
 
     @ObservationIgnored private var engineRunOwners: [String: String] = [:]
 
+    /// One of the agents bridge's sessions: a session with the coding agents, or a subagent's of
+    /// one (which has no row of its own).
+    private func isBridgeSession(_ id: String) -> Bool {
+        session(id).map(OutsideAgents.isAgentSession) ?? bridgeSessions.contains(id)
+    }
+
     /// The agents bridge stopped for good: its sessions aren't at work, nor asking anything.
     func agentsStopped() {
         for (request, id) in asking where sharedForms[request] == nil && (session(id).map(OutsideAgents.isAgentSession) ?? false) {
             asking[request] = nil
             Notifier.shared.clear(request: request)
         }
-        running = running.filter { id in !(session(id).map(OutsideAgents.isAgentSession) ?? false) }
+        running = running.filter { !isBridgeSession($0) }
         for model in models.values where OutsideAgents.isAgentSession(model.session) { model.bridgeStopped() }
     }
 

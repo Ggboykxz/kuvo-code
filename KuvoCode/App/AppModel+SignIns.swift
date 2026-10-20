@@ -71,7 +71,15 @@ extension AppModel {
             }
             // Back to this Mac only when it's known to be this account's (its ID, or the copy made
             // of it): a label shared by two accounts could bring back the other one.
-            let known = Self.accountID(mine).map { $0 == Self.accountID(yours) } ?? (copy == Copy(mac: mine.id, machine: yours.id))
+            let known: Bool
+            if let a = Self.accountID(mine), let b = Self.accountID(yours) {
+                known = a == b
+            } else if let copy {
+                known = copy == Copy(mac: mine.id, machine: yours.id)
+            } else {
+                // No copy noted yet (made before it was): the label, when it names one account here.
+                known = byLabel && mine.label == yours.label
+            }
             if known, yours.expires > mine.expires {
                 // Back to this Mac, and from it to the other machines.
                 guard (try? await mac.storeCredential(yours, for: local)) != nil else { return nil }
