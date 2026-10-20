@@ -27,8 +27,10 @@ public enum EngineRoutes {
     /// where the engine is, nor updating an agent's program (that runs an installer on the Mac).
     public static func allowsAgents(_ path: String, method: String = "GET") -> Bool {
         guard staysInProject(path) else { return false }
-        if path.prefixMatch(of: #/api/kuvo/engine(/|\?|$)/#) != nil { return false }
-        if path.prefixMatch(of: #/api/integration/[^/?]+/update(/|\?|$)/#) != nil { return false }
+        // As the bridge routes it: it decodes each part of the path ("%75pdate" is "update").
+        let routed = path.removingPercentEncoding ?? path
+        if routed.prefixMatch(of: #/api/kuvo/engine(/|\?|$)/#) != nil { return false }
+        if routed.prefixMatch(of: #/api/integration/[^/?]+/update(/|\?|$)/#) != nil { return false }
         return allows(path, method: method)
             || path.prefixMatch(of: #/api/integration(/|\?|$)/#) != nil
             || path.prefixMatch(of: #/api/kuvo/(auto|accounts)(/|\?|$)/#) != nil
