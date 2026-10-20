@@ -24,7 +24,16 @@ export type SymbolName =
   | "tray.and.arrow.down"
   | "list.bullet"
   | "doc"
+  | "doc.text"
+  | "doc.badge.plus"
   | "doc.on.doc"
+  | "pencil"
+  | "terminal"
+  | "globe"
+  | "questionmark.bubble"
+  | "wand.and.stars"
+  | "wrench.and.screwdriver"
+  | "chevron.left.forwardslash.chevron.right"
   | "checkmark"
   | "magnifyingglass"
   | "arrow.triangle.branch"
@@ -60,6 +69,15 @@ const PATHS: Record<SymbolName, string[]> = {
   "doc.on.doc": ["M5.5 5.5h-3A1.5 1.5 0 0 0 1.5 1.5H7.5", "M3 5.5H2.2A1.3 1.3 0 0 0 1.3 1.3H5.5", "M9 2.2h3.3A1.5 1.5 0 0 1 1.5 1.5v6.8a1.5 1.5 0 0 1-1.5 1.5H8.2a1.5 1.5 0 0 1-1.5-1.5V6.2a1.5 1.5 0 0 1 1.5-1.5", "M6 8.2h5"],
   "checkmark": ["M3.2 8.4l3.1 3.1 6.5-6.5"],
   "doc": ["M4 2.6h5l3 3v7.8H4z", "M9 2.6v3h3"],
+  "doc.text": ["M4 2.6h5l3 3v7.8H4z", "M9 2.6v3h3", "M5.8 8h4.4M5.8 10.4h3"],
+  "doc.badge.plus": ["M4 2.6h4.2l2.8 2.8v7.6H4z", "M8.2 2.6v2.8h2.8", "M11.6 9.4v3.4M9.9 11.1h3.4"],
+  "pencil": ["M3 13l.9-3 6.8-6.8a1.2 1.2 0 0 1 1.7 0l.4.4a1.2 1.2 0 0 1 0 1.7L6 12.1 3 13Z", "M9.8 4l2.2 2.2"],
+  "terminal": ["M2.6 3.4h10.8v9.2H2.6z", "M5 6.4l2 1.8-2 1.8M8.6 10.4h2.6"],
+  "globe": ["M8 2.4a5.6 5.6 0 1 0 0 11.2 5.6 5.6 0 0 0 0-11.2Z", "M2.6 8h10.8", "M8 2.4c1.6 1.6 2.4 3.4 2.4 5.6s-.8 4-2.4 5.6c-1.6-1.6-2.4-3.4-2.4-5.6s.8-4 2.4-5.6Z"],
+  "questionmark.bubble": ["M8 2.4a5.6 5.6 0 0 0-3.3 10.1c.6.5 1 1.1 1 1.9v.4h4.6v-.4c0-.8.4-1.4 1-1.9A5.6 5.6 0 0 0 8 2.4Z", "M6.6 7.2a1.5 1.5 0 1 1 2.2.8c-.5.4-.8.8-.8 1.4"],
+  "wand.and.stars": ["M3 13l6.4-6.4", "M9.4 4.2l.7 1.6 1.6.7-1.6.7-.7 1.6-.7-1.6-1.6-.7 1.6-.7Z", "M12.6 8.6l.5 1.1 1.1.5-1.1.5-.5 1.1-.5-1.1-1.1-.5 1.1-.5Z"],
+  "wrench.and.screwdriver": ["M10.6 2.6a3.2 3.2 0 0 0-3.9 4.2L2.8 10.7a1.2 1.2 0 0 0 1.7 1.7l3.9-3.9a3.2 3.2 0 0 0 4.2-3.9l-1.9 1.9-1.6-.4-.4-1.6Z", "M6.4 4.4l5.2 5.2"],
+  "chevron.left.forwardslash.chevron.right": ["M5.8 4.4L2.8 8l3 3.6", "M6.8 12.4l1.4-8.8", "M10.2 4.4l3 3.6-3 3.6"],
   "magnifyingglass": ["M7 2.6a4.4 4.4 0 1 0 0 8.8 4.4 4.4 0 0 0 0-8.8Z", "M10.4 10.4L13.4 13.4"],
   "arrow.triangle.branch": ["M5.2 2.6v7.2a2.6 2.6 0 0 0 2.6 2.6h4.4", "M5.2 2.6L2.6 5.2M5.2 2.6l2.6 2.6", "M11 9.6h1.2a1.4 1.4 0 0 0 1.4-1.4V4.4", "M11 9.6L9.4 8M11 9.6l1.6-1.6"],
   "arrow.uturn.backward": ["M4 6.6h5.4a3.4 3.4 0 0 1 0 6.8H6.6", "M6.6 3.6L3.4 6.6l3.2 3"],

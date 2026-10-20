@@ -33,6 +33,7 @@ const sources = {
   logo: read("app", "src", "components", "provider-logo.tsx"),
   spinner: read("app", "src", "components", "spinner.tsx"),
   transcript: read("harness", "transcript.mjs"),
+  toolCall: read("app", "src", "components", "tool-call.tsx"),
   mac: read("..", "Packages", "OpenCodeKit", "Sources", "OpenCodeKit", "Events", "Transcript.swift"),
   tailwind: read("app", "app", "globals.css"),
   postcss: read("app", "postcss.config.mjs"),
@@ -366,6 +367,22 @@ const checks = [
     assert.match(spinner, /className="spinner-faint"/);
     assert.match(spinner, /className="spinner-drawn"/);
     assert.match(spinner, /strokeDasharray=\{dash\}/);
+  }],
+
+  ["the tool rows say what the call did, in the Mac's words", ({ app, toolCall, symbols }) => {
+    // ToolCallView.swift:163-200: the words of the call. Ours said the tool's raw name.
+    assert.match(toolCall, /case "read": return `\$\{active \? "Reading " : "Read "\}/);
+    assert.match(toolCall, /case "shell": return `\$\{active \? "Running " : "Ran "\}/);
+    assert.match(toolCall, /case "grep": return `Searched for/);
+    assert.match(toolCall, /case "websearch": return `Searched the web for/);
+    // And the mark that stands for it (ToolCallView.swift:312-326), drawn.
+    assert.match(toolCall, /case "read": return "doc\.text"/);
+    assert.match(toolCall, /case "grep":\s*case "glob": return "magnifyingglass"/);
+    for (const mark of ["doc.text", "doc.badge.plus", "pencil", "terminal", "globe", "questionmark.bubble", "wand.and.stars", "wrench.and.screwdriver"]) {
+      assert.ok(symbols.includes(`"${mark}"`), `${mark} is drawn`);
+    }
+    // And the row shows them.
+    assert.match(app, /<Spinner size=\{11\} \/> : <Symbol name=\{toolSymbol\(/);
   }],
 
   ["the page listens for the engine's own event names, and the transcript knows them", ({ app, transcript, mac }) => {

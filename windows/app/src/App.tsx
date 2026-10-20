@@ -50,6 +50,7 @@ import { DiffModal, Drawer, Palette, Picker, Toast } from "./Overlays";
 import { Shimmer } from "./components/ai-elements/shimmer";
 import { FolderIcon, Symbol } from "./components/symbols";
 import { Spinner } from "./components/spinner";
+import { toolSummary, toolSymbol } from "./components/tool-call";
 import { ProviderLogo } from "./components/provider-logo";
 import { motion } from "motion/react";
 import { macSpringOrStill } from "./motion";
@@ -86,9 +87,13 @@ function ToolCard({ part }: { part: TranscriptEntry["parts"] extends (infer P)[]
         onClick={() => hasDetails && setOpen(value => !value)}
         title={hasDetails ? "Show what it did" : undefined}
       >
+        {/* The Mac's row (ToolCallView.swift:99-128): the mark of the tool, what it did
+            in words, and the chevron that opens what it did. */}
+        <span className="tool-icon">
+          {going ? <Spinner size={11} /> : <Symbol name={toolSymbol(part.name ?? "tool")} size={12} />}
+        </span>
+        <span className="tool-name">{toolSummary(part.name ?? "tool", part.input as Record<string, unknown> | undefined, going, state.project)}</span>
         <span className="tool-chevron">{hasDetails ? <Symbol name="chevron.right" size={12} className={open ? "turned" : ""} /> : null}</span>
-        <span className="tool-name">{part.name ?? "tool"}</span>
-        <span className="tool-status">{status === "completed" ? "done" : status === "error" ? "failed" : status}</span>
       </button>
       {open && hasDetails ? (
         <div className="tool-details">

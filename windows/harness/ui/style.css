@@ -468,8 +468,11 @@ aside {
               border-color var(--motion-fast) var(--ease-standard);
 }
 .tool:hover { border-color: var(--ink-faint); background: var(--hover); }
+/* The Mac's row (ToolCallView.swift:15-16, 99-128): the mark of the tool in a 16 pt
+   column, the words of what it did, and the chevron that opens what it did. */
 .tool-head { display: flex; gap: var(--space-2); align-items: center; padding: var(--space-2) var(--space-3); }
-.tool-name { font-family: var(--font-mono); font-size: var(--text-sm); font-weight: 500; }
+.tool-icon { width: 16px; flex: 0 0 16px; display: inline-flex; align-items: center; justify-content: center; color: var(--ink-soft); }
+.tool-name { font-size: var(--text-sm); font-weight: 400; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tool-status { font-size: var(--text-xs); color: var(--ink-soft); }
 .tool.completed .tool-status { color: var(--ok); }
 .tool.error .tool-status { color: var(--danger); }
