@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Machines whose login shell is fish (or another that isn't like sh) work: a backslash in a file name, a bot's memory or a wake-up note no longer breaks the commands Kuvo Code runs there.
 - Answering from a notification (Allow, Reply, a question's choices) needs your Mac unlocked; a notification that can't show everything a request covers has no Allow button; and what looks like a password, token or key in a notification shows as dots.
 - Removing a provider you set up in Accounts also removes its key, here and on your machines.
 - In split view, Run, New Terminal, Open Quickly and Edit Project go to the session you're working in, as Stop does.
