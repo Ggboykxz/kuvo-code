@@ -333,7 +333,7 @@ extension AppModel {
         var environment = await machineEnvironment()
         let sites = Integrations.sites(Integrations.added(in: engineConfig).filter { !Integrations.macOnly.contains($0) })
         environment["OPENCODE_CONFIG_CONTENT"] = AppModel.merged(MachineBrowserInstaller.engineConfig(sites: sites), into: environment["OPENCODE_CONFIG_CONTENT"])
-        return MachineEngine.Launch(environment: environment, helper: MachineBrowserInstaller.helper)
+        return MachineEngine.Launch(environment: environment, helper: MachineBrowserInstaller.helper, agents: MachineEngine.agentsBridge)
     }
 
     /// Starts `engine` over with this Mac's settings as they are now (an integration's key), if

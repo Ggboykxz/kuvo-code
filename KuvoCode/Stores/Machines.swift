@@ -118,13 +118,15 @@ final class MachineEngine {
         var environment: [String: String]
         /// The browser helper the engine runs for the browser tools (`kuvo-browser.js`).
         var helper: (text: String, hash: String)
+        /// The agents bridge that starts beside it (`kuvo-agents.js`), for the coding agents there.
+        var agents: (text: String, hash: String)?
 
         /// Changes when the settings do, so an engine started with older ones is known.
         /// The launch script's, the watchdog's and the browser helper's versions count too: an
         /// engine running older ones is started over the next time it's idle. (The launch script's
         /// goes up when what it sets up changes: its folders, `kuvo-npx`, the commands' plugin.)
         var fingerprint: String {
-            let text = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n") + "\nlaunch=7\nwatchdog=wakes\nbrowser=\(helper.hash)"
+            let text = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n") + "\nlaunch=8\nwatchdog=wakes\nbrowser=\(helper.hash)\nagents=\(agents?.hash ?? "none")"
             return SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
         }
     }
@@ -188,8 +190,9 @@ final class MachineEngine {
                 if engine != nil { try await RemoteServer.stop(on: connection) }
                 engine = nil
             }
-            // The browser tools' helper, which an engine starts with.
+            // The browser tools' helper, and the agents bridge, which an engine starts with.
             try await MachineBrowserInstaller.installHelper(launch.helper, on: connection)
+            if let agents = launch.agents { try await Self.installAgents(agents, on: connection) }
             try check()
             let running: RemoteServer.Engine
             if let engine { running = engine } else { running = try await launchEngine(launch) }
@@ -239,7 +242,32 @@ final class MachineEngine {
     private struct Superseded: Error {}
 
     private func launchEngine(_ launch: Launch) async throws -> RemoteServer.Engine {
-        try await RemoteServer.launch(on: machine.connection, environment: launch.environment, notes: ["settings": launch.fingerprint, "mac": Self.macID])
+        try await RemoteServer.launch(on: machine.connection, environment: launch.environment, notes: ["settings": launch.fingerprint, "mac": Self.macID], withAgents: launch.agents != nil)
+    }
+
+    /// `kuvo-agents.js` as it goes to a machine: the bundle, with a last line naming its contents,
+    /// to tell whether a machine has it. (Its first line is Bun's.)
+    static let agentsBridge: (text: String, hash: String)? = {
+        guard let url = Bundle.main.url(forResource: "kuvo-agents", withExtension: "js"),
+              let text = try? String(contentsOf: url, encoding: .utf8), !text.isEmpty else { return nil }
+        let hash = SHA256.hash(data: Data(text.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
+        return (text + "\n// kuvo-agents \(hash)\n", hash)
+    }()
+
+    /// Puts the agents bridge in the machine's `~/.kuvo-code/bin`, unless it has this one already.
+    static func installAgents(_ bridge: (text: String, hash: String), on connection: SSHConnection) async throws {
+        let path = "$HOME/\(RemoteEngineInstaller.root)/bin/kuvo-agents.js"
+        let last = try await connection.run("tail -n 1 \"\(path)\" 2>/dev/null || true")
+        guard last.trimmingCharacters(in: .whitespacesAndNewlines) != "// kuvo-agents \(bridge.hash)" else { return }
+        let file = FileManager.default.temporaryDirectory.appending(path: "kuvo-agents-\(UUID().uuidString).js")
+        try Data(bridge.text.utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        try await connection.run("""
+            set -e
+            mkdir -p "$HOME/\(RemoteEngineInstaller.root)/bin"
+            cat >"\(path).new"
+            mv -f "\(path).new" "\(path)"
+            """, input: file)
     }
 
     private func attach(_ engine: RemoteServer.Engine, _ launch: Launch) async throws -> RemoteServer {
