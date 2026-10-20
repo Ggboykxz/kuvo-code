@@ -51,7 +51,7 @@ const TAB_IDLE = Number(process.env.KUVO_BROWSER_TAB_IDLE || 12 * 3600) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 24;
+const KEEPER = 25;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -241,9 +241,14 @@ function identity() {
 /// A finished download, from its temporary name to its own (numbered if that's taken). Its path,
 /// or null if it's gone.
 function finishDownload(guid, name) {
-  const safe = path.basename(String(name)).replace(/^\.+/, "").slice(0, 200) || "download";
-  const extension = path.extname(safe);
-  const stem = safe.slice(0, safe.length - extension.length);
+  // At most 200 bytes, whole characters, its extension kept (a name can't be longer than 255
+  // bytes there).
+  const whole = path.basename(String(name)).replace(/^\.+/, "") || "download";
+  let extension = path.extname(whole);
+  let stem = whole.slice(0, whole.length - extension.length);
+  if (Buffer.byteLength(extension) > 20) [stem, extension] = [whole, ""];
+  while (Buffer.byteLength(stem + extension) > 200) stem = [...stem].slice(0, -1).join("");
+  const safe = stem + extension;
   let file = path.join(DOWNLOADS, safe);
   for (let n = 2; fs.existsSync(file); n++) file = path.join(DOWNLOADS, `${stem} ${n}${extension}`);
   try {
@@ -624,6 +629,7 @@ async function host() {
       if (message.params.state === "completed" && name) {
         const file = finishDownload(message.params.guid, name);
         if (file) broadcast({ method: "Kuvo.downloaded", params: { name: path.basename(file), path: file, size: message.params.totalBytes } });
+        else broadcast({ method: "Kuvo.downloadFailed", params: { name } });
       } else if (name) {
         broadcast({ method: "Kuvo.downloadFailed", params: { name } });
       }
@@ -659,9 +665,18 @@ async function host() {
         internal("Target.detachFromTarget", { sessionId });
       }
       for (const [id, ask] of asks) if (ask.client === client) closeAsk(id);
-      let released = false;
-      for (const [targetId, holder] of held) if (holder === client) released = held.delete(targetId);
-      if (released) announceHeld();
+      // A page a Mac took over stays taken ten minutes after its connection drops (it slept, the
+      // network blinked), as long as an agent waits on one, for it to take the page again as it
+      // comes back.
+      for (const [targetId, holder] of held) {
+        if (holder !== client) continue;
+        held.set(targetId, null);
+        setTimeout(() => {
+          if (held.get(targetId) !== null) return;
+          held.delete(targetId);
+          announceHeld();
+        }, 600_000).unref?.();
+      }
       if (client.status?.working) broadcast({ method: "Kuvo.status", params: (status = everyStatus()) });
       if (client.viewer) broadcast({ method: "Kuvo.viewers", params: { count: viewers() } });
       if (!clients.size) idleSoon();
@@ -766,6 +781,8 @@ async function host() {
   // Downloads go into the browser's folder, each under a temporary name until it's done.
   fs.mkdirSync(DOWNLOADS, { recursive: true, mode: 0o700 });
   clearOldDownloads();
+  // And every hour while it runs, which can be for days.
+  setInterval(clearOldDownloads, 3_600_000).unref?.();
   internal("Browser.setDownloadBehavior", { behavior: "allowAndName", downloadPath: DOWNLOADS, eventsEnabled: true });
   if (reopen.length) {
     for (const url of reopen) internal("Target.createTarget", { url, newWindow: true });
@@ -970,6 +987,7 @@ async function takeTurn(call) {
 /// The call's turn ends, and the next in line goes.
 function endTurn(call) {
   if (current === call) {
+    unguardFiles();
     current = null;
     busy = false;
     acceptDialogs = false;
@@ -1094,9 +1112,14 @@ async function page() {
   }
   // Its own page (or, with no conversation named, the one in use) you took over since: it waits.
   if (target ? held.has(target) : !caller && held.has(active)) throw new HeldError();
-  // Any other page you took over isn't one to borrow: it gets a page of its own.
+  // Any other page you took over isn't one to borrow: it gets a page of its own. Nor one on a file
+  // it may not read (you opened it, say), which stays as it is.
   const fallback = open.find((info) => info.targetId === active)?.targetId ?? open.at(-1)?.targetId;
   target ??= fallback && !held.has(fallback) ? fallback : null;
+  if (target && (await onOutsideFile(target, open))) {
+    target = null;
+    notes.push("The tab in use shows a file outside this conversation's folder, so this goes on in a new tab.");
+  }
   if (target && caller && !(await c.send("Kuvo.claim", { targetId: target, session: caller })).ok) target = null;
   if (!target) {
     target = (await c.send("Target.createTarget", { url: "about:blank", newWindow: true })).targetId;
@@ -1115,7 +1138,7 @@ async function use(target) {
     sessions.set(target, session);
     await c.send("Page.enable", {}, session);
   }
-  await guardFiles(target, session);
+  await guardFiles(session);
   // In front in its window: a site's new tab shares its opener's, and only the front one is drawn.
   await c.send("Target.activateTarget", { targetId: target }).catch(() => {});
   if (active !== target) {
@@ -1497,54 +1520,60 @@ async function fileNote(address, session) {
   return file ? outsideNote(file) : null;
 }
 
-/// The file outside where `session` may read files that a page is on now, in itself or a frame;
-/// nil if none. Loads of such files are refused as they're made (see `guardFiles`); this is for a
-/// page that had one before, like one you opened. `access` is looked up once, when a page has a
-/// file in it. Its frames unknown, it goes by its own address.
+/// What a page has from files outside where `session` may read files: `{ file, main }`, `main`
+/// when it's the page itself, else a frame, a picture or a script in it; nil if nothing. Read from
+/// the page's resources, but not while it shows a dialog, which holds the page; unknown, it goes
+/// by the page's address. `access` is looked up once, when a page has a file in it.
 async function pageFile(p, session, access) {
+  let main = null;
   const addresses = [];
-  try {
-    const { frameTree } = await link.send("Page.getFrameTree", {}, p.session);
-    (function collect(node) {
-      if (node?.frame?.url) addresses.push(node.frame.url);
-      for (const child of node?.childFrames ?? []) collect(child);
-    })(frameTree);
-  } catch {
-    addresses.push(await address(p));
+  if (!dialogs.has(p.session)) {
+    try {
+      const { frameTree } = await link.send("Page.getResourceTree", {}, p.session, 3_000);
+      main = frameTree?.frame?.url ?? null;
+      (function collect(node) {
+        if (node?.frame?.url) addresses.push(node.frame.url);
+        // What it has, not what it was refused.
+        for (const resource of node?.resources ?? []) if (!resource.failed && !resource.canceled) addresses.push(resource.url);
+        for (const child of node?.childFrames ?? []) collect(child);
+      })(frameTree);
+    } catch {}
+  }
+  if (main === null) {
+    main = await address(p);
+    addresses.push(main);
   }
   if (!addresses.some((each) => each.startsWith("file:"))) return null;
   access.value ??= await fileAccess(session);
-  return addresses.map((each) => outsideFile(each, access.value)).find(Boolean) ?? null;
+  const itself = outsideFile(main, access.value);
+  if (itself) return { file: itself, main: true };
+  const file = addresses.map((each) => outsideFile(each, access.value)).find(Boolean);
+  return file ? { file, main: false } : null;
 }
 
-/// What each page may load from files, by its session here: what the conversation that last worked
-/// in it may read (see `fileAccess`). Its loads of files are paused, and those outside that are
-/// refused, as the page itself, a frame, a picture or a script; a page you took over loads
-/// anything. Kept from a call's first step in the page.
+/// What a page may load from files while a step works in it, by its session here: what the
+/// step's conversation may read (see `fileAccess`). Its loads of files are paused, and those
+/// outside that refused, as the page itself, a frame, a picture or a script; a page you took over
+/// loads anything. Only during the step: between steps (you browsing, another conversation's
+/// step) a page loads as it would, and the next step looks at what it has (`readyPage`).
 const fileRules = new Map();
-/// The files refused in each page (by its session), for the step to say so.
+/// The files refused in each page during the step (by its session), for it to say so.
 const refusedFiles = new Map();
 
-async function guardFiles(target, session) {
-  if (!current) return;
+async function guardFiles(session) {
+  if (!current || fileRules.has(session)) return;
   current.access ??= await fileAccess(current.session);
-  const first = !fileRules.has(session);
+  // Approve All: nothing to refuse.
+  if (current.access.anywhere) return;
   fileRules.set(session, current.access);
-  if (!first) return;
   await link.send("Fetch.enable", { patterns: [{ urlPattern: "file://*" }] }, session).catch(() => {});
-  // A page from a file it may read, loaded before: again, through the rules (what it showed from
-  // elsewhere goes). One it may not read is left to `tool`.
-  const here = await address({ target, session });
-  if (!current.access.anywhere && here.startsWith("file:") && !outsideFile(here, current.access)) {
-    await link.send("Page.reload", {}, session).catch(() => {});
-    await settle({ target, session }, true);
-  }
 }
 
-/// A page the agent no longer works in loads anything again.
-function unguardFiles(session) {
-  if (!fileRules.delete(session)) return;
-  link.send("Fetch.disable", {}, session).catch(() => {});
+/// The step is over, or waits for you: its pages load anything again.
+function unguardFiles() {
+  for (const session of fileRules.keys()) link?.send("Fetch.disable", {}, session).catch(() => {});
+  fileRules.clear();
+  refusedFiles.clear();
 }
 
 function fileRequest(message) {
@@ -1553,11 +1582,47 @@ function fileRequest(message) {
   const target = [...sessions].find(([, session]) => session === message.sessionId)?.[0];
   const file = access && !held.has(target) ? outsideFile(request.url, access) : null;
   if (file) {
-    refusedFiles.set(message.sessionId, [...(refusedFiles.get(message.sessionId) ?? []), file]);
+    const refused = refusedFiles.get(message.sessionId) ?? new Set();
+    if (refused.size < 20) refused.add(file);
+    refusedFiles.set(message.sessionId, refused);
     link.send("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" }, message.sessionId).catch(() => {});
   } else {
     link.send("Fetch.continueRequest", { requestId }, message.sessionId).catch(() => {});
   }
+}
+
+/// Whether `target` is on a file the conversation at work may not read (one you opened, say),
+/// from what `open` says of it (a page whose load of one was refused shows an error, not it).
+async function onOutsideFile(target, open) {
+  const url = open.find((info) => info.targetId === target)?.url ?? "";
+  if (!url.startsWith("file:") || !current) return false;
+  current.access ??= await fileAccess(current.session);
+  if (!outsideFile(url, current.access)) return false;
+  const session = sessions.get(target);
+  if (!session || dialogs.has(session)) return true;
+  const tree = await link.send("Page.getFrameTree", {}, session, 3_000).catch(() => null);
+  return !tree || Boolean(outsideFile(tree.frameTree?.frame?.url ?? url, current.access));
+}
+
+/// The page a step goes on in: `p`, loaded again without them if it shows pictures or frames from
+/// files outside the conversation's folder (from before, as its loads are only refused during a
+/// step); a new tab if it's on such a file itself, which stays as it is.
+async function readyPage(p) {
+  const found = await pageFile(p, caller, { value: current?.access });
+  if (!found) return p;
+  if (found.main) {
+    current?.pages?.delete(p.target);
+    const c = await browser();
+    const { targetId } = await c.send("Target.createTarget", { url: "about:blank", newWindow: true });
+    if (caller) await c.send("Kuvo.claim", { targetId, session: caller });
+    notes.push("The tab in use shows a file outside this conversation's folder, so this goes on in a new tab.");
+    return use(targetId);
+  }
+  await link.send("Page.reload", {}, p.session).catch(() => {});
+  await settle(p, true);
+  refusedFiles.delete(p.session);
+  notes.push("The page had files from outside this conversation's folder in it, so it was loaded again without them.");
+  return p;
 }
 
 /// Nil if the field is there and takes `wanted` ("password" or "text"), else why not.
@@ -1777,7 +1842,9 @@ async function waitForControl(call) {
 /// What a tool says instead of its step, after waiting for you.
 async function afterControl(wait) {
   if (wait.stillHeld) return text("The user took over the browser and still has it. Carry on without it for now, or try again later; if you work on your own (a bot), schedule a wake-up to come back to it.");
-  return text("The user took over the browser while you worked, and has handed it back. The page may have changed: this is where it is now. Go on from here.\n\n" + (await snapshot(await use(wait.target))));
+  const p = await readyPage(await use(wait.target));
+  const moved = notes.length ? notes.splice(0).join("\n") + "\n\n" : "";
+  return text("The user took over the browser while you worked, and has handed it back. The page may have changed: this is where it is now. Go on from here.\n\n" + moved + (await snapshot(p)));
 }
 
 /// A browser tool call, in its turn in the line, once you've handed back its page if you have
@@ -1801,10 +1868,10 @@ async function perform(call, reply) {
         const session = sessions.get(target);
         refused.push(...(refusedFiles.get(session) ?? []));
         refusedFiles.delete(session);
-        const file = await pageFile({ target, session }, call.session, access);
-        if (!file) continue;
-        if (!held.has(target)) await link.send("Page.navigate", { url: "about:blank" }, session).catch(() => {});
-        return reply(text(outsideNote(file) + (held.has(target) ? " The page is on it, so this step's result was held back." : " The page was on it, so it's blank now and this step's result was held back."), true));
+        if (!(await pageFile({ target, session }, call.session, access))) continue;
+        if (held.has(target)) return reply(text("The page shows a file outside this conversation's folder, so this step's result was held back.", true));
+        await link.send("Page.navigate", { url: "about:blank" }, session).catch(() => {});
+        return reply(text("The page went to a file outside this conversation's folder, which this session asks about before reading, so it's blank now and this step's result was held back.", true));
       }
       // Files the page tried to load from outside the folder, which weren't.
       if (refused.length) {
@@ -1918,6 +1985,7 @@ async function tool(name, args) {
     const chosen = number === null ? null : open[number - 1];
     if (!chosen) return text(`There's no tab [${number ?? 0}]. ` + list(open));
     if (held.has(chosen.targetId)) return text(`The user took tab [${number}] over and has it now. Pick another, or carry on without it.`);
+    if (access && outsideFile(chosen.url, access)) return text(`Tab [${number}] shows a file outside this conversation's folder, which this session asks about before reading. Pick another, or open one with browser_new_tab.`);
     // Another conversation's agent is at work there: not this one's to take or close.
     if (caller && !(await c.send("Kuvo.claim", { targetId: chosen.targetId, session: caller })).ok) {
       return text(`Another conversation's agent is using tab [${number}]. Pick another, or open one with browser_new_tab.`);
@@ -1946,19 +2014,7 @@ async function tool(name, args) {
     return text(url ? await navigate(p, url) : await snapshot(p));
   }
 
-  let p = await page();
-  // The page in use on a file the conversation may not read (one you opened, say): it stays as it
-  // is, and this goes on in a new tab.
-  const shown = await pageFile(p, caller, { value: current?.access });
-  if (shown) {
-    unguardFiles(p.session);
-    current?.pages?.delete(p.target);
-    const c = await browser();
-    const { targetId } = await c.send("Target.createTarget", { url: "about:blank", newWindow: true });
-    if (caller) await c.send("Kuvo.claim", { targetId, session: caller });
-    p = await use(targetId);
-    notes.push("The tab in use shows a file outside this conversation's folder, so this goes on in a new tab.");
-  }
+  let p = await readyPage(await page());
   const note = () => (notes.length ? notes.splice(0).join("\n") + "\n\n" : "");
   const withNote = async (promise) => {
     const result = await promise;

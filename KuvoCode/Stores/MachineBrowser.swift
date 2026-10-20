@@ -447,8 +447,10 @@ final class MachineBrowser {
             workingPages = (params["status"] as? [String: Any]).map(Self.workingPages) ?? []
             noteWorkers(params["status"] as? [String: Any] ?? [:])
             heldPages = Set(params["held"] as? [String] ?? [])
-            // A new connection: the keeper let go of this Mac's holds with the old one.
-            myHolds = []
+            // A new connection (after a sleep, a dropped one): the pages this Mac took over are
+            // taken again, which the keeper kept a while for it, so their agents don't go on in them.
+            myHolds.formIntersection(heldPages)
+            for page in myHolds { link?.fire("Kuvo.hold", ["targetId": page, "on": true]) }
             for ask in params["asks"] as? [[String: Any]] ?? [] { asked(ask) }
             Task { await begin() }
         case "Kuvo.asked":
