@@ -118,6 +118,13 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     travel with the app, in `windows/THIRD_PARTY_LICENSES.txt`, written by
     `windows/tools/third-party-licenses.mjs` and checked in CI. The app is linted too
     (oxlint) and type-checked before it is built, in CI and before every push.
+  - **2.62 (this change). The upstream's main is merged in.** The branch had fallen 715
+    commits behind — the upstream refactored the KuvoLink bridge while we were porting the
+    app — and the pull request could not be merged. The merge is now done: the upstream's
+    tree comes in whole, and our Windows changes to the bridge are put back on top of their
+    new shape — the command line a process tells on Windows (the process list, where there
+    is no `/proc`), the bridge's own `isBridge` and `bridgeSpawnOptions`, and the pid file
+    that has to go when Windows gives no `SIGTERM`. The pull request is mergeable again.
   - **2.61 (this change). The provider's marks.** The Mac draws the maker's mark beside
     each model (`ProviderLogo.swift`), monochrome so it follows the ink, or in the maker's
     own colour where it has one. The marks themselves are not published as a package, but
