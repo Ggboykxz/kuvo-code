@@ -205,17 +205,22 @@ final class AgentMail {
             return .refused("More than one agent is called \(wanted): use one's address.\n" + Self.describe(matches, caller: caller, here: nil))
         }
         guard target.session != caller else { return .refused("That's you.") }
-        // A few at a time: two agents shouldn't keep writing to each other unattended. (Counted
-        // once it's sent, so one tried again isn't counted twice.)
+        // A few at a time: two agents shouldn't keep writing to each other unattended. Counted as
+        // it starts, before anything's awaited, so messages sent at once count each other; taken
+        // back if it doesn't go, so one tried again isn't counted twice.
         let key = limitKey ?? caller ?? "outside"
         let lately = (sent[key] ?? []).filter { $0.timeIntervalSinceNow > -600 }
         guard lately.count < 20 else {
             return .limited("You've sent a lot of messages in the last few minutes. Wait a while, or ask the user how to go on.")
         }
+        let counted = Date.now
+        sent[key] = lately + [counted]
         guard let app, let api = app.workspace.api(forSession: target.session) else {
             // Its machine is away: it goes when it's back.
-            guard let machine = target.machine else { return .failed("\(target.name) can't be reached now. Try again later.") }
-            sent[key] = lately + [.now]
+            guard let machine = target.machine else {
+                sent[key]?.removeAll { $0 == counted }
+                return .failed("\(target.name) can't be reached now. Try again later.")
+            }
             waiting.append(Waiting(from: caller, name: name, to: target.session, machine: machine, text: text))
             save()
             return .done("\(target.name)'s machine (\(machine)) is away: the message goes to it as soon as it's back\(waits ? ", and its answer comes to you as a message" : "").")
@@ -228,9 +233,9 @@ final class AgentMail {
         do {
             try await api.prompt(session: target.session, id: id, text: Self.compose(from: name, session: caller ?? "unknown", text: text, waits: waits), delivery: .steer)
         } catch {
+            sent[key]?.removeAll { $0 == counted }
             return .failed("It didn't reach \(target.name): \(error.localizedDescription)")
         }
-        sent[key] = lately + [.now]
         Analytics.shared.track("agent_message_sent", ["waits": waits, "bot": target.kind == "bot"])
         guard waits else { return .done("Sent to \(target.name). Its answer, if it writes one, comes to you as a message.") }
         if let reply = await reply(in: target.session, known: known ?? [], api: api) {

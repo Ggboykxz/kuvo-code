@@ -1056,10 +1056,26 @@ final class Workspace {
     }
 
     /// This Mac's engine stopped for good (it failed, and starting it again did too): its
-    /// sessions aren't at work, so they don't show as working, nor keep the Mac awake.
+    /// sessions aren't at work, nor asking anything, nor running commands, as the agents bridge's
+    /// aren't once it stops; so they don't show as working, nor keep the Mac awake.
     func macEngineStopped() {
-        running = running.filter { id in
-            isBridgeSession(id) || sessionMachines[id] != nil || session(id).map { RemoteFolder.isRemote($0.location.directory) } == true
+        func isMac(_ id: String) -> Bool {
+            !isBridgeSession(id) && sessionMachines[id] == nil && session(id).map { RemoteFolder.isRemote($0.location.directory) } != true
+        }
+        for (request, id) in asking where sharedForms[request] == nil && isMac(id) {
+            asking[request] = nil
+            Notifier.shared.clear(request: request)
+        }
+        running = running.filter { !isMac($0) }
+        dropShellJobs(where: isMac)
+        for model in models.values where isMac(model.id) { model.bridgeStopped() }
+    }
+
+    /// Commands that ran for these sessions, gone with the engine that ran them.
+    private func dropShellJobs(where gone: (String) -> Bool) {
+        for (id, jobs) in shellJobs where gone(id) {
+            shellJobs[id] = nil
+            for job in jobs { lastingShellJobs.remove(job.id) }
         }
     }
 
@@ -1070,6 +1086,7 @@ final class Workspace {
             Notifier.shared.clear(request: request)
         }
         running = running.filter { !isBridgeSession($0) }
+        dropShellJobs(where: isBridgeSession)
         for model in models.values where OutsideAgents.isAgentSession(model.session) { model.bridgeStopped() }
     }
 
