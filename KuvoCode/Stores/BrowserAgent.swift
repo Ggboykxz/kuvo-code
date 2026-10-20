@@ -53,6 +53,9 @@ final class BrowserAgent {
         }
         page.agentRests()
         guard !page.isHeld else { return Self.stillHeld }
+        // Handed back on a file the conversation may not read: it stays as it is, unread, and the
+        // agent goes on in a new tab.
+        if let moved = await moveOffForbiddenFile() { return "The user took over the browser while you worked, and has handed it back. " + moved + "Go on from here." }
         return Self.handedBack + (await snapshot())
     }
 
@@ -399,12 +402,17 @@ final class BrowserAgent {
     func askCode(_ index: Int, prompt: String?, for caller: String? = nil) async -> String {
         let browser = browser()
         guard let host = Self.site(of: browser.url) else { return "Open the page that asks for the code first." }
+        // Asked for the site whose page it is, as a sign-in is: the address can show the next
+        // site while the last one's page is still there.
+        guard await Self.documentSite(in: browser) == host else {
+            return "The page is still on its way to \(host). Wait for it, take a browser_snapshot, and call browser_ask_code again."
+        }
         let kind = await run(Self.fieldKindScript, ["index": index], in: browser)
         guard kind == "text" || kind == "password" else { return kind == "missing" ? "There's no element [\(index)] on the page now. Take a fresh browser_snapshot." : "[\(index)] isn't a field to type a code into." }
         switch await ask(.code(prompt: prompt ?? ""), host: host, in: browser, for: caller) {
         case .code(let code):
             if let problem = stillOn(host, in: browser) { return problem }
-            let outcome = await run(Self.fillScript, ["index": index, "value": code, "wanted": "code"], in: browser)
+            let outcome = await run(Self.fillScript, ["index": index, "value": code, "wanted": "code", "site": host], in: browser)
             guard outcome == "ok" else { return outcome }
             try? await Task.sleep(for: .milliseconds(300))
             return "Filled the code (you can't see it). Submit it if the page doesn't on its own.\n\n" + (await snapshot())

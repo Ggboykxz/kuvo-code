@@ -361,11 +361,6 @@ enum BrowserTools {
         defer { agent.finished() }
         // You have the page: the step waits until you hand it back.
         if let handedBack = await agent.waitForControl() {
-            // Handed back on a file the conversation may not read: it stays as it is, unread, and
-            // the agent goes on in a new tab.
-            if let moved = await agent.moveOffForbiddenFile() {
-                return ["content": [["type": "text", "text": "The user took over the browser while you worked, and has handed it back. " + moved + "Go on from here."]], "isError": false]
-            }
             return ["content": [["type": "text", "text": handedBack]], "isError": false]
         }
         // The tab in use on a file the conversation may not read (one you opened, say): the step
