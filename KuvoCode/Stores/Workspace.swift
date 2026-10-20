@@ -1252,8 +1252,15 @@ final class Workspace {
         if let id = event.sessionID ?? Self.formSessionID(event), let model = models[id] {
             model.apply(event)
         }
-        // A subagent's asks: shown in the conversation it works for.
-        if Self.asksEvents.contains(event.type), let id = event.sessionID ?? Self.formSessionID(event), case let parent = root(of: id), parent != id, let model = models[parent] {
+        // A subagent's asks: shown in the conversation it works for (found first, for one at work
+        // before the app knew of it).
+        if Self.asksEvents.contains(event.type), let id = event.sessionID ?? Self.formSessionID(event), session(id) == nil, parents[id] == nil, models[id] == nil, id != FormRequest.anySession {
+            Task {
+                await reload(id)
+                let parent = root(of: id)
+                if parent != id, let model = models[parent] { model.applyHelper(event, from: id) }
+            }
+        } else if Self.asksEvents.contains(event.type), let id = event.sessionID ?? Self.formSessionID(event), case let parent = root(of: id), parent != id, let model = models[parent] {
             model.applyHelper(event, from: id)
         }
         noteQuestions(event)

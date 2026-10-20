@@ -538,10 +538,14 @@ final class SessionModel {
             let waiting = (try? await inbox) ?? []
             // What's asked as it was, for a read that failed (over SSH, say): no card goes for
             // one the agent still waits on, which no event would bring back.
-            let asked = (try? await permissions) ?? transcript.permissions
+            // Its subagents at work ask here too (nothing else shows what they ask): theirs are
+            // read with its own, as each read replaces what's shown.
+            let helpers = transcript.helpers.union(Self.subagents(in: page.data, adding: [], known: foundSubagents).filter { !$0.isStepDone || $0.isBackground }.map(\.id))
+            let (helperAsks, helperForms) = await Self.asks(of: helpers, api: api)
+            let asked = (try? await permissions).map { $0 + helperAsks } ?? transcript.permissions
             let readForms = try? await forms
             let readShared = try? await shared
-            let open = readForms.flatMap { own in readShared.map { own + $0 } } ?? transcript.forms
+            let open = readForms.flatMap { own in readShared.map { own + $0 + helperForms } } ?? transcript.forms
             let running = (try? await active).map { $0.contains(id) }
             // Earlier messages read as you scrolled up stay, ahead of the latest: only those this
             // read, not a saved copy's (whose start it doesn't know), and only when they reach the
@@ -552,6 +556,7 @@ final class SessionModel {
             if kept.isEmpty { earlierCursor = Self.cursor(before: page) }
             // The read, with what came while it was made.
             var fresh = transcript
+            fresh.helpers.formUnion(helpers)
             // Unknown (the engine didn't answer): as it was, not stopped.
             fresh.load(messages: kept + page.data, inbox: waiting, permissions: asked, forms: open, isRunning: running ?? transcript.isRunning)
             for event in cameDuringRead[read] ?? [] { fresh.apply(event) }
@@ -1302,6 +1307,26 @@ final class SessionModel {
         Task {
             // In the session that asked: a subagent's own, for one of its asks shown here.
             do { try await api.reply(session: request.sessionID, permission: request.id, decision: decision, message: message) } catch { fail(error) }
+        }
+    }
+
+    /// What some subagents ask now, read side by side; one that can't be read asks nothing here.
+    private static func asks(of helpers: Set<String>, api: OpenCodeAPI) async -> ([PermissionRequest], [FormRequest]) {
+        guard !helpers.isEmpty else { return ([], []) }
+        return await withTaskGroup(of: ([PermissionRequest], [FormRequest]).self) { group in
+            for helper in helpers {
+                group.addTask {
+                    async let permissions = api.permissions(session: helper)
+                    async let forms = api.forms(session: helper)
+                    return ((try? await permissions) ?? [], (try? await forms) ?? [])
+                }
+            }
+            var all: ([PermissionRequest], [FormRequest]) = ([], [])
+            for await (permissions, forms) in group {
+                all.0 += permissions
+                all.1 += forms
+            }
+            return all
         }
     }
 
