@@ -1021,8 +1021,10 @@ final class BotGroups {
     /// Until the bot's run on its part ends (however long it takes, waiting on you meanwhile if
     /// it asks something); then what it said, back in the chat as its report.
     private func awaitReport(_ taskID: String, of wrapUpID: String, in id: String) async {
-        // Checks in a row that found its message neither queued nor in the conversation.
+        // Checks in a row that found its message neither queued nor in the conversation, and that
+        // found its run stopped with nothing after.
         var misses = 0
+        var stoppedChecks = 0
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(3))
             guard let app, group(id) != nil, let task = messages(in: id).first(where: { $0.id == wrapUpID })?.tasks?.first(where: { $0.id == taskID }),
@@ -1051,12 +1053,19 @@ final class BotGroups {
             let run = conversation.dropFirst()
             // Not a stop that the run carried on from (a model switch stops it, and its note goes
             // on): only one you followed with a message of yours, or the end at last.
-            let end = run.indices.first { index in
+            var end = run.indices.first { index in
                 guard case .idle(let idle) = run[index] else { return false }
                 guard idle.outcome == .interrupted else { return true }
                 let next = run.index(after: index)
                 if next < run.endIndex, case .user = run[next] { return true }
                 return false
+            }
+            // Stopped with nothing after (before even a first step): it ended, once it's stayed so.
+            if end == nil, let last = run.indices.last, case .idle(let idle) = run[last], idle.outcome == .interrupted {
+                stoppedChecks += 1
+                if stoppedChecks >= 2 { end = last }
+            } else {
+                stoppedChecks = 0
             }
             let answered = end != nil || run.contains { message in
                 if case .assistant(let answer) = message { answer.time.completed != nil } else { false }
