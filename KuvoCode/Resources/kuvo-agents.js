@@ -1266,10 +1266,10 @@ class Snapshots {
       await this.checkout(repository, tree, paths.filter((path) => isRules(path) && there.has(path)));
       let gone = paths.filter((path) => !isRules(path) && !there.has(path) && !repositories.has(path));
       if (gone.length) {
-        const ignored = await this.git(repository, ["check-ignore", "--no-index", "-z", "--stdin"], { input: gone.join("\x00"), patterns: true });
+        const ignored = await this.git(repository, ["check-ignore", "--no-index", "-z", "--stdin"], { input: gone.map((path) => `./${path}`).join("\x00"), patterns: true });
         if (ignored.code !== 0 && ignored.code !== 1)
           throw new Error("Kuvo Code couldn't tell which files the ignore rules left out.");
-        const left = new Set(ignored.stdout.split("\x00").filter(Boolean));
+        const left = new Set(ignored.stdout.split("\x00").filter(Boolean).map((path) => path.replace(/^\.\//, "")));
         gone = gone.filter((path) => !left.has(path));
       }
       if (since !== undefined)
@@ -3723,11 +3723,12 @@ class ClaudeThread {
     return new Promise((resolve3) => {
       this.lastHooks = hooks;
       this.active = this.turnFor(turn, hooks, resolve3, input.auto, new Map);
-      for (const frame of own.frames) {
-        if (!this.active)
-          break;
-        this.handle(frame);
-      }
+      let at = 0;
+      for (;at < own.frames.length && this.active; at++)
+        this.handle(own.frames[at]);
+      const rest = own.frames.slice(at);
+      if (rest.length)
+        setTimeout(() => rest.forEach((frame) => this.handle(frame)), 0);
     });
   }
   ownFrame(message) {
@@ -7554,13 +7555,14 @@ function parseCommands(line) {
   scanCommands(line.replace(/\\\n/g, ""), 0, "", out, state);
   return { commands: [...new Set(out)], sure: state.sure };
 }
-var shellKeywords = new Set(["if", "then", "else", "elif", "do", "while", "until", "!", "time", "{", "}", "fi", "done", "esac"]);
+var shellKeywords = new Set(["if", "then", "else", "elif", "do", "while", "until", "!", "{", "}", "fi", "done", "esac"]);
 function scanCommands(text, start, close, out, state) {
   let current = "";
   let depth = 0;
+  let escaped = false;
   const heredocs = [];
   const push = () => {
-    addCommand(current, out);
+    addCommand(current, out, state);
     current = "";
   };
   let i = start;
@@ -7570,9 +7572,26 @@ function scanCommands(text, start, close, out, state) {
       push();
       return i;
     }
+    const wasEscaped = escaped;
+    escaped = false;
     if (ch === "\\") {
       current += text.slice(i, i + 2);
       i += 2;
+      escaped = true;
+    } else if (text.startsWith("$((", i) || text.startsWith("((", i) && !current.trim()) {
+      let level = 0;
+      let j = text[i] === "$" ? i + 1 : i;
+      for (;j < text.length; j++) {
+        if (text[j] === "(")
+          level++;
+        else if (text[j] === ")" && --level === 0)
+          break;
+      }
+      const inner = text.slice(i, j + 1);
+      if (j >= text.length || /\$\(|`/.test(inner.slice(3)))
+        state.sure = false;
+      current += inner;
+      i = j + 1;
     } else if (ch === "'") {
       const end = text.indexOf("'", i + 1);
       if (end < 0)
@@ -7603,11 +7622,14 @@ function scanCommands(text, start, close, out, state) {
         state.sure = false;
       current += text.slice(i, end + 1);
       i = end + 1;
-    } else if (ch === "#" && (current === "" || /\s$/.test(current))) {
+    } else if (ch === "#" && !wasEscaped && (current === "" || /\s$/.test(current))) {
       const lineEnd = text.indexOf(`
 `, i);
       i = lineEnd < 0 ? text.length : lineEnd;
-    } else if (ch === "<" && text.startsWith("<<", i) && text[i + 2] !== "<") {
+    } else if (text.startsWith("<<<", i)) {
+      current += "<<<";
+      i += 3;
+    } else if (ch === "<" && text.startsWith("<<", i)) {
       const match = /^<<(-?)\s*(['"]?)([^\s'"<>;&|()]+)\2/.exec(text.slice(i));
       if (match)
         heredocs.push({ word: match[3], tabs: match[1] === "-" });
@@ -7660,19 +7682,26 @@ function scanCommands(text, start, close, out, state) {
     state.sure = false;
   return text.length;
 }
-function addCommand(raw, out) {
+function addCommand(raw, out, state) {
   const words = shellWords(raw.trim());
   while (words.length && shellKeywords.has(words[0]))
     words.shift();
   if (!words.length || /^(for|case|select|function)$/.test(words[0]))
     return;
   out.push(words.join(" "));
-  const bare = withoutPrefix(words);
+  const bare = withoutPrefix(words, (line) => addLine(line, out, state));
   if (!bare.length)
     return;
   out.push(bare.join(" "));
-  if (bare[0] === "git") {
-    const rest = bare.slice(1);
+  const plain2 = bare.map(dequote);
+  plain2[0] = plain2[0].split("/").pop() ?? plain2[0];
+  const shown = plain2.map((word, index) => /^[\w@%+=:,./-]*$/.test(word) ? word : bare[index]);
+  out.push(shown.join(" "));
+  if (/[$`]/.test(bare[0]) || bare.some((word) => /\$['"]/.test(word)))
+    state.sure = false;
+  const program = plain2[0];
+  if (program === "git") {
+    const rest = shown.slice(1);
     while (rest.length) {
       if (rest[0] === "-C" || rest[0] === "-c" || rest[0] === "--git-dir" || rest[0] === "--work-tree" || rest[0] === "--namespace")
         rest.splice(0, 2);
@@ -7682,30 +7711,90 @@ function addCommand(raw, out) {
         break;
     }
     out.push(["git", ...rest].join(" "));
-  }
-  const program = bare[0].split("/").pop() ?? "";
-  if (/^(ba|z|da|k|fi)?sh$/.test(program)) {
-    const at = bare.findIndex((word, index) => index > 0 && /^-[a-z]*c[a-z]*$/.test(word));
-    if (at > 0 && bare[at + 1])
-      out.push(...parseCommands(unquote(bare[at + 1])).commands);
+  } else if (/^(ba|z|da|k|fi)?sh$/.test(program)) {
+    const at = plain2.findIndex((word, index) => index > 0 && /^-[a-z]*c[a-z]*$/.test(word));
+    if (at > 0 && plain2[at + 1] !== undefined)
+      addLine(plain2[at + 1], out, state);
+    else if (plain2.includes("-s") || !operands(plain2.slice(1)).some((word) => !word.startsWith("-") && !word.startsWith("+")))
+      state.sure = false;
+  } else if (program === "eval") {
+    addLine(plain2.slice(1).join(" "), out, state);
+  } else if (program === "xargs") {
+    state.sure = false;
+    let i = 1;
+    while (i < plain2.length && plain2[i].startsWith("-"))
+      i += /^-[IinPLsdEa]$/.test(plain2[i]) ? 2 : 1;
+    if (i < plain2.length)
+      addCommand(plain2.slice(i).map(quoted).join(" "), out, state);
+  } else if (program === "find") {
+    for (let i = 1;i < plain2.length; i++) {
+      if (!/^-(exec|execdir|ok|okdir)$/.test(plain2[i]))
+        continue;
+      const end = plain2.findIndex((word, index) => index > i && (word === ";" || word === "+"));
+      addCommand(plain2.slice(i + 1, end < 0 ? undefined : end).map(quoted).join(" "), out, state);
+      if (end < 0)
+        state.sure = false;
+    }
   }
 }
-var wrappers = new Set(["env", "command", "exec", "nohup", "builtin", "sudo", "doas", "time", "nice", "caffeinate"]);
-function withoutPrefix(words) {
+function operands(words) {
+  const kept2 = [];
+  for (let i = 0;i < words.length; i++) {
+    if (/^\d*(<<<|<<-?|>>|<>|<&|>&|&>>|&>|<|>)$/.test(words[i]))
+      i++;
+    else if (!/^\d*(<<<|<<-?|>>|<>|<&|>&|&>>|&>|<|>)/.test(words[i]))
+      kept2.push(words[i]);
+  }
+  return kept2;
+}
+function addLine(line, out, state) {
+  const inner = parseCommands(line);
+  out.push(...inner.commands);
+  if (!inner.sure)
+    state.sure = false;
+}
+function quoted(word) {
+  return /^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, `'\\''`)}'`;
+}
+var wrappers = {
+  env: /^-[uCSP]$/,
+  command: undefined,
+  exec: /^-a$/,
+  nohup: undefined,
+  builtin: undefined,
+  sudo: /^-[ugCDhprtUT]$/,
+  doas: /^-[uC]$/,
+  time: /^-[of]$/,
+  nice: /^-n$/,
+  caffeinate: /^-[tw]$/,
+  timeout: /^-[sk]$/
+};
+function withoutPrefix(words, line) {
   let i = 0;
   while (i < words.length) {
     const word = words[i];
+    const program = dequote(word).split("/").pop() ?? "";
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word))
       i++;
     else if (/^\d*(>>?|<|&>|>&|<&|&>>)$/.test(word))
       i += 2;
     else if (/^\d*(>>?|<|&>|>&|<&|&>>)\S/.test(word))
       i++;
-    else if (wrappers.has(word.split("/").pop() ?? "")) {
+    else if (Object.hasOwn(wrappers, program)) {
+      const takesValue = wrappers[program];
       i++;
       while (i < words.length && words[i].startsWith("-")) {
-        i += /^-[ugCDhprtUn]$/.test(words[i]) ? 2 : 1;
+        if (words[i] === "--") {
+          i++;
+          break;
+        }
+        const split = program === "env" && /^(-S|--split-string)(=|$)/.exec(words[i]);
+        if (split)
+          line?.(dequote(split[2] ? words[i].slice(split[0].length) : words[i + 1] ?? ""));
+        i += takesValue?.test(words[i]) ? 2 : 1;
       }
+      if (program === "timeout" && i < words.length)
+        i++;
     } else
       break;
   }
@@ -7751,10 +7840,34 @@ function shellWords(text) {
     words.push(word);
   return words;
 }
-function unquote(word) {
-  if (word.length >= 2 && (word[0] === "'" || word[0] === '"') && word.at(-1) === word[0])
-    return word.slice(1, -1);
-  return word;
+function dequote(word) {
+  let out = "";
+  let i = 0;
+  while (i < word.length) {
+    const ch = word[i];
+    if (ch === "\\") {
+      out += word[i + 1] ?? "";
+      i += 2;
+    } else if (ch === "'") {
+      const end = word.indexOf("'", i + 1);
+      out += word.slice(i + 1, end < 0 ? word.length : end);
+      i = end < 0 ? word.length : end + 1;
+    } else if (ch === '"') {
+      let j = i + 1;
+      while (j < word.length && word[j] !== '"') {
+        if (word[j] === "\\" && /["\\$`]/.test(word[j + 1] ?? "")) {
+          out += word[j + 1];
+          j += 2;
+        } else
+          out += word[j++];
+      }
+      i = j + 1;
+    } else {
+      out += ch;
+      i++;
+    }
+  }
+  return out;
 }
 function partsOf(ask) {
   return isShell(ask.action) ? ask.resources.flatMap(commandParts) : ask.resources;
@@ -8215,11 +8328,13 @@ class Sessions {
     this.afterBusy(id);
   }
   afterBusy(id) {
-    const live = this.live.get(id);
-    if (!live || this.isRunning(id))
+    if (!this.store.get(id) || this.isRunning(id))
       return;
+    const live = this.state(id);
     const later = live.wakeLater;
     live.wakeLater = false;
+    if (later && live.adopting)
+      live.resume = true;
     if (later || live.adopting)
       this.wake(id);
   }
@@ -8416,8 +8531,8 @@ class Sessions {
     if (this.removing.has(id))
       return;
     if (this.isRunning(id)) {
-      const live = this.live.get(id);
-      if (live && !live.turn && this.busy.has(id))
+      const live = this.state(id);
+      if (!live.turn && this.busy.has(id))
         live.wakeLater = true;
       return;
     }
@@ -8443,8 +8558,10 @@ class Sessions {
     const record = this.store.get(id);
     if (!record || this.isRunning(id))
       return;
-    if (this.startAdopting(id))
+    if (this.startAdopting(id)) {
+      live.resume = resume;
       return;
+    }
     const queue = this.queue(record);
     const free = (input2) => !this.steering.has(input2.id);
     let index = -1;
@@ -8583,7 +8700,7 @@ ${text.slice(0, 4000)}
       const run2 = { text: attached.text, files: attached.files, model: model2, plan: session.agent === "plan" };
       if (model2.providerID !== autoProvider)
         delete record.agent.autoHeld;
-      result = input.adopt ? await this.runOn(id, record, live, input.adopt, { ...run2, model: input.adopt, adopt: true }, turn, abort.signal, input.id) : model2.providerID === autoProvider ? await this.runAuto(id, record, live, { ...run2, auto: true }, turn, abort.signal, input.id) : await this.runOn(id, record, live, model2, run2, turn, abort.signal, input.id);
+      result = input.adopt ? await this.runOn(id, record, live, input.adopt, { ...run2, model: input.adopt, adopt: true, auto: model2.providerID === autoProvider || undefined }, turn, abort.signal, input.id) : model2.providerID === autoProvider ? await this.runAuto(id, record, live, { ...run2, auto: true }, turn, abort.signal, input.id) : await this.runOn(id, record, live, model2, run2, turn, abort.signal, input.id);
     } catch (error) {
       result = { outcome: "failed", error: failure(error) };
     }
@@ -8644,7 +8761,8 @@ ${text.slice(0, 4000)}
     const record = this.store.get(id);
     const live = this.live.get(id);
     const model2 = live?.models.get(provider);
-    if (!record || !live || !model2 || this.removing.has(id) || record.session.revert || live.turn || live.adopting)
+    const busy = live?.turn && !live.turn.isEnded && live.running?.provider !== provider;
+    if (!record || !live || !model2 || this.removing.has(id) || record.session.revert || busy || live.adopting)
       return false;
     live.adopting = { id: newID("msg"), text: note.text, files: [], delivery: "steer", synthetic: { description: note.description, metadata: note.metadata }, adopt: model2 };
     this.wake(id);
@@ -8710,7 +8828,8 @@ ${text.slice(0, 4000)}
       const hasMessage = at >= 0 && seenAt >= at;
       const late = new Set(record.agent.lateShells ?? []);
       const before = hasMessage ? [] : record.messages.slice(0, at < 0 ? undefined : at).filter((message, index) => index > seenAt || late.has(message.id));
-      if (!hasMessage && late.size)
+      const missed = Boolean(input.adopt && (before.length || late.size));
+      if (!hasMessage && late.size && !input.adopt)
         delete record.agent.lateShells;
       const partway = at < 0 ? [] : record.messages.slice(Math.max(at, seenAt) + 1);
       const handed = handover(before, partway, (message) => this.stepName(message));
@@ -8718,7 +8837,7 @@ ${text.slice(0, 4000)}
       const files = hasMessage ? [] : input.files;
       reached = true;
       const result = await Promise.race([thread.run({ ...input, model: model2, text, files }, turn, hooks), abandoned]);
-      if (result.outcome !== "failed" || result.taken || record.messages.slice(from).some(didWork))
+      if (!missed && (result.outcome !== "failed" || result.taken || record.messages.slice(from).some(didWork)))
         slot.seen = record.messages[record.messages.length - 1]?.id;
       const missedAt = result.missed?.length ? record.messages.findIndex((message) => result.missed.includes(message.id)) : -1;
       if (missedAt >= 0)
