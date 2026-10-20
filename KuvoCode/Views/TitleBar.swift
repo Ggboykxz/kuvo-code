@@ -1,4 +1,3 @@
-import os
 import AppKit
 import OpenCodeKit
 import SwiftUI
@@ -705,13 +704,12 @@ struct WindowXReader: NSViewRepresentable {
     }
 }
 
-/// The window's state that the title bar follows: in full screen (no window buttons of its own
-/// in the title bar), and being resized by a drag, as each changes.
-private let titleBarLog = Logger(subsystem: "run.kuvo.code", category: "title-bar")
-
+/// The window, as the title bar follows it: being resized by a drag. It also keeps the window
+/// out of full screen: the green button fills the screen with the window as it is. (In full
+/// screen, AppKit painted a strip of its own at the top, a gray band unlike the rest of the
+/// window, which nothing here could reach.)
 struct WindowStateReader: NSViewRepresentable {
     struct State: Equatable {
-        var isFullScreen = false
         var isResizing = false
     }
 
@@ -742,76 +740,23 @@ struct WindowStateReader: NSViewRepresentable {
             observers.forEach(NotificationCenter.default.removeObserver)
             observers = []
             guard let window else { return }
-            let names: [NSNotification.Name] = [NSWindow.didEnterFullScreenNotification, NSWindow.willExitFullScreenNotification,
-                                                NSWindow.willStartLiveResizeNotification, NSWindow.didEndLiveResizeNotification]
-            for name in names {
+            Self.keepOutOfFullScreen(window)
+            // Again whenever it comes forward, in case SwiftUI set the window up anew.
+            observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main) { [weak window] _ in
+                MainActor.assumeIsolated { if let window { Self.keepOutOfFullScreen(window) } }
+            })
+            for name in [NSWindow.willStartLiveResizeNotification, NSWindow.didEndLiveResizeNotification] {
                 observers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] note in
-                    let name = note.name
-                    MainActor.assumeIsolated {
-                        guard let self else { return }
-                        var next = self.state
-                        switch name {
-                        case NSWindow.didEnterFullScreenNotification:
-                            next.isFullScreen = true
-                            self.clearFullScreenTitleBar()
-                        case NSWindow.willExitFullScreenNotification: next.isFullScreen = false
-                        case NSWindow.willStartLiveResizeNotification: next.isResizing = true
-                        default: next.isResizing = false
-                        }
-                        self.report(next)
-                    }
+                    let isResizing = note.name == NSWindow.willStartLiveResizeNotification
+                    MainActor.assumeIsolated { self?.report(State(isResizing: isResizing)) }
                 })
             }
-            report(State(isFullScreen: window.styleMask.contains(.fullScreen), isResizing: false))
         }
 
-        /// In full screen, AppKit puts the title bar (and the toolbar in it) in a strip of its own
-        /// at the top of the screen and paints it the window's plain gray: a band unlike the rest of
-        /// the window, where out of full screen the tabs sit on its glass. Whatever paints that
-        /// strip is made see-through, so the window's glass shows; what it found is logged, to
-        /// tell what a macOS update changed if the gray comes back.
-        private func clearFullScreenTitleBar() {
-            guard let window else { return }
-            window.titlebarAppearsTransparent = true
-            for delay in [0.0, 0.4, 1.2] {
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak window] in
-                    guard let window, window.styleMask.contains(.fullScreen), let screen = window.screen else { return }
-                    let top = NSRect(x: screen.frame.minX, y: screen.frame.maxY - 80, width: screen.frame.width, height: 80)
-                    for other in NSApp.windows where other !== window && other.isVisible && other.frame.intersects(top) {
-                        let name = String(describing: type(of: other))
-                        guard name.contains("Toolbar") || name.contains("Titlebar") || name.contains("FullScreen") else { continue }
-                        other.isOpaque = false
-                        other.backgroundColor = .clear
-                        if let content = other.contentView { Self.clearBackdrops(in: content) }
-                        if delay == 1.2 { titleBarLog.notice("full screen: cleared \(name, privacy: .public) \(NSStringFromRect(other.frame), privacy: .public)") }
-                    }
-                    // The window's own title bar, if AppKit keeps it in this window.
-                    if let frame = window.contentView?.superview { Self.clearBackdrops(in: frame, titleBarsOnly: true) }
-                    if delay == 1.2 {
-                        let shown = NSApp.windows.filter(\.isVisible).map { "\(type(of: $0)) \(NSStringFromRect($0.frame)) opaque=\($0.isOpaque)" }
-                        titleBarLog.notice("full screen: windows \(shown.joined(separator: "; "), privacy: .public)")
-                        if let frame = window.contentView?.superview { titleBarLog.notice("full screen: frame \(Self.tree(frame, depth: 0), privacy: .public)") }
-                    }
-                }
-            }
-        }
-
-        /// The materials and backgrounds AppKit draws under a title bar or toolbar, taken away.
-        private static func clearBackdrops(in view: NSView, titleBarsOnly: Bool = false) {
-            let name = String(describing: type(of: view))
-            let isBar = name.contains("Titlebar") || name.contains("Toolbar")
-            if !titleBarsOnly || isBar {
-                if let effect = view as? NSVisualEffectView { effect.isHidden = true }
-                if name.contains("Background") || name.contains("Backdrop") { view.isHidden = true }
-            }
-            for subview in view.subviews { clearBackdrops(in: subview, titleBarsOnly: titleBarsOnly && !isBar) }
-        }
-
-        /// Views' classes and frames, a few levels down, for the log.
-        private static func tree(_ view: NSView, depth: Int) -> String {
-            let line = String(repeating: " ", count: depth) + "\(type(of: view)) \(NSStringFromRect(view.frame))\(view.isHidden ? " hidden" : "")"
-            guard depth < 5 else { return line }
-            return ([line] + view.subviews.filter { !($0 is NSHostingView<AnyView>) }.map { tree($0, depth: depth + 1) }).joined(separator: "\n")
+        private static func keepOutOfFullScreen(_ window: NSWindow) {
+            guard !window.collectionBehavior.contains(.fullScreenNone) else { return }
+            window.collectionBehavior.remove(.fullScreenPrimary)
+            window.collectionBehavior.insert(.fullScreenNone)
         }
 
         private func report(_ next: State) {

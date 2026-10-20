@@ -20,7 +20,7 @@ struct MainView: View {
     /// The row at the top: the project, its branch and the tabs. Hidden, sessions are switched
     /// from the sidebar or ⌘K.
     @AppStorage(TabBar.showsKey) private var showsTabBar = true
-    /// The window is in full screen (no buttons of its own in the title bar), or being resized.
+    /// The window is being resized.
     @State private var window = WindowStateReader.State()
     @SceneStorage("showsPanel") private var showsPanel = false
     /// The panel over the conversation, for room.
@@ -381,10 +381,7 @@ struct MainView: View {
             }
         }
         .toolbar(removing: .title)
-        // In full screen with the tab bar hidden, the row would hold only the sidebar button (no
-        // window buttons to line up with): the cards go to the top, and the sidebar is ⌘0. (Its
-        // gray there is taken away: see `WindowStateReader`.)
-        .toolbar(window.isFullScreen && !showsTabBar && !app.showsSettings ? .hidden : .automatic, for: .windowToolbar)
+        // Being resized (for the tabs' room), and kept out of full screen (see `WindowStateReader`).
         .background(WindowStateReader { window = $0 })
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .iconOnlyToolbar()
