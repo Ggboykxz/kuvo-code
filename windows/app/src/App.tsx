@@ -338,7 +338,7 @@ function EntryNodes({ transcript }: { transcript: Transcript }) {
               <div className="text">{entry.text}</div>
               {(entry.files ?? []).map((file, i) => <AttachmentNode key={i} file={file} />)}
               {entry.id ? (
-                <button className="small entry-action" title="Take the session back to before this message" onClick={() => void undoFromHere(entry)}>
+                <button className="small entry-action" title="Undo" onClick={() => void undoFromHere(entry)}>
                   Undo from here
                 </button>
               ) : null}
@@ -395,9 +395,9 @@ function PermissionCard({ request }: { request: PermissionRequest }) {
       </div>
       {request.message ? <div className="ask-message">{request.message}</div> : null}
       <div className="ask-buttons">
-        <button className="primary" onClick={() => void answerPermission(request, "once")}>Allow once</button>
-        <button onClick={() => void answerPermission(request, "always")}>Always allow</button>
-        <button className="danger" onClick={() => void answerPermission(request, "reject")}>Reject</button>
+        <button className="primary" onClick={() => void answerPermission(request, "once")}>Allow</button>
+        <button onClick={() => void answerPermission(request, "always")}>Always Allow</button>
+        <button className="danger" onClick={() => void answerPermission(request, "reject")}>Deny</button>
       </div>
     </div>
   );
@@ -489,7 +489,7 @@ function ContextGauge() {
         id="context-gauge"
         className="context-gauge"
         hidden={!total}
-        title="Context window used"
+        title="Context window"
         onClick={event => { event.stopPropagation(); setGaugeOpen(open => !open); }}
       >
         {fraction !== null ? `${Math.round(fraction * 100)}%` : compactTokens(total)}
@@ -603,7 +603,7 @@ function Header() {
                 <path d="M6.3 3v10" stroke="currentColor" strokeWidth="1.2" />
               </svg>
             </button>
-            <div className="identity" title={state.project ?? "Choose a folder"}>
+            <div className="identity" title={state.project ?? "Open Folder…"}>
               <button
                 id="project"
                 className="identity-hit"
@@ -692,7 +692,7 @@ function Header() {
         <input
           id="find"
           className="file-search header-find"
-          placeholder="Find in conversation…"
+          placeholder="Find in Conversation…"
           spellCheck={false}
           value={state.findQuery}
           onChange={event => { state.findQuery = event.target.value; render(); }}
@@ -871,7 +871,7 @@ function MessageSearch({ query }: { query: string }) {
   return (
     <div id="message-search-results" className="search-results" hidden={!open}>
       <div className="search-heading">In Conversations</div>
-      {matches.length === 0 ? <div className="search-empty">No conversations match.</div> : null}
+      {matches.length === 0 ? <div className="search-empty">No sessions match.</div> : null}
       {matches.slice(0, 20).map(match => (
         <div className="hit" key={match.session.id}>
           <div>{match.session.title || match.session.id}</div>
@@ -1023,7 +1023,7 @@ function Composer() {
         if (picked.length) setFiles(current => [...current, ...picked]);
       }}
     >
-      <button id="redo" className="small" type="button" hidden={!state.revert} title="Bring back what an undo took away" onClick={() => void redoNow()}>Redo</button>
+      <button id="redo" className="small" type="button" hidden={!state.revert} title="Redo" onClick={() => void redoNow()}>Redo</button>
       <div id="queue-dock" className={`queue-dock ${queueOpen ? "open" : ""}`} hidden={queueItems.length === 0}>
         {!queueOpen ? null : queueItems.map(item => (
           <div className="queue-item" key={item.id}>
@@ -1055,7 +1055,7 @@ function Composer() {
             </button>
           </div>
         ))}
-        <button className="small" title={queueOpen ? "Fold the queue away" : "Show what is waiting"} onClick={() => { setQueueOpen(open => !open); render(); }}>
+        <button className="small" title={queueOpen ? "Fold the queue away" : "Queue for After This Run"} onClick={() => { setQueueOpen(open => !open); render(); }}>
           <Symbol name={queueOpen ? "arrow.up" : "arrow.down"} size={12} /> {queueItems.length} waiting
         </button>
       </div>
@@ -1127,7 +1127,7 @@ function Composer() {
         }}
       />
       <div className="composer-foot">
-        <button id="attach" type="button" className="small icon" title="Attach files (also by dropping them here)" aria-label="Attach files">
+        <button id="attach" type="button" className="small icon" title="Attach Files… You can also drop files here, or paste them." aria-label="Attach Files">
           {/* A paperclip, drawn — one stroke, the same weight as the app's other marks. */}
           <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="M10.6 4.3 5.2 9.7a1.6 1.6 0 0 0 2.3 2.3l5.5-5.5a3 3 0 0 0-4.2-4.2L3 8.3a4.4 4.4 0 0 0 6.2 6.2l4.3-4.3" />
@@ -1452,14 +1452,14 @@ export function App() {
           <div className="card-fade" aria-hidden="true" />
           <CardHeader />
           <div id="empty" className="empty" hidden={hasSession}>
-            <h1>{needsFolder ? "Start with a folder" : "A session to work in"}</h1>
+            <h1>{needsFolder ? "Open a folder" : "A session to work in"}</h1>
             <p>
               {needsFolder
                 ? "Pick the project to work in, then say what you want done. The agent reads, edits and runs things in that folder, asking first."
                 : "Sessions live in the folder you picked. Start one, then say what you want done in it."}
             </p>
-            <button id="choose" className="primary" hidden={!needsFolder} onClick={() => { state.pickerOpen = true; render(); }}>Choose a folder</button>
-            <button id="start" className="primary" hidden={needsFolder} onClick={() => void newSession()}>Start a session</button>
+            <button id="choose" className="primary" hidden={!needsFolder} onClick={() => { state.pickerOpen = true; render(); }}>Open Folder…</button>
+            <button id="start" className="primary" hidden={needsFolder} onClick={() => void newSession()}>New Session</button>
           </div>
           <div
             id="entries"

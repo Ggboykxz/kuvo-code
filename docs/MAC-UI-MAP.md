@@ -75,6 +75,10 @@ gaps (0.5.38), the materials, the header's tabs and the palette (0.5.39), and th
 (0.5.40). Row 14, the icons, and the rest of Phase 6 (the screens) remain. The table is the
 baseline the release is measured against, not a description of the current page.
 
+**The wording is finished with the screens it lives in.** The shell's strings are the Mac's,
+word for word, and a check holds them to the Mac's own source
+(`windows/wording.test.mjs`); the rest follow the screens they belong to, in Phase 6.
+
 **The platform moved, the look did not.** Since 0.5.41 the window is built by Next.js (a
 static export the harness serves), and the page is read in a real browser in CI. That changes
 how the app is built and tested, not what it looks like: the Mac's stylesheet, tokens and
@@ -615,7 +619,7 @@ interpretation of it.
 | **3. Motion** | Analytic spring `linear()`, hover 0.12, press fills, list tint, shimmer, spinner, image-viewer transitions, reduced motion | §5 | 0.5.40 ✅ |
 | **— The platform** | The window is built by Next.js (a static export the harness serves) and the page is read in a real browser in CI; the look and the behaviour do not move | — | 0.5.41 |
 | **4. Icons** | 89 symbols → drawn SVGs; FolderIcon; PromptMark; provider logos; remove text glyphs and the naked `@` | §7 | 0.5.42 ✅ |
-| **5. Wording** | 1 208 sites compared; menus, tooltips, accessibility labels; punctuation | §8 | 0.5.43 |
+| **5. Wording** | 1 208 sites compared; menus, tooltips, accessibility labels; punctuation | §8 | 0.5.43 (the shell's words; the rest with the screens) |
 | **6. Screens** | Sidebar + title bar; transcript; composer + queue + gauge; palette + drawer; settings (14 existing + 3 missing: Notifications, Privacy, Panel; Worktrees maps to Projects); files/changes/terminal | §6.1–6.3 | 0.5.44 → 0.5.49 |
 | **7. Gestures & micro-UX** | Rename, double-click, resize grabber, history, popover flip, clear/remove/badge behaviours, find and search field shape | §9 | 0.5.50 |
 | **8. Verification** | Full capture matrix, computed-value checks, close every ◐; final side-by-side | all in-scope rows | 0.5.51 |
