@@ -26,6 +26,8 @@ struct RowStack<Item, Row: View>: NSViewRepresentable {
 
     final class Coordinator {
         var items: [String: Item] = [:]
+        /// Each row's space above it, which goes by the row before it.
+        var spaces: [String: CGFloat] = [:]
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -39,19 +41,26 @@ struct RowStack<Item, Row: View>: NSViewRepresentable {
         let isShown = context.environment.isConversationShown
         if view.isHidden == isShown { view.isHidden = !isShown }
         let old = context.coordinator.items
+        let oldSpaces = context.coordinator.spaces
         var now: [String: Item] = [:]
+        var spaces: [String: CGFloat] = [:]
         var ids: [String] = []
         var changed: Set<String> = []
         ids.reserveCapacity(items.count)
         now.reserveCapacity(items.count)
-        for item in items {
+        spaces.reserveCapacity(items.count)
+        for (index, item) in items.enumerated() {
             let key = id(item)
             ids.append(key)
             now[key] = item
-            if let before = old[key], same(before, item) { continue }
+            // Changed too when the row before it did, or came or went: its space above.
+            let gap = space(item, index)
+            spaces[key] = gap
+            if let before = old[key], same(before, item), oldSpaces[key] == gap { continue }
             changed.insert(key)
         }
         context.coordinator.items = now
+        context.coordinator.spaces = spaces
         let items = items, row = row, estimate = estimate, text = text, space = space
         let environment = context.environment
         view.rowText = { index in index < items.count ? text(items[index]) : "" }
@@ -699,8 +708,8 @@ final class RowStackView: NSView, NSUserInterfaceValidations {
                 }
                 let clamped = NSPoint(x: point.x, y: min(max(point.y, view.minY), view.maxY))
                 // Past an end that's in view: to the very start or end.
-                let top = convert(NSPoint.zero, to: enclosingScrollView?.documentView).y <= clip.bounds.minY + (enclosingScrollView?.contentInsets.top ?? 0) + 1
-                let bottom = convert(NSPoint(x: 0, y: total), to: enclosingScrollView?.documentView).y >= clip.bounds.maxY - (enclosingScrollView?.contentInsets.bottom ?? 0) - 1
+                let top = convert(NSPoint.zero, to: enclosingScrollView?.documentView).y >= clip.bounds.minY + (enclosingScrollView?.contentInsets.top ?? 0) - 1
+                let bottom = convert(NSPoint(x: 0, y: total), to: enclosingScrollView?.documentView).y <= clip.bounds.maxY - (enclosingScrollView?.contentInsets.bottom ?? 0) + 1
                 if past < 0, top {
                     select(anchor, Spot(row: 0, unit: 0, offset: 0))
                 } else if past > 0, bottom, let last = ids.indices.last {

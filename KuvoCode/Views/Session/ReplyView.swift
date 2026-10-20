@@ -195,7 +195,8 @@ final class ReplyTextView: NSTextView, NSTextViewDelegate {
         isHorizontallyResizable = false
         usesFontPanel = false
         isAutomaticLinkDetectionEnabled = false
-        linkTextAttributes = [.foregroundColor: ReplyDocument.Colors.link, .cursor: NSCursor.pointingHand]
+        // The document colors its links (a bot's name in its color, Find's marks in black).
+        linkTextAttributes = [.cursor: NSCursor.pointingHand]
         delegate = self
     }
 
