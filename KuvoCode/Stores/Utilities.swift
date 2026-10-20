@@ -105,6 +105,11 @@ final class Utilities {
     var worksBeside = false {
         didSet { if worksBeside != oldValue { panelChanged(from: panelKey(worksBeside: oldValue)) } }
     }
+    /// The session beside you work in, also while the expanded panel covers it (it's no longer
+    /// in view then, but the panel stays its). The window sets it, before `worksBeside`.
+    var workedBeside: String? {
+        didSet { if workedBeside != oldValue, worksBeside, besideInView == nil { panelChanged(from: oldValue.map(panelOf) ?? panelKey) } }
+    }
 
     /// Which conversation's panel a session's tabs are in: a bot's session's are the bot's (by its
     /// ID), a group chat seat's the chat's, a subagent's the session that started it. The app sets it.
@@ -118,7 +123,7 @@ final class Utilities {
         if let group = isSet ? group : groupInView { return group }
         let session = session ?? sessionInView
         let beside = beside ?? besideInView
-        let working = (worksBeside ?? self.worksBeside) ? beside ?? session : session
+        let working = (worksBeside ?? self.worksBeside) ? beside ?? workedBeside ?? session : session
         return working.map(panelOf) ?? ""
     }
 

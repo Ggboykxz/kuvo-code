@@ -140,7 +140,12 @@ struct MainView: View {
     /// It stays so while the expanded panel covers it (the panel is still its), not once it gave
     /// way for want of room.
     private var worksBeside: Bool {
-        lastHalf == .split && splitModel != nil && (besideID != nil || (showsPanel && panelExpanded))
+        lastHalf == .split && splitModel != nil && paneLayout(available: contentWidth).split != nil
+    }
+
+    /// The session beside you work in, if you do.
+    private var workedBesideID: String? {
+        worksBeside ? splitModel?.id : nil
     }
 
     /// The sessions on screen: the tab's, and the one beside it.
@@ -461,7 +466,10 @@ struct MainView: View {
         followingSessions
         // A tab you pick is the agent's of the half you work in.
         .onChange(of: focus) { _, pane in if pane == .conversation || pane == .split { lastHalf = pane } }
-        .onChange(of: worksBeside, initial: true) { _, beside in utilities.worksBeside = beside }
+        .onChange(of: workedBesideID, initial: true) { _, id in
+            utilities.workedBeside = id
+            utilities.worksBeside = id != nil
+        }
         .onChange(of: groupID) { showBotTabs() }
         .onChange(of: groupID.flatMap { groups.group($0)?.members } ?? []) { showBotTabs() }
         .task(id: activeDirectory) {
