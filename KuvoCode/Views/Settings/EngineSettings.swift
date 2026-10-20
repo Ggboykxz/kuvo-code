@@ -172,7 +172,8 @@ struct EngineSettings: View {
         .settingsDetail(item: $addingKey, title: { _ in nil }) { ref in
             ConnectDetail(integrationID: ref.id, note: "The agent can search the web with it now.") { addingKey = nil }
         }
-        .task {
+        // Again once the engine is ready: opened while it starts, or after Restart.
+        .task(id: app.engine == .ready) {
             guard let api = app.api else { return }
             shells = (try? await api.shells()) ?? []
             searchProviders = (try? await api.webSearchProviders()) ?? []

@@ -340,9 +340,13 @@ private struct SkillEditor: View {
 /// A SKILL.md: a header with its name and description, then its instructions.
 nonisolated enum SkillFile {
     /// A skill's name as skills want it: lowercase letters, digits and hyphens.
+    /// A skill's name from what's typed: its words in a to z and digits, joined by single
+    /// hyphens (words in other scripts left out, so none at the start, the end or doubled).
     static func name(from text: String) -> String {
-        let words = text.lowercased().split { !$0.isLetter && !$0.isNumber }
-        return String(words.joined(separator: "-").filter { $0.isASCII }.prefix(64))
+        let words = text.lowercased().split { !$0.isLetter && !$0.isNumber }.map { $0.filter(\.isASCII) }.filter { !$0.isEmpty }
+        var name = String(words.joined(separator: "-").prefix(64))
+        while name.hasSuffix("-") { name.removeLast() }
+        return name
     }
 
     static func parse(_ text: String) -> (description: String, body: String) {

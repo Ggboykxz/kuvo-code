@@ -186,8 +186,17 @@ nonisolated enum GitPreferences {
     static let defaultBranchPrefix = "kuvo/"
 
     /// What a session's own branch starts with ("kuvo/").
+    /// As git takes it in a branch's name: without spaces around it (one typed at the end of
+    /// the field doesn't show), the characters a branch can't have (~ ^ : ? * [ \), "..", or a
+    /// start in - / or .; else every worktree's branch would fail to be made.
     static var branchPrefix: String {
-        UserDefaults.standard.string(forKey: branchPrefixKey) ?? defaultBranchPrefix
+        let typed = UserDefaults.standard.string(forKey: branchPrefixKey) ?? defaultBranchPrefix
+        var prefix = typed.trimmingCharacters(in: .whitespacesAndNewlines).filter { character in
+            !" ~^:?*[\\".contains(character) && !character.isWhitespace && !(character.asciiValue.map { $0 < 32 || $0 == 127 } ?? false)
+        }
+        while prefix.contains("..") { prefix = prefix.replacingOccurrences(of: "..", with: ".") }
+        while let first = prefix.first, "-/.".contains(first) { prefix.removeFirst() }
+        return prefix
     }
 
     /// A prompt for a commit message or pull request, with your instructions for it added.

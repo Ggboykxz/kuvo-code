@@ -21,8 +21,11 @@ struct CommandsSettings: View {
     /// The name a Claude Code command comes over as: its own, or with "-claude" where it's one of
     /// the engine's (/init, /review), which it would take the place of.
     private func importedName(_ command: ClaudeCommands.Command) -> String {
-        others.contains { $0.name == command.id } ? command.id + "-claude" : command.id
+        others.contains { $0.name == command.id } || Self.engineOwn.contains(command.id) ? command.id + "-claude" : command.id
     }
+
+    /// The engine's own commands, taken also before its list has loaded.
+    private static let engineOwn: Set<String> = ["init", "review"]
 
     var body: some View {
         ScrollingSettingsForm {

@@ -45,7 +45,7 @@ struct PermissionCard: View {
                         ForEach(diffs) { diff in
                             let whole = shownWhole.contains(diff.id)
                             DiffView(diff: diff, title: relative(diff.file), maxLines: whole ? .max : Self.linesShown)
-                            if !whole, diff.patch.utf8.count(where: { $0 == 10 }) > Self.linesShown {
+                            if !whole, DiffParser.file(from: diff, directory: directory).lines.count > Self.linesShown {
                                 Button("Show All") { shownWhole.insert(diff.id) }
                                     .buttonStyle(TextButtonStyle())
                             }
