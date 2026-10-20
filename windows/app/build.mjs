@@ -45,6 +45,13 @@ copy(exported, out);
 const icon = path.join(here, "src", "icon.png");
 if (fs.existsSync(icon)) fs.copyFileSync(icon, path.join(out, "icon.png"));
 
+// The terminal's own files, from beside the hand-written page: one copy, shared.
+const vendor = path.join(here, "..", "harness", "ui", "vendor");
+if (fs.existsSync(vendor)) {
+  fs.mkdirSync(path.join(out, "vendor"), { recursive: true });
+  copy(vendor, path.join(out, "vendor"));
+}
+
 const size = fs.readdirSync(out, { recursive: true })
   .map(entry => path.join(out, entry))
   .filter(entry => fs.statSync(entry).isFile())

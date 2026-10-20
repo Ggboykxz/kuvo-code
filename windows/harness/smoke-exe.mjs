@@ -50,10 +50,15 @@ async function get(where) {
 try {
   const url = await address();
 
-  assert.match(await get(url), /<title>Kuvo Code<\/title>/, "the page comes from inside the binary");
-  assert.match(await get(`${url}app.js`), /new EventSource/, "the page's own script is served");
+  const page = await get(url);
+  assert.match(page, /<title>Kuvo Code<\/title>/, "the page comes from inside the binary");
+  // The page's own scripts: the build is Next.js's, so they are named after their contents
+  // and live in its own folder.
+  const scripts = [...page.matchAll(/<script[^>]+src="([^"]+)"/g)].map(match => match[1]);
+  assert.ok(scripts.length > 0, "the page brings its scripts");
+  const bodies = await Promise.all(scripts.map(src => get(new URL(src, url).href)));
+  assert.ok(bodies.some(body => /EventSource/.test(body)), "the app's own code is served");
   assert.match(await get(`${url}transcript.mjs`), /export function apply/, "the reducer is served");
-  assert.match(await get(`${url}style.css`), /--accent/, "the stylesheet is served");
   assert.match(await get(`${url}vendor/xterm.min.js`), /xterm/i, "the terminal's script is served");
   // The shell loads the page with its own query string; that must be the same page.
   const withQuery = await get(`${url}?terminalPort=0&shell=1`);

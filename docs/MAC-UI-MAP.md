@@ -607,11 +607,12 @@ interpretation of it.
 | **2a. Cards & glass** | The conversation card, 38 pt header + 62 pt fade, 8 pt window gaps, the sidebar on the glass (no surface), 32 pt rows, one search, the composer inside the card | §1 rows 3–8, 15, 16; §2; §4 Card/Composer/Bubble | 0.5.38 ✅ |
 | **2b. Title bar & overlays** | Title-bar tabs, drawer, palette 600/18, settings card, gauge popover, wells | §1 rows 15, 16; §2; §4 | 0.5.39 ✅ |
 | **3. Motion** | Analytic spring `linear()`, hover 0.12, press fills, list tint, shimmer, spinner, image-viewer transitions, reduced motion | §5 | 0.5.40 ✅ |
-| **4. Icons** | 89 symbols → drawn SVGs; FolderIcon; PromptMark; provider logos; remove text glyphs and the naked `@` | §7 | 0.5.41 |
-| **5. Wording** | 1 208 sites compared; menus, tooltips, accessibility labels; punctuation | §8 | 0.5.42 |
-| **6. Screens** | Sidebar + title bar; transcript; composer + queue + gauge; palette + drawer; settings (14 existing + 3 missing: Notifications, Privacy, Panel; Worktrees maps to Projects); files/changes/terminal | §6.1–6.3 | 0.5.43 → 0.5.48 |
-| **7. Gestures & micro-UX** | Rename, double-click, resize grabber, history, popover flip, clear/remove/badge behaviours, find and search field shape | §9 | 0.5.49 |
-| **8. Verification** | Full capture matrix, computed-value checks, close every ◐; final side-by-side | all in-scope rows | 0.5.50 |
+| **— The platform** | The window is built by Next.js (a static export the harness serves) and the page is read in a real browser in CI; the look and the behaviour do not move | — | 0.5.41 |
+| **4. Icons** | 89 symbols → drawn SVGs; FolderIcon; PromptMark; provider logos; remove text glyphs and the naked `@` | §7 | 0.5.42 |
+| **5. Wording** | 1 208 sites compared; menus, tooltips, accessibility labels; punctuation | §8 | 0.5.43 |
+| **6. Screens** | Sidebar + title bar; transcript; composer + queue + gauge; palette + drawer; settings (14 existing + 3 missing: Notifications, Privacy, Panel; Worktrees maps to Projects); files/changes/terminal | §6.1–6.3 | 0.5.44 → 0.5.49 |
+| **7. Gestures & micro-UX** | Rename, double-click, resize grabber, history, popover flip, clear/remove/badge behaviours, find and search field shape | §9 | 0.5.50 |
+| **8. Verification** | Full capture matrix, computed-value checks, close every ◐; final side-by-side | all in-scope rows | 0.5.51 |
 
 One release per batch, one descriptive commit line, CI green on `windows/harness` and `main`
 before the tag. The 20 excluded view files — five of them the excluded Settings pages — stay
