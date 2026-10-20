@@ -369,6 +369,12 @@ final class BotGroups {
         await remember(bot.id)
     }
 
+    /// The agent a seat on `model` runs as, when not the usual: Cursor can't stop to ask, so its
+    /// rules can't hold it back: it plans instead of changing anything.
+    private static func seatAgent(for model: ModelRef?, onAgents: Bool) -> String? {
+        onAgents && OutsideAgents.base(model?.providerID ?? "") == "cursor" ? "plan" : nil
+    }
+
     /// A bot's new default model, for its seats.
     func modelChanged(of bot: Bot) async {
         guard let model = bot.model else { return }
@@ -378,7 +384,13 @@ final class BotGroups {
             // One that runs elsewhere than the new model can (the engine, the agents): a new seat
             // at its next turn, which hears the whole chat.
             if group.agentSeats?.contains(seat) == true || !onAgents {
-                if let api = seatAPI(of: bot, in: group) { try? await api.selectModel(session: seat, model: model) }
+                if let api = seatAPI(of: bot, in: group) {
+                    try? await api.selectModel(session: seat, model: model)
+                    // Cursor plans in a seat (it can't stop to ask); others take part as seats do.
+                    if group.agentSeats?.contains(seat) == true {
+                        try? await api.selectAgent(session: seat, agent: Self.seatAgent(for: model, onAgents: onAgents) ?? "build")
+                    }
+                }
             } else {
                 await deleteSeat(seat, of: bot.id, in: group)
                 guard let index = list.firstIndex(where: { $0.id == group.id }) else { continue }
@@ -1194,8 +1206,7 @@ final class BotGroups {
         guard let group = group(id), let app else { throw CancellationError() }
         let model = bot.model ?? app.workspace.session(bot.sessionID)?.model
         let onAgents = OutsideAgents.runsWithAgents(model, machine: bot.machine)
-        // (Cursor can't stop to ask, so its rules can't hold it back: it plans instead of changing anything.)
-        let agent = onAgents && OutsideAgents.base(model?.providerID ?? "") == "cursor" ? "plan" : nil
+        let agent = Self.seatAgent(for: model, onAgents: onAgents)
         let session = try await api.createSession(directory: bot.directory, title: "\(bot.name) in \(group.name)", agent: agent, model: model, permissions: Self.seatRules(for: bot))
         if onAgents { app.workspace.runsOnAgents([session.id]) }
         app.workspace.seats.insert(session.id)

@@ -36,6 +36,9 @@ final class Catalog {
     /// Commands by project folder, with the project's own.
     private(set) var projectCommands: [String: [Command]] = [:]
     private(set) var isLoaded = false
+    /// The coding agents' accounts and models have been read (or their bridge couldn't start):
+    /// until then, theirs and Auto's aren't known.
+    private(set) var areAgentsLoaded = false
     /// True while a refresh has been waiting more than a few seconds.
     private(set) var isSlow = false
 
@@ -195,19 +198,28 @@ final class Catalog {
     /// A model picked that you can't use now (gone from its provider, or its account signed out
     /// of): it would only fail. Not before the models are known.
     func isUnavailable(_ ref: ModelRef?) -> Bool {
-        isLoaded && ref != nil && offeredModel(ref) == nil
+        guard let ref else { return false }
+        return isKnown(ref) && offeredModel(ref) == nil
+    }
+
+    /// Whether the models `ref` would be among are known yet: the engine's, or the coding agents'
+    /// (this Mac's; a machine has none).
+    private func isKnown(_ ref: ModelRef) -> Bool {
+        OutsideAgents.runsInBridge(ref.providerID) && isMac ? areAgentsLoaded : isLoaded
     }
 
     /// The model a new session or bot starts on: the first of `wanted` (the one picked, the one
     /// picked last) you can use now; else the engine's default, if you can; else the first model
     /// you can use. A model whose account you signed out of would only fail. Before the models are
-    /// known (just after launch), the first of `wanted` as it is.
+    /// known (just after launch; the coding agents' come after the engine's), the first of `wanted`
+    /// as it is.
     func startingModel(_ wanted: ModelRef?..., scope: ModelScope = .all) -> ModelRef? {
         let wanted = wanted.compactMap(\.self).filter { scope.allows($0.providerID) }
         guard isLoaded else { return wanted.first ?? defaultModel?.ref }
-        if let ref = wanted.first(where: { offeredModel($0) != nil }) { return ref }
+        if let ref = wanted.first(where: { offeredModel($0) != nil || !isKnown($0) }) { return ref }
         if let model = offeredModel(defaultModel?.ref) { return model.ref }
-        return modelsByProvider.first?.models.first?.ref
+        // Only coding agents' accounts: one of theirs.
+        return modelsByProvider.first?.models.first?.ref ?? offered.first { OutsideAgents.isAgent($0.providerID) && scope.allows($0.providerID) }?.ref
     }
 
     /// What to sign in to again for an account opencode had: a ChatGPT or SuperGrok plan is
@@ -289,9 +301,14 @@ final class Catalog {
         }
         defer { if fresh { isRefreshingAgents = false } }
         // The accounts first: one that changed has other models.
-        do { agentIntegrations = try await api.agentIntegrations(fresh: fresh) } catch { log.error("agents: \(String(describing: error), privacy: .public)") }
+        var read = false
+        do {
+            agentIntegrations = try await api.agentIntegrations(fresh: fresh)
+            read = true
+        } catch { log.error("agents: \(String(describing: error), privacy: .public)") }
         do { agentModels = try await api.models() } catch { log.error("agents' models: \(String(describing: error), privacy: .public)") }
         merge()
+        if read { areAgentsLoaded = true }
     }
 
     /// The agents bridge stopped for good: its agents and their models aren't there to use.
@@ -299,6 +316,8 @@ final class Catalog {
         agentIntegrations = []
         agentModels = []
         merge()
+        // Known: not there.
+        areAgentsLoaded = true
     }
 
     /// True while the agents are being asked anew.

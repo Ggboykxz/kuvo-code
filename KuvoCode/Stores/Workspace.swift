@@ -821,17 +821,18 @@ final class Workspace {
     func moveToAgents(_ id: String, model: ModelRef) async throws {
         guard let moved = try await carryToAgents(id, model: model) else { return }
         Analytics.shared.track("session_moved_to_agents", Analytics.model(provider: model.providerID, model: model.id))
-        // One something else keeps (a bot's conversation): it takes the new session, in its place.
-        if await onMovedToAgents?(id, moved) == true { return }
-        await setArchived(id, true)
+        // The window with its tab (or pane) takes its place, before the old one goes.
         let swap = TabSwap(from: id, to: moved.id)
         swappedTab = swap
-        // The window with its tab takes its place; with none, it opens as any session does.
+        // One something else keeps (a bot's conversation): it takes the new session, in its place.
+        let kept = await onMovedToAgents?(id, moved) == true
+        if !kept { await setArchived(id, true) }
+        // With no tab of it, it opens as any session does; a bot's that wasn't open stays so.
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(400))
             if swappedTab == swap {
                 swappedTab = nil
-                requestedTab = swap.to
+                if !kept { requestedTab = swap.to }
             }
         }
     }
@@ -1006,7 +1007,7 @@ final class Workspace {
             }
             // Questions it asked before starting over went with it (it keeps them in memory): only
             // those it still asks stay.
-            for (request, id) in asking where sharedForms[request] == nil && (session(id).map(OutsideAgents.isAgentSession) ?? false) {
+            for (request, id) in asking where sharedForms[request] == nil && isBridgeSession(id) {
                 // Not read: as it was.
                 guard let asked = await Self.stillAsked(in: id, api: api), !asked.contains(request) else { continue }
                 asking[request] = nil
@@ -1092,7 +1093,7 @@ final class Workspace {
 
     /// The agents bridge stopped for good: its sessions aren't at work, nor asking anything.
     func agentsStopped() {
-        for (request, id) in asking where sharedForms[request] == nil && (session(id).map(OutsideAgents.isAgentSession) ?? false) {
+        for (request, id) in asking where sharedForms[request] == nil && isBridgeSession(id) {
             asking[request] = nil
             Notifier.shared.clear(request: request)
         }
@@ -1592,7 +1593,7 @@ final class Workspace {
             // without the note on attached files, and another agent's message without its header.
             let first = page.data.lazy.compactMap { message -> String? in
                 guard case .user(let user) = message else { return nil }
-                let text = Attachments.split(CommandMessages.shared.text(of: user)).text
+                let text = SentMessage.words(of: CommandMessages.shared.text(of: user))
                 let words = AgentMail.parse(text)?.text ?? text
                 return words.isEmpty ? nil : words
             }.first
