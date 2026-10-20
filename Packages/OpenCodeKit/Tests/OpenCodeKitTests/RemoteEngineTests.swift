@@ -12,7 +12,12 @@ struct RemoteEngineTests {
     @Test func runsAScriptWithShWhateverTheLoginShell() {
         let arguments = SSHConnection(destination: "box").arguments(running: "echo \"$HOME\"", extra: ["-L", "1:127.0.0.1:2"])
         #expect(arguments.contains("BatchMode=yes"))
-        #expect(arguments.suffix(4) == ["-L", "1:127.0.0.1:2", "box", #"sh -c 'echo "$HOME"'"#])
+        #expect(arguments.suffix(4) == ["-L", "1:127.0.0.1:2", "box", SSHConnection.command(running: "echo \"$HOME\"")])
+        // Only base64 between the quotes the login shell reads: nothing in it that fish, csh or sh
+        // would take as an escape.
+        let command = SSHConnection.command(running: "printf '%s\\n' \"a'b\\\\c\"")
+        #expect(command.hasPrefix("exec sh -c 'eval \"$(printf %s "))
+        #expect(!command.dropFirst("exec sh -c '".count).dropLast().contains { $0 == "'" || $0 == "\\" })
         #expect(arguments.contains("ControlMaster=auto"))
         // The engine's connection never joins the shared one.
         #expect(SSHConnection(destination: "box").arguments(running: "true", shared: false).contains("ControlPath=none"))

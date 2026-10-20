@@ -40,8 +40,16 @@ public struct SSHConnection: Sendable, Hashable, Codable {
     static let separate = ["-o", "ControlMaster=no", "-o", "ControlPath=none"]
 
     /// The `ssh` arguments that run `script` on the machine with `sh`, whatever its login shell.
+    /// sshd hands the command to that shell, and one like fish reads backslashes in quotes its own
+    /// way, so the script goes as base64, which no shell changes, for `sh` to decode and run. Its
+    /// standard input stays the command's.
     public func arguments(running script: String, extra: [String] = [], shared: Bool = true) -> [String] {
-        Self.options + (shared ? Self.sharing : Self.separate) + extra + [destination, "sh -c " + Self.quoted(script)]
+        Self.options + (shared ? Self.sharing : Self.separate) + extra + [destination, Self.command(running: script)]
+    }
+
+    /// The command line for the machine's login shell that runs `script` with `sh`.
+    public static func command(running script: String) -> String {
+        "exec sh -c 'eval \"$(printf %s " + Data(script.utf8).base64EncodedString() + " | base64 -d)\"'"
     }
 
     /// Runs `script` on the machine and returns what it printed. `input` is sent to it.
