@@ -386,6 +386,11 @@ final class Catalog {
         endedSignIns[provider] = id
     }
 
+    /// A step on `provider`'s model ended well: its sign-in works (renewed after all).
+    func signInWorks(_ provider: String) {
+        if endedSignIns[provider] != nil { endedSignIns[provider] = nil }
+    }
+
     /// `provider`'s sign-in in use ended: the one refused is still the one in use (signed in again,
     /// it's another).
     func hasEndedSignIn(_ provider: String) -> Bool {

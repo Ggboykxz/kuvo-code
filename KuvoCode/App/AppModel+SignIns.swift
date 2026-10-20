@@ -129,11 +129,14 @@ extension AppModel {
                     && (yours.id == copy?.machine || mine.contains { Self.lasting($0) == Self.lasting(yours) })
             }
             var removed = true
+            // At most one comes back: this Mac's is gone once it has.
+            var broughtBack = false
             for yours in copies {
-                if let here = mine.first(where: \.active) ?? mine.first, Self.lasting(here) != Self.lasting(yours), yours.expires > here.expires,
+                if !broughtBack, let here = mine.first(where: \.active) ?? mine.first, Self.lasting(here) != Self.lasting(yours), yours.expires > here.expires,
                    Self.accountID(here).map({ $0 == Self.accountID(yours) }) ?? (copy == Copy(mac: here.id, machine: yours.id)) {
                     guard (try? await mac.storeCredential(yours, for: integration, activate: here.active)) != nil else { removed = false; continue }
                     try? await mac.removeCredential(here.id)
+                    broughtBack = true
                 }
                 if (try? await remote.removeCredential(yours.id)) == nil { removed = false }
             }
