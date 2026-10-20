@@ -138,6 +138,8 @@ export interface Thread {
    */
   prepare?(input: RunInput, hooks: TurnHooks): Promise<{ fresh: boolean } | undefined>
   run(input: RunInput, turn: Turn, hooks: TurnHooks): Promise<RunResult>
+  /** Adds a message of yours to the turn under way, at its next step; false when it can't. */
+  steer?(input: { text: string; files: PromptFile[] }): Promise<boolean>
   /** Stops the turn under way; `run` then ends with `interrupted`. */
   interrupt(): Promise<void>
   close(): void

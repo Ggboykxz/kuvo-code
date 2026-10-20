@@ -65,6 +65,7 @@ class FakeThread implements Thread {
   interrupted = 0
   closed = false
   onStop?: () => void
+  steer?: (input: { text: string; files: unknown[] }) => Promise<boolean>
   /** Its next prepare says it started over. */
   fresh = false
   /** Its prepare never ends, or fails. */
@@ -567,6 +568,42 @@ describe("undo", () => {
     expect(events.some((event) => event.type === "session.revert.committed")).toBe(true)
     expect(readFileSync(join(folder, "a.txt"), "utf8")).toBe("one\n")
     expect(a.threads.length).toBe(2)
+  })
+})
+
+describe("steering", () => {
+  test("a message for an agent that takes one partway goes into its turn at once", async () => {
+    a.script = works
+    const id = create()
+    send(id, "first")
+    await until(() => a.runs.length === 1)
+    const steered: string[] = []
+    a.threads[0].steer = async (input) => {
+      steered.push(input.text)
+      return true
+    }
+    send(id, "also do this")
+    await until(() => steered.length === 1)
+    await until(() => sessions.inbox(id).length === 0)
+    expect(sessions.messages(id).filter((message) => message.type === "user").map((message: any) => message.text)).toEqual(["first", "also do this"])
+    a.threads[0].onStop!()
+    await settled(id, 1)
+    // It went into that turn: no second one for it.
+    expect(a.runs).toHaveLength(1)
+  })
+
+  test("one it turns away waits for the turn to end", async () => {
+    a.script = works
+    const id = create()
+    send(id, "first")
+    await until(() => a.runs.length === 1)
+    a.threads[0].steer = async () => false
+    send(id, "later")
+    await until(() => sessions.inbox(id)[0]?.delivery === "queue")
+    a.script = replies
+    a.threads[0].onStop!()
+    await settled(id, 1)
+    expect(sessions.inbox(id)).toHaveLength(1)
   })
 })
 

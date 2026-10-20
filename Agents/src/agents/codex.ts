@@ -6,7 +6,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, rmSync, sy
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { providerID, type AgentAccount } from "../accounts"
-import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, SubagentRun, Thread, TurnHooks } from "../agent"
+import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, SubagentRun, Thread, TurnHooks, PromptFile } from "../agent"
 import type { Limit } from "../auto"
 import { accountName, failure, model } from "../agent"
 import { fromPatch } from "../diff"
@@ -429,6 +429,27 @@ class CodexThread implements Thread {
 
   get isRunning(): boolean {
     return this.inTurn
+  }
+
+  /** Your message, into the turn under way (Codex's turn/steer). */
+  async steer(input: { text: string; files: PromptFile[] }): Promise<boolean> {
+    const active = this.active
+    if (!active?.turnID || !this.nativeID) return false
+    const items: any[] = [{ type: "text", text: input.text, text_elements: [] }]
+    const others: string[] = []
+    for (const file of input.files) {
+      if (file.mime.startsWith("image/") && file.path) items.push({ type: "localImage", path: file.path })
+      else if (file.mime.startsWith("image/") && file.data) items.push({ type: "image", url: `data:${file.mime};base64,${file.data}` })
+      else if (file.path) others.push(file.path)
+    }
+    if (others.length) items[0].text += `\n\nAttached files:\n${others.map((path) => `- ${path}`).join("\n")}`
+    try {
+      const rpc = await this.agent.rpc()
+      await rpc.request("turn/steer", { threadId: this.nativeID, input: items, expectedTurnId: active.turnID }, 30_000)
+      return this.active === active
+    } catch {
+      return false
+    }
   }
 
   async prepare(input: RunInput, hooks: TurnHooks) {

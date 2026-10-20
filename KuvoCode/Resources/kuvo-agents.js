@@ -3618,6 +3618,34 @@ class CodexThread {
   get isRunning() {
     return this.inTurn;
   }
+  async steer(input) {
+    const active = this.active;
+    if (!active?.turnID || !this.nativeID)
+      return false;
+    const items = [{ type: "text", text: input.text, text_elements: [] }];
+    const others = [];
+    for (const file of input.files) {
+      if (file.mime.startsWith("image/") && file.path)
+        items.push({ type: "localImage", path: file.path });
+      else if (file.mime.startsWith("image/") && file.data)
+        items.push({ type: "image", url: `data:${file.mime};base64,${file.data}` });
+      else if (file.path)
+        others.push(file.path);
+    }
+    if (others.length)
+      items[0].text += `
+
+Attached files:
+${others.map((path) => `- ${path}`).join(`
+`)}`;
+    try {
+      const rpc = await this.agent.rpc();
+      await rpc.request("turn/steer", { threadId: this.nativeID, input: items, expectedTurnId: active.turnID }, 30000);
+      return this.active === active;
+    } catch {
+      return false;
+    }
+  }
   async prepare(input, hooks) {
     this.inTurn = true;
     try {
@@ -5741,12 +5769,41 @@ class Sessions {
     const queue = this.queue(record);
     if (queue.some((waiting) => waiting.id === input.id) || record.messages.some((message) => message.id === input.id))
       return;
-    const delivery = this.isRunning(id) || input.delivery === "queue" ? "queue" : "steer";
+    const running = this.live.get(id)?.running;
+    const steers = this.isRunning(id) && input.delivery !== "queue" && Boolean(running?.thread.steer);
+    const delivery = steers || !this.isRunning(id) && input.delivery !== "queue" ? "steer" : "queue";
     queue.push({ ...input, delivery });
     this.store.save(id, true);
     emit("session.inbox.enqueued", { sessionID: id, inboxID: input.id, item: { type: "user", payload: { text: input.text, files: input.files }, delivery } }, record.session.location.directory);
-    if (delivery === "steer")
+    if (steers)
+      this.steerNow(id, input);
+    else if (delivery === "steer")
       this.wake(id);
+  }
+  async steerNow(id, input) {
+    const running = this.live.get(id)?.running;
+    const taken = running?.thread.steer ? await running.thread.steer({ text: input.text, files: input.files.map(promptFile) }).catch(() => false) : false;
+    const record = this.store.get(id);
+    if (!record)
+      return;
+    const queue = this.queue(record);
+    const at = queue.findIndex((waiting) => waiting.id === input.id);
+    if (at < 0)
+      return;
+    if (!taken || !this.isRunning(id)) {
+      if (this.isRunning(id))
+        this.setDelivery(id, input.id, "queue");
+      else
+        this.wake(id);
+      return;
+    }
+    queue.splice(at, 1);
+    const directory = record.session.location.directory;
+    emit("session.inbox.delivered", { sessionID: id, inboxID: input.id }, directory);
+    const attachments = input.files.map((file) => ({ mime: mime(file.uri), name: file.name, source: { type: "uri", uri: file.uri } }));
+    record.messages.push({ type: "user", id: input.id, time: { created: Date.now() }, text: input.text, files: attachments.length ? attachments : undefined });
+    record.session.time.updated = Date.now();
+    this.store.save(id, true);
   }
   setDelivery(id, inputID, delivery) {
     const record = this.record(id);

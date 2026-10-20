@@ -525,12 +525,39 @@ export class Sessions {
     const queue = this.queue(record)
     // Sent twice (a retry after a timeout): once is enough.
     if (queue.some((waiting) => waiting.id === input.id) || record.messages.some((message) => message.id === input.id)) return
-    // While a turn runs, it waits for it (these agents take nothing in partway).
-    const delivery: Delivery = this.isRunning(id) || input.delivery === "queue" ? "queue" : "steer"
+    // While a turn runs, it waits for it, unless the agent at work takes it partway (Codex does).
+    const running = this.live.get(id)?.running
+    const steers = this.isRunning(id) && input.delivery !== "queue" && Boolean(running?.thread.steer)
+    const delivery: Delivery = steers || (!this.isRunning(id) && input.delivery !== "queue") ? "steer" : "queue"
     queue.push({ ...input, delivery })
     this.store.save(id, true)
     emit("session.inbox.enqueued", { sessionID: id, inboxID: input.id, item: { type: "user", payload: { text: input.text, files: input.files }, delivery } }, record.session.location.directory)
-    if (delivery === "steer") this.wake(id)
+    if (steers) void this.steerNow(id, input)
+    else if (delivery === "steer") this.wake(id)
+  }
+
+  /** A message of yours into the turn under way, at its next step; it waits for the turn when it can't go. */
+  private async steerNow(id: string, input: Input) {
+    const running = this.live.get(id)?.running
+    const taken = running?.thread.steer ? await running.thread.steer({ text: input.text, files: input.files.map(promptFile) }).catch(() => false) : false
+    const record = this.store.get(id)
+    if (!record) return
+    const queue = this.queue(record)
+    const at = queue.findIndex((waiting) => waiting.id === input.id)
+    // Cancelled, or sent, meanwhile.
+    if (at < 0) return
+    if (!taken || !this.isRunning(id)) {
+      if (this.isRunning(id)) this.setDelivery(id, input.id, "queue")
+      else this.wake(id)
+      return
+    }
+    queue.splice(at, 1)
+    const directory = record.session.location.directory
+    emit("session.inbox.delivered", { sessionID: id, inboxID: input.id }, directory)
+    const attachments: Attachment[] = input.files.map((file) => ({ mime: mime(file.uri), name: file.name, source: { type: "uri", uri: file.uri } }))
+    record.messages.push({ type: "user", id: input.id, time: { created: Date.now() }, text: input.text, files: attachments.length ? attachments : undefined })
+    record.session.time.updated = Date.now()
+    this.store.save(id, true)
   }
 
   /** Steer (it goes next, and now if nothing runs) or queue (it waits its turn) a waiting message. */
