@@ -6,6 +6,9 @@ public struct ServerEvent: Sendable, Identifiable {
     public var id: String
     public var type: String
     public var created: Milliseconds?
+    /// When it came, by this computer's clock: read as it arrives. One applied again later (as a
+    /// conversation is read anew) keeps it.
+    public var received: Milliseconds
     public var location: Location?
     /// The `data` object's `sessionID`, for the many events that have one.
     public var sessionID: String?
@@ -31,6 +34,7 @@ public struct ServerEvent: Sendable, Identifiable {
         id = head.id
         type = head.type
         created = head.created
+        received = Date().timeIntervalSince1970 * 1000
         location = head.location
         sessionID = head.data?.sessionID
         raw = json

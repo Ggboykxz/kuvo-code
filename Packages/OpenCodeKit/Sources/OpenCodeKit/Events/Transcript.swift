@@ -17,7 +17,7 @@ public struct Transcript: Sendable, Equatable {
     /// thinking, a tool's input): for telling a reply that stalled partway from one being written.
     /// By the engine's clock, as its messages' times are (see `clockOffset`).
     public var lastHeard: Milliseconds?
-    /// How far this computer's clock is ahead of the engine's, as its events arrive: a machine's
+    /// How far this computer's clock is ahead of the engine's, from when its events arrived: a machine's
     /// can be behind or ahead. Take it from this computer's time to compare it with the engine's
     /// times (a message's, `lastHeard`). Not part of what two transcripts compare: it differs
     /// between two reads of the same events.
@@ -188,7 +188,8 @@ public struct Transcript: Sendable, Equatable {
     private mutating func reduce(_ event: ServerEvent) throws {
         let now = event.created ?? Date().timeIntervalSince1970 * 1000
         let messageID = "msg_" + event.id.dropFirst("evt_".count)
-        if let created = event.created { clockOffset = Date().timeIntervalSince1970 * 1000 - created }
+        // When it came, not when it's applied: one applied again after a read would add the read's time.
+        if let created = event.created { clockOffset = event.received - created }
         if event.sessionID == sessionID, Self.heard.contains(event.type) { lastHeard = now }
 
         switch event.type {
