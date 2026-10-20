@@ -248,6 +248,46 @@ public final class RemoteServer: @unchecked Sendable {
             public var port: Int
             public var password: String
         }
+
+        public init(pid: Int, port: Int, password: String, version: String, notes: [String: String], agents: Agents?) {
+            self.pid = pid
+            self.port = port
+            self.password = password
+            self.version = version
+            self.notes = notes
+            self.agents = agents
+        }
+
+        // The record keeps the bridge's port and password under names of their own, at the top
+        // (`agentsPort`, `agentsPassword`): scripts on the machine (kuvo-wake's) take the first
+        // `"port"` and `"password"` they find, whatever order the keys come in.
+        private enum CodingKeys: String, CodingKey { case pid, port, password, version, notes, agentsPort, agentsPassword, agents }
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            pid = try container.decodeIfPresent(Int.self, forKey: .pid) ?? 0
+            port = try container.decode(Int.self, forKey: .port)
+            password = try container.decode(String.self, forKey: .password)
+            version = try container.decode(String.self, forKey: .version)
+            notes = try container.decodeIfPresent([String: String].self, forKey: .notes) ?? [:]
+            if let port = try container.decodeIfPresent(Int.self, forKey: .agentsPort), let password = try container.decodeIfPresent(String.self, forKey: .agentsPassword) {
+                agents = Agents(port: port, password: password)
+            } else {
+                // As test builds wrote it.
+                agents = try container.decodeIfPresent(Agents.self, forKey: .agents)
+            }
+        }
+
+        public func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(pid, forKey: .pid)
+            try container.encode(port, forKey: .port)
+            try container.encode(password, forKey: .password)
+            try container.encode(version, forKey: .version)
+            try container.encode(notes, forKey: .notes)
+            try container.encodeIfPresent(agents?.port, forKey: .agentsPort)
+            try container.encodeIfPresent(agents?.password, forKey: .agentsPassword)
+        }
     }
 
     public let engine: Engine
@@ -305,8 +345,8 @@ public final class RemoteServer: @unchecked Sendable {
             environment["OPENCODE_CLIENT"] = "desktop"
             environment.removeValue(forKey: "OPENCODE_SERVER_PASSWORD")
             // What's kept to find it again, but its process, which the script adds.
-            struct Record: Encodable { var port: Int, password: String, version: String, notes: [String: String], agents: Engine.Agents? }
-            let record = String(decoding: try JSONEncoder().encode(Record(port: engine.port, password: engine.password, version: engine.version, notes: engine.notes, agents: agents)), as: UTF8.self)
+            struct Record: Encodable { var port: Int, password: String, version: String, notes: [String: String], agentsPort: Int?, agentsPassword: String? }
+            let record = String(decoding: try JSONEncoder().encode(Record(port: engine.port, password: engine.password, version: engine.version, notes: engine.notes, agentsPort: agents?.port, agentsPassword: agents?.password)), as: UTF8.self)
             environment["KUVO_RECORD"] = String(record.dropFirst())
             environment["KUVO_PORT"] = String(engine.port)
             if let agents {
@@ -504,7 +544,7 @@ public final class RemoteServer: @unchecked Sendable {
             kill -0 "$apid" 2>/dev/null && break
             try=$((try + 1)); [ $try -ge 3 ] && break
             old=$aport; aport=$(( $(od -An -N2 -tu2 /dev/urandom | tr -d ' ') % 40000 + 20000 ))
-            sed -i "s/\\"port\\":$old\\([,}]\\)/\\"port\\":$aport\\1/" "$R/engine.json"
+            sed -i "s/\\"agentsPort\\":$old\\([,}]\\)/\\"agentsPort\\":$aport\\1/" "$R/engine.json"
           done
         fi
         unset KUVO_AGENTS_PASSWORD
