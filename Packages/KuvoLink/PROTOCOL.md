@@ -207,11 +207,17 @@ itself. A host serves:
     and sessions are theirs. `kuvo/agents/api/kuvo/accounts`: `POST {agent, label}` (agent:
     `claude`, `codex`, `cursor`, `grok`, `antigravity`) → `{data: {providerID}}`, then sign in as
     any; `PATCH …/accounts/<provider> {label}`; `DELETE …/accounts/<provider>`.
-  - Auto: a session's model `{providerID: "auto", id: "auto"}` runs down your list.
-    `kuvo/agents/api/kuvo/auto`: `GET` and `PUT {entries}` → `{data: {entries: [{providerID,
-    modelID, variant?}], limits: [{key, until, scope, known}]}}` (`key` is a provider for an
-    account's limit, `provider/model` for a model's; `until` in ms); `DELETE …/auto/limits`
-    tries them all again. The event `kuvo.auto.updated` says the list or its limits changed.
+    `metadata.signInEnded` true: its maker ended the sign-in; mark the account (the Mac says
+    "Sign-in ended") and offer to sign in again.
+  - Custom Auto: a session's model `{providerID: "auto", id: <list ID>}` runs down that list,
+    going on with the next model at a usage limit or an error. `kuvo/agents/api/kuvo/auto`: `GET`
+    and `PUT {lists}` → `{data: {entries, lists: [{id, name, entries: [{providerID, modelID,
+    variant?}]}], limits: [{key, until, scope, known}]}}` (the first list's ID is `auto`;
+    `entries` is the first list's; `key` is a provider for an account's limit, `provider/model`
+    for a model's; `until` in ms); `DELETE …/auto/limits` tries them all again. The event
+    `kuvo.auto.updated` says the lists or their limits changed. An account with a `provider`
+    limit whose `until` hasn't come is at its usage limit: mark it (the Mac says "Usage limit ·
+    Resets in …").
   - A session with the agents may switch to any model (`…/session/<id>/model`), the engine's
     too: it runs those through an engine session of its own, which carries
     `metadata.kuvo.engineFor` and is never shown (hide it in the engine's session list).
