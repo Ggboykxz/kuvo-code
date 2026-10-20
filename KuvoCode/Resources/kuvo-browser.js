@@ -1972,15 +1972,18 @@ async function wake(name, args, from) {
   if (!from) return text("This needs a conversation of its own.", true);
   let session = from;
   let info = null;
+  // Up to the conversation it works for (a subagent's), on the engine or the agents' bridge here.
+  let place = null;
   for (let step = 0; step < 5; step++) {
-    const found = (await engine("GET", `api/session/${encodeURIComponent(session)}`).catch(() => null))?.data;
+    const found = await findSession(session);
     if (!found) break;
-    info = found;
-    if (!found.parentID) break;
-    session = found.parentID;
+    info = found.data;
+    place = found.place;
+    if (!found.data.parentID) break;
+    session = found.data.parentID;
   }
-  // Not the engine's: a coding agent's session, with the agents' bridge here.
-  const viaBridge = !info && fs.existsSync(path.join(K, "run", "bridge.json"));
+  // A coding agent's session: its wake-ups go to the agents' bridge here.
+  const viaBridge = place === "bridge" || (!info && fs.existsSync(path.join(K, "run", "bridge.json")));
   const bots = process.env.KUVO_BOTS || path.join(K, "bots");
   let target = session;
   for (const id of fs.existsSync(bots) ? fs.readdirSync(bots) : []) {
