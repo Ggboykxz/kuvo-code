@@ -440,15 +440,18 @@ final class BrowserAgent {
 
     /// The site of the document the page shows, as `site(of:)` names it.
     static func documentSite(in browser: BrowserSession) async -> String? {
-        let script = "return location.protocol === 'file:' ? 'a file on this Mac' : location.hostname"
+        let script = "return location.protocol === 'file:' ? 'a file on this Mac' : location.protocol === 'http:' ? 'http://' + location.hostname : location.hostname"
         return try? await browser.webView.callAsyncJavaScript(script, arguments: [:], contentWorld: world) as? String
     }
 
     /// The site a page is on, as the ask names it and Passwords keeps it: its host, or for a page
-    /// from a file, that it is one.
+    /// from a file, that it is one. One over plain http is a site of its own ("http://host"):
+    /// passwords are saved from https, and one sent over http can be read on the way, so a saved
+    /// one isn't offered or filled in there.
     static func site(of url: URL?) -> String? {
         guard let url else { return nil }
-        return url.isFileURL ? "a file on this Mac" : url.host()
+        if url.isFileURL { return "a file on this Mac" }
+        return url.scheme == "http" ? url.host().map { "http://" + $0 } : url.host()
     }
 
     /// Nil if the fields are there and fit what goes in them, else why not.
@@ -932,7 +935,8 @@ final class BrowserAgent {
     // Only into a page of the site the user was asked about: its address may already show the
     // next site while this document is still the last one's.
     const where = element.ownerDocument.location;
-    if (typeof site === 'string' && (site === 'a file on this Mac' ? where.protocol !== 'file:' : where.hostname !== site)) {
+    const here = where.protocol === 'file:' ? 'a file on this Mac' : where.protocol === 'http:' ? 'http://' + where.hostname : where.hostname;
+    if (typeof site === 'string' && here !== site) {
       return `The page isn't on ${site} now, so nothing was filled in. Take a fresh browser_snapshot and ask again.`;
     }
     const kind = kindOf(element);
