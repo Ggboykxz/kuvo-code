@@ -5,7 +5,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
-import type { RunInput, RunResult, Thread, TurnHooks, SubagentTask } from "./agent"
+import type { RunInput, RunResult, Thread, TurnHooks, SubagentRun, SubagentTask } from "./agent"
 import { failure } from "./agent"
 import type { Limit } from "./auto"
 import { fileDiff } from "./diff"
@@ -94,7 +94,7 @@ interface Active {
   /** How much of its context the conversation fills, as the agent last said (usage_update). */
   used?: number
   /** Subagents its tool calls started, by the call that started them; their rows, one each. */
-  spawns: Map<string, string[]>
+  spawns: Map<string, { row: string; run: SubagentRun; ended?: boolean }[]>
 }
 
 export class AcpThread implements Thread {
@@ -309,7 +309,7 @@ export class AcpThread implements Thread {
     if (this.active === active) this.active = undefined
     if (active.plan) active.turn.toolSucceeded(active.plan.id, "", { todos: active.plan.todos })
     // Its subagents are done when it is (it says no more of them).
-    if (outcome === "succeeded") for (const rows of active.spawns.values()) for (const row of rows) active.turn.toolSucceeded(row, "")
+    if (outcome === "succeeded") for (const spawns of active.spawns.values()) for (const spawn of spawns) if (!spawn.ended) active.turn.toolSucceeded(spawn.row, "")
     active.turn.endStep({ tokens: this.stepTokens(active) })
     if (active.hooks.signal.aborted) active.resolve({ outcome: "interrupted" })
     // It had the message when it said something about it, or answered the prompt itself.
@@ -390,17 +390,18 @@ export class AcpThread implements Thread {
     const merged = { ...(active.tools.get(id) ?? {}), ...Object.fromEntries(Object.entries(update).filter(([, value]) => value !== undefined && value !== null)) }
     active.tools.set(id, merged)
     // One that starts subagents: a row for each, with a session of its own, as the engine's do.
+    // (Antigravity says the call itself "failed" even when its subagents run: they're started by
+    // another call. So its own updates don't change them.)
     if (active.spawns.has(id)) return
     const spawned = this.flavor.subagents?.(merged)
     if (spawned?.length) {
-      const rows = spawned.map((task, index) => {
+      const spawns = spawned.map((task, index) => {
         const row = `${id}:${index}`
         active.toolsSinceText = true
         turn.toolStart(row, "subagent", { description: task.title, prompt: task.prompt, agent: task.agent })
-        active.hooks.subagent(row, task)
-        return row
+        return { row, run: active.hooks.subagent(row, task) }
       })
-      active.spawns.set(id, rows)
+      active.spawns.set(id, spawns)
       return
     }
     if (this.flavor.hides?.(merged)) return
@@ -424,6 +425,16 @@ export class AcpThread implements Thread {
     if (merged.status === "completed") turn.toolSucceeded(id, output, metadata)
     else if (merged.status === "failed") turn.toolFailed(id, output || "The tool failed.", metadata)
     else if (output) turn.toolProgress(id, metadata)
+  }
+
+  /** A call's subagents, refused: their rows and sessions end as not run. */
+  private refused(active: Active, callID: string) {
+    for (const spawn of active.spawns.get(callID) ?? []) {
+      if (spawn.ended) continue
+      spawn.ended = true
+      active.turn.toolFailed(spawn.row, "You declined this.")
+      spawn.run.end("failed", { type: "agent", message: "You declined this." })
+    }
   }
 
   private async request(method: string, params: any): Promise<unknown> {
@@ -453,6 +464,8 @@ export class AcpThread implements Thread {
           metadata: files.length ? { files } : undefined,
           message: call.title,
         })
+        // Subagents you said no to never run.
+        if (decision === "reject") this.refused(active, call.toolCallId)
         const pick = (kinds: string[]) => kinds.map((kind) => options.find((option) => option.kind === kind)).find(Boolean)
         const option = decision === "reject" ? pick(["reject_once", "reject_always"]) : decision === "always" ? pick(["allow_always", "allow_once"]) : pick(["allow_once", "allow_always"])
         return option ? { outcome: { outcome: "selected", optionId: option.optionId } } : { outcome: { outcome: "cancelled" } }

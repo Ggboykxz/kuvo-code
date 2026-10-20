@@ -1127,6 +1127,67 @@ process.stdin.on("data", (chunk) => {
     expect(sessions.messages(children[0]).at(-1)).toMatchObject({ type: "idle", outcome: "succeeded" })
   })
 
+  test("Antigravity's subagents you say no to end as not run", async () => {
+    const folder = mkdtempSync(join(root, "agy-"))
+    const script = join(folder, "agent.js")
+    writeFileSync(
+      script,
+      `let buffer = ""
+let prompt
+const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n")
+const update = (value) => send({ method: "session/update", params: { sessionId: "s1", update: value } })
+process.stdin.on("data", (chunk) => {
+  buffer += chunk
+  let at
+  while ((at = buffer.indexOf("\\n")) >= 0) {
+    const line = buffer.slice(0, at)
+    buffer = buffer.slice(at + 1)
+    if (!line.trim()) continue
+    const message = JSON.parse(line)
+    if (message.method === "initialize") send({ id: message.id, result: { protocolVersion: 1, authMethods: [] } })
+    else if (message.method === "session/new") send({ id: message.id, result: { sessionId: "s1" } })
+    else if (message.method === "session/prompt") {
+      prompt = message.id
+      update({ sessionUpdate: "tool_call", toolCallId: "inv1", title: "Run invoke_subagent?", kind: "other", status: "pending", rawInput: { Subagents: [{ Role: "Worker", TypeName: "self", Prompt: "Do it" }] } })
+      send({ id: 900, method: "session/request_permission", params: { sessionId: "s1", toolCall: { toolCallId: "inv1" }, options: [{ optionId: "yes", kind: "allow_once" }, { optionId: "no", kind: "reject_once" }] } })
+    } else if (message.id === 900) {
+      update({ sessionUpdate: "tool_call_update", toolCallId: "inv1", status: "failed", rawOutput: "The user declined." })
+      update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Fine." } })
+      send({ id: prompt, result: { stopReason: "end_turn" } })
+    } else if (message.id !== undefined) send({ id: message.id, result: {} })
+  }
+})
+`,
+    )
+    const agy: Agent = {
+      id: "antigravity",
+      providerID: "gamma",
+      name: "Gamma",
+      instance: { id: "default" },
+      methods: () => [],
+      account: async () => ({ installed: true, signedIn: true }),
+      models: async () => [],
+      thread: (session, state) =>
+        new AcpThread(
+          { fileSystem: false, authMethod: () => undefined, command: async () => ({ argv: [process.execPath, script], cwd: folder }), selectModel: async () => {}, subagents: antigravitySubagents },
+          session,
+          state,
+          "Gamma",
+        ),
+    }
+    sessions = new Sessions(store, { find: (provider: string | undefined) => (provider === "gamma" ? agy : undefined) } as unknown as Roster, auto)
+    const id = sessions.create({ model: { providerID: "gamma", id: "one" }, location: { directory: folder } }).id
+    sessions.update(id, { permissions: [{ action: "*", resource: "*", effect: "ask" }] })
+    send(id, "spawn one")
+    await until(() => sessions.permissions(id).length === 1, 15_000)
+    sessions.replyPermission(id, sessions.permissions(id)[0].id, "reject")
+    await settled(id, 1, 15_000)
+    const step = sessions.messages(id).find((message) => message.type === "assistant") as any
+    const row = step.content.find((content: any) => content.type === "tool")
+    expect(row.state.status).toBe("error")
+    expect(sessions.messages(row.state.metadata.sessionID).at(-1)).toMatchObject({ type: "idle", outcome: "failed" })
+  })
+
   test("a subagent still at work when the turn is stopped is stopped with it", async () => {
     let child = ""
     a.script = (_input, turn, hooks, thread) => {
