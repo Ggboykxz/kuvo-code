@@ -818,6 +818,8 @@ final class Workspace {
             throw OutsideAgents.Failure.onlyOnThisMac(model.providerID == OutsideAgents.autoProvider ? "Auto" : OutsideAgents.name(model.providerID))
         }
         guard let bridge = agents?.api else { throw OutsideAgents.Failure.notRunning(agents?.failure) }
+        // What waits stays waiting (it comes along), rather than starting as the run ends.
+        await models[id]?.holdQueue()
         // Not partway through a turn.
         if running.contains(id) {
             _ = try? await engine.interrupt(session: id)
@@ -860,7 +862,16 @@ final class Workspace {
         Drafts.shared[moved.id] = Drafts.shared[id]
         Analytics.shared.track("session_moved_to_agents", Analytics.model(provider: model.providerID, model: model.id))
         await setArchived(id, true)
-        swappedTab = TabSwap(from: id, to: moved.id)
+        let swap = TabSwap(from: id, to: moved.id)
+        swappedTab = swap
+        // The window with its tab takes its place; with none, it opens as any session does.
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(400))
+            if swappedTab == swap {
+                swappedTab = nil
+                requestedTab = swap.to
+            }
+        }
     }
 
     /// A waiting message's files as they were sent: on this Mac, or with it (`data:`).

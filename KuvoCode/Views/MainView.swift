@@ -484,7 +484,8 @@ struct MainView: View {
             workspace.requestedTab = nil
         }
         .onChange(of: workspace.swappedTab) { _, swap in
-            guard let swap else { return }
+            // Only the window the session's tab is in (another window leaves it).
+            guard let swap, tabs.contains(swap.from) || splitPairs.values.contains(swap.from) else { return }
             workspace.swappedTab = nil
             swapTab(swap.from, with: swap.to)
         }

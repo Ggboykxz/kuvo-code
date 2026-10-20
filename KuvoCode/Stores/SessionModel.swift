@@ -937,6 +937,12 @@ final class SessionModel {
         }
     }
 
+    /// What's waiting, held where it is (paused) before the session is stopped from elsewhere: it
+    /// isn't started as the run ends (moving the session to a coding agent carries it over).
+    func holdQueue() async {
+        await holdWaiting()
+    }
+
     /// Before an interrupt: what's waiting stays where it is, paused, instead of being handed
     /// over as the step ends or started by the nudge after it.
     private func holdWaiting() async {
