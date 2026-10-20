@@ -815,7 +815,7 @@ function Sidebar() {
           const unread = Boolean(session.time?.idle && session.time?.viewed && session.time.idle > session.time.viewed && session.id !== state.session?.id);
           return (
             <li key={session.id} className={`${session.id === state.session?.id ? "current" : ""} ${unread ? "unread" : ""}`}>
-              <button className="session" data-id={session.id} onClick={() => void openSession(session.id)}>
+              <button className="session" data-id={session.id} onClick={() => { state.settingsOpen = false; void openSession(session.id); }}>
                 <span className="session-title">{session.title || "New Session"}</span>
                 {running || unread ? <span className={`session-state ${running ? "running" : "unread"}`} aria-hidden="true" /> : null}
               </button>
@@ -1090,7 +1090,9 @@ function Composer() {
         }}
         onKeyDown={event => {
           if (mentions.length && ["ArrowDown", "ArrowUp", "Enter", "Escape"].includes(event.key)) {
-            if (event.key === "Escape") { setMentions([]); return; }
+            // A key the page has already handled (the palette's own Escape) stops here.
+      if (event.defaultPrevented) return;
+      if (event.key === "Escape") { setMentions([]); return; }
             if (event.key === "ArrowDown") { event.preventDefault(); setMentionIndex(index => (index + 1) % mentions.length); return; }
             if (event.key === "ArrowUp") { event.preventDefault(); setMentionIndex(index => (index - 1 + mentions.length) % mentions.length); return; }
             // A chord belongs to the composer itself (⌘Return queues), so the mention is
@@ -1404,8 +1406,10 @@ export function App() {
       }
       if (event.key === "Escape") {
         if ((document.activeElement as HTMLElement | null)?.id === "find") (document.activeElement as HTMLElement).blur();
-        state.paletteOpen = false;
-        state.settingsOpen = false;
+        // Escape goes back one step, as it does on the Mac: the palette first, then the
+        // settings, then the sheet that is open.
+        if (state.paletteOpen) { state.paletteOpen = false; render(); return; }
+        if (state.settingsOpen) { state.settingsOpen = false; render(); return; }
         state.diffOpen = false;
         render();
       }

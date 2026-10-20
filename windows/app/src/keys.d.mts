@@ -2,8 +2,7 @@
 // for TypeScript. The list and the arithmetic are pure, so the test holds them to the
 // Mac's without a browser.
 
-declare module "*/keys.mjs" {
-  export type Shortcut = {
+export type Shortcut = {
     id: string;
     title: string;
     /** The keys, the way a Windows user reads them: Ctrl, Alt, Shift. */
@@ -33,4 +32,3 @@ declare module "*/keys.mjs" {
   export function specFromEvent(event: KeyPress): string | null;
   export function matchesEvent(spec: string, event: KeyPress): boolean;
   export function keyCaps(spec: string): string[];
-}

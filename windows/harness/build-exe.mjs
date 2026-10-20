@@ -60,12 +60,15 @@ function collectAssets(dir, prefix) {
 collectAssets(path.join(here, "ui"), "ui");
 if (fs.existsSync(path.join(here, "ui-build"))) collectAssets(path.join(here, "ui-build"), "ui-build");
 
-// The page the app shows: built from windows/app (React and TypeScript) when its
-// dependencies are there, so the binary always carries the page it was built with.
+// The page the app shows: built from windows/app (React and TypeScript, by Next.js) when
+// its dependencies are there, so the binary always carries the page it was built with.
 const appDir = path.join(here, "..", "app");
 if (fs.existsSync(path.join(appDir, "node_modules"))) {
-  const built = spawnSync(process.execPath, [path.join(appDir, "build.mjs")], { stdio: "inherit" });
+  const next = path.join(appDir, "node_modules", "next", "dist", "bin", "next");
+  const built = spawnSync(process.execPath, [next, "build"], { stdio: "inherit", cwd: appDir });
   if (built.status !== 0) throw new Error("the page did not build");
+  const copied = spawnSync(process.execPath, [path.join(appDir, "build.mjs")], { stdio: "inherit", cwd: appDir });
+  if (copied.status !== 0) throw new Error("the page was not copied into place");
 }
 
 const config = {

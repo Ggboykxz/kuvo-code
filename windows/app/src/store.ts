@@ -168,7 +168,6 @@ export async function openProjectFile(relative: string) {
     const { content } = await api<{ content: string }>(`/api/file?path=${encodeURIComponent(relative)}`);
     state.openFile = relative;
     state.openFileContent = content;
-    state.settingsOpen = false;
     state.drawerOpen = true;
     state.drawerTab = "files";
     render();
@@ -198,7 +197,6 @@ export async function openSession(id: string) {
     state.session = detail.session;
     state.transcript = fromHistory(id, detail.messages as never[], detail.permissions as never[], detail.running);
     state.revert = detail.revert ?? null;
-    state.settingsOpen = false;
     if (!state.openSessions.includes(id)) state.openSessions.push(id);
     render();
     await Promise.all([loadInbox(), loadVcs(), loadSessionDiff(), loadForms()]);

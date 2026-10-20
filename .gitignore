@@ -18,5 +18,9 @@ github-token-to-revoke.txt
 # Playwright MCP's own logs
 .playwright-mcp/
 
-# The built page (React): an artefact, built by windows/app
+# The built page (React and TypeScript, built by Next.js): an artefact
 windows/harness/ui-build/
+windows/app/.next/
+windows/app/out/
+windows/app/next-env.d.ts
+windows/app/tsconfig.tsbuildinfo

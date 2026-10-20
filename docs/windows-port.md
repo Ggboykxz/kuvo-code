@@ -105,6 +105,33 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     verbatim and builds in CI on `windows-latest`.
   - **2.2 (next).** ConPTY terminal, files panel, diff view, tray polish,
     auto-update wiring, code signing.
+  - **2.58. The app's motion is the Mac's own spring, and the pieces that carry no look
+    of their own come from elsewhere. Phase 3 wrote the Mac's `.spring(response: 0.32,
+    dampingFraction: 0.86)` down twice: as the analytic curve in CSS (`--ease-spring`,
+    `--motion-spring: 450ms`, the true half-percent overshoot) and as Motion's spring
+    (stiffness 385.5, damping 33.8) for the components that move — the tab's pill slides to
+    the tab you pick, as the Mac's does. The hover is 120 ms and the press is a 13 % fill,
+    never a squeeze. The shimmer over "Thinking…" is AI Elements' `Shimmer` (Vercel,
+    Apache-2.0), painted in the Mac's ink: the shadcn tokens it reads are bound to the Mac's
+    tokens, Tailwind's preflight is not imported, and only the AI Elements' own files are
+    scanned for classes, so the Mac's stylesheet stays the base of the app. Their terms
+    travel with the app, in `windows/THIRD_PARTY_LICENSES.txt`, written by
+    `windows/tools/third-party-licenses.mjs` and checked in CI. The app is linted too
+    (oxlint) and type-checked before it is built, in CI and before every push.
+  - **2.59. The window is built by Next.js, and the page is read in a real browser. The
+    app's own code (React and TypeScript, in `windows/app/src`) is the page: Next.js
+    builds it as a static export (`output: "export"`), the harness serves those files
+    from `windows/harness/ui-build`, and the packed executable carries them inside
+    itself. There is no server to render the app later — it talks to the engine over
+    the harness's own HTTP API — so the export is the whole app, and it works with no
+    network. The Mac's stylesheet, tokens and components are unchanged: the App Router
+    renders exactly what the page rendered before. The live page test now runs in
+    Chromium (Playwright) rather than in a DOM, because the exported page is ES modules
+    and a DOM cannot run them; a real browser is also the better witness, since the
+    Mac's screenshots are the arbiter. Two bugs came out of that test and are fixed:
+    Escape now goes back one step (the palette, then the settings), and choosing a
+    session no longer closes the settings by itself — the engine's "the turn ended"
+    event was opening the session again, and the settings went with it.
   - **2.57 (this change).** The layout, seen at last: the app's column was never a column —
     the React root, the body and the grid's row all had to become one, or the composer
     floated at the top of the conversation and the sidebar's glass stopped halfway down. The
@@ -236,19 +263,6 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     packed executable carries that build. The state stays a plain object the way the page
     has always kept it; React draws it. The hand-written page stays as a fallback when
     there is no build, so the app never shows nothing.
-  - **2.22. The app's motion is the Mac's own spring, and the pieces that carry no look
-    of their own come from elsewhere. Phase 3 wrote the Mac's `.spring(response: 0.32,
-    dampingFraction: 0.86)` down twice: as the analytic curve in CSS (`--ease-spring`,
-    `--motion-spring: 450ms`, the true half-percent overshoot) and as Motion's spring
-    (stiffness 385.5, damping 33.8) for the components that move — the tab's pill slides to
-    the tab you pick, as the Mac's does. The hover is 120 ms and the press is a 13 % fill,
-    never a squeeze. The shimmer over "Thinking…" is AI Elements' `Shimmer` (Vercel,
-    Apache-2.0), painted in the Mac's ink: the shadcn tokens it reads are bound to the Mac's
-    tokens, Tailwind's preflight is not imported, and only the AI Elements' own files are
-    scanned for classes, so the Mac's stylesheet stays the base of the app. Their terms
-    travel with the app, in `windows/THIRD_PARTY_LICENSES.txt`, written by
-    `windows/tools/third-party-licenses.mjs` and checked in CI. The app is linted too
-    (oxlint) and type-checked before it is built, in CI and before every push.
   - **2.21. The look is bound to OpenDesign's design direction `modern-minimal`
     ("Modern minimal — Linear / Vercel"), read with the tool that ships it
     (`od tools directions --id modern-minimal --json`): system fonts, hairline borders, no

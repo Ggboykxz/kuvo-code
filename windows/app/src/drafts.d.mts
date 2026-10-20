@@ -1,8 +1,7 @@
 // The Mac app's drafts, as they are written in drafts.mjs; this declares their shape for
 // TypeScript.
 
-declare module "*/drafts.mjs" {
-  export type Draft = {
+export type Draft = {
     text: string;
     files: { name?: string; uri?: string; mime?: string }[];
   };
@@ -19,4 +18,3 @@ declare module "*/drafts.mjs" {
     draft: { text?: string; files?: { name?: string; uri?: string; mime?: string }[] },
   ): void;
   export function clearDraft(storage: Storage, key: string): void;
-}

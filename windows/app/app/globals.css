@@ -27,4 +27,4 @@
 }
 
 /* Only the AI Elements' own files are scanned: the utilities they use, and nothing else. */
-@source "./components/ai-elements";
+@source "../src/components/ai-elements";

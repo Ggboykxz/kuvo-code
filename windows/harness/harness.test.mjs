@@ -450,14 +450,17 @@ test("the page and the reducer are served", async t => {
   const { harness, url } = await inFront(engine);
   t.after(() => harness.close());
 
-  // The page is the built one (React) when there is a build, the hand-written one
-  // otherwise; both are the app, and both carry the same ids.
+  // The page is the built one (React, built by Next.js) when there is a build, the
+  // hand-written one otherwise; both are the app, and both carry the same ids.
   const page = await fetch(url);
   assert.equal(page.status, 200);
-  assert.match(await page.text(), /Kuvo/);
-  const app = await fetch(`${url}app.js`);
-  assert.equal(app.status, 200);
-  assert.match(await app.text(), /EventSource/);
+  const html = await page.text();
+  assert.match(html, /Kuvo/);
+  // The built page brings its own scripts, and the app's code is in one of them.
+  const scripts = [...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(match => match[1]);
+  assert.ok(scripts.length > 0, "the page brings its scripts");
+  const bodies = await Promise.all(scripts.map(src => fetch(new URL(src, url)).then(answer => answer.text())));
+  assert.ok(bodies.some(body => /EventSource/.test(body)), "the app's code is in the page");
   const reducer = await fetch(`${url}transcript.mjs`);
   assert.match(await reducer.text(), /export function apply/);
 });
@@ -601,16 +604,19 @@ test("the page and its files are served, and a file that isn't there is a plain 
 
   const page = await fetch(url);
   assert.equal(page.status, 200);
-  assert.match(await page.text(), /<title>Kuvo Code<\/title>/);
+  const html = await page.text();
+  assert.match(html, /<title>Kuvo Code<\/title>/);
 
   // The shell loads the page with its own query string; that is the same page.
   const withQuery = await fetch(`${url}?terminalPort=0&shell=1`);
   assert.equal(withQuery.status, 200);
   assert.match(await withQuery.text(), /<title>Kuvo Code<\/title>/);
 
-  const script = await fetch(`${url}app.js`);
-  assert.equal(script.status, 200);
-  assert.match(await script.text(), /new EventSource/);
+  const scripts = [...html.matchAll(/<script[^>]+src="([^"]+)"/g)].map(match => match[1]);
+  for (const src of scripts) {
+    const script = await fetch(new URL(src, url));
+    assert.equal(script.status, 200, `the page's ${src} is served`);
+  }
 
   const missing = await fetch(`${url}nope.js`);
   assert.equal(missing.status, 404);

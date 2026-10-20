@@ -64,11 +64,12 @@ test("the shell is built with the icon and carries the PNG", () => {
 });
 
 test("the page carries the icon and the build copies it", () => {
-  const html = read("windows", "app", "src", "index.html").toString();
-  assert.match(html, /<link rel="icon" href="\/icon\.png">/, "the page asks for the icon");
+  const layout = read("windows", "app", "app", "layout.tsx").toString();
+  assert.match(layout, /icon: "\/icon\.png"/, "the page asks for the icon");
   const build = read("windows", "app", "build.mjs").toString();
   assert.match(build, /icon\.png/, "the build copies the icon beside the page");
-  assert.ok(exists("windows", "app", "src", "icon.png"), "the icon is in the source");
+  assert.ok(exists("windows", "app", "app", "icon.png"), "the icon is in the source");
+  assert.ok(exists("windows", "app", "src", "icon.png"), "and beside it");
 });
 
 test("the icon is in the repository, not ignored like a build artefact", () => {

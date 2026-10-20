@@ -75,6 +75,12 @@ gaps (0.5.38), the materials, the header's tabs and the palette (0.5.39), and th
 (0.5.40). Row 14, the icons, and the rest of Phase 6 (the screens) remain. The table is the
 baseline the release is measured against, not a description of the current page.
 
+**The platform moved, the look did not.** Since 0.5.41 the window is built by Next.js (a
+static export the harness serves), and the page is read in a real browser in CI. That changes
+how the app is built and tested, not what it looks like: the Mac's stylesheet, tokens and
+components are the ones the App Router renders. The reasoning is in
+[`windows-port.md`](windows-port.md) §2.24.
+
 **Decision, taken and executed in Phase 1.** `DESIGN.md` is rewritten around the Mac's own
 system — `Theme.swift`, `Look.swift`, `Surfaces.swift`, `Card.swift`, `WindowGlass.swift` — and
 the Mac binding block at the end of `style.css` takes its values from that document. Phase 2
@@ -600,7 +606,7 @@ interpretation of it.
 | **1. Tokens** | Rebind `DESIGN.md`; replace `:root` light/dark with §3; radii 14/18/10/8/7/6/5; shadows; type sizes and faces; accent presets | §1 rows 1, 3, 7, 9, 10, 12, 13; §3 | 0.5.37 ✅ |
 | **2a. Cards & glass** | The conversation card, 38 pt header + 62 pt fade, 8 pt window gaps, the sidebar on the glass (no surface), 32 pt rows, one search, the composer inside the card | §1 rows 3–8, 15, 16; §2; §4 Card/Composer/Bubble | 0.5.38 ✅ |
 | **2b. Title bar & overlays** | Title-bar tabs, drawer, palette 600/18, settings card, gauge popover, wells | §1 rows 15, 16; §2; §4 | 0.5.39 ✅ |
-| **3. Motion** | Analytic spring `linear()`, hover 0.12, press fills, list tint, shimmer, spinner, image-viewer transitions, reduced motion | §5 | 0.5.40 |
+| **3. Motion** | Analytic spring `linear()`, hover 0.12, press fills, list tint, shimmer, spinner, image-viewer transitions, reduced motion | §5 | 0.5.40 ✅ |
 | **4. Icons** | 89 symbols → drawn SVGs; FolderIcon; PromptMark; provider logos; remove text glyphs and the naked `@` | §7 | 0.5.41 |
 | **5. Wording** | 1 208 sites compared; menus, tooltips, accessibility labels; punctuation | §8 | 0.5.42 |
 | **6. Screens** | Sidebar + title bar; transcript; composer + queue + gauge; palette + drawer; settings (14 existing + 3 missing: Notifications, Privacy, Panel; Worktrees maps to Projects); files/changes/terminal | §6.1–6.3 | 0.5.43 → 0.5.48 |

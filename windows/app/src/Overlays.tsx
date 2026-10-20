@@ -93,7 +93,7 @@ export function Palette() {
 
   const folder = state.project ? state.project.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "" : "";
   const coreActions: PaletteRow[] = [
-    { id: "action:new-session", kind: "action", title: "New session", shortcut: keysOf("new-session"), run: async () => { await newSession(); } },
+    { id: "action:new-session", kind: "action", title: "New Session", shortcut: keysOf("new-session"), run: async () => { await newSession(); } },
     { id: "action:stop", kind: "action", title: "Stop the agent", shortcut: keysOf("stop"), run: async () => { await stopRun(); } },
     { id: "action:find", kind: "action", title: "Find in the conversation", shortcut: keysOf("find"), run: () => { (document.getElementById("find") as HTMLInputElement | null)?.focus(); } },
     { id: "action:save", kind: "action", title: "Save the conversation as Markdown", shortcut: keysOf("save"), run: async () => { await exportConversation(); } },
@@ -130,7 +130,7 @@ export function Palette() {
     kind: "session",
     title: session.title || "New Session",
     detail: folder,
-    run: async () => { await openSession(session.id); },
+    run: async () => { state.settingsOpen = false; await openSession(session.id); },
   }));
   const actionRows = [...coreActions, ...commandActions];
   const fileRows: PaletteRow[] = files.map(file => {
@@ -190,7 +190,9 @@ export function Palette() {
             onKeyDown={event => {
               if (event.key === "ArrowDown") { event.preventDefault(); setIndex(current => (current + 1) % Math.max(total, 1)); return; }
               if (event.key === "ArrowUp") { event.preventDefault(); setIndex(current => (current - 1 + total) % Math.max(total, 1)); return; }
-              if (event.key === "Escape") { event.preventDefault(); state.paletteOpen = false; render(); return; }
+              // Escape closes the palette, and stops there: the window's own handler
+              // would otherwise take it as a step further back.
+              if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); state.paletteOpen = false; render(); return; }
               if (event.key === "Enter") {
                 event.preventDefault();
                 const chosen = rows[current];

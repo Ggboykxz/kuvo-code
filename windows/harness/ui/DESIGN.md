@@ -170,6 +170,7 @@ own — the Mac's own values are bound to them instead:
 | AI Elements' `Shimmer` (Vercel) | Apache-2.0 | the light sweeping across "Thinking…" (`windows/app/src/components/ai-elements/shimmer.tsx`) |
 | Motion (the `motion` package) | MIT | the spring behind the tab's pill, and the shared layout that moves it |
 | Tailwind CSS | MIT | the utilities the AI Elements' components are written in; the Mac's own stylesheet rides in the layer below them, and the shadcn tokens are bound to the Mac's |
+| Next.js and React 19 | MIT | the window itself: the app is the page, built as a static export the harness serves |
 
 Nothing else in the app wears their look: the Mac's stylesheet is the base (Tailwind's
 preflight is not imported), and only the AI Elements' own files are scanned for classes. Their
@@ -215,6 +216,14 @@ The title bar is native chrome with a 38 px overlay (`windows/electron/main.js`)
 is opaque, and the canvas is the Mac's. The Mac's traffic lights have no Windows equivalent;
 the native minimise/maximise/close controls keep their place and their system colours. The
 app's own header is reproduced, not the OS's.
+
+The window is built by **Next.js** (`windows/app`): the app's own code is the page, and
+Next.js builds it as a static export (`output: "export"`), which the harness serves from
+`windows/harness/ui-build` and the packed executable carries inside itself. There is no
+server to render it later — the app talks to the engine over the harness's own HTTP API —
+so the exported files are the whole app, and the client works with no network. The design
+above is unaffected by the move: the Mac's stylesheet, the tokens and the components are the
+same ones the App Router renders.
 
 ## Phases
 

@@ -17,6 +17,7 @@ const shimmer = read("app", "src", "components", "ai-elements", "shimmer.tsx");
 const elementsLicense = read("app", "src", "components", "ai-elements", "LICENSE");
 const utils = read("app", "src", "lib", "utils.ts");
 const manifest = JSON.parse(read("app", "package.json"));
+const harnessManifest = JSON.parse(read("harness", "package.json"));
 const lintConfig = JSON.parse(read("app", ".oxlintrc.json"));
 const licenses = read("THIRD_PARTY_LICENSES.txt");
 const generator = read("tools", "third-party-licenses.mjs");
@@ -51,11 +52,15 @@ test("the packages the components need are named, and pinned by the lockfile", (
   for (const name of ["motion", "clsx", "tailwind-merge"]) {
     assert.ok(manifest.dependencies[name], `${name} is a dependency`);
   }
-  for (const name of ["tailwindcss", "@tailwindcss/cli", "oxlint"]) {
+  for (const name of ["tailwindcss", "@tailwindcss/cli", "@tailwindcss/postcss", "oxlint"]) {
     assert.ok(manifest.devDependencies[name], `${name} is a build-time dependency`);
   }
+  // The window is built by Next.js, and read in a real browser.
+  assert.ok(manifest.dependencies.next, "Next.js builds the window");
+  assert.ok(manifest.dependencies.react.startsWith("^19"), "React 19, as Next.js wants it");
+  assert.ok(harnessManifest.devDependencies.playwright, "the page is read in a browser");
   const lock = read("app", "package-lock.json");
-  for (const name of ["motion", "clsx", "tailwind-merge", "tailwindcss", "@tailwindcss/cli", "oxlint"]) {
+  for (const name of ["motion", "clsx", "tailwind-merge", "tailwindcss", "@tailwindcss/cli", "next", "oxlint"]) {
     assert.match(lock, new RegExp(`node_modules/${name.replace("/", "\\/")}"`), `${name} is in the lockfile`);
   }
 });
@@ -73,9 +78,10 @@ test("every third-party package's terms are listed, and the list is generated", 
 });
 
 test("the code is linted, and the linter keeps the rules that matter", () => {
-  assert.equal(manifest.scripts.lint, "oxlint src");
+  assert.equal(manifest.scripts.lint, "oxlint src app");
   assert.equal(manifest.scripts.typecheck, "tsc --noEmit");
   assert.ok(manifest.scripts.check, "the app has one command that lints, type-checks and builds");
+  assert.equal(manifest.scripts.build, "next build && node build.mjs", "the build is Next.js's, then the copy");
   assert.equal(lintConfig.categories.correctness, "error");
   assert.ok(lintConfig.rules["no-unused-vars"], "unused variables are an error");
   assert.ok(lintConfig.rules.eqeqeq, "loose equality is an error");

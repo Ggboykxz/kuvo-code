@@ -26,7 +26,10 @@ const sources = {
   design: read("harness", "ui", "DESIGN.md"),
   motion: read("app", "src", "motion.ts"),
   shimmer: read("app", "src", "components", "ai-elements", "shimmer.tsx"),
-  tailwind: read("app", "src", "tailwind.css"),
+  tailwind: read("app", "app", "globals.css"),
+  postcss: read("app", "postcss.config.mjs"),
+  next: read("app", "next.config.mjs"),
+  page: read("app", "app", "page.tsx"),
   build: read("app", "build.mjs"),
 };
 
@@ -336,11 +339,9 @@ const checks = [
     assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[^}]*\.tab-status\.running \{ animation: none; \}/s);
   }],
 
-  ["the stylesheet is compiled with Tailwind, and only the AI Elements' classes are in it", ({ build, tailwind }) => {
-    // The build compiles the stylesheet with this app's own copy of Tailwind.
-    assert.match(build, /@tailwindcss/);
-    assert.match(build, /tailwind\.css/);
-    assert.match(build, /--minify/);
+  ["the stylesheet is compiled with Tailwind, and only the AI Elements' classes are in it", ({ build, tailwind, postcss }) => {
+    // Tailwind runs through its PostCSS plugin, in Next's own build.
+    assert.match(postcss, /@tailwindcss\/postcss/);
     // The Mac's own stylesheet rides in its own layer; the utilities sit above it.
     assert.match(tailwind, /@layer theme, mac, utilities;/);
     assert.match(tailwind, /@import "tailwindcss\/theme\.css" layer\(theme\);/);
@@ -353,7 +354,25 @@ const checks = [
     assert.match(tailwind, /--color-muted-foreground: var\(--ink-soft\)/);
     assert.match(tailwind, /--color-primary: var\(--accent\)/);
     // And only the AI Elements' own files are scanned.
-    assert.match(tailwind, /@source "\.\/components\/ai-elements";/);
+    assert.match(tailwind, /@source "\.\.\/src\/components\/ai-elements";/);
+    // The build copies the export where the harness looks for it.
+    assert.match(build, /ui-build/);
+    assert.match(build, /fs\.copyFileSync/);
+  }],
+
+  ["the window is built by Next.js, and exported as the static files the harness serves", ({ next, page, build }) => {
+    // The app talks to the engine over the harness's API: there is no server to render
+    // it, so the export is the whole app.
+    assert.match(next, /output: "export"/);
+    assert.match(next, /turbopack: \{ root:/);
+    // The page draws with the DOM, so it is the browser's: the export is the shell, and
+    // the app takes over when the page is alive.
+    assert.match(page, /"use client"/);
+    assert.match(page, /useEffect\(\(\) => setAlive\(true\)/);
+    assert.match(page, /<App \/>/);
+    // And the build puts the export where the harness serves it.
+    assert.match(build, /ui-build/);
+    assert.match(build, /out/);
   }],
 ];
 

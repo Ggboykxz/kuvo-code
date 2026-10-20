@@ -96,6 +96,8 @@ jobs:
         working-directory: windows/harness
         run: |
           npm install --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
+          # The page is read in a real browser: Playwright's Chromium, fetched once.
+          npx playwright install chromium
           npm run test:live
 
       # The same harness packed into one executable: this runner's own node.exe, the bundled
