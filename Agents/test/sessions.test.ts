@@ -2,7 +2,7 @@
 // Auto down its list, and what a session keeps. Each test has a folder of its own, removed after.
 
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { AcpThread } from "../src/acp"
@@ -629,6 +629,122 @@ describe("steering", () => {
     a.threads[0].onStop!()
     await settled(id, 1)
     expect(sessions.inbox(id)).toHaveLength(1)
+  })
+})
+
+describe("undo, carefully", () => {
+  /** A git repository in the test's folder, with its first commit. */
+  function repository(files: Record<string, string>, setup?: (folder: string) => void) {
+    const folder = mkdtempSync(join(root, "repo-"))
+    const git = (...args: string[]) => Bun.spawnSync(["git", "-C", folder, ...args], { env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } })
+    git("init", "-q")
+    for (const [path, text] of Object.entries(files)) {
+      mkdirSync(join(folder, path, ".."), { recursive: true })
+      writeFileSync(join(folder, path), text)
+    }
+    setup?.(folder)
+    git("add", ".")
+    git("commit", "-q", "-m", "first")
+    return folder
+  }
+
+  function withSnapshots() {
+    const agents = new Map([a, b].map((agent) => [agent.providerID, agent]))
+    sessions = new Sessions(store, { find: (provider: string | undefined) => (provider ? agents.get(provider) : undefined) } as unknown as Roster, auto, undefined, undefined, undefined, new Snapshots(join(root, "snapshots")))
+  }
+
+  test("only what the turn changed goes back: your own edits and new files stay", async () => {
+    const folder = repository({ "a.txt": "one\n", "b.txt": "mine\n" })
+    withSnapshots()
+    a.script = async (input, turn, hooks, thread) => {
+      writeFileSync(join(folder, "a.txt"), "agent\n")
+      return replies(input, turn, hooks, thread)
+    }
+    const id = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: folder } }).id
+    const first = send(id, "change a")
+    await settled(id, 1)
+    // You, by hand, after it.
+    writeFileSync(join(folder, "b.txt"), "mine, edited\n")
+    writeFileSync(join(folder, "notes.txt"), "new of mine\n")
+    await sessions.stageRevert(id, first)
+    expect(readFileSync(join(folder, "a.txt"), "utf8")).toBe("one\n")
+    expect(readFileSync(join(folder, "b.txt"), "utf8")).toBe("mine, edited\n")
+    expect(readFileSync(join(folder, "notes.txt"), "utf8")).toBe("new of mine\n")
+    await sessions.clearRevert(id)
+    expect(readFileSync(join(folder, "a.txt"), "utf8")).toBe("agent\n")
+  })
+
+  test("never deletes through a link the agent replaced", async () => {
+    const outside = mkdtempSync(join(root, "outside-"))
+    writeFileSync(join(outside, "lib.js"), "keep me\n")
+    const folder = repository({ "a.txt": "one\n" }, (folder) => symlinkSync(outside, join(folder, "lib")))
+    withSnapshots()
+    a.script = async (input, turn, hooks, thread) => {
+      // The link replaced with a folder of its own, with a file of the same name.
+      rmSync(join(folder, "lib"))
+      mkdirSync(join(folder, "lib"))
+      writeFileSync(join(folder, "lib", "lib.js"), "copy\n")
+      return replies(input, turn, hooks, thread)
+    }
+    const id = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: folder } }).id
+    const first = send(id, "vendor it")
+    await settled(id, 1)
+    await sessions.stageRevert(id, first)
+    expect(lstatSync(join(folder, "lib")).isSymbolicLink()).toBe(true)
+    expect(readFileSync(join(outside, "lib.js"), "utf8")).toBe("keep me\n")
+  })
+
+  test("another session's work in the same project stays", async () => {
+    const folder = repository({ "a.txt": "one\n" })
+    withSnapshots()
+    a.script = async (input, turn, hooks, thread) => {
+      writeFileSync(join(folder, input.text.includes("first") ? "from-a.txt" : "from-b.txt"), "x\n")
+      return replies(input, turn, hooks, thread)
+    }
+    const one = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: folder } }).id
+    const two = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: folder } }).id
+    const first = send(one, "first")
+    await settled(one, 1)
+    send(two, "second")
+    await settled(two, 1)
+    await sessions.stageRevert(one, first)
+    expect(existsSync(join(folder, "from-a.txt"))).toBe(false)
+    expect(existsSync(join(folder, "from-b.txt"))).toBe(true)
+  })
+
+  test("a file that became a folder goes back", async () => {
+    const folder = repository({ "config": "plain\n" })
+    withSnapshots()
+    a.script = async (input, turn, hooks, thread) => {
+      rmSync(join(folder, "config"))
+      mkdirSync(join(folder, "config"))
+      writeFileSync(join(folder, "config", "main.json"), "{}\n")
+      return replies(input, turn, hooks, thread)
+    }
+    const id = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: folder } }).id
+    const first = send(id, "split it")
+    await settled(id, 1)
+    await sessions.stageRevert(id, first)
+    expect(readFileSync(join(folder, "config"), "utf8")).toBe("plain\n")
+    await sessions.clearRevert(id)
+    expect(readFileSync(join(folder, "config", "main.json"), "utf8")).toBe("{}\n")
+  })
+
+  test("in a subfolder, the repository's ignore rules hold: what it ignores is left alone", async () => {
+    const folder = repository({ ".gitignore": "node_modules/\n", "app/a.txt": "one\n" })
+    withSnapshots()
+    a.script = async (input, turn, hooks, thread) => {
+      writeFileSync(join(folder, "app", "a.txt"), "two\n")
+      mkdirSync(join(folder, "app", "node_modules", "pkg"), { recursive: true })
+      writeFileSync(join(folder, "app", "node_modules", "pkg", "index.js"), "installed\n")
+      return replies(input, turn, hooks, thread)
+    }
+    const id = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: join(folder, "app") } }).id
+    const first = send(id, "install and change")
+    await settled(id, 1)
+    await sessions.stageRevert(id, first)
+    expect(readFileSync(join(folder, "app", "a.txt"), "utf8")).toBe("one\n")
+    expect(existsSync(join(folder, "app", "node_modules", "pkg", "index.js"))).toBe(true)
   })
 })
 

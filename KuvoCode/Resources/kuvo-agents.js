@@ -1,6 +1,6 @@
 // @bun
 // Agents/src/main.ts
-import { mkdirSync as mkdirSync11, readdirSync as readdirSync4, rmSync as rmSync8 } from "fs";
+import { mkdirSync as mkdirSync11, readdirSync as readdirSync5, rmSync as rmSync8 } from "fs";
 import { join as join14 } from "path";
 
 // Agents/src/accounts.ts
@@ -841,8 +841,8 @@ function limitOf(error) {
 
 // Agents/src/snapshots.ts
 import { createHash } from "crypto";
-import { existsSync as existsSync2, mkdirSync as mkdirSync4, rmSync as rmSync2 } from "fs";
-import { join as join5, resolve } from "path";
+import { existsSync as existsSync2, lstatSync, mkdirSync as mkdirSync4, readdirSync, realpathSync, rmdirSync, rmSync as rmSync2 } from "fs";
+import { dirname, join as join5, relative, resolve, sep } from "path";
 
 // Agents/src/diff.ts
 var searchLimit = 2000;
@@ -1079,97 +1079,189 @@ function plain(text) {
 }
 
 // Agents/src/snapshots.ts
-var quiet = { GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1", GIT_OPTIONAL_LOCKS: "0" };
+var quiet = { GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1", GIT_OPTIONAL_LOCKS: "0", GIT_LITERAL_PATHSPECS: "1" };
+var patchLimit = 50000;
+var fileLimit = 200;
 
 class Snapshots {
   root;
+  queues = new Map;
+  taken = 0;
   constructor(root) {
     this.root = root;
   }
-  store(directory) {
-    return join5(this.root, createHash("sha1").update(resolve(directory)).digest("hex").slice(0, 20));
+  async repository(directory) {
+    const top = await run("git", ["-C", directory, "rev-parse", "--show-toplevel"], { timeout: 15000, env: quiet }).catch(() => {
+      return;
+    });
+    if (top?.code !== 0 || !top.stdout.trim())
+      return;
+    let root;
+    let here;
+    try {
+      root = realpathSync(top.stdout.trim());
+      here = realpathSync(directory);
+    } catch {
+      return;
+    }
+    const exclude = await run("git", ["-C", directory, "rev-parse", "--path-format=absolute", "--git-path", "info/exclude"], { timeout: 15000, env: quiet }).catch(() => {
+      return;
+    });
+    let prefix = relative(root, here);
+    if (prefix.startsWith(".."))
+      prefix = "";
+    return { top: root, prefix, exclude: exclude?.code === 0 ? exclude.stdout.trim() || undefined : undefined };
   }
-  git(directory, args, timeout = 120000) {
-    return run("git", ["--git-dir", this.store(directory), "--work-tree", directory, ...args], { cwd: directory, timeout, env: quiet });
+  storeOf(repository) {
+    return join5(this.root, createHash("sha1").update(repository.top).digest("hex").slice(0, 20));
+  }
+  git(repository, args, options = {}) {
+    const settings = ["-c", "core.autocrlf=false", "-c", "core.fsmonitor=false", "-c", "core.quotepath=false", "-c", "core.symlinks=true", "-c", "core.longpaths=true", "-c", "gc.auto=0"];
+    if (repository.exclude)
+      settings.push("-c", `core.excludesFile=${repository.exclude}`);
+    return run("git", ["--git-dir", this.storeOf(repository), "--work-tree", repository.top, ...settings, ...args], {
+      cwd: repository.top,
+      timeout: options.timeout ?? 120000,
+      env: quiet,
+      input: options.input
+    });
+  }
+  exclusive(repository, work) {
+    const store = this.storeOf(repository);
+    const before = this.queues.get(store) ?? Promise.resolve();
+    const next = before.then(work, work);
+    this.queues.set(store, next.catch(() => {}));
+    return next;
   }
   async take(directory) {
-    const inside = await run("git", ["-C", directory, "rev-parse", "--is-inside-work-tree"], { timeout: 15000, env: quiet }).catch(() => {
+    const repository = await this.repository(directory);
+    if (!repository)
       return;
+    return this.exclusive(repository, async () => {
+      const store = this.storeOf(repository);
+      if (!existsSync2(join5(store, "HEAD"))) {
+        mkdirSync4(store, { recursive: true });
+        const made = await run("git", ["init", "--bare", "-q", store], { timeout: 30000, env: quiet });
+        if (made.code !== 0)
+          throw new Error("Kuvo Code couldn't make a place to keep this project's files.");
+      }
+      const added = await this.git(repository, ["add", "-A", "--", repository.prefix || "."]);
+      if (added.code !== 0)
+        throw new Error(`Kuvo Code couldn't keep this project's files: ${added.stderr.trim().split(`
+`).pop() ?? "git failed"}`);
+      const tree = await this.git(repository, ["write-tree"]);
+      if (tree.code !== 0 || !tree.stdout.trim())
+        throw new Error("Kuvo Code couldn't keep this project's files.");
+      if (++this.taken % 50 === 0)
+        this.git(repository, ["gc", "--auto", "--quiet"], { timeout: 600000 }).catch(() => {});
+      return tree.stdout.trim();
     });
-    if (inside?.stdout.trim() !== "true")
-      return;
-    const store = this.store(directory);
-    if (!existsSync2(join5(store, "HEAD"))) {
-      mkdirSync4(store, { recursive: true });
-      const made = await run("git", ["init", "--bare", "-q", store], { timeout: 30000, env: quiet }).catch(() => {
-        return;
-      });
-      if (made?.code !== 0)
-        return;
-    }
-    const added = await this.git(directory, ["add", "-A", "."]).catch(() => {
-      return;
-    });
-    if (added?.code !== 0)
-      return;
-    const tree = await this.git(directory, ["write-tree"]).catch(() => {
-      return;
-    });
-    return tree?.code === 0 ? tree.stdout.trim() || undefined : undefined;
   }
-  async changes(directory, from, to) {
-    const ran = await this.git(directory, ["diff", "--no-color", "--no-renames", "--no-ext-diff", from, to]).catch(() => {
-      return;
-    });
-    if (ran?.code !== 0)
+  async changed(directory, from, to) {
+    const repository = await this.repository(directory);
+    if (!repository || from === to)
       return [];
-    const files = [];
-    for (const section of ran.stdout.split(/^(?=diff --git )/m)) {
-      const path = /^diff --git a\/(.+?) b\//.exec(section)?.[1];
-      if (!path)
-        continue;
-      const status = /^new file mode/m.test(section) ? "added" : /^deleted file mode/m.test(section) ? "deleted" : "modified";
-      files.push(fromPatch(join5(directory, path), section, status));
-    }
-    return files;
+    return this.exclusive(repository, async () => {
+      const ran = await this.git(repository, ["diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", from, to, "--", repository.prefix || "."]);
+      if (ran.code !== 0)
+        throw new Error("Kuvo Code couldn't tell which files changed.");
+      return ran.stdout.split("\x00").filter(Boolean);
+    });
   }
-  async restore(directory, tree, now) {
-    const changed = await this.git(directory, ["diff", "--name-only", "--no-renames", "-z", now, tree]).catch(() => {
-      return;
+  async changes(directory, from, to, paths) {
+    const repository = await this.repository(directory);
+    if (!repository)
+      return [];
+    return this.exclusive(repository, async () => {
+      const files = [];
+      for (const path of paths.slice(0, fileLimit)) {
+        const ran = await this.git(repository, ["diff", "--no-color", "--no-renames", "--no-ext-diff", from, to, "--", path]).catch(() => {
+          return;
+        });
+        if (ran?.code !== 0)
+          continue;
+        const patch = ran.stdout.length > patchLimit ? ran.stdout.slice(0, patchLimit) : ran.stdout;
+        const status = /^new file mode/m.test(patch) ? "added" : /^deleted file mode/m.test(patch) ? "deleted" : "modified";
+        files.push(fromPatch(join5(repository.top, path), patch, status));
+      }
+      return files;
     });
-    if (changed?.code !== 0)
-      return false;
-    const paths = changed.stdout.split("\x00").filter(Boolean);
-    if (!paths.length)
-      return true;
-    const listed = await this.git(directory, ["ls-tree", "-r", "-z", "--name-only", tree, "--", ...paths]).catch(() => {
+  }
+  async restore(directory, tree, paths) {
+    const repository = await this.repository(directory);
+    if (!repository || !paths.length)
       return;
+    await this.exclusive(repository, async () => {
+      const listed = await this.git(repository, ["ls-tree", "-r", "-z", "--name-only", "--full-tree", tree]);
+      if (listed.code !== 0)
+        throw new Error("Kuvo Code couldn't read what the files were.");
+      const wanted = new Set(paths);
+      const there = new Set(listed.stdout.split("\x00").filter((path) => path && wanted.has(path)));
+      const gone = paths.filter((path) => !there.has(path)).sort((a, b) => b.length - a.length);
+      for (const path of gone)
+        this.remove(repository.top, path);
+      const back = paths.filter((path) => there.has(path));
+      if (back.length) {
+        for (const path of back) {
+          const full = join5(repository.top, path);
+          if (this.isInside(repository.top, full) && existsSync2(full) && lstatSync(full).isDirectory())
+            rmSync2(full, { recursive: true, force: true });
+        }
+        const checked = await this.git(repository, ["checkout", tree, "--pathspec-from-file=-", "--pathspec-file-nul"], { input: back.join("\x00") });
+        if (checked.code !== 0)
+          throw new Error(`Kuvo Code couldn't put the files back: ${checked.stderr.trim().split(`
+`).pop() ?? "git failed"}`);
+      }
     });
-    if (listed?.code !== 0)
+  }
+  isInside(top, full) {
+    const target = resolve(full);
+    if (!target.startsWith(top + sep))
       return false;
-    const there = new Set(listed.stdout.split("\x00").filter(Boolean));
-    const back = paths.filter((path) => there.has(path));
-    if (back.length) {
-      const checked = await this.git(directory, ["checkout", tree, "--", ...back]).catch(() => {
-        return;
-      });
-      if (checked?.code !== 0)
-        return false;
+    let folder = dirname(target);
+    while (folder.length > top.length) {
+      try {
+        if (lstatSync(folder).isSymbolicLink())
+          return false;
+      } catch {
+        return true;
+      }
+      folder = dirname(folder);
     }
-    for (const path of paths.filter((path2) => !there.has(path2)))
-      rmSync2(join5(directory, path), { force: true });
     return true;
+  }
+  remove(top, path) {
+    const full = join5(top, path);
+    if (!this.isInside(top, full))
+      return;
+    try {
+      const stat = lstatSync(full);
+      rmSync2(full, { recursive: stat.isDirectory() && !stat.isSymbolicLink(), force: true });
+    } catch {
+      return;
+    }
+    let folder = dirname(full);
+    while (folder.length > top.length) {
+      try {
+        if (readdirSync(folder).length)
+          break;
+        rmdirSync(folder);
+      } catch {
+        break;
+      }
+      folder = dirname(folder);
+    }
   }
 }
 
 // Agents/src/agents/antigravity.ts
 import { createHash as createHash2 } from "crypto";
-import { chmodSync as chmodSync2, existsSync as existsSync5, mkdirSync as mkdirSync7, readdirSync, readFileSync as readFileSync6, renameSync as renameSync3, rmSync as rmSync4, writeFileSync as writeFileSync6 } from "fs";
+import { chmodSync as chmodSync2, existsSync as existsSync5, mkdirSync as mkdirSync7, readdirSync as readdirSync2, readFileSync as readFileSync6, renameSync as renameSync3, rmSync as rmSync4, writeFileSync as writeFileSync6 } from "fs";
 import { join as join7 } from "path";
 
 // Agents/src/acp.ts
 import { existsSync as existsSync3, mkdirSync as mkdirSync5, readFileSync as readFileSync4, writeFileSync as writeFileSync4 } from "fs";
-import { dirname } from "path";
+import { dirname as dirname2 } from "path";
 
 // Agents/src/rpc.ts
 class RPCError extends Error {
@@ -1721,7 +1813,7 @@ ${others.map((path) => `- ${path}`).join(`
       case "fs/write_text_file": {
         if (!this.flavor.fileSystem)
           break;
-        mkdirSync5(dirname(params.path), { recursive: true });
+        mkdirSync5(dirname2(params.path), { recursive: true });
         writeFileSync4(params.path, params.content ?? "");
         return {};
       }
@@ -2135,7 +2227,7 @@ class AntigravityAgent {
       writeFileSync6(join7(staging, ".complete"), JSON.stringify({ version, sha256: release.sha256 }));
       rmSync4(this.folder, { recursive: true, force: true });
       renameSync3(staging, this.folder);
-      for (const name of readdirSync(this.root)) {
+      for (const name of readdirSync2(this.root)) {
         if (name !== version && name !== "profile" && /^\d/.test(name))
           rmSync4(join7(this.root, name), { recursive: true, force: true });
       }
@@ -2335,7 +2427,7 @@ import { homedir } from "os";
 import { join as join9 } from "path";
 
 // Agents/src/maintenance.ts
-import { existsSync as existsSync6, realpathSync } from "fs";
+import { existsSync as existsSync6, realpathSync as realpathSync2 } from "fs";
 import { basename, join as join8 } from "path";
 var checked = new Map;
 var newest = new Map;
@@ -2425,7 +2517,7 @@ async function npmLatest(name, fresh, tag = "latest") {
 async function resolveUpdater(definition) {
   let realPath = definition.executable;
   try {
-    realPath = realpathSync(definition.executable);
+    realPath = realpathSync2(definition.executable);
   } catch {}
   const name = basename(definition.executable);
   const native = definition.nativeUpdate;
@@ -2451,7 +2543,7 @@ async function resolveUpdater(definition) {
       let brewPrefix = said;
       try {
         if (said)
-          brewPrefix = realpathSync(said);
+          brewPrefix = realpathSync2(said);
       } catch {}
       if (brewPrefix && brewPrefix === keg.prefix) {
         const cask = keg.kind === "cask";
@@ -3377,7 +3469,7 @@ function safeBase642(path) {
 }
 
 // Agents/src/agents/codex.ts
-import { existsSync as existsSync8, lstatSync, mkdirSync as mkdirSync8, readdirSync as readdirSync2, readlinkSync, rmSync as rmSync5, symlinkSync } from "fs";
+import { existsSync as existsSync8, lstatSync as lstatSync2, mkdirSync as mkdirSync8, readdirSync as readdirSync3, readlinkSync, rmSync as rmSync5, symlinkSync } from "fs";
 import { homedir as homedir2 } from "os";
 import { join as join10 } from "path";
 var places2 = ["/opt/homebrew/bin", "/usr/local/bin", join10(homedir2(), ".local/bin"), join10(homedir2(), ".codex/bin")];
@@ -4250,12 +4342,12 @@ function shadowHome(home) {
   const own = join10(homedir2(), ".codex");
   const kept = new Set(["auth.json", "models_cache.json"]);
   mkdirSync8(home, { recursive: true, mode: 448 });
-  const wanted = existsSync8(own) ? readdirSync2(own).filter((name) => !kept.has(name)) : [];
+  const wanted = existsSync8(own) ? readdirSync3(own).filter((name) => !kept.has(name)) : [];
   for (const name of wanted) {
     const link = join10(home, name);
     const target = join10(own, name);
     try {
-      const stat = lstatSync(link, { throwIfNoEntry: false });
+      const stat = lstatSync2(link, { throwIfNoEntry: false });
       if (stat?.isSymbolicLink() && readlinkSync(link) === target)
         continue;
       if (stat && !stat.isSymbolicLink())
@@ -4265,10 +4357,10 @@ function shadowHome(home) {
       symlinkSync(target, link);
     } catch {}
   }
-  for (const name of readdirSync2(home)) {
+  for (const name of readdirSync3(home)) {
     const link = join10(home, name);
     try {
-      if (lstatSync(link).isSymbolicLink() && !wanted.includes(name))
+      if (lstatSync2(link).isSymbolicLink() && !wanted.includes(name))
         rmSync5(link, { force: true });
     } catch {}
   }
@@ -5531,7 +5623,16 @@ class Sessions {
   }
   isRunning(id) {
     const turn = this.live.get(id)?.turn;
-    return Boolean(turn && !turn.isEnded);
+    return Boolean(turn && !turn.isEnded) || this.busy.has(id);
+  }
+  busy = new Set;
+  notes(record) {
+    const kept = record.agent.snapshots ?? {};
+    for (const [id, value] of Object.entries(kept))
+      if (typeof value === "string")
+        kept[id] = { before: value, failed: true };
+    record.agent.snapshots = kept;
+    return kept;
   }
   queue(record) {
     let queue = record.agent.inbox;
@@ -5767,24 +5868,47 @@ class Sessions {
     const record = this.record(id);
     if (this.isRunning(id))
       throw new BadRequest("Stop the agent first.");
-    if (!record.messages.some((message) => message.id === messageID2 && message.type === "user"))
+    const at = record.messages.findIndex((message) => message.id === messageID2 && message.type === "user");
+    if (at < 0)
       throw new NotFound("No such message of yours.");
     const directory = record.session.location.directory;
-    const before = (record.agent.snapshots ?? {})[messageID2];
-    let files = [];
-    if (before && this.snapshots) {
-      const now = await this.snapshots.take(directory);
-      if (now) {
-        files = await this.snapshots.changes(directory, before, now);
-        if (!await this.snapshots.restore(directory, before, now))
-          throw new Error("Kuvo Code couldn't put the files back as they were.");
+    const notes = this.notes(record);
+    const files = new Set;
+    let kept = false;
+    for (const message of record.messages.slice(at)) {
+      const note = message.type === "user" ? notes[message.id] : undefined;
+      if (!note)
+        continue;
+      kept = true;
+      if (note.failed || !note.before || !note.files)
+        throw new BadRequest("Kuvo Code couldn't keep what the files were around one of these messages, so Undo can't put them back.");
+      for (const path of note.files)
+        files.add(path);
+    }
+    const first = notes[messageID2];
+    if (kept && !first?.before)
+      throw new BadRequest("This message went into the turn before it: undo from that one.");
+    let diffs2 = [];
+    if (first?.before && files.size && this.snapshots) {
+      this.busy.add(id);
+      try {
+        const now = await this.snapshots.take(directory);
+        if (!now)
+          throw new Error("Kuvo Code couldn't keep the files as they are now.");
         record.agent.revertNow ??= now;
+        record.agent.revertFiles = [...new Set([...record.agent.revertFiles ?? [], ...files])];
+        this.store.save(id);
+        diffs2 = await this.snapshots.changes(directory, first.before, now, [...files]);
+        await this.snapshots.restore(directory, first.before, [...files]);
+      } finally {
+        this.busy.delete(id);
       }
     }
-    const revert = { messageID: messageID2, files };
+    const revert = { messageID: messageID2, files: diffs2 };
     record.session.revert = revert;
     this.store.save(id, true);
     emit("session.revert.staged", { sessionID: id, revert }, directory);
+    this.next(id, "succeeded");
     return revert;
   }
   async clearRevert(id) {
@@ -5795,15 +5919,21 @@ class Sessions {
       throw new BadRequest("Stop the agent first.");
     const directory = record.session.location.directory;
     const now = record.agent.revertNow;
-    if (now && this.snapshots) {
-      const current = await this.snapshots.take(directory);
-      if (current && !await this.snapshots.restore(directory, now, current))
-        throw new Error("Kuvo Code couldn't bring the files back.");
+    const files = record.agent.revertFiles ?? [];
+    if (now && files.length && this.snapshots) {
+      this.busy.add(id);
+      try {
+        await this.snapshots.restore(directory, now, files);
+      } finally {
+        this.busy.delete(id);
+      }
     }
     delete record.session.revert;
     delete record.agent.revertNow;
+    delete record.agent.revertFiles;
     this.store.save(id, true);
     emit("session.revert.cleared", { sessionID: id }, directory);
+    this.next(id, "succeeded");
   }
   commitRevert(id, record, live) {
     const revert = record.session.revert;
@@ -5812,15 +5942,18 @@ class Sessions {
     const at = record.messages.findIndex((message) => message.id === revert.messageID);
     if (at >= 0) {
       const gone = record.messages.splice(at);
-      const kept = record.agent.snapshots ?? {};
+      const kept = this.notes(record);
       for (const message of gone)
         delete kept[message.id];
     }
     delete record.session.revert;
     delete record.agent.revertNow;
+    delete record.agent.revertFiles;
     for (const thread of live.threads.values())
       thread.close();
     live.threads.clear();
+    for (const [provider, slot] of Object.entries(this.slots(record)))
+      this.agent(provider)?.forgetConversation?.(slot.state).catch(() => {});
     record.agent.threads = {};
     this.store.save(id, true);
     emit("session.revert.committed", { sessionID: id, to: revert.messageID }, record.session.location.directory);
@@ -6013,17 +6146,21 @@ class Sessions {
       record.messages.push({ type: "user", id: input.id, time: { created: Date.now() }, text: input.text, files: attachments.length ? attachments : undefined });
     session.time.updated = Date.now();
     this.store.save(id, true);
+    let note;
     if (!input.synthetic && this.snapshots) {
-      const tree = await this.snapshots.take(directory).catch(() => {
-        return;
-      });
-      if (tree) {
-        const kept = record.agent.snapshots ?? {};
-        kept[input.id] = tree;
+      try {
+        const before2 = await this.snapshots.take(directory);
+        if (before2)
+          note = { before: before2 };
+      } catch {
+        note = { failed: true };
+      }
+      if (note) {
+        const kept = this.notes(record);
+        kept[input.id] = note;
         const ids = Object.keys(kept).sort();
         for (const old of ids.slice(0, Math.max(0, ids.length - 100)))
           delete kept[old];
-        record.agent.snapshots = kept;
         this.store.save(id);
       }
     }
@@ -6061,6 +6198,20 @@ class Sessions {
     live.running = undefined;
     if (live.turn === turn)
       live.turn = undefined;
+    if (note?.before && this.snapshots) {
+      this.busy.add(id);
+      try {
+        const after = await this.snapshots.take(directory);
+        if (after)
+          note.files = await this.snapshots.changed(directory, note.before, after);
+      } catch {
+        note.failed = true;
+      } finally {
+        this.busy.delete(id);
+      }
+      if (this.store.get(id))
+        this.store.save(id);
+    }
     this.next(id, outcome);
     if (!this.isRunning(id))
       this.closeWhenIdle(id, live);
@@ -6930,7 +7081,7 @@ ${written.trim()}`;
 }
 
 // Agents/src/store.ts
-import { mkdirSync as mkdirSync10, readdirSync as readdirSync3, readFileSync as readFileSync10, renameSync as renameSync4, rmSync as rmSync7, writeFileSync as writeFileSync7 } from "fs";
+import { mkdirSync as mkdirSync10, readdirSync as readdirSync4, readFileSync as readFileSync10, renameSync as renameSync4, rmSync as rmSync7, writeFileSync as writeFileSync7 } from "fs";
 import { join as join13 } from "path";
 
 class Store {
@@ -6940,7 +7091,7 @@ class Store {
   constructor(root) {
     this.root = root;
     mkdirSync10(root, { recursive: true });
-    for (const id of readdirSync3(root)) {
+    for (const id of readdirSync4(root)) {
       try {
         const folder = join13(root, id);
         const session = JSON.parse(readFileSync10(join13(folder, "session.json"), "utf8"));
@@ -7018,7 +7169,7 @@ var temporary = process.env.TMPDIR?.replace(/\/$/, "") || join14(home, "tmp");
 mkdirSync11(temporary, { recursive: true });
 rmSync8(join14(temporary, "antigravity"), { recursive: true, force: true });
 try {
-  for (const name of readdirSync4(join14(home, "antigravity")))
+  for (const name of readdirSync5(join14(home, "antigravity")))
     if (name.startsWith(".install-"))
       rmSync8(join14(home, "antigravity", name), { recursive: true, force: true });
 } catch {}

@@ -87,6 +87,16 @@ const changes = new Set(["edit", "write", "patch"])
 const shellTimeout = 10 * 60_000
 const shellOutputLimit = 50_000
 
+/** What's kept of the project's files around one of your messages, for Undo. */
+interface SnapshotNote {
+  /** Before its turn. */
+  before?: string
+  /** The files its turn changed (the repository's paths), once it ended. */
+  files?: string[]
+  /** They couldn't be kept: Undo can't put them back. */
+  failed?: boolean
+}
+
 /** What the engine asks first about whatever else you've set (reading a .env file), for when it can't say its own. */
 const engineDefaults: PermissionRule[] = [
   { action: "read", resource: "*.env", effect: "ask" },
@@ -179,7 +189,19 @@ export class Sessions {
 
   private isRunning(id: string) {
     const turn = this.live.get(id)?.turn
-    return Boolean(turn && !turn.isEnded)
+    return Boolean(turn && !turn.isEnded) || this.busy.has(id)
+  }
+
+  /** Sessions whose files are being kept or put back: a message waits for that as for a turn. */
+  private busy = new Set<string>()
+
+  /** What's kept of the project's files around each of your messages, by message. */
+  private notes(record: Record_): Record<string, SnapshotNote> {
+    const kept = (record.agent.snapshots as Record<string, SnapshotNote | string> | undefined) ?? {}
+    // From before notes were kept whole: a tree alone, its turn's files not known.
+    for (const [id, value] of Object.entries(kept)) if (typeof value === "string") kept[id] = { before: value, failed: true }
+    record.agent.snapshots = kept
+    return kept as Record<string, SnapshotNote>
   }
 
   /** What's waiting to be sent, kept with the session (it outlasts the bridge). */
@@ -448,23 +470,45 @@ export class Sessions {
   async stageRevert(id: string, messageID: string): Promise<NonNullable<Session["revert"]>> {
     const record = this.record(id)
     if (this.isRunning(id)) throw new BadRequest("Stop the agent first.")
-    if (!record.messages.some((message) => message.id === messageID && message.type === "user")) throw new NotFound("No such message of yours.")
+    const at = record.messages.findIndex((message) => message.id === messageID && message.type === "user")
+    if (at < 0) throw new NotFound("No such message of yours.")
     const directory = record.session.location.directory
-    const before = ((record.agent.snapshots as Record<string, string> | undefined) ?? {})[messageID]
-    let files: FileDiff[] = []
-    if (before && this.snapshots) {
-      const now = await this.snapshots.take(directory)
-      if (now) {
-        files = await this.snapshots.changes(directory, before, now)
-        if (!(await this.snapshots.restore(directory, before, now))) throw new Error("Kuvo Code couldn't put the files back as they were.")
-        // As they were before any undo: what Redo brings back.
+    const notes = this.notes(record)
+    // What the turns from it on changed, as the engine's undo puts back: only those files (your
+    // own edits elsewhere, and other sessions', stay).
+    const files = new Set<string>()
+    let kept = false
+    for (const message of record.messages.slice(at)) {
+      const note = message.type === "user" ? notes[message.id] : undefined
+      if (!note) continue
+      kept = true
+      if (note.failed || !note.before || !note.files) throw new BadRequest("Kuvo Code couldn't keep what the files were around one of these messages, so Undo can't put them back.")
+      for (const path of note.files) files.add(path)
+    }
+    const first = notes[messageID]
+    // A message taken partway through a turn (steered) has no files of its own.
+    if (kept && !first?.before) throw new BadRequest("This message went into the turn before it: undo from that one.")
+    let diffs: FileDiff[] = []
+    if (first?.before && files.size && this.snapshots) {
+      this.busy.add(id)
+      try {
+        const now = await this.snapshots.take(directory)
+        if (!now) throw new Error("Kuvo Code couldn't keep the files as they are now.")
+        // As they were before any undo, and which: what Redo brings back (kept before a file is touched).
         record.agent.revertNow ??= now
+        record.agent.revertFiles = [...new Set([...((record.agent.revertFiles as string[] | undefined) ?? []), ...files])]
+        this.store.save(id)
+        diffs = await this.snapshots.changes(directory, first.before, now, [...files])
+        await this.snapshots.restore(directory, first.before, [...files])
+      } finally {
+        this.busy.delete(id)
       }
     }
-    const revert = { messageID, files }
+    const revert = { messageID, files: diffs }
     record.session.revert = revert
     this.store.save(id, true)
     emit("session.revert.staged", { sessionID: id, revert }, directory)
+    this.next(id, "succeeded")
     return revert
   }
 
@@ -475,14 +519,22 @@ export class Sessions {
     if (this.isRunning(id)) throw new BadRequest("Stop the agent first.")
     const directory = record.session.location.directory
     const now = record.agent.revertNow as string | undefined
-    if (now && this.snapshots) {
-      const current = await this.snapshots.take(directory)
-      if (current && !(await this.snapshots.restore(directory, now, current))) throw new Error("Kuvo Code couldn't bring the files back.")
+    const files = (record.agent.revertFiles as string[] | undefined) ?? []
+    if (now && files.length && this.snapshots) {
+      this.busy.add(id)
+      try {
+        // Kept until it has worked: a Redo that failed can be tried again.
+        await this.snapshots.restore(directory, now, files)
+      } finally {
+        this.busy.delete(id)
+      }
     }
     delete record.session.revert
     delete record.agent.revertNow
+    delete record.agent.revertFiles
     this.store.save(id, true)
     emit("session.revert.cleared", { sessionID: id }, directory)
+    this.next(id, "succeeded")
   }
 
   /** An undo made final: what was taken back goes, and the agents start their conversations over, handed what's left. */
@@ -492,14 +544,17 @@ export class Sessions {
     const at = record.messages.findIndex((message) => message.id === revert.messageID)
     if (at >= 0) {
       const gone = record.messages.splice(at)
-      const kept = (record.agent.snapshots as Record<string, string> | undefined) ?? {}
+      const kept = this.notes(record)
       for (const message of gone) delete kept[message.id]
     }
     delete record.session.revert
     delete record.agent.revertNow
-    // Their own conversations still hold what was undone.
+    delete record.agent.revertFiles
+    // Their own conversations still hold what was undone: let go of (an engine model's hidden
+    // session too), and started over.
     for (const thread of live.threads.values()) thread.close()
     live.threads.clear()
+    for (const [provider, slot] of Object.entries(this.slots(record))) void this.agent(provider)?.forgetConversation?.(slot.state).catch(() => {})
     record.agent.threads = {}
     this.store.save(id, true)
     emit("session.revert.committed", { sessionID: id, to: revert.messageID }, record.session.location.directory)
@@ -690,16 +745,22 @@ export class Sessions {
     else record.messages.push({ type: "user", id: input.id, time: { created: Date.now() }, text: input.text, files: attachments.length ? attachments : undefined })
     session.time.updated = Date.now()
     this.store.save(id, true)
-    // The project's files as they are before it, to undo it (yours, not a note from the app).
+    // The project's files as they are before it (yours, not a note from the app), and after its
+    // turn: what the turn changed, which Undo puts back.
+    let note: SnapshotNote | undefined
     if (!input.synthetic && this.snapshots) {
-      const tree = await this.snapshots.take(directory).catch(() => undefined)
-      if (tree) {
-        const kept = (record.agent.snapshots as Record<string, string> | undefined) ?? {}
-        kept[input.id] = tree
+      try {
+        const before = await this.snapshots.take(directory)
+        if (before) note = { before }
+      } catch {
+        note = { failed: true }
+      }
+      if (note) {
+        const kept = this.notes(record)
+        kept[input.id] = note
         // The last hundred messages' are enough.
         const ids = Object.keys(kept).sort()
         for (const old of ids.slice(0, Math.max(0, ids.length - 100))) delete kept[old]
-        record.agent.snapshots = kept
         this.store.save(id)
       }
     }
@@ -738,6 +799,19 @@ export class Sessions {
     this.settleAsks(id, live)
     live.running = undefined
     if (live.turn === turn) live.turn = undefined
+    // What the turn changed (the session waits for it, as for its turn).
+    if (note?.before && this.snapshots) {
+      this.busy.add(id)
+      try {
+        const after = await this.snapshots.take(directory)
+        if (after) note.files = await this.snapshots.changed(directory, note.before, after)
+      } catch {
+        note.failed = true
+      } finally {
+        this.busy.delete(id)
+      }
+      if (this.store.get(id)) this.store.save(id)
+    }
     this.next(id, outcome)
     if (!this.isRunning(id)) this.closeWhenIdle(id, live)
   }
