@@ -159,6 +159,9 @@ final class BrowserAgent {
                 return "Another conversation's agent is using tab [\(number)]. Pick another, or open one with browser_new_tab."
             }
             if chosen.browser.isHeld { return "The user took tab [\(number)] over and has it now. Pick another, or carry on without it." }
+            if let url = chosen.browser.url, url.isFileURL, BrowserTools.fileNote(for: url.absoluteString, caller: caller) != nil {
+                return "Tab [\(number)] shows a file outside this conversation's folder, which this session asks about before reading. Pick another, or open one with browser_new_tab."
+            }
             if action == "close" {
                 utilities.close(chosen.id)
                 return "Closed tab [\(number)]. " + list(utilities.browserTabs(of: panel))
@@ -567,15 +570,15 @@ final class BrowserAgent {
         return "The tab in use shows a file outside this conversation's folder, so this goes on in a new tab.\n\n"
     }
 
-    /// After a step, or once you hand a page back: the page on such a file goes blank, unless you
-    /// have it, and what the step read is held back. Says why, or nil.
+    /// After a step: the page on such a file goes blank, unless you have it, and what the step read
+    /// is held back. Says why (not which file), or nil.
     func leaveForbiddenFile() async -> String? {
-        guard let page = currentPage, let note = await forbiddenFile(in: page) else { return nil }
-        if page.isHeld { return note + " The page is on it, so this step's result was held back." }
+        guard let page = currentPage, await forbiddenFile(in: page) != nil else { return nil }
+        if page.isHeld { return "The page shows a file outside this conversation's folder, so this step's result was held back." }
         page.webView.stopLoading()
         page.load("about:blank")
         await settle(page, expectNavigation: true)
-        return note + " The page was on it, so it's blank now and this step's result was held back."
+        return "The page went to a file outside this conversation's folder, which this session asks about before reading, so it's blank now and this step's result was held back."
     }
 
     /// The tab in use, for the tab list.
