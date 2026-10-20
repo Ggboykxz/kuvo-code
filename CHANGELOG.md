@@ -12,7 +12,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - A page the agent saves as a PDF leaves out what you filled in (a password, a code), as its screenshots do, in the browser on your Mac and on a machine.
 - Saved passwords are offered and filled in only over https, where they were saved: a sign-in page over plain http (which can be read on the way) gets no saved password, from you or the agent, on your Mac or in a machine's browser.
 - A widget in the conversation sends a message as you only when you click in it, and opens a web address in your browser only from your click: a widget's script could do either on its own.
-- Under Ask First, and in a group chat, the agent's browser opens files in the conversation's folder (and temporary ones) only: a file elsewhere on your Mac or the machine, which a command would have asked about, isn't opened without your say.
+- Under Ask First, and in a group chat, the agent's browser opens files in the conversation's folder (and temporary ones) only: a file elsewhere on your Mac or the machine, which a command would have asked about, isn't opened without your say, nor read when a link, a redirect or going back leads there.
+- On a machine, an agent no longer switches to or closes a browser tab another conversation's agent is using, as on your Mac.
 - In Settings › Permissions, a rule you were typing in no longer takes the place of a choice you made above it before leaving the field.
 - **Wake Up Now** says so when a one-off wake-up couldn't be taken off the schedule (it would come at its time too), and on a machine it doesn't send a shortened note when the whole one can't be read.
 - Picking another model while the agent has just asked you something no longer stops it and loses the question.

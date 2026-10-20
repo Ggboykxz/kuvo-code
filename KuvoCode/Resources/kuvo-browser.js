@@ -1100,6 +1100,8 @@ async function page() {
 
 async function use(target) {
   const c = await browser();
+  // The pages a call works in, to check where they are when it's done.
+  current?.pages?.add(target);
   let session = sessions.get(target);
   if (!session) {
     session = (await c.send("Target.attachToTarget", { targetId: target, flatten: true })).sessionId;
@@ -1424,43 +1426,90 @@ function hostOf(url) {
   }
 }
 
-/// The site the fill script checks the page is still on (it names a page from a file as one on
-/// the Mac, so that one goes by the address alone).
-const siteOf = (host) => (host === "a file on this machine" ? undefined : host);
+/// The site the fill script checks the page is still on. It names a page from a file as one on
+/// the Mac, wherever it runs.
+const siteOf = (host) => (host === "a file on this machine" ? "a file on this Mac" : host);
 
-/// What the browser says instead of opening `address`, a file outside the conversation's folder
-/// (and the temporary folders, where an agent writes a page to open), when it asks before reading
-/// those: opened, the browser read it without asking, where a command would have asked. Links are
-/// followed to where they lead. A subagent's goes by the conversation that started it. As the
-/// Mac's BrowserTools.fileNote.
-async function fileNote(address, session) {
-  const target = destination(address);
-  if (!target || !target.startsWith("file:")) return null;
-  let file;
-  try {
-    file = fileURLToPath(target);
-  } catch {
-    return null;
-  }
+/// Where a conversation may open files without asking: anywhere under Approve All, else its
+/// folder and the temporary ones (where an agent writes a page to open). A subagent's goes by the
+/// conversation that started it. Unknown, it asks. As the Mac's BrowserTools.
+async function fileAccess(session) {
   let found = null;
   for (let id = session, step = 0; id && step < 6; step++) {
     found = (await engine("GET", `api/session/${encodeURIComponent(id)}`).catch(() => null))?.data ?? null;
     id = found?.parentID ?? null;
   }
-  // Approve All: no rule asking before commands (nor one refusing them, as a group chat's seat has).
+  // Ask First asks before commands; a group chat's seat refuses them all. (Approve All keeps
+  // Settings' refusals, of some commands.)
   const rules = found?.permissions ?? [];
-  if (found && !rules.some((rule) => rule.action === "shell" && (rule.effect === "ask" || rule.effect === "deny"))) return null;
-  const real = (place) => {
-    try {
-      return fs.realpathSync(place);
-    } catch {
-      return path.resolve(place);
-    }
-  };
-  const where = real(file);
-  const places = [found?.location?.directory, os.tmpdir(), "/tmp"].filter(Boolean).map(real);
-  if (places.some((place) => where === place || where.startsWith(place.endsWith("/") ? place : place + "/"))) return null;
-  return `Not opened: ${file} is outside this conversation's folder, and this session asks before reading files elsewhere. Ask the user first; if they agree, copy it into the folder (a command, which asks them) and open it there.`;
+  const asks = rules.some((rule) => rule.action === "shell" && (rule.effect === "ask" || (rule.effect === "deny" && rule.resource === "*")));
+  if (found && !asks) return { anywhere: true, places: [] };
+  return { anywhere: false, places: [found?.location?.directory, os.tmpdir(), "/tmp"].filter(Boolean).map(realPath) };
+}
+
+function realPath(place) {
+  try {
+    return fs.realpathSync(place);
+  } catch {
+    return path.resolve(place);
+  }
+}
+
+/// The file `address` (a whole URL) is, when it's one outside `access`'s places, links followed
+/// to where they lead; else null. One it can't tell (a host in it, say, which Chrome ignores)
+/// counts as outside.
+function outsideFile(address, access) {
+  let url;
+  try {
+    url = new URL(address);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "file:" || access.anywhere) return null;
+  let file;
+  try {
+    file = fileURLToPath(url);
+  } catch {
+    return url.pathname || address;
+  }
+  const where = realPath(file);
+  return access.places.some((place) => where === place || where.startsWith(place.endsWith("/") ? place : place + "/")) ? null : file;
+}
+
+const outsideNote = (file) =>
+  `Not opened: ${file} is outside this conversation's folder, and this session asks before reading files elsewhere. Ask the user first; if they agree, copy it into the folder (a command, which asks them) and open it there.`;
+
+/// What the browser says instead of opening `address`, a file outside where the conversation may
+/// read files without asking: opened, the browser read it without asking, where a command would
+/// have asked.
+async function fileNote(address, session) {
+  const target = destination(address);
+  if (!target || !target.startsWith("file:")) return null;
+  const file = outsideFile(target, await fileAccess(session));
+  return file ? outsideNote(file) : null;
+}
+
+/// The same for where a page is now, its frames too: one can get to a file by a link, a redirect,
+/// going back or a folder's listing as well as by its address. Such a page goes blank, and this
+/// says why; nil if it's fine. `access` is looked up once, when a page has a file in it.
+async function pageNote(p, session, access) {
+  let tree;
+  try {
+    ({ frameTree: tree } = await link.send("Page.getFrameTree", {}, p.session));
+  } catch {
+    return null;
+  }
+  const addresses = [];
+  (function collect(node) {
+    if (node?.frame?.url) addresses.push(node.frame.url);
+    for (const child of node?.childFrames ?? []) collect(child);
+  })(tree);
+  if (!addresses.some((address) => address.startsWith("file:"))) return null;
+  access.value ??= await fileAccess(session);
+  const file = addresses.map((address) => outsideFile(address, access.value)).find(Boolean);
+  if (!file) return null;
+  await link.send("Page.navigate", { url: "about:blank" }, p.session).catch(() => {});
+  return outsideNote(file) + " The page got there by a link or by itself, so it's blank now.";
 }
 
 /// Nil if the field is there and takes `wanted` ("password" or "text"), else why not.
@@ -1693,7 +1742,16 @@ async function perform(call, reply) {
     try {
       if (call.cancelled) return;
       await browser();
-      return reply(wait ? await afterControl(wait) : await tool(call.name, call.args));
+      const result = wait ? await afterControl(wait) : await tool(call.name, call.args);
+      // A page it worked in that went to a file it may not read: blank, and its result kept back.
+      const access = {};
+      const open = new Set((await pages()).map((info) => info.targetId));
+      for (const target of call.pages) {
+        if (!open.has(target) || !sessions.has(target)) continue;
+        const note = await pageNote({ target, session: sessions.get(target) }, call.session, access);
+        if (note) return reply(text(note, true));
+      }
+      return reply(result);
     } catch (error) {
       if (error instanceof Cancelled) return;
       // Its page, taken over while it waited in line: it waits again, out of the line.
@@ -1795,13 +1853,16 @@ async function tool(name, args) {
     const chosen = number === null ? null : open[number - 1];
     if (!chosen) return text(`There's no tab [${number ?? 0}]. ` + list(open));
     if (held.has(chosen.targetId)) return text(`The user took tab [${number}] over and has it now. Pick another, or carry on without it.`);
+    // Another conversation's agent is at work there: not this one's to take or close.
+    if (caller && !(await c.send("Kuvo.claim", { targetId: chosen.targetId, session: caller })).ok) {
+      return text(`Another conversation's agent is using tab [${number}]. Pick another, or open one with browser_new_tab.`);
+    }
     if (action === "close") {
       await c.send("Target.closeTarget", { targetId: chosen.targetId });
       sessions.delete(chosen.targetId);
       if (active === chosen.targetId) active = null;
       return text(`Closed tab [${number}]. ` + list((await pages())));
     }
-    if (caller) await c.send("Kuvo.claim", { targetId: chosen.targetId, session: caller });
     return text(await snapshot(await use(chosen.targetId)));
   }
 
@@ -1821,6 +1882,9 @@ async function tool(name, args) {
   }
 
   let p = await page();
+  // A page that went to such a file since the last step (on a timer, say) isn't read first.
+  const before = name === "browser_navigate" ? null : await pageNote(p, caller, {});
+  if (before) return text(before, true);
   const note = () => (notes.length ? notes.splice(0).join("\n") + "\n\n" : "");
   const withNote = async (promise) => {
     const result = await promise;
@@ -1906,7 +1970,7 @@ async function tool(name, args) {
         try {
           ({ data } = await link.send("Page.printToPDF", { printBackground: true, preferCSSPageSize: true, marginTop: 0.5, marginBottom: 0.5, marginLeft: 0.5, marginRight: 0.5, ...paper }, p.session, 60_000));
         } finally {
-          await run(p, scripts.unmask);
+          await run(p, scripts.printUnmask);
         }
         const bytes = Buffer.from(data, "base64");
         fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -2054,7 +2118,7 @@ async function mcp() {
       case "tools/list":
         return reply({ tools: CONFIG.tools });
       case "tools/call": {
-        call = { id: message.id, name: params.name || "", args: params.arguments || {}, session: params._meta?.["ai.opencode/sessionID"] ?? null, cancelled: false, stops: new Set(), notes: [] };
+        call = { id: message.id, name: params.name || "", args: params.arguments || {}, session: params._meta?.["ai.opencode/sessionID"] ?? null, cancelled: false, stops: new Set(), notes: [], pages: new Set() };
         calls.set(call.id, call);
         // Showing something in Kuvo Code's panel needs no browser, nor a turn in the line.
         // Nor does writing to another agent.
