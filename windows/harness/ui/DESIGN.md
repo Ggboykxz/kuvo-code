@@ -247,7 +247,7 @@ same ones the App Router renders.
 | 5 | Wording: 1,208 strings verbatim | 0.5.43 ✅ (the shell) |
 | 6 | Screens: 23 settings pages, transcript, drawers | 0.5.44 ✅ (the transcript, the gauge, the steps row) · 0.5.45 ✅ (the settings' grouped form) · 0.5.46 ✅ (the rest of the groups) · 0.5.47 ✅ (the panel's files, as a tree) |
 | 7 | Gestures and shortcuts | 0.5.48 ✅ (the rename, the grabber, the history) · 0.5.49 ✅ (the find bar) · 0.5.50 ✅ (the popover that flips, the clear) |
-| 8 | Verification: capture matrix, real-Mac screenshots | |
+| 8 | Verification: capture matrix, real-Mac screenshots | 0.5.51 ✅ (the matrix and the measured values) |
 
 The Mac screenshots are the arbiter. Until they exist, `docs/MAC-UI-MAP.md` and the Swift
 source are the evidence, and a capture that does not match them is a defect, not a taste
