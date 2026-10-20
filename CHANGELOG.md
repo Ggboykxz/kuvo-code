@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Picking another model while the agent has just asked you something no longer stops it and loses the question.
 - While the agent thinks or writes at length, the line under the conversation keeps saying it's working, rather than "Waiting for the model to answer" after 20 seconds; and on a machine whose clock differs from your Mac's, its times are right.
 - The coding agents you use in Kuvo Code, and the commands they run, no longer see the password of Kuvo Code's agents bridge in their environment, where a command that printed it showed it to the model.
 - If saving your Auto list fails, Settings › Auto shows the list Auto still uses, rather than the one that didn't save.

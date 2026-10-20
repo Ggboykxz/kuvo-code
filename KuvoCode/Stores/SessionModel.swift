@@ -1220,8 +1220,9 @@ final class SessionModel {
             do {
                 try await api.selectModel(session: id, model: model)
                 // The note starts a turn of its own: only when there was a run to stop, as there
-                // may not be by now (it ended while the model was being set).
-                if switchesNow, try await api.interrupt(session: id) {
+                // may not be by now (it ended while the model was being set); and not if it has
+                // asked you something meanwhile.
+                if switchesNow, permissions.isEmpty, forms.isEmpty, try await api.interrupt(session: id) {
                     try await api.addSynthetic(session: id, text: Self.switchedModelNote)
                 }
             } catch {
