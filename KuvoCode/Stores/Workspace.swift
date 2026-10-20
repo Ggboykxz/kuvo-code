@@ -1062,8 +1062,10 @@ final class Workspace {
         func isMac(_ id: String) -> Bool {
             !isBridgeSession(id) && sessionMachines[id] == nil && session(id).map { RemoteFolder.isRemote($0.location.directory) } != true
         }
-        for (request, id) in asking where sharedForms[request] == nil && isMac(id) {
+        // Forms its MCP servers asked (one for every session in a folder here) went with it too.
+        for (request, id) in asking where sharedForms[request].map { !RemoteFolder.isRemote($0) } ?? isMac(id) {
             asking[request] = nil
+            sharedForms[request] = nil
             Notifier.shared.clear(request: request)
         }
         running = running.filter { !isMac($0) }

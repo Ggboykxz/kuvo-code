@@ -162,8 +162,10 @@ private struct ShellOutputView: View {
                 if let api, let size = try? await api.shellOutput(job.id, limit: 1, directory: directory).size {
                     let start = max(0, size - Self.tail)
                     if let read = try? await api.shellOutput(job.id, from: start, limit: Self.tail, directory: directory) {
-                        // Begun partway: from the first whole line.
-                        let output = start > 0 ? read.output.drop { $0 != "\n" }.dropFirst() : Substring(read.output)
+                        // Begun partway: from the first whole line (a progress line that redraws
+                        // itself ends in a return); all of it when there's no line end in it.
+                        let lineEnd = start > 0 ? read.output.firstIndex { $0 == "\n" || $0 == "\r" } : nil
+                        let output = lineEnd.map { read.output[read.output.index(after: $0)...] } ?? Substring(read.output)
                         let trimmed = String(output).trimmingCharacters(in: .newlines)
                         if trimmed != text { text = trimmed }
                     }
