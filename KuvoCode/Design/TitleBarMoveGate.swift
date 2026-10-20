@@ -8,17 +8,63 @@ import SwiftUI
 /// walks every view that takes clicks or the keyboard to answer. Scrolling the sidebar spent a
 /// third of its time there, and every scroll, reply and animation paid some. Not movable, the
 /// window has none of that; it's made movable again as the pointer comes to the title bar, so
-/// dragging it (and snapping it to the screen's edges) is as it always was.
+/// dragging it (and snapping it to the screen's edges) is as it always was. Movable too while a
+/// menu is open and as the tiling keys are pressed: macOS offers Window › Fill, Center and Move &
+/// Resize only for a window that can move, and greyed them out.
 @MainActor final class TitleBarMoveGate: NSObject {
     private weak var window: NSWindow?
     private var tracking: NSTrackingArea?
     private var observers: [NSObjectProtocol] = []
     private static var gates: [ObjectIdentifier: TitleBarMoveGate] = [:]
+    /// Menus open now: the window stays movable meanwhile.
+    private static var menusOpen = 0
+    /// Until when it's kept movable after a menu or a tiling key, for what they do to finish.
+    private var heldUntil: ContinuousClock.Instant?
+    private static var keys: Any?
 
     static func install(on window: NSWindow) {
         guard gates[ObjectIdentifier(window)] == nil else { return }
         let gate = TitleBarMoveGate(window: window)
         gates[ObjectIdentifier(window)] = gate
+        watchMenusAndKeys()
+    }
+
+    /// The Window menu's Fill, Center and Move & Resize, and their keys (fn ⌃ and an arrow, F or
+    /// C), are only for a window that can move: each window is made movable as any menu opens,
+    /// and as those keys go down, then as it was a moment after.
+    private static func watchMenusAndKeys() {
+        guard keys == nil else { return }
+        let center = NotificationCenter.default
+        _ = center.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                menusOpen += 1
+                for gate in gates.values { gate.hold() }
+            }
+        }
+        _ = center.addObserver(forName: NSMenu.didEndTrackingNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                menusOpen = max(0, menusOpen - 1)
+                for gate in gates.values { gate.hold() }
+            }
+        }
+        keys = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if flags.contains(.function) && flags.contains(.control) {
+                event.window.flatMap { gates[ObjectIdentifier($0)] }?.hold()
+            }
+            return event
+        }
+    }
+
+    /// Movable now, and for a moment more (the tiling it was for moves the window after the menu
+    /// closes or the key goes down).
+    private func hold() {
+        heldUntil = .now + .seconds(1)
+        setMovable(true)
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.1))
+            self?.update()
+        }
     }
 
     private init(window: NSWindow) {
@@ -52,7 +98,11 @@ import SwiftUI
         tracking = area
         // Where the pointer is now decides, as it would have entering or leaving.
         let pointer = content.convert(window.mouseLocationOutsideOfEventStream, from: nil)
-        setMovable(rect.contains(pointer) || window.styleMask.contains(.fullScreen))
+        setMovable(rect.contains(pointer) || window.styleMask.contains(.fullScreen) || isHeld)
+    }
+
+    private var isHeld: Bool {
+        Self.menusOpen > 0 || heldUntil.map { $0 > .now } == true
     }
 
     private func setMovable(_ movable: Bool) {
@@ -72,7 +122,7 @@ import SwiftUI
             }
             return
         }
-        setMovable(window?.styleMask.contains(.fullScreen) ?? false)
+        setMovable((window?.styleMask.contains(.fullScreen) ?? false) || isHeld)
     }
 
     private func remove() {
