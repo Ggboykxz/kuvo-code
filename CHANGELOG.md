@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- A command's output in the conversation is colored as a terminal shows it: a search's files, line numbers and what it found, a diff's added and removed lines, and errors and warnings.
 - Discarding in Changes moves a folder that took a file's place (a repository cloned there, or new files) to the Trash before the file comes back, instead of git deleting it for good; and a changed file too big to show says so instead of looking unchanged.
 - Merge and Pull Request no longer ask you to commit files git is set to hide; removing a worktree still counts them.
 - Notifications hide more kinds of keys (DigitalOcean, Supabase, Pulumi, Groq, xAI, Hugging Face and others, and a token in an address), and show migration file names, temporary folders, `docker -u` and `mysql -P` in full.
