@@ -127,7 +127,12 @@ nonisolated enum SkillLibrary {
             if !folder.isEmpty { byFolder[folder, default: []].append(file) }
             else if isSkill, !file.hasPrefix(".") { byFolder["", default: []].append(file) }
         }
-        let skills = ((isSkill ? [""] : []) + folders.sorted()).map { RemoteSkill(repository: repository, path: $0, files: byFolder[$0] ?? []) }
+        var skills = ((isSkill ? [""] : []) + folders.sorted()).map { RemoteSkill(repository: repository, path: $0, files: byFolder[$0] ?? []) }
+        // A copy kept for another tool, in a hidden folder (.claude/skills, .openclaw/skills…),
+        // of a skill the repository has in plain sight: listed once, as the one in plain sight.
+        func isHidden(_ skill: RemoteSkill) -> Bool { skill.path.split(separator: "/").contains { $0.hasPrefix(".") } }
+        let shown = Set(skills.filter { !isHidden($0) }.map(\.name))
+        skills.removeAll { isHidden($0) && shown.contains($0.name) }
         return Listing(skills: skills, isPartial: tree.truncated == true)
     }
 
