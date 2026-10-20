@@ -595,8 +595,8 @@ interpretation of it.
 | Phase | Scope | Ledger rows it closes | Release |
 | --- | --- | --- | --- |
 | **0. Extraction** | This document, the generated inventory, the generator | all rows extracted; statuses set | docs commit (no release) |
-| **1. Tokens** | Rebind `DESIGN.md`; replace `:root` light/dark with §3; radii 14/18/10/8/7/6/5; shadows; type sizes and faces; accent presets | §1 rows 1, 3, 7, 9, 10, 12, 13; §3 | 0.5.37 |
-| **2. Surfaces & chrome** | Cards, header + fade, window gaps, sidebar card, title bar tabs, composer opaque surface, accent-glass bubble, wells, palette/settings/drawer materials | §1 rows 3–8, 15, 16; §2; §4 Card/Composer/Bubble | 0.5.38 |
+| **1. Tokens** | Rebind `DESIGN.md`; replace `:root` light/dark with §3; radii 14/18/10/8/7/6/5; shadows; type sizes and faces; accent presets | §1 rows 1, 3, 7, 9, 10, 12, 13; §3 | 0.5.37 ✅ |
+| **2. Surfaces & chrome** | Cards, header + fade, window gaps, sidebar on the glass (no surface), title-bar tabs, composer inside the conversation card, wells, palette/settings/drawer materials | §1 rows 3–8, 15, 16; §2; §4 Card/Composer/Bubble | 0.5.38 |
 | **3. Motion** | Analytic spring `linear()`, hover 0.12, press fills, list tint, shimmer, spinner, image-viewer transitions, reduced motion | §5 | 0.5.39 |
 | **4. Icons** | 89 symbols → drawn SVGs; FolderIcon; PromptMark; provider logos; remove text glyphs and the naked `@` | §7 | 0.5.40 |
 | **5. Wording** | 1 208 sites compared; menus, tooltips, accessibility labels; punctuation | §8 | 0.5.41 |
