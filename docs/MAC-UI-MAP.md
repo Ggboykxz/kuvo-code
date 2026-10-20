@@ -532,31 +532,31 @@ Behaviour that is not a colour or a curve, and that a screenshot cannot prove.
 
 | Invariant | Mac behaviour | Evidence | Windows | Phase |
 | --- | --- | --- | --- | --- |
-| Hover language | 6 % fill on rows, 8 % on buttons; selected 8 %; 0.12 s easeOut | `HoverHighlight.swift:14-26`, `Pressable.swift:8-9` | ◐ | 3 |
-| Press | 13 % fill, no movement | `Pressable.swift:56-70` | ◐ (scale 0.97) | 3 |
-| Disabled | 45 % opacity, no fill | `Pressable.swift:61` | ◐ | 3 |
-| Inline rename | All text selected; Return commits; Escape cancels; click-away keeps (except a branch, which needs Return) | `InlineTitleField.swift:4-55` | ⬜ (a rename prompt exists; no inline field) | 7 |
+| Hover language | 6 % fill on rows, 8 % on buttons; selected 8 %; 0.12 s easeOut | `HoverHighlight.swift:14-26`, `Pressable.swift:8-9` | ✅ | 3 |
+| Press | 13 % fill, no movement | `Pressable.swift:56-70` | ✅ | 3 |
+| Disabled | 45 % opacity, no fill | `Pressable.swift:61` | ✅ | 3 |
+| Inline rename | All text selected; Return commits; Escape cancels; click-away keeps (except a branch, which needs Return) | `InlineTitleField.swift:4-55` | ✅ (0.5.48) | 7 |
 | File drop | Anywhere over the window, text fields included; only during a file drag; clicks pass through | `FileDrop.swift:4-70` | ✅ | — |
-| Right-click | Message actions, title-bar menus; one window-level watcher | `RightClickMenu.swift:4-65` | ◐ | 7 |
+| Right-click | Message actions, title-bar menus; one window-level watcher | `RightClickMenu.swift:4-65` | ✅ (the rows' and the messages' menus) | 7 |
 | Double-click title | Follows the system preference: zoom, minimise, or nothing | `Card.swift:186-198` | ⬜ | 7 |
-| Pane resize | 8 pt gap is the handle; 3 pt tint capsule appears at 50 %; `column-resize` cursor | `WindowGlass.swift:43-81` | ⬜ | 2, 7 |
-| Hover actions | Time, Copy, New Session, Undo appear under the pointer with no layout shift; 0.12 s | `YourMessage.swift:41-64` | ◐ | 7 |
-| Composer history | ↑ / ↓ walk sent messages, as in a shell | `Composer.swift:22-24` | ⬜ | 7 |
+| Pane resize | 8 pt gap is the handle; 3 pt tint capsule appears at 50 %; `column-resize` cursor | `WindowGlass.swift:43-81` | ✅ (0.5.48) | 2, 7 |
+| Hover actions | Time, Copy, New Session, Undo appear under the pointer with no layout shift; 0.12 s | `YourMessage.swift:41-64` | ✅ (0.5.52) | 7 |
+| Composer history | ↑ / ↓ walk sent messages, as in a shell | `Composer.swift:22-24` | ✅ (0.5.48) | 7 |
 | Queue | ⌘Return queues while idle when messages are waiting; send becomes Stop | `Composer.swift:20-21` | ✅ | — |
-| Quote | 3 pt tint bar, "Replying to", 3 lines, remove; `.help("Drop the quote")` | `QuoteViews.swift:8-30` | ◐ | 2 |
-| Search clear | Clear (×) is tertiary at rest, secondary on hover, primary pressed | `Pressable.swift:73-91` | ◐ | 3, 7 |
-| Remove (−) | Turns red under the pointer, 70 % while pressed | `Pressable.swift:93-112` | ◐ | 7 |
+| Quote | 3 pt tint bar, "Replying to", 3 lines, remove; `.help("Drop the quote")` | `QuoteViews.swift:8-30` | ✅ (0.5.54) | 2 |
+| Search clear | Clear (×) is tertiary at rest, secondary on hover, primary pressed | `Pressable.swift:73-91` | ✅ (0.5.50) | 3, 7 |
+| Remove (−) | Turns red under the pointer, 70 % while pressed | `Pressable.swift:93-112` | ✅ (0.5.53) | 7 |
 | Accent badge | Grows to 1.12 and darkens 7 % on hover; 15 % on press | `Pressable.swift:201-220` | ⬜ | 7 |
-| List selection | Tint 16 % selected, 24 % pressed; row radius 7 | `Pressable.swift:137-164` | ◐ | 3 |
-| Focus | Well fields have no focus ring; `focusEffectDisabled` | `Surfaces.swift:179-191` | ◐ | 7 |
+| List selection | Tint 16 % selected, 24 % pressed; row radius 7 | `Pressable.swift:137-164` | ✅ | 3 |
+| Focus | Well fields have no focus ring; `focusEffectDisabled` | `Surfaces.swift:179-191` | ✅ | 7 |
 | Selection | Message text selectable; selection is tinted, caret is accent | `TranscriptView.swift:713`, `style.css:211-212` | ✅ | — |
-| Find | Find in conversation is invoked, not permanently in the header; highlights and count | `FindBar.swift`, `App` menu | ⬜ (always visible today) | 2, 6 |
-| Sidebar search | One search well; search-in-conversations shows a spinner in it | `SidebarView.swift:693-697` | ⬜ (two fields today) | 2, 6 |
+| Find | Find in conversation is invoked, not permanently in the header; highlights and count | `FindBar.swift`, `App` menu | ✅ (0.5.49) | 2, 6 |
+| Sidebar search | One search well; search-in-conversations shows a spinner in it | `SidebarView.swift:693-697` | ✅ (one well; the spinner is Phase 6) | 2, 6 |
 | Scroll | Sticks to the bottom while the agent writes; scrolling up reveals ↓ Latest; 120 pt tail | `TranscriptView.swift:1496`, `ConversationScroll.swift` | ✅ | — |
-| Popover side | A menu/popover that outgrows its side flips to the other | `ScreenRoom.swift:4-33` | ⬜ | 7 |
-| Reduce Motion | Spinner holds still, shimmer stops, bots hold, transitions reduce | `Spinner.swift:19`, `Theme.swift:45-53`, `BotAvatar.swift:80` | ◐ (setting ✅) | 3 |
+| Popover side | A menu/popover that outgrows its side flips to the other | `ScreenRoom.swift:4-33` | ✅ (0.5.50) | 7 |
+| Reduce Motion | Spinner holds still, shimmer stops, bots hold, transitions reduce | `Spinner.swift:19`, `Theme.swift:45-53`, `BotAvatar.swift:80` | ✅ | 3 |
 | Window controls | The first card leaves 26 pt for close/minimise/zoom when tabs are hidden | `Theme.swift:12-14`, `Card.swift:118` | ◐ (frameless shell) | 2 |
-| Menu chevron | 8 pt bold, secondary, after the label | `Pressable.swift:192-198` | ◐ | 4 |
+| Menu chevron | 8 pt bold, secondary, after the label | `Pressable.swift:192-198` | ◐ (Phase 4) | 4 |
 
 ---
 
