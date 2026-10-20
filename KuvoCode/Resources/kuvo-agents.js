@@ -4849,6 +4849,7 @@ class Roster {
 
 // Agents/src/sessions.ts
 import { createHash as createHash3 } from "crypto";
+import { readFileSync as readFileSync9, statSync as statSync2 } from "fs";
 import { fileURLToPath } from "url";
 
 // Agents/src/handover.ts
@@ -5853,7 +5854,8 @@ class Sessions {
     live.agentPrompt = own ? await this.agentPrompt?.(own, directory).catch(() => live.agentPrompt) : undefined;
     let result;
     try {
-      const run2 = { text: input.text, files: input.files.map(promptFile), model: model2, plan: session.agent === "plan" };
+      const attached = withTextFiles(input.text, input.files.map(promptFile));
+      const run2 = { text: attached.text, files: attached.files, model: model2, plan: session.agent === "plan" };
       if (model2.providerID !== autoProvider)
         delete record.agent.autoHeld;
       result = model2.providerID === autoProvider ? await this.runAuto(id, record, live, { ...run2, auto: true }, turn, abort.signal, input.id) : await this.runOn(id, record, live, model2, run2, turn, abort.signal, input.id);
@@ -6273,6 +6275,33 @@ function mime(uri) {
     md: "text/markdown",
     json: "application/json"
   }[extension] ?? "application/octet-stream";
+}
+var textFileLimit = 200000;
+function withTextFiles(text, files) {
+  const others = [];
+  const parts = [];
+  for (const file of files) {
+    let contents;
+    if (!file.mime.startsWith("image/") && file.mime !== "application/pdf") {
+      try {
+        const bytes = file.data ? Buffer.from(file.data, "base64") : file.path && statSync2(file.path).isFile() && statSync2(file.path).size <= textFileLimit ? readFileSync9(file.path) : undefined;
+        if (bytes && !bytes.includes(0))
+          contents = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      } catch {}
+    }
+    if (contents === undefined) {
+      others.push(file);
+      continue;
+    }
+    parts.push(`<file path="${file.path ?? file.name ?? "pasted"}">
+${contents}
+</file>`);
+  }
+  return { text: parts.length ? `${text}
+
+${parts.join(`
+
+`)}` : text, files: others };
 }
 function promptFile(file) {
   const type = mime(file.uri);
@@ -6699,7 +6728,7 @@ ${written.trim()}`;
 }
 
 // Agents/src/store.ts
-import { mkdirSync as mkdirSync10, readdirSync as readdirSync3, readFileSync as readFileSync9, renameSync as renameSync4, rmSync as rmSync7, writeFileSync as writeFileSync7 } from "fs";
+import { mkdirSync as mkdirSync10, readdirSync as readdirSync3, readFileSync as readFileSync10, renameSync as renameSync4, rmSync as rmSync7, writeFileSync as writeFileSync7 } from "fs";
 import { join as join13 } from "path";
 
 class Store {
@@ -6712,14 +6741,14 @@ class Store {
     for (const id of readdirSync3(root)) {
       try {
         const folder = join13(root, id);
-        const session = JSON.parse(readFileSync9(join13(folder, "session.json"), "utf8"));
+        const session = JSON.parse(readFileSync10(join13(folder, "session.json"), "utf8"));
         let messages = [];
         try {
-          messages = JSON.parse(readFileSync9(join13(folder, "messages.json"), "utf8"));
+          messages = JSON.parse(readFileSync10(join13(folder, "messages.json"), "utf8"));
         } catch {}
         let agent = {};
         try {
-          agent = JSON.parse(readFileSync9(join13(folder, "agent.json"), "utf8"));
+          agent = JSON.parse(readFileSync10(join13(folder, "agent.json"), "utf8"));
         } catch {}
         this.records.set(session.id, { session, messages, agent });
       } catch {}

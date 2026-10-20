@@ -8,6 +8,7 @@
 // on its own the next one starts; after Stop, or an error, nothing does until the app says.
 
 import { createHash } from "node:crypto"
+import { readFileSync, statSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import type { Agent, PermissionAsk, PromptFile, QuestionAsk, RunInput, RunResult, SubagentRun, SubagentTask, Thread, TurnHooks } from "./agent"
 import { failure } from "./agent"
@@ -633,7 +634,9 @@ export class Sessions {
 
     let result: RunResult
     try {
-      const run: RunInput = { text: input.text, files: input.files.map(promptFile), model, plan: session.agent === "plan" }
+      // A text file you attached goes in the message, as the engine puts it (the agent reads the rest).
+      const attached = withTextFiles(input.text, input.files.map(promptFile))
+      const run: RunInput = { text: attached.text, files: attached.files, model, plan: session.agent === "plan" }
       // A message on a model you picked: what Auto held back before isn't news when it's back on.
       if (model.providerID !== autoProvider) delete record.agent.autoHeld
       result =
@@ -1073,6 +1076,31 @@ function mime(uri: string): string {
       json: "application/json",
     } as Record<string, string>
   )[extension] ?? "application/octet-stream"
+}
+
+/** How much of a text file you attach goes in the message. */
+const textFileLimit = 200_000
+
+/** Text files you attached, in the message (as the engine puts them), and the other files. */
+export function withTextFiles(text: string, files: PromptFile[]): { text: string; files: PromptFile[] } {
+  const others: PromptFile[] = []
+  const parts: string[] = []
+  for (const file of files) {
+    let contents: string | undefined
+    if (!file.mime.startsWith("image/") && file.mime !== "application/pdf") {
+      try {
+        const bytes = file.data ? Buffer.from(file.data, "base64") : file.path && statSync(file.path).isFile() && statSync(file.path).size <= textFileLimit ? readFileSync(file.path) : undefined
+        // Text, not something binary that happens to be small.
+        if (bytes && !bytes.includes(0)) contents = new TextDecoder("utf-8", { fatal: true }).decode(bytes)
+      } catch {}
+    }
+    if (contents === undefined) {
+      others.push(file)
+      continue
+    }
+    parts.push(`<file path="${file.path ?? file.name ?? "pasted"}">\n${contents}\n</file>`)
+  }
+  return { text: parts.length ? `${text}\n\n${parts.join("\n\n")}` : text, files: others }
 }
 
 function promptFile(file: { uri: string; name?: string }): PromptFile {

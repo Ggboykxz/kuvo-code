@@ -13,6 +13,7 @@ import { compareVersions, homebrewKeg, npmGlobalPrefix, versionIn } from "../src
 import { evaluate, matches } from "../src/rules"
 import { handover } from "../src/handover"
 import { expandCommand } from "../src/server"
+import { withTextFiles } from "../src/sessions"
 import { commandSignIn } from "../src/signin"
 
 describe("diffs", () => {
@@ -295,5 +296,25 @@ describe("your commands", () => {
     expect(expandCommand("Compare $1 with $2.", "a.ts b.ts")).toBe("Compare a.ts with b.ts.")
     expect(expandCommand("Write the changelog.", "")).toBe("Write the changelog.")
     expect(expandCommand("Write the changelog.", "for 1.2")).toBe("Write the changelog.\n\nfor 1.2")
+  })
+})
+
+describe("attachments", () => {
+  test("a text file you attach goes in the message; a picture and a binary file stay files", () => {
+    const folder = mkdtempSync(join(process.env.KUVO_TEST_ROOT ?? tmpdir(), "kuvo-attach-"))
+    try {
+      writeFileSync(join(folder, "notes.md"), "# Plan\nShip it.")
+      writeFileSync(join(folder, "data.bin"), Buffer.from([1, 0, 2, 3]))
+      const { text, files } = withTextFiles("Read these", [
+        { uri: `file://${join(folder, "notes.md")}`, mime: "text/markdown", path: join(folder, "notes.md") },
+        { uri: `file://${join(folder, "data.bin")}`, mime: "application/octet-stream", path: join(folder, "data.bin") },
+        { uri: "file:///tmp/shot.png", mime: "image/png", path: "/tmp/shot.png" },
+      ])
+      expect(text).toContain("# Plan\nShip it.")
+      expect(text).toContain(`<file path="${join(folder, "notes.md")}">`)
+      expect(files.map((file) => file.mime)).toEqual(["application/octet-stream", "image/png"])
+    } finally {
+      rmSync(folder, { recursive: true, force: true })
+    }
   })
 })
