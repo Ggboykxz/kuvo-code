@@ -303,13 +303,25 @@ final class ReplyTextView: NSTextView, NSTextViewDelegate {
     // opening. A double or triple click selects a word or paragraph here, as text does.
     override func mouseDown(with event: NSEvent) {
         guard event.clickCount == 1, let stack = enclosingRowStack else {
-            enclosingRowStack?.clearSelection()
+            // A word or a paragraph, here: the keyboard comes here with it, for ⌘C.
+            if let stack = enclosingRowStack {
+                stack.clearSelection()
+                window?.makeFirstResponder(self)
+            }
             return super.mouseDown(with: event)
         }
         stack.trackSelection(from: event) { [self] in
+            // A click: a word double-clicked here before is let go, and a link opens.
+            setSelectedRange(NSRange(location: selectedRange().location, length: 0))
             guard let link = link(at: convert(event.locationInWindow, from: nil)) else { return }
             _ = textView(self, clickedOnLink: link.value, at: link.index)
         }
+    }
+
+    // Not while the conversation holds a selection: a right-click (whose menu copies it) or a
+    // shift-click (which extends it) would take the keyboard here first, and that would end it.
+    override var acceptsFirstResponder: Bool {
+        enclosingRowStack?.selection == nil && super.acceptsFirstResponder
     }
 
     /// The link under `point`, if one is.
@@ -598,10 +610,19 @@ final class ReplyCodeTextView: NSTextView {
     // As a reply's text: a press selects across the conversation (see `ReplyTextView`).
     override func mouseDown(with event: NSEvent) {
         guard event.clickCount == 1, let stack = enclosingRowStack else {
-            enclosingRowStack?.clearSelection()
+            if let stack = enclosingRowStack {
+                stack.clearSelection()
+                window?.makeFirstResponder(self)
+            }
             return super.mouseDown(with: event)
         }
-        stack.trackSelection(from: event) {}
+        stack.trackSelection(from: event) { [self] in
+            setSelectedRange(NSRange(location: selectedRange().location, length: 0))
+        }
+    }
+
+    override var acceptsFirstResponder: Bool {
+        enclosingRowStack?.selection == nil && super.acceptsFirstResponder
     }
 
     private var cachedSize: CGSize?

@@ -531,17 +531,37 @@ final class RowStackView: NSView, NSUserInterfaceValidations {
         }
     }
 
+    /// A spot kept by its row's id, not where the row is: rows come in above (earlier messages)
+    /// and go (an undo) while a selection's kept.
+    struct Mark: Equatable {
+        var id: String
+        var unit: Int
+        var offset: Int
+    }
+
     /// One selection across the conversation, as in a page: from where a drag began to where it
     /// is, through replies, your messages, steps and code between, whichever text holds it.
-    private(set) var selection: (anchor: Spot, focus: Spot)?
+    private(set) var selection: (anchor: Mark, focus: Mark)?
+
+    private func mark(_ spot: Spot) -> Mark { Mark(id: ids[spot.row], unit: spot.unit, offset: spot.offset) }
+
+    /// Where a mark's row is now; nil once it's gone.
+    private func spot(_ mark: Mark) -> Spot? {
+        rowIndex[mark.id].map { Spot(row: $0, unit: mark.unit, offset: mark.offset) }
+    }
+
+    private func select(_ anchor: Spot, _ focus: Spot) {
+        selection = (mark(anchor), mark(focus))
+        showSelection()
+    }
     var rowText: (Int) -> String = { _ in "" }
     var rowSpace: (Int) -> CGFloat = { _ in 0 }
     /// The rows selected whole, each tinted behind.
     private var tints: [String: NSView] = [:]
 
     private var orderedSelection: (start: Spot, end: Spot)? {
-        guard let selection, selection.anchor != selection.focus else { return nil }
-        return selection.anchor < selection.focus ? (selection.anchor, selection.focus) : (selection.focus, selection.anchor)
+        guard let selection, let anchor = spot(selection.anchor), let focus = spot(selection.focus), anchor != focus else { return nil }
+        return anchor < focus ? (anchor, focus) : (focus, anchor)
     }
 
     /// The text you select in, in a row's view: its prose and its code, in reading order.
@@ -565,11 +585,11 @@ final class RowStackView: NSView, NSUserInterfaceValidations {
         let y = min(max(point.y, 0), max(0, total - 1))
         let index = min(ids.count - 1, max(0, tops.partitioningIndex { $0 > y } - 1))
         let frame = frame(at: index)
-        guard let host = hosts[ids[index]], host.isShown else {
-            return Spot(row: index, unit: 0, offset: point.y < frame.midY ? 0 : .max)
-        }
+        // Before a row or after all of it, whatever text it has.
+        let whole = point.y < frame.midY ? Spot(row: index, unit: 0, offset: 0) : Spot(row: index, unit: .max, offset: .max)
+        guard let host = hosts[ids[index]], host.isShown else { return whole }
         let texts = units(in: host.view)
-        guard !texts.isEmpty else { return Spot(row: index, unit: 0, offset: point.y < frame.midY ? 0 : .max) }
+        guard !texts.isEmpty else { return whole }
         for (unit, text) in texts.enumerated() {
             let box = text.convert(text.bounds, to: self)
             if point.y < box.minY { return Spot(row: index, unit: unit, offset: 0) }
@@ -592,7 +612,7 @@ final class RowStackView: NSView, NSUserInterfaceValidations {
     /// Whether a row without text of its own is in the selection.
     private func takesWhole(_ row: Int, in selected: (start: Spot, end: Spot)) -> Bool {
         guard row >= selected.start.row, row <= selected.end.row else { return false }
-        if row == selected.start.row, selected.start.offset == .max { return false }
+        if row == selected.start.row, selected.start.unit == .max { return false }
         if row == selected.end.row, selected.end.offset == 0, selected.end.unit == 0 { return false }
         return true
     }
@@ -634,13 +654,11 @@ final class RowStackView: NSView, NSUserInterfaceValidations {
     func trackSelection(from event: NSEvent, click: () -> Void) {
         guard let window, let clip = enclosingScrollView?.contentView else { return click() }
         let start = convert(event.locationInWindow, from: nil)
-        let extending = event.modifierFlags.contains(.shift) && selection != nil
-        guard let anchor = extending ? selection?.anchor : spot(at: start) else { return click() }
+        let kept = selection.flatMap { spot($0.anchor) }
+        let extending = event.modifierFlags.contains(.shift) && kept != nil
+        guard let anchor = extending ? kept : spot(at: start) else { return click() }
         var dragged = extending
-        if extending, let focus = spot(at: start) {
-            selection = (anchor, focus)
-            showSelection()
-        }
+        if extending, let focus = spot(at: start) { select(anchor, focus) }
         NSEvent.startPeriodicEvents(afterDelay: 0.05, withPeriod: 0.03)
         defer { NSEvent.stopPeriodicEvents() }
         // Where the pointer last was, in the window: held still past an edge, the conversation
@@ -684,14 +702,11 @@ final class RowStackView: NSView, NSUserInterfaceValidations {
                 let top = convert(NSPoint.zero, to: enclosingScrollView?.documentView).y <= clip.bounds.minY + (enclosingScrollView?.contentInsets.top ?? 0) + 1
                 let bottom = convert(NSPoint(x: 0, y: total), to: enclosingScrollView?.documentView).y >= clip.bounds.maxY - (enclosingScrollView?.contentInsets.bottom ?? 0) - 1
                 if past < 0, top {
-                    selection = (anchor, Spot(row: 0, unit: 0, offset: 0))
-                    showSelection()
+                    select(anchor, Spot(row: 0, unit: 0, offset: 0))
                 } else if past > 0, bottom, let last = ids.indices.last {
-                    selection = (anchor, Spot(row: last, unit: .max, offset: .max))
-                    showSelection()
+                    select(anchor, Spot(row: last, unit: .max, offset: .max))
                 } else if let focus = spot(at: clamped) {
-                    selection = (anchor, focus)
-                    showSelection()
+                    select(anchor, focus)
                 }
             default:
                 break
@@ -702,6 +717,18 @@ final class RowStackView: NSView, NSUserInterfaceValidations {
             return click()
         }
         if orderedSelection != nil { window.makeFirstResponder(self) } else { clearSelection() }
+    }
+
+    /// Row `index`'s view, made and laid out where it is if it's not there.
+    private func madeHost(_ index: Int) -> Host? {
+        let id = ids[index]
+        if let host = hosts[id] { return host }
+        guard make != nil, width > 0 else { return nil }
+        let host = host(at: index)
+        host.view.frame = frame(at: index)
+        host.view.layoutSubtreeIfNeeded()
+        if !keptOrder.contains(id) { keptOrder.append(id) }
+        return host
     }
 
     func clearSelection() {
@@ -716,7 +743,9 @@ final class RowStackView: NSView, NSUserInterfaceValidations {
         guard let selected = orderedSelection else { return "" }
         var parts: [String] = []
         for index in selected.start.row...selected.end.row where index < ids.count {
-            let texts = hosts[ids[index]].map { units(in: $0.view) } ?? []
+            // The rows it ends in, taken in part: made again if they were let go, for the part.
+            let isEnd = index == selected.start.row || index == selected.end.row
+            let texts = (isEnd ? madeHost(index) : hosts[ids[index]]).map { units(in: $0.view) } ?? []
             if texts.isEmpty {
                 if takesWhole(index, in: selected) {
                     let words = rowText(index).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -752,8 +781,7 @@ final class RowStackView: NSView, NSUserInterfaceValidations {
 
     override func selectAll(_ sender: Any?) {
         guard let last = ids.indices.last else { return }
-        selection = (Spot(row: 0, unit: 0, offset: 0), Spot(row: last, unit: .max, offset: .max))
-        showSelection()
+        select(Spot(row: 0, unit: 0, offset: 0), Spot(row: last, unit: .max, offset: .max))
         window?.makeFirstResponder(self)
     }
 

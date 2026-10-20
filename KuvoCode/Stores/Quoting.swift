@@ -11,8 +11,9 @@ enum Quoting {
         if let responder = NSApp.keyWindow?.firstResponder {
             if let stack = responder as? RowStackView { return trimmed(stack.selectedText()) }
             if let text = responder as? NSTextView, !text.isEditable {
-                let board = NSPasteboard(name: .init("run.kuvo.code.quote"))
-                board.clearContents()
+                // One of its own, let go once read: a named one would keep the words readable.
+                let board = NSPasteboard.withUniqueName()
+                defer { board.releaseGlobally() }
                 guard text.writeSelection(to: board, types: [.string]) else { return nil }
                 return trimmed(board.string(forType: .string))
             }
