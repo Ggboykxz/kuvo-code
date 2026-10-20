@@ -110,6 +110,8 @@ enum TerminalColors {
     private static let named = try! NSRegularExpression(pattern: #"^([^\s:][^:\n]*?):(\d+):(?:\d+:)?"#)
     /// A line of a search's results under its file: "12:text", "12:3:text" or "12-text".
     private static let numbered = try! NSRegularExpression(pattern: #"^(\d+)(?::(?:\d+:)?|-)"#)
+    /// A line number between dashes, "-12-", where a file's name could end.
+    private static let contextNumber = try! NSRegularExpression(pattern: #"-(\d+)(?=-)"#)
 
     /// Where a line of a search's results says its file and line are: "path:12:", "path-12-" for a
     /// file the results name, or "12:" alone. `end` is where what the line says starts.
@@ -118,13 +120,17 @@ enum TerminalColors {
         if let match = named.firstMatch(in: line, range: whole) {
             return (match.range(at: 1), match.range(at: 2), match.range.length)
         }
-        // "path-12-": a file named before, as long a name as fits ("2026-10-20.sql-12-").
-        for file in files.sorted(by: { $0.count > $1.count }) where line.hasPrefix(file + "-") {
-            let start = (file as NSString).length + 1
-            let rest = (line as NSString).substring(from: start)
-            let digits = rest.prefix { $0.isASCII && $0.isNumber }
-            guard !digits.isEmpty, rest.dropFirst(digits.count).first == "-" else { continue }
-            return (NSRange(location: 0, length: start - 1), NSRange(location: start, length: digits.utf16.count), start + digits.utf16.count + 1)
+        // "path-12-": a file named before, as long a name as fits ("2026-10-20.sql-12-"). Each
+        // "-12-" in the line is a place it could end; the text before it is looked up, so a long
+        // search's thousands of lines don't each go through every file.
+        if !files.isEmpty {
+            var best: NSTextCheckingResult?
+            for match in contextNumber.matches(in: line, range: whole) where match.range.location > 0 {
+                if files.contains((line as NSString).substring(to: match.range.location)) { best = match }
+            }
+            if let best {
+                return (NSRange(location: 0, length: best.range.location), best.range(at: 1), best.range.location + best.range.length + 1)
+            }
         }
         if let match = numbered.firstMatch(in: line, range: whole) {
             return (nil, match.range(at: 1), match.range.length)
