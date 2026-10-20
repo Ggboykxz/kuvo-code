@@ -8,6 +8,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Find marks every place it finds, also while a reply is being written, and the conversation's first message no longer sits under its bar.
 - Esc stops the agent even when the composer doesn't have the keyboard.
 - In full screen, the title bar's row looks as it does in a window, without a gray band.
+- Coding agents keep to Settings › Permissions' "Work outside the project": with Ask First they ask before reading or changing files outside it, and Don't Allow there holds for them. Answering Always to Codex, Grok or Antigravity is kept by Kuvo Code for the conversation, so your rules still hold for what comes after. If Antigravity can't be set to ask first, its turn stops instead of going on without asking.
 - Sign-in pages that ask for a passkey no longer get stuck in the browser, on your Mac or a machine: passkeys can't be used there yet, so the site offers its other ways, like your password.
 - The usage item in the menu bar is compact (Bars) by default; a style you picked stays.
 - In full screen with the tab bar hidden, there's no empty row at the top; ⌘0 shows the sidebar. Tabs in the title bar no longer flicker while you make the window narrower.

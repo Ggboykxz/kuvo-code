@@ -1,7 +1,7 @@
 // @bun
 // Agents/src/main.ts
 import { mkdirSync as mkdirSync14, readdirSync as readdirSync7, readFileSync as readFileSync17, renameSync as renameSync7, rmSync as rmSync11, writeFileSync as writeFileSync12 } from "fs";
-import { join as join17 } from "path";
+import { join as join18 } from "path";
 
 // Agents/src/accounts.ts
 import { randomBytes } from "crypto";
@@ -2152,7 +2152,7 @@ class AcpThread {
         return this.end(active, "failed", `${this.name} started again and couldn't take up this conversation. Send your message again.`);
       const sessionId = this.sessionID;
       await this.flavor.selectModel(rpc, sessionId, input.model.id, this.setup, input.model.variant).catch(() => {});
-      await this.flavor.selectMode?.(rpc, sessionId, { approvesAll: active.hooks.approvesAll(), plan: input.plan }, this.setup).catch(() => {});
+      await this.flavor.selectMode?.(rpc, sessionId, { approvesAll: active.hooks.approvesAll(), plan: input.plan }, this.setup);
       if (active.ended)
         return;
       this.prompt(active, sessionId, [{ type: "text", text: "<system-reminder>Your connection was renewed partway through your work, and what was under way then was cut off. Carry on with the task from where you were.</system-reminder>" }]);
@@ -2176,7 +2176,11 @@ class AcpThread {
       return { outcome: "interrupted" };
     const sessionId = this.sessionID;
     await this.flavor.selectModel(rpc, sessionId, input.model.id, this.setup, input.model.variant).catch(() => {});
-    await this.flavor.selectMode?.(rpc, sessionId, { approvesAll: hooks.approvesAll(), plan: input.plan }, this.setup).catch(() => {});
+    try {
+      await this.flavor.selectMode?.(rpc, sessionId, { approvesAll: hooks.approvesAll(), plan: input.plan }, this.setup);
+    } catch (error) {
+      return { outcome: "failed", error: failure(error) };
+    }
     if (hooks.signal.aborted)
       return { outcome: "interrupted" };
     const prompt = [];
@@ -2609,6 +2613,16 @@ ${others.map((path) => `- ${path}`).join(`
     }
     active.served.set(file, [...active.served.get(file) ?? [], served]);
   }
+  async allowFile(active, action, path) {
+    if (!active)
+      return;
+    const ask = { action, resources: [path] };
+    const said = active.hooks.check(ask);
+    if (said === "deny")
+      throw new RPCError(-32000, "Kuvo Code's settings don't allow this (Settings \u203A Permissions, or this session's rules).");
+    if (said === "ask" && await active.hooks.permission(ask) === "reject")
+      throw new RPCError(-32000, "Declined.");
+  }
   async request(method, params) {
     const own = this.flavor.request?.(method, params, this.context());
     if (own)
@@ -2646,12 +2660,13 @@ ${others.map((path) => `- ${path}`).join(`
           (active.declined ??= new Map).set(call.toolCallId, "Declined.");
         }
         const pick = (kinds2) => kinds2.map((kind) => options.find((option2) => option2.kind === kind)).find(Boolean);
-        const option = decision === "reject" ? pick(["reject_once", "reject_always"]) : decision === "always" ? pick(["allow_always", "allow_once"]) : pick(["allow_once", "allow_always"]);
+        const option = decision === "reject" ? pick(["reject_once", "reject_always"]) : pick(["allow_once", "allow_always"]);
         return option ? { outcome: { outcome: "selected", optionId: option.optionId } } : { outcome: { outcome: "cancelled" } };
       }
       case "fs/read_text_file": {
         if (!this.flavor.fileSystem)
           break;
+        await this.allowFile(active, "read", resolve2(this.session.location.directory, params.path));
         let content;
         try {
           content = readFileSync7(resolve2(this.session.location.directory, params.path), "utf8");
@@ -2673,6 +2688,8 @@ ${others.map((path) => `- ${path}`).join(`
         if (!this.flavor.fileSystem)
           break;
         const file = resolve2(this.session.location.directory, params.path);
+        if (active?.hooks.check({ action: "edit", resources: [file] }) === "deny")
+          throw new RPCError(-32000, "Kuvo Code's settings don't allow this (Settings \u203A Permissions, or this session's rules).");
         mkdirSync6(dirname3(file), { recursive: true });
         writeFileSync6(file, params.content ?? "");
         return {};
@@ -3057,6 +3074,10 @@ function setSkillSource(engine, folder) {
   home = folder;
 }
 var listed = new Map;
+var said = new Map;
+function skillFolders() {
+  return [...new Set([...said.values()].flat().map((skill) => skill.folder))];
+}
 function engineSkills(directory) {
   const known = listed.get(directory);
   if (known && Date.now() - known.at < 60000)
@@ -3077,6 +3098,7 @@ function engineSkills(directory) {
       }
       if (!list.length)
         listed.delete(directory);
+      said.set(directory, found);
       return found;
     } catch {
       listed.delete(directory);
@@ -3840,9 +3862,22 @@ class AntigravityAgent {
         const option = (setup?.configOptions ?? []).find((option2) => option2.id === "mode" || option2.category === "mode");
         const values = (option?.options ?? []).map((entry) => entry.value);
         const wanted = plan && values.includes("plan") ? "plan" : approvesAll ? "yolo" : "default";
-        if (!option || setup.kuvoMode === wanted || values.length && !values.includes(wanted))
+        const current = setup?.kuvoMode ?? option?.currentValue;
+        if (current === wanted)
           return;
-        await rpc.request("session/set_config_option", { sessionId, configId: option.id, value: wanted }, 30000);
+        const cantAsk = () => new Error("Antigravity couldn't be set to ask before it acts, so it didn't start. Try again, or pick Approve All for this session.");
+        if (!option || values.length && !values.includes(wanted)) {
+          if (wanted !== "yolo" && current === "yolo")
+            throw cantAsk();
+          return;
+        }
+        try {
+          await rpc.request("session/set_config_option", { sessionId, configId: option.id, value: wanted }, 30000);
+        } catch {
+          if (wanted !== "yolo")
+            throw cantAsk();
+          return;
+        }
         setup.kuvoMode = wanted;
       }
     }, session, state, this.name);
@@ -3980,13 +4015,13 @@ async function resolveUpdater(definition) {
   if (keg && keg.name.toLowerCase() !== "mise") {
     const brew = existsSync8(join11(keg.prefix, "bin", "brew")) ? join11(keg.prefix, "bin", "brew") : which("brew");
     if (brew) {
-      const said = (await run(brew, ["--prefix"], { timeout: 15000 }).catch(() => {
+      const said2 = (await run(brew, ["--prefix"], { timeout: 15000 }).catch(() => {
         return;
       }))?.stdout.trim();
-      let brewPrefix = said;
+      let brewPrefix = said2;
       try {
-        if (said)
-          brewPrefix = realpathSync2(said);
+        if (said2)
+          brewPrefix = realpathSync2(said2);
       } catch {}
       if (brewPrefix && brewPrefix === keg.prefix) {
         const cask = keg.kind === "cask";
@@ -6268,12 +6303,12 @@ ${others.map((path) => `- ${path}`).join(`
         }
         if (method === "hook/started")
           return;
-        const said = (run2.entries ?? []).map((entry) => entry.kind && entry.kind !== "context" ? `${entry.kind}: ${entry.text ?? ""}` : entry.text ?? "").filter(Boolean).join(`
+        const said2 = (run2.entries ?? []).map((entry) => entry.kind && entry.kind !== "context" ? `${entry.kind}: ${entry.text ?? ""}` : entry.text ?? "").filter(Boolean).join(`
 `);
         if (run2.status === "failed" || run2.status === "blocked")
-          turn.toolFailed(id, said || (run2.statusMessage ?? `The hook ${run2.status}.`));
+          turn.toolFailed(id, said2 || (run2.statusMessage ?? `The hook ${run2.status}.`));
         else
-          turn.toolSucceeded(id, said || (run2.statusMessage ?? ""));
+          turn.toolSucceeded(id, said2 || (run2.statusMessage ?? ""));
         return;
       }
       case "model/rerouted":
@@ -6570,12 +6605,12 @@ From memory: ${cited.join("; ")}`);
       }
       case "reasoning": {
         if (!active.summarized?.has(item.id) && !active.reasoned?.has(item.id)) {
-          const said = [...item.summary ?? [], ...item.summary?.length ? [] : item.content ?? []].filter((part) => typeof part === "string" && part.trim()).join(`
+          const said2 = [...item.summary ?? [], ...item.summary?.length ? [] : item.content ?? []].filter((part) => typeof part === "string" && part.trim()).join(`
 
 `);
-          if (said) {
+          if (said2) {
             this.words(active);
-            turn.reasoning(said);
+            turn.reasoning(said2);
           }
         }
         turn.endBlock();
@@ -6601,14 +6636,14 @@ From memory: ${cited.join("; ")}`);
       case "fileChange": {
         const changes = codexChanges(item.changes);
         const files = changes.map(changeDiff);
-        const said = changes.map((change) => change.movedTo ? `${change.path} \u2192 ${change.movedTo}` : change.path).join(`
+        const said2 = changes.map((change) => change.movedTo ? `${change.path} \u2192 ${change.movedTo}` : change.path).join(`
 `);
         if (item.status === "declined")
           turn.toolFailed(item.id, "Declined.", { files });
         else if (item.status === "failed")
           turn.toolFailed(item.id, "The change couldn't be made.", { files });
         else
-          turn.toolSucceeded(item.id, said, { files });
+          turn.toolSucceeded(item.id, said2, { files });
         return;
       }
       case "mcpToolCall": {
@@ -6686,11 +6721,11 @@ From memory: ${cited.join("; ")}`);
         if (!codexItems.has(item?.type) && typeof item?.id === "string") {
           if (!turn.hasTool(item.id))
             turn.toolStart(item.id, String(item.type ?? "tool"), unknownInput(item));
-          const said = unknownOutput(item);
+          const said2 = unknownOutput(item);
           if (item.status === "failed" || item.success === false)
-            turn.toolFailed(item.id, said || "It failed.");
+            turn.toolFailed(item.id, said2 || "It failed.");
           else
-            turn.toolSucceeded(item.id, said);
+            turn.toolSucceeded(item.id, said2);
         }
     }
   }
@@ -6713,7 +6748,7 @@ From memory: ${cited.join("; ")}`);
         const host = params.networkApprovalContext?.host;
         const command = unwrapShell(params.command ?? "");
         const decision = host && !command ? await hooks.permission({ toolCallID: params.itemId, action: "webfetch", resources: [host], message: params.reason ?? `Codex wants to reach ${host}.` }) : await hooks.permission({ toolCallID: params.itemId, action: "shell", resources: [command || "*"], message: params.reason ?? undefined });
-        return { decision: decision === "always" ? "acceptForSession" : decision === "once" ? "accept" : "decline" };
+        return { decision: decision === "reject" ? "decline" : "accept" };
       }
       case "item/fileChange/requestApproval": {
         const changes = (lane ?? active).changes.get(params.itemId) ?? [];
@@ -6725,23 +6760,23 @@ From memory: ${cited.join("; ")}`);
           metadata: files.length ? { files } : undefined,
           message: params.reason ?? undefined
         });
-        return { decision: decision === "always" ? "acceptForSession" : decision === "once" ? "accept" : "decline" };
+        return { decision: decision === "reject" ? "decline" : "accept" };
       }
       case "item/permissions/requestApproval": {
         const paths = [...params.permissions?.fileSystem?.read ?? [], ...params.permissions?.fileSystem?.write ?? []];
         const network = params.permissions?.network?.enabled;
         const decision = await hooks.permission({ toolCallID: params.itemId, action: paths.length || !network ? "external_directory" : "webfetch", resources: paths.length ? paths : network ? ["the network"] : ["*"], message: params.reason ?? undefined });
-        return decision === "reject" ? { permissions: {}, scope: "turn" } : { permissions: params.permissions, scope: decision === "always" ? "session" : "turn" };
+        return decision === "reject" ? { permissions: {}, scope: "turn" } : { permissions: params.permissions, scope: "turn" };
       }
       case "execCommandApproval": {
         const command = Array.isArray(params.command) ? params.command.join(" ") : String(params.command ?? "");
         const decision = await hooks.permission({ toolCallID: params.callId, action: "shell", resources: [command], message: params.reason ?? undefined });
-        return { decision: decision === "always" ? "approved_for_session" : decision === "once" ? "approved" : "denied" };
+        return { decision: decision === "reject" ? "denied" : "approved" };
       }
       case "applyPatchApproval": {
         const paths = Object.keys(params.fileChanges ?? {});
         const decision = await hooks.permission({ toolCallID: params.callId, action: "edit", resources: paths.length ? paths : ["*"], message: params.reason ?? undefined });
-        return { decision: decision === "always" ? "approved_for_session" : decision === "once" ? "approved" : "denied" };
+        return { decision: decision === "reject" ? "denied" : "approved" };
       }
       case "item/tool/requestUserInput": {
         const questions = params.questions ?? [];
@@ -7931,6 +7966,8 @@ class Roster {
 import { createHash as createHash4 } from "crypto";
 import { spawn as spawnProcess } from "child_process";
 import { readFileSync as readFileSync15, statSync as statSync5 } from "fs";
+import { homedir as homedir5 } from "os";
+import { dirname as dirname6, join as join16, resolve as resolve4 } from "path";
 import { fileURLToPath } from "url";
 
 // Agents/src/handover.ts
@@ -8423,7 +8460,7 @@ var changes = new Set(["edit", "write", "patch"]);
 var shellTimeout = 10 * 60000;
 var shellOutputLimit = 50000;
 function runCommand(command, directory) {
-  return new Promise((resolve4) => {
+  return new Promise((resolve5) => {
     let output = "";
     let truncated = false;
     let timedOut = false;
@@ -8441,7 +8478,7 @@ function runCommand(command, directory) {
       done = true;
       clearTimeout(timer);
       const text = plain(output).trimEnd();
-      resolve4({ code, output: text.length > shellOutputLimit ? text.slice(-shellOutputLimit) : text, truncated: truncated || text.length > shellOutputLimit, timedOut });
+      resolve5({ code, output: text.length > shellOutputLimit ? text.slice(-shellOutputLimit) : text, truncated: truncated || text.length > shellOutputLimit, timedOut });
     };
     let child;
     try {
@@ -8880,6 +8917,22 @@ function hidesFromBlocks(blocks, ask) {
   if (!isShell(ask.action) || !blocks?.some((rule) => rule.effect === "deny" && isShell(rule.action)))
     return false;
   return ask.resources.some((line) => !parseCommands(line.trim()).sure);
+}
+var fileActions = new Set(["read", "edit", "write", "patch", "list", "grep", "glob"]);
+function ownPlaces() {
+  const places4 = [process.env.KUVO_AGENTS_HOME, process.env.TMPDIR?.replace(/\/$/, ""), join16(homedir5(), ".claude", "plans")].filter((place) => Boolean(place));
+  if (process.env.KUVO_AGENTS_HOME && !onMachine)
+    places4.push(join16(dirname6(process.env.KUVO_AGENTS_HOME), "Attachments"));
+  return [...places4, ...skillFolders()];
+}
+function outsidePaths(ask, directory, attached, own = ownPlaces()) {
+  if (!fileActions.has(ask.action))
+    return [];
+  const paths = ask.resources.filter((resource) => resource && resource !== "*" && (resource.startsWith("/") || resource.startsWith("~/") || !/[*?[]/.test(resource))).map((resource) => resolve4(directory, resource.startsWith("~/") ? join16(homedir5(), resource.slice(2)) : resource));
+  return paths.filter((path) => !within(path, [directory, ...own]) && !attached.has(path));
+}
+function outsideAsk(ask, paths) {
+  return { ...ask, action: "external_directory", resources: paths, save: [...new Set(paths.map((path) => join16(dirname6(path), "*")))], unclassified: false };
 }
 function partsOf(ask) {
   return isShell(ask.action) ? ask.resources.flatMap(commandParts) : ask.resources;
@@ -9845,7 +9898,7 @@ ${text.slice(0, 4000)}
     const hooks = this.hooks(id, live, turn, signal, slot, input.plan);
     turn.setModel(model2);
     let abandon;
-    const abandoned = new Promise((resolve4) => abandon = () => resolve4({ outcome: "interrupted" }));
+    const abandoned = new Promise((resolve5) => abandon = () => resolve5({ outcome: "interrupted" }));
     const running = { provider: model2.providerID, thread, abandon };
     live.running = running;
     const from = record.messages.length;
@@ -10219,14 +10272,42 @@ ${live.agentPrompt}` : ""
       return "deny";
     if (plan && changes.has(ask.action))
       return "deny";
-    const effect = strictest([...live.agentRules ?? engineDefaults, ...session.permissions ?? []], ask.action, parts);
+    const rules = [...live.agentRules ?? engineDefaults, ...session.permissions ?? []];
+    const effect = strictest(rules, ask.action, parts);
     if (effect === "deny")
       return "deny";
+    const away = outsidePaths(ask, session.location.directory, this.attached(session.id));
+    if (away.length) {
+      if (live.blocks && strictest(live.blocks, "external_directory", away) === "deny")
+        return "deny";
+      const outside = strictest(rules, "external_directory", away);
+      if (outside === "deny")
+        return "deny";
+      if (outside === "ask" && !this.allowedBefore(live, outsideAsk(ask, away)))
+        return "ask";
+    }
     if (live.blocks === undefined && !looks.has(ask.action))
       return "ask";
     if (hidesFromBlocks(live.blocks, ask))
       return "ask";
     return effect === "ask" && !this.allowedBefore(live, ask) ? "ask" : undefined;
+  }
+  attached(id) {
+    const paths = new Set;
+    for (const message of this.store.get(id)?.messages ?? []) {
+      if (message.type !== "user")
+        continue;
+      for (const file of message.files ?? []) {
+        const uri = file.source?.type === "uri" ? file.source.uri : undefined;
+        if (uri?.startsWith("file:")) {
+          try {
+            paths.add(fileURLToPath(uri));
+          } catch {}
+        } else if (uri?.startsWith("/"))
+          paths.add(uri);
+      }
+    }
+    return paths;
   }
   allowedBefore(live, ask) {
     return live.always.some((rule) => rule.action === ask.action && coveredBy(rule.patterns, ask.action, ask.resources));
@@ -10246,6 +10327,19 @@ ${live.agentPrompt}` : ""
       return "reject";
     if (plan && changes.has(ask.action))
       return "reject";
+    const away = ask.weighed ? [] : outsidePaths(ask, session.location.directory, this.attached(id));
+    if (away.length) {
+      if (live.blocks && strictest(live.blocks, "external_directory", away) === "deny")
+        return "reject";
+      const rules = [...live.agentRules ?? engineDefaults, ...session.permissions ?? []];
+      const outside = strictest(rules, "external_directory", away);
+      if (outside === "deny")
+        return "reject";
+      const own = strictest(rules, ask.action, parts) ?? "allow";
+      if (outside === "ask" && own !== "deny" && (own === "allow" || this.allowedBefore(live, ask)) && !this.allowedBefore(live, outsideAsk(ask, away))) {
+        return this.askPermission(id, live, turn, { ...outsideAsk(ask, away), metadata: ask.metadata, message: ask.message }, plan);
+      }
+    }
     const matched = ask.weighed ? strictest(session.permissions ?? [], ask.action, parts) : strictest([...live.agentRules ?? engineDefaults, ...session.permissions ?? []], ask.action, parts);
     const effect = ask.weighed ? matched : matched ?? "allow";
     if (effect === "deny")
@@ -10267,21 +10361,21 @@ ${live.agentPrompt}` : ""
     const step = ask.toolCallID ? turn.toolStep(ask.toolCallID) : undefined;
     if (ask.toolCallID && step)
       request.source = { type: "tool", messageID: step, id: ask.toolCallID };
-    return new Promise((resolve4) => {
+    return new Promise((resolve5) => {
       live.permissions.set(request.id, {
         request,
         turn,
         resolve: (decision) => {
           if (decision === "always")
             live.always.push({ action: ask.action, patterns: request.save ?? ask.resources });
-          resolve4(decision);
+          resolve5(decision);
         }
       });
       emit("permission.asked", request, session.location.directory);
       ask.signal?.addEventListener("abort", () => {
         if (!live.permissions.delete(request.id))
           return;
-        resolve4("reject");
+        resolve5("reject");
         emit("permission.replied", { sessionID: id, requestID: request.id }, session.location.directory);
       });
     });
@@ -10318,13 +10412,13 @@ ${live.agentPrompt}` : ""
     if (turn.isEnded || live.abort?.signal.aborted)
       return Promise.resolve(null);
     const form = { id: newID("frm"), sessionID: id, title: ask.title, metadata: { kind: "question" }, fields: ask.fields };
-    return new Promise((resolve4) => {
-      live.forms.set(form.id, { form, resolve: resolve4 });
+    return new Promise((resolve5) => {
+      live.forms.set(form.id, { form, resolve: resolve5 });
       emit("form.created", { form }, session.location.directory);
       ask.signal?.addEventListener("abort", () => {
         if (!live.forms.delete(form.id))
           return;
-        resolve4(null);
+        resolve5(null);
         emit("form.cancelled", { id: form.id, sessionID: id }, session.location.directory);
       });
     });
@@ -10900,7 +10994,7 @@ ${all}`;
 
 // Agents/src/store.ts
 import { mkdirSync as mkdirSync13, readdirSync as readdirSync6, readFileSync as readFileSync16, renameSync as renameSync6, rmSync as rmSync10, statSync as statSync6, writeFileSync as writeFileSync11 } from "fs";
-import { join as join16 } from "path";
+import { join as join17 } from "path";
 
 class Store {
   root;
@@ -10911,15 +11005,15 @@ class Store {
     mkdirSync13(root, { recursive: true });
     for (const id of readdirSync6(root)) {
       try {
-        const folder = join16(root, id);
-        const session = JSON.parse(readFileSync16(join16(folder, "session.json"), "utf8"));
+        const folder = join17(root, id);
+        const session = JSON.parse(readFileSync16(join17(folder, "session.json"), "utf8"));
         let messages = [];
         try {
-          messages = JSON.parse(readFileSync16(join16(folder, "messages.json"), "utf8"));
+          messages = JSON.parse(readFileSync16(join17(folder, "messages.json"), "utf8"));
         } catch {}
         let agent = {};
         try {
-          agent = JSON.parse(readFileSync16(join16(folder, "agent.json"), "utf8"));
+          agent = JSON.parse(readFileSync16(join17(folder, "agent.json"), "utf8"));
         } catch {}
         this.records.set(session.id, { session, messages, agent });
       } catch {}
@@ -10933,7 +11027,7 @@ class Store {
   }
   writtenAt(id) {
     try {
-      return statSync6(join16(this.root, id, "messages.json")).mtimeMs;
+      return statSync6(join17(this.root, id, "messages.json")).mtimeMs;
     } catch {
       return;
     }
@@ -10946,7 +11040,7 @@ class Store {
     this.records.delete(id);
     clearTimeout(this.pending.get(id));
     this.pending.delete(id);
-    rmSync10(join16(this.root, id), { recursive: true, force: true });
+    rmSync10(join17(this.root, id), { recursive: true, force: true });
   }
   save(id, now = false) {
     clearTimeout(this.pending.get(id));
@@ -10968,14 +11062,14 @@ class Store {
     const record = this.records.get(id);
     if (!record)
       return;
-    const folder = join16(this.root, id);
+    const folder = join17(this.root, id);
     mkdirSync13(folder, { recursive: true });
     for (const [name, value] of [
       ["session.json", record.session],
       ["messages.json", record.messages],
       ["agent.json", record.agent]
     ]) {
-      const file = join16(folder, name);
+      const file = join17(folder, name);
       writeFileSync11(file + ".new", JSON.stringify(value));
       renameSync6(file + ".new", file);
     }
@@ -10998,19 +11092,19 @@ if (onMachine) {
   takeOwnFolders();
   if (home2)
     dropCarriedSignIns(home2);
-  process.env.KUVO_BIN = join17(machineHome, "bin");
-  process.env.KUVO_BOTS ??= join17(machineHome, "bots");
-  process.env.KUVO_WAKES ??= join17(machineHome, "wakes");
+  process.env.KUVO_BIN = join18(machineHome, "bin");
+  process.env.KUVO_BOTS ??= join18(machineHome, "bots");
+  process.env.KUVO_WAKES ??= join18(machineHome, "wakes");
   for (const name of ["OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG", "OPENCODE_CLIENT", "KUVO_AGENTS_PASSWORD", "KUVO_AGENTS_PORT", "KUVO_ENGINE_PORT", "KUVO_ENGINE_PID"])
     delete process.env[name];
 }
-var temporary = process.env.TMPDIR?.replace(/\/$/, "") || join17(home2, "tmp");
+var temporary = process.env.TMPDIR?.replace(/\/$/, "") || join18(home2, "tmp");
 mkdirSync14(temporary, { recursive: true });
-rmSync11(join17(temporary, "antigravity"), { recursive: true, force: true });
+rmSync11(join18(temporary, "antigravity"), { recursive: true, force: true });
 try {
-  for (const name of readdirSync7(join17(home2, "antigravity")))
+  for (const name of readdirSync7(join18(home2, "antigravity")))
     if (name.startsWith(".install-"))
-      rmSync11(join17(home2, "antigravity", name), { recursive: true, force: true });
+      rmSync11(join18(home2, "antigravity", name), { recursive: true, force: true });
 } catch {}
 delete process.env.BUN_BE_BUN;
 process.env.KUVO_WAKE_VIA = "bridge";
@@ -11020,10 +11114,10 @@ process.on("uncaughtException", (error2) => {
   console.error("uncaught:", error2);
   process.exit(1);
 });
-var deps = new Deps(join17(home2, "runtime"), join17(home2, "cache"));
+var deps = new Deps(join18(home2, "runtime"), join18(home2, "cache"));
 var context = { home: home2, temporary, deps };
 var roster = new Roster(new Accounts(home2), context);
-var store = new Store(join17(home2, "sessions"));
+var store = new Store(join18(home2, "sessions"));
 var auto = new Auto(home2);
 var link2 = new EngineLink;
 if (machineEngine)
@@ -11038,7 +11132,7 @@ function engineAgent(providerID2) {
     engineAgents.set(providerID2, agent = new EngineAgent(link2, providerID2));
   return agent;
 }
-var sessions = new Sessions(store, roster, auto, engineAgent, (directory) => link2.policies(directory), (name, directory) => link2.agent(name, directory), new Snapshots(join17(home2, "snapshots")), (directory) => link2.titleModel(directory));
+var sessions = new Sessions(store, roster, auto, engineAgent, (directory) => link2.policies(directory), (name, directory) => link2.agent(name, directory), new Snapshots(join18(home2, "snapshots")), (directory) => link2.titleModel(directory));
 var server2;
 try {
   server2 = Bun.serve({
@@ -11052,7 +11146,7 @@ try {
   process.exit(onMachine && /in use|EADDRINUSE/i.test(String(error2?.code ?? error2?.message ?? error2)) ? 98 : 1);
 }
 console.log(JSON.stringify({ url: `http://127.0.0.1:${server2.port}` }));
-var record = onMachine ? join17(machineHome, "run", "bridge.json") : undefined;
+var record = onMachine ? join18(machineHome, "run", "bridge.json") : undefined;
 if (record) {
   writeFileSync12(record + ".new", JSON.stringify({ pid: process.pid, port: server2.port, password }), { mode: 384 });
   renameSync7(record + ".new", record);

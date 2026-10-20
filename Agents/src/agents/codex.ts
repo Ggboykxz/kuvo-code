@@ -1294,13 +1294,15 @@ class CodexThread implements Thread {
       permission: (ask: Parameters<TurnHooks["permission"]>[0]) => (lane ? lane.run.permission({ ...ask, signal }) : active!.hooks.permission({ ...ask, signal })),
       question: (ask: Parameters<TurnHooks["question"]>[0]) => (active ? active.hooks.question({ ...ask, signal }) : Promise.resolve(null)),
     }
+    // Always is kept here (the session asks the bridge again, which answers from it), never as
+    // Codex's own for its session: that would let what comes after through without your rules.
     switch (method) {
       case "item/commandExecution/requestApproval": {
         // A command, or a connection to a site it wants (its sandbox keeps it off the network).
         const host = params.networkApprovalContext?.host
         const command = unwrapShell(params.command ?? "")
         const decision = host && !command ? await hooks.permission({ toolCallID: params.itemId, action: "webfetch", resources: [host], message: params.reason ?? `Codex wants to reach ${host}.` }) : await hooks.permission({ toolCallID: params.itemId, action: "shell", resources: [command || "*"], message: params.reason ?? undefined })
-        return { decision: decision === "always" ? "acceptForSession" : decision === "once" ? "accept" : "decline" }
+        return { decision: decision === "reject" ? "decline" : "accept" }
       }
       case "item/fileChange/requestApproval": {
         // A spawned agent's change: its session has it.
@@ -1313,23 +1315,23 @@ class CodexThread implements Thread {
           metadata: files.length ? { files } : undefined,
           message: params.reason ?? undefined,
         })
-        return { decision: decision === "always" ? "acceptForSession" : decision === "once" ? "accept" : "decline" }
+        return { decision: decision === "reject" ? "decline" : "accept" }
       }
       case "item/permissions/requestApproval": {
         const paths = [...(params.permissions?.fileSystem?.read ?? []), ...(params.permissions?.fileSystem?.write ?? [])]
         const network = params.permissions?.network?.enabled
         const decision = await hooks.permission({ toolCallID: params.itemId, action: paths.length || !network ? "external_directory" : "webfetch", resources: paths.length ? paths : network ? ["the network"] : ["*"], message: params.reason ?? undefined })
-        return decision === "reject" ? { permissions: {}, scope: "turn" } : { permissions: params.permissions, scope: decision === "always" ? "session" : "turn" }
+        return decision === "reject" ? { permissions: {}, scope: "turn" } : { permissions: params.permissions, scope: "turn" }
       }
       case "execCommandApproval": {
         const command = Array.isArray(params.command) ? params.command.join(" ") : String(params.command ?? "")
         const decision = await hooks.permission({ toolCallID: params.callId, action: "shell", resources: [command], message: params.reason ?? undefined })
-        return { decision: decision === "always" ? "approved_for_session" : decision === "once" ? "approved" : "denied" }
+        return { decision: decision === "reject" ? "denied" : "approved" }
       }
       case "applyPatchApproval": {
         const paths = Object.keys(params.fileChanges ?? {})
         const decision = await hooks.permission({ toolCallID: params.callId, action: "edit", resources: paths.length ? paths : ["*"], message: params.reason ?? undefined })
-        return { decision: decision === "always" ? "approved_for_session" : decision === "once" ? "approved" : "denied" }
+        return { decision: decision === "reject" ? "denied" : "approved" }
       }
       case "item/tool/requestUserInput": {
         const questions = (params.questions ?? []) as { id: string; header?: string; question: string; options?: { label: string; description?: string }[]; isOther?: boolean; isSecret?: boolean }[]

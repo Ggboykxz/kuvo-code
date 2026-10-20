@@ -29,6 +29,13 @@ export function setSkillSource(engine: EngineLink, folder: string) {
 }
 
 const listed = new Map<string, { at: number; skills: Promise<Skill[]> }>()
+/** What the engine last said, by folder: the skills' own folders (an agent reading one isn't working outside the project). */
+const said = new Map<string, Skill[]>()
+
+/** Every skill's folder the engine has listed, for any project. */
+export function skillFolders(): string[] {
+  return [...new Set([...said.values()].flat().map((skill) => skill.folder))]
+}
 
 /** The engine's skills for a project's folder, as Settings › Skills lists them: asked once a minute at most. */
 export function engineSkills(directory: string): Promise<Skill[]> {
@@ -49,6 +56,7 @@ export function engineSkills(directory: string): Promise<Skill[]> {
       }
       // None yet (the engine answers so while it's still looking, as it starts): asked again next time.
       if (!list.length) listed.delete(directory)
+      said.set(directory, found)
       return found
     } catch {
       // Not now (the engine restarting): asked again next time.

@@ -670,8 +670,22 @@ export class AntigravityAgent implements Agent {
           const option = (setup?.configOptions ?? []).find((option: any) => option.id === "mode" || option.category === "mode")
           const values: string[] = (option?.options ?? []).map((entry: any) => entry.value)
           const wanted = plan && values.includes("plan") ? "plan" : approvesAll ? "yolo" : "default"
-          if (!option || setup.kuvoMode === wanted || (values.length && !values.includes(wanted))) return
-          await rpc.request("session/set_config_option", { sessionId, configId: option.id, value: wanted }, 30_000)
+          const current = setup?.kuvoMode ?? option?.currentValue
+          if (current === wanted) return
+          // Running without asking where it should ask (an earlier Approve All session's mode),
+          // and no way out of it: not this turn.
+          const cantAsk = () => new Error("Antigravity couldn't be set to ask before it acts, so it didn't start. Try again, or pick Approve All for this session.")
+          if (!option || (values.length && !values.includes(wanted))) {
+            if (wanted !== "yolo" && current === "yolo") throw cantAsk()
+            return
+          }
+          try {
+            await rpc.request("session/set_config_option", { sessionId, configId: option.id, value: wanted }, 30_000)
+          } catch {
+            // Not running without asking when it was to: it asks, and that's answered for it.
+            if (wanted !== "yolo") throw cantAsk()
+            return
+          }
           setup.kuvoMode = wanted
         },
       },

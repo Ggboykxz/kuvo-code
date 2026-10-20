@@ -49,7 +49,10 @@ export interface AcpFlavor {
   resumes?: boolean
   /** Selects the model the session is to use, and its effort (`variant`) where the agent has one. */
   selectModel(rpc: RPC, sessionID: string, modelID: string, setup: any, variant?: string): Promise<void>
-  /** Sets the mode the turn needs (Antigravity's yolo, default…), if the agent has one. */
+  /**
+   * Sets the mode the turn needs (Antigravity's yolo, default…), if the agent has one. Throws when
+   * it can't, and the one it's in would do more without asking than the turn may.
+   */
   selectMode?(rpc: RPC, sessionID: string, options: { approvesAll: boolean; plan: boolean }, setup: any): Promise<void>
   /** A line the agent writes that isn't ACP (a sign-in link): false to drop it. */
   filter?(line: string): boolean
@@ -341,7 +344,8 @@ export class AcpThread implements Thread {
       if (this.startedOver) return this.end(active, "failed", `${this.name} started again and couldn't take up this conversation. Send your message again.`)
       const sessionId = this.sessionID!
       await this.flavor.selectModel(rpc, sessionId, input.model.id, this.setup, input.model.variant).catch(() => {})
-      await this.flavor.selectMode?.(rpc, sessionId, { approvesAll: active.hooks.approvesAll(), plan: input.plan }, this.setup).catch(() => {})
+      // A mode it can't be put in (asking first) stops the turn, rather than going on in another.
+      await this.flavor.selectMode?.(rpc, sessionId, { approvesAll: active.hooks.approvesAll(), plan: input.plan }, this.setup)
       if (active.ended) return
       this.prompt(active, sessionId, [{ type: "text", text: "<system-reminder>Your connection was renewed partway through your work, and what was under way then was cut off. Carry on with the task from where you were.</system-reminder>" }])
     } catch (error) {
@@ -366,7 +370,12 @@ export class AcpThread implements Thread {
     if (hooks.signal.aborted) return { outcome: "interrupted" }
     const sessionId = this.sessionID!
     await this.flavor.selectModel(rpc, sessionId, input.model.id, this.setup, input.model.variant).catch(() => {})
-    await this.flavor.selectMode?.(rpc, sessionId, { approvesAll: hooks.approvesAll(), plan: input.plan }, this.setup).catch(() => {})
+    // A mode it can't be put in (asking first) stops the turn, rather than going on in another.
+    try {
+      await this.flavor.selectMode?.(rpc, sessionId, { approvesAll: hooks.approvesAll(), plan: input.plan }, this.setup)
+    } catch (error) {
+      return { outcome: "failed", error: failure(error) }
+    }
     if (hooks.signal.aborted) return { outcome: "interrupted" }
     const prompt: any[] = []
     const others: string[] = []
@@ -785,6 +794,16 @@ export class AcpThread implements Thread {
     active.served.set(file, [...(active.served.get(file) ?? []), served])
   }
 
+  /** A file the agent reads through the bridge: as your rules say, asking you when they ask. */
+  private async allowFile(active: Active | undefined, action: string, path: string) {
+    // (Between turns, as before: nothing to ask in.)
+    if (!active) return
+    const ask = { action, resources: [path] }
+    const said = active.hooks.check(ask)
+    if (said === "deny") throw new RPCError(-32000, "Kuvo Code's settings don't allow this (Settings › Permissions, or this session's rules).")
+    if (said === "ask" && (await active.hooks.permission(ask)) === "reject") throw new RPCError(-32000, "Declined.")
+  }
+
   private async request(method: string, params: any): Promise<unknown> {
     const own = this.flavor.request?.(method, params, this.context())
     if (own) return own
@@ -823,11 +842,15 @@ export class AcpThread implements Thread {
           ;(active.declined ??= new Map()).set(call.toolCallId, "Declined.")
         }
         const pick = (kinds: string[]) => kinds.map((kind) => options.find((option) => option.kind === kind)).find(Boolean)
-        const option = decision === "reject" ? pick(["reject_once", "reject_always"]) : decision === "always" ? pick(["allow_always", "allow_once"]) : pick(["allow_once", "allow_always"])
+        // Always is kept here (the bridge answers the next ask from it), never as the agent's own,
+        // which it would keep past your rules (Grok's for the project).
+        const option = decision === "reject" ? pick(["reject_once", "reject_always"]) : pick(["allow_once", "allow_always"])
         return option ? { outcome: { outcome: "selected", optionId: option.optionId } } : { outcome: { outcome: "cancelled" } }
       }
       case "fs/read_text_file": {
         if (!this.flavor.fileSystem) break
+        // It doesn't ask before reading: your rules for reading (and working outside the project) do.
+        await this.allowFile(active, "read", resolve(this.session.location.directory, params.path))
         let content: string
         try {
           content = readFileSync(resolve(this.session.location.directory, params.path), "utf8")
@@ -846,6 +869,8 @@ export class AcpThread implements Thread {
       case "fs/write_text_file": {
         if (!this.flavor.fileSystem) break
         const file = resolve(this.session.location.directory, params.path)
+        // It asked before writing (as an edit): what your rules refuse still doesn't happen.
+        if (active?.hooks.check({ action: "edit", resources: [file] }) === "deny") throw new RPCError(-32000, "Kuvo Code's settings don't allow this (Settings › Permissions, or this session's rules).")
         mkdirSync(dirname(file), { recursive: true })
         writeFileSync(file, params.content ?? "")
         return {}

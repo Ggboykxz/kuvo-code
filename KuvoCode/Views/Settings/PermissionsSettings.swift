@@ -22,7 +22,7 @@ struct PermissionsSettings: View {
     static let actions: [(id: String, title: String, detail: String)] = [
         ("edit", "Edit files", "Changing, creating or deleting files."),
         ("shell", "Run commands", "In the terminal."),
-        ("read", "Read files", "Files ending in .env ask first unless you allow this."),
+        ("read", "Read files", "Files ending in .env ask first unless you allow this. Codex, Cursor, Grok and Antigravity can read files without asking, so only Kuvo Code's agent and Claude Code are sure to keep to it."),
         ("external_directory", "Work outside the project", "In folders that aren't the project's. Asks by default."),
         ("webfetch", "Open web pages", ""),
         ("websearch", "Search the web", ""),

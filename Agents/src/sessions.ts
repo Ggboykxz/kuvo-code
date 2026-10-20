@@ -10,6 +10,8 @@
 import { createHash } from "node:crypto"
 import { spawn as spawnProcess } from "node:child_process"
 import { readFileSync, statSync } from "node:fs"
+import { homedir } from "node:os"
+import { dirname, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import type { Agent, OwnTurn, PermissionAsk, PromptFile, QuestionAsk, RunInput, RunResult, SubagentRun, SubagentTask, Thread, TurnHooks } from "./agent"
 import { failure } from "./agent"
@@ -20,6 +22,7 @@ import { onMachine } from "./machine"
 import { messageID, newID } from "./ids"
 import type { Roster } from "./roster"
 import { asksFirst, matches, ruled } from "./rules"
+import { skillFolders, within } from "./skills"
 import type { Record_, Store } from "./store"
 import { Turn, type Outcome } from "./turn"
 import type { AssistantMessage, Attachment, Decision, FormAnswer, FormRequest, Message, ModelRef, PermissionRequest, PermissionRule, Session, ShellMessage, FileDiff, StructuredError } from "./wire"
@@ -602,6 +605,40 @@ function dequote(word: string): string {
 function hidesFromBlocks(blocks: PermissionRule[] | undefined, ask: PermissionAsk): boolean {
   if (!isShell(ask.action) || !blocks?.some((rule) => rule.effect === "deny" && isShell(rule.action))) return false
   return ask.resources.some((line) => !parseCommands(line.trim()).sure)
+}
+
+/** What reads or changes files: its paths may be outside the project. */
+const fileActions = new Set(["read", "edit", "write", "patch", "list", "grep", "glob"])
+
+/**
+ * Kuvo Code's own folders an agent works with, never "outside the project": the bridge's (the
+ * skills it gives agents, their temporary files), files you attached, Claude Code's plans, the
+ * skills Settings › Skills lists.
+ */
+function ownPlaces(): string[] {
+  const places = [process.env.KUVO_AGENTS_HOME, process.env.TMPDIR?.replace(/\/$/, ""), join(homedir(), ".claude", "plans")].filter((place): place is string => Boolean(place))
+  // This Mac's attachments, beside the bridge's folder (a machine's are in the session).
+  if (process.env.KUVO_AGENTS_HOME && !onMachine) places.push(join(dirname(process.env.KUVO_AGENTS_HOME), "Attachments"))
+  return [...places, ...skillFolders()]
+}
+
+/**
+ * The paths an ask about files names outside the session's folder (and Kuvo Code's own, and files
+ * attached to the conversation): what your rules for working outside the project
+ * (`external_directory`) say of, as the engine's do.
+ */
+export function outsidePaths(ask: PermissionAsk, directory: string, attached: Set<string>, own = ownPlaces()): string[] {
+  if (!fileActions.has(ask.action)) return []
+  const paths = ask.resources
+    // Paths, from the session's folder (`../x` too), not patterns of names (`*.ts`).
+    .filter((resource) => resource && resource !== "*" && (resource.startsWith("/") || resource.startsWith("~/") || !/[*?[]/.test(resource)))
+    .map((resource) => resolve(directory, resource.startsWith("~/") ? join(homedir(), resource.slice(2)) : resource))
+  return paths.filter((path) => !within(path, [directory, ...own]) && !attached.has(path))
+}
+
+/** An ask about working outside the project, for these paths: "Always" allows their folders. */
+function outsideAsk(ask: PermissionAsk, paths: string[]): PermissionAsk {
+  return { ...ask, action: "external_directory", resources: paths, save: [...new Set(paths.map((path) => join(dirname(path), "*")))], unclassified: false }
 }
 
 /** What an ask is about, a command line's commands one by one. */
@@ -2024,12 +2061,38 @@ export class Sessions {
     const parts = partsOf(ask)
     if (live.blocks && strictest(live.blocks, ask.action, parts) === "deny") return "deny"
     if (plan && changes.has(ask.action)) return "deny"
-    const effect = strictest([...(live.agentRules ?? engineDefaults), ...(session.permissions ?? [])], ask.action, parts)
+    const rules = [...(live.agentRules ?? engineDefaults), ...(session.permissions ?? [])]
+    const effect = strictest(rules, ask.action, parts)
     if (effect === "deny") return "deny"
+    // Paths outside the project: your rules for working there too.
+    const away = outsidePaths(ask, session.location.directory, this.attached(session.id))
+    if (away.length) {
+      if (live.blocks && strictest(live.blocks, "external_directory", away) === "deny") return "deny"
+      const outside = strictest(rules, "external_directory", away)
+      if (outside === "deny") return "deny"
+      if (outside === "ask" && !this.allowedBefore(live, outsideAsk(ask, away))) return "ask"
+    }
     // Blocks not known (the engine didn't answer): asked, which reads them again.
     if (live.blocks === undefined && !looks.has(ask.action)) return "ask"
     if (hidesFromBlocks(live.blocks, ask)) return "ask"
     return effect === "ask" && !this.allowedBefore(live, ask) ? "ask" : undefined
+  }
+
+  /** The files attached to a conversation's messages, by path. */
+  private attached(id: string): Set<string> {
+    const paths = new Set<string>()
+    for (const message of this.store.get(id)?.messages ?? []) {
+      if (message.type !== "user") continue
+      for (const file of message.files ?? []) {
+        const uri = file.source?.type === "uri" ? file.source.uri : undefined
+        if (uri?.startsWith("file:")) {
+          try {
+            paths.add(fileURLToPath(uri))
+          } catch {}
+        } else if (uri?.startsWith("/")) paths.add(uri)
+      }
+    }
+    return paths
   }
 
   private allowedBefore(live: Live, ask: PermissionAsk): boolean {
@@ -2049,6 +2112,19 @@ export class Sessions {
     // Blocks win over everything, approvals included; each command of a command line counts.
     if (live.blocks && strictest(live.blocks, ask.action, parts) === "deny") return "reject"
     if (plan && changes.has(ask.action)) return "reject"
+    // Paths outside the project (the engine weighs its own asks): your rules for working there
+    // too. One that asks, where the action itself doesn't, is asked as that.
+    const away = ask.weighed ? [] : outsidePaths(ask, session.location.directory, this.attached(id))
+    if (away.length) {
+      if (live.blocks && strictest(live.blocks, "external_directory", away) === "deny") return "reject"
+      const rules = [...(live.agentRules ?? engineDefaults), ...(session.permissions ?? [])]
+      const outside = strictest(rules, "external_directory", away)
+      if (outside === "deny") return "reject"
+      const own = strictest(rules, ask.action, parts) ?? "allow"
+      if (outside === "ask" && own !== "deny" && (own === "allow" || this.allowedBefore(live, ask)) && !this.allowedBefore(live, outsideAsk(ask, away))) {
+        return this.askPermission(id, live, turn, { ...outsideAsk(ask, away), metadata: ask.metadata, message: ask.message }, plan)
+      }
+    }
     // The engine's asks were weighed by it already: without a rule of yours, they're yours to
     // answer. Others go by the session's agent's permissions as the engine has them (its own
     // defaults, reading a .env file asks first), with the session's rules over them.
