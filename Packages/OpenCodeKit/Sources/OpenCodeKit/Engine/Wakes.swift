@@ -614,15 +614,25 @@ public enum Wakes {
     # A string as JSON.
     json() { printf '%s' "$1" | tr -d '\000-\010\013-\037' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/	/\\t/g' | awk 'BEGIN { ORS = "" } NR > 1 { print "\\n" } { print }'; }
 
+    # The port ($2 port) or password ($2 password) in the record $1, an engine's or the bridge's:
+    # its own, not those of an object inside it (an engine's record has named the bridge's,
+    # "agents":{…}, before or after its own).
+    listens() {
+      case $2 in
+        port) sed 's/:{[^{}]*}/:0/g' "$1" 2>/dev/null | sed -n 's/.*"port":\([0-9]*\).*/\1/p' ;;
+        *) sed 's/:{[^{}]*}/:0/g' "$1" 2>/dev/null | sed -n 's/.*"password":"\([^"]*\)".*/\1/p' ;;
+      esac
+    }
+
     if [ "$1" = fire ]; then
       record=$3; botsroot=$2
       [ -f "$record" ] || exit 0
-      eport=$(sed -n 's/.*"port":\([0-9]*\).*/\1/p' "$record")
-      epassword=$(sed -n 's/.*"password":"\([^"]*\)".*/\1/p' "$record")
+      eport=$(listens "$record" port)
+      epassword=$(listens "$record" password)
       # The coding agents' bridge beside the engine, which answers the same paths for its sessions.
       bridge="${record%/*}/bridge.json"
-      bport=$(sed -n 's/.*"port":\([0-9]*\).*/\1/p' "$bridge" 2>/dev/null)
-      bpassword=$(sed -n 's/.*"password":"\([^"]*\)".*/\1/p' "$bridge" 2>/dev/null)
+      bport=$(listens "$bridge" port)
+      bpassword=$(listens "$bridge" password)
       [ -n "$eport$bport" ] || exit 0
       # Where a conversation lives ($bot, its folder): the bridge for one its folder says is a
       # coding agent's (`via`), whose tools aren't the engine's to wait for; else the engine.
