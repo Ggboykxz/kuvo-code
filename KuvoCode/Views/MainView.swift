@@ -167,6 +167,17 @@ struct MainView: View {
         activeDirectory.flatMap { Workspace.isChat($0) || Workspace.isBotFolder($0) ? nil : $0 }
     }
 
+    /// The folder of the session you're working in: the one beside, once you've clicked into it.
+    /// Run, a new terminal and Open Quickly go there, as Stop goes to its session.
+    private var focusedDirectory: String? {
+        focus == .split && besideID != nil ? splitModel?.session.location.directory ?? activeDirectory : activeDirectory
+    }
+
+    /// The focused session's folder when it's a project's.
+    private var focusedProject: String? {
+        focusedDirectory.flatMap { Workspace.isChat($0) || Workspace.isBotFolder($0) ? nil : $0 }
+    }
+
     /// A bot's workspace: the folder of its own it works in when it has no project.
     private func isBotsOwnFolder(_ directory: String) -> Bool {
         bots.list.contains { $0.project == nil && $0.directory == directory }
@@ -367,7 +378,7 @@ struct MainView: View {
         }
         .animation(.ui, value: catalog.isSlow)
         .overlay(alignment: .top) {
-            if showsOpenQuickly, let directory = activeDirectory {
+            if showsOpenQuickly, let directory = focusedDirectory {
                 ZStack(alignment: .top) {
                     // A click outside closes it.
                     Color.black.opacity(0.001)
@@ -394,7 +405,7 @@ struct MainView: View {
                         initialQuery: Self.demoPaletteQuery,
                         actions: paletteActions,
                         sessions: paletteSessions,
-                        roots: activeDirectory.map { [$0] + workspace.extraFolders($0) } ?? [],
+                        roots: focusedDirectory.map { [$0] + workspace.extraFolders($0) } ?? [],
                         openFile: { url in showInPanel { utilities.show(url) } },
                         dismiss: { showsPalette = false }
                     )
@@ -1279,7 +1290,7 @@ struct MainView: View {
         let model = focusedModel
         return SessionActions(
             hasSession: model != nil,
-            hasProject: activeProject != nil,
+            hasProject: focusedProject != nil,
             canStop: model?.isRunning == true,
             canReopenTab: closedTabs.contains(where: canReopen),
             newSession: { newSession(in: nil) },
@@ -1294,7 +1305,7 @@ struct MainView: View {
             togglePanel: { withAnimation(.ui) { showPanel(!panelOnScreen) } },
             showChanges: { showInPanel { utilities.showChanges() } },
             showFiles: { showInPanel { utilities.showFiles() } },
-            newTerminal: { showInPanel { utilities.newTerminal(in: activeDirectory, environment: app.shellEnvironment) } },
+            newTerminal: { showInPanel { utilities.newTerminal(in: focusedDirectory, environment: app.shellEnvironment) } },
             run: runProject,
             newBrowser: { showInPanel { utilities.newBrowser() } },
             toggleSidebar: { withAnimation(.ui) { showSidebar(!sidebarOnScreen) } },
@@ -1368,7 +1379,7 @@ struct MainView: View {
         add("New Project…", "folder.badge.plus", "⇧⌘N", actions.newProject)
         add("New Bot…", "face.smiling", nil) { openBotEditor(bot: nil) }
         add("Open Folder…", "folder", "⌘O", actions.openFolder)
-        if let directory = activeProject {
+        if let directory = focusedProject {
             let primary = workspace.projectDirectory(directory)
             add("Edit Project…", "slider.horizontal.3", detail: workspace.projectName(primary)) {
                 openProjectEditor(ProjectEditorRequest(project: workspace.projects.first { $0.directory == primary } ?? Workspace.Project(directory: primary, sessions: [], settings: workspace.settings[primary] ?? .init())))
@@ -1396,13 +1407,13 @@ struct MainView: View {
 
     /// The active project's run command, if it has one.
     private var runCommand: String? {
-        activeProject.flatMap { workspace.settings[workspace.projectDirectory($0)]?.run }
+        focusedProject.flatMap { workspace.settings[workspace.projectDirectory($0)]?.run }
     }
 
     /// Runs the project's run command in a terminal, in the session's folder (its worktree, if it
     /// has one). Without a command yet, Edit Project opens to set one.
     private func runProject() {
-        guard let directory = activeProject else { return }
+        guard let directory = focusedProject else { return }
         guard let command = runCommand else {
             let primary = workspace.projectDirectory(directory)
             let project = workspace.projects.first { $0.directory == primary } ?? Workspace.Project(directory: primary, sessions: [], settings: workspace.settings[primary] ?? .init())
@@ -1519,7 +1530,7 @@ struct MainView: View {
         for item in (environment["KUVO_DEMO_PANEL"] ?? "").split(separator: ",").map(String.init) {
             let parts = item.split(separator: "=", maxSplits: 1).map(String.init)
             switch parts.first {
-            case "terminal": utilities.newTerminal(in: activeDirectory, environment: app.shellEnvironment)
+            case "terminal": utilities.newTerminal(in: focusedDirectory, environment: app.shellEnvironment)
             case "browser": utilities.newBrowser(parts.count > 1 ? parts[1] : nil)
             case "machine" where parts.count > 1:
                 let rest = parts[1].split(separator: "=", maxSplits: 1).map(String.init)
