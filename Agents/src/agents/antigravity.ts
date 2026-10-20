@@ -6,7 +6,7 @@ import { createHash } from "node:crypto"
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { providerID, type AgentAccount } from "../accounts"
-import type { Agent, AgentContext, Account, SignInAttempt, Thread } from "../agent"
+import type { Agent, AgentContext, Account, SignInAttempt, Thread, SubagentTask } from "../agent"
 import { accountName, failure, model } from "../agent"
 import { AcpThread } from "../acp"
 import { newID } from "../ids"
@@ -49,6 +49,23 @@ const scrubbed = [
   "AGY_ACP_ENABLE_OAUTH", "GEMINI_HOME", "AGY_ACP_FORCE_FILE_STORAGE", "ANTIGRAVITY_HARNESS_PATH", "BROWSER", "PYTHONUNBUFFERED",
   "ELECTRON_RUN_AS_NODE",
 ]
+
+/** The subagents an invoke_subagent call starts: {Subagents: [{Role, TypeName, Prompt, Model}]}, as an object or as JSON. */
+export function antigravitySubagents(call: any): SubagentTask[] | undefined {
+  let input = call?.rawInput
+  if (typeof input === "string") {
+    try {
+      input = JSON.parse(input)
+    } catch {}
+  }
+  const list = input?.Subagents
+  if (!Array.isArray(list) || !list.length) return undefined
+  return list.map((subagent: any) => ({
+    title: String(subagent?.Role ?? subagent?.TypeName ?? "A subagent's task"),
+    prompt: typeof subagent?.Prompt === "string" ? subagent.Prompt : undefined,
+    agent: typeof subagent?.TypeName === "string" && subagent.TypeName !== "self" ? subagent.TypeName : undefined,
+  }))
+}
 
 export class AntigravityAgent implements Agent {
   id = "antigravity"
@@ -312,6 +329,8 @@ export class AntigravityAgent implements Agent {
         resumes: true,
         // Google's quotas are each model's own.
         limitScope: "model",
+        subagents: antigravitySubagents,
+        hides: (call) => /\bstart_subagent\b/.test(String(call?.title ?? "")),
         authMethod: () => "oauth-personal",
         async command() {
           if (!agent.isInstalled) throw new Error("Sign in to Antigravity in Settings › Accounts first.")

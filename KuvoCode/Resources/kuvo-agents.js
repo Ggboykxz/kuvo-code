@@ -1489,7 +1489,7 @@ ${others.map((path) => `- ${path}`).join(`
 `)}`;
     prompt.unshift({ type: "text", text });
     return new Promise((resolve2) => {
-      const active = { turn, hooks, resolve: resolve2, rpc, tools: new Map, toolsSinceText: false, ended: false, instructed };
+      const active = { turn, hooks, resolve: resolve2, rpc, tools: new Map, toolsSinceText: false, ended: false, instructed, spawns: new Map };
       this.active = active;
       turn.startStep();
       const meta = this.flavor.promptMeta?.();
@@ -1521,6 +1521,10 @@ ${others.map((path) => `- ${path}`).join(`
       this.active = undefined;
     if (active.plan)
       active.turn.toolSucceeded(active.plan.id, "", { todos: active.plan.todos });
+    if (outcome === "succeeded")
+      for (const rows of active.spawns.values())
+        for (const row of rows)
+          active.turn.toolSucceeded(row, "");
     active.turn.endStep({ tokens: this.stepTokens(active) });
     if (active.hooks.signal.aborted)
       active.resolve({ outcome: "interrupted" });
@@ -1598,6 +1602,22 @@ ${others.map((path) => `- ${path}`).join(`
       return;
     const merged = { ...active.tools.get(id) ?? {}, ...Object.fromEntries(Object.entries(update).filter(([, value]) => value !== undefined && value !== null)) };
     active.tools.set(id, merged);
+    if (active.spawns.has(id))
+      return;
+    const spawned = this.flavor.subagents?.(merged);
+    if (spawned?.length) {
+      const rows = spawned.map((task, index) => {
+        const row = `${id}:${index}`;
+        active.toolsSinceText = true;
+        turn.toolStart(row, "subagent", { description: task.title, prompt: task.prompt, agent: task.agent });
+        active.hooks.subagent(row, task);
+        return row;
+      });
+      active.spawns.set(id, rows);
+      return;
+    }
+    if (this.flavor.hides?.(merged))
+      return;
     const kuvo = kuvoTool(merged);
     if (!turn.hasTool(id)) {
       active.toolsSinceText = true;
@@ -1976,6 +1996,22 @@ var scrubbed = [
   "PYTHONUNBUFFERED",
   "ELECTRON_RUN_AS_NODE"
 ];
+function antigravitySubagents(call) {
+  let input = call?.rawInput;
+  if (typeof input === "string") {
+    try {
+      input = JSON.parse(input);
+    } catch {}
+  }
+  const list = input?.Subagents;
+  if (!Array.isArray(list) || !list.length)
+    return;
+  return list.map((subagent) => ({
+    title: String(subagent?.Role ?? subagent?.TypeName ?? "A subagent's task"),
+    prompt: typeof subagent?.Prompt === "string" ? subagent.Prompt : undefined,
+    agent: typeof subagent?.TypeName === "string" && subagent.TypeName !== "self" ? subagent.TypeName : undefined
+  }));
+}
 
 class AntigravityAgent {
   context;
@@ -2232,6 +2268,8 @@ class AntigravityAgent {
       authenticatesFirst: true,
       resumes: true,
       limitScope: "model",
+      subagents: antigravitySubagents,
+      hides: (call) => /\bstart_subagent\b/.test(String(call?.title ?? "")),
       authMethod: () => "oauth-personal",
       async command() {
         if (!agent.isInstalled)

@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { AcpThread } from "../src/acp"
+import { antigravitySubagents } from "../src/agents/antigravity"
 import type { Agent, RunInput, RunResult, Thread, TurnHooks } from "../src/agent"
 import { Auto } from "../src/auto"
 import { subscribe } from "../src/events"
@@ -670,6 +671,73 @@ describe("subagents", () => {
     // It goes with the conversation.
     await sessions.remove(id)
     expect(() => sessions.get(child)).toThrow()
+  })
+
+  test("Antigravity's subagents each get a row and a session, done when its turn is", async () => {
+    const folder = mkdtempSync(join(root, "agy-"))
+    const script = join(folder, "agent.js")
+    writeFileSync(
+      script,
+      `let buffer = ""
+const send = (message) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\\n")
+const update = (value) => send({ method: "session/update", params: { sessionId: "s1", update: value } })
+process.stdin.on("data", (chunk) => {
+  buffer += chunk
+  let at
+  while ((at = buffer.indexOf("\\n")) >= 0) {
+    const line = buffer.slice(0, at)
+    buffer = buffer.slice(at + 1)
+    if (!line.trim()) continue
+    const message = JSON.parse(line)
+    if (message.method === "initialize") send({ id: message.id, result: { protocolVersion: 1, authMethods: [] } })
+    else if (message.method === "session/new") send({ id: message.id, result: { sessionId: "s1" } })
+    else if (message.method === "session/prompt") {
+      update({ sessionUpdate: "tool_call", toolCallId: "inv1", title: "Run invoke_subagent?", kind: "other", status: "pending", rawInput: { Subagents: [{ Role: "Timer Worker 1", TypeName: "self", Prompt: "Wait 3 minutes" }, { Role: "Timer Worker 2", TypeName: "self", Prompt: "Wait 3 minutes" }] } })
+      update({ sessionUpdate: "tool_call", toolCallId: "s1:2", title: "Running start_subagent", kind: "other", status: "in_progress", rawInput: {} })
+      update({ sessionUpdate: "tool_call_update", toolCallId: "s1:2", status: "completed", rawOutput: "Launch subagents" })
+      update({ sessionUpdate: "tool_call_update", toolCallId: "inv1", status: "failed", rawOutput: "Tool call was approved but never executed." })
+      update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Both finished." } })
+      send({ id: message.id, result: { stopReason: "end_turn" } })
+    } else if (message.id !== undefined) send({ id: message.id, result: {} })
+  }
+})
+`,
+    )
+    const agy: Agent = {
+      id: "antigravity",
+      providerID: "gamma",
+      name: "Gamma",
+      instance: { id: "default" },
+      methods: () => [],
+      account: async () => ({ installed: true, signedIn: true }),
+      models: async () => [],
+      thread: (session, state) =>
+        new AcpThread(
+          {
+            fileSystem: false,
+            authMethod: () => undefined,
+            command: async () => ({ argv: [process.execPath, script], cwd: folder }),
+            selectModel: async () => {},
+            subagents: antigravitySubagents,
+            hides: (call) => /\bstart_subagent\b/.test(String(call?.title ?? "")),
+          },
+          session,
+          state,
+          "Gamma",
+        ),
+    }
+    sessions = new Sessions(store, { find: (provider: string | undefined) => (provider === "gamma" ? agy : undefined) } as unknown as Roster, auto)
+    const id = sessions.create({ model: { providerID: "gamma", id: "one" }, location: { directory: folder } }).id
+    send(id, "spawn two")
+    await settled(id, 1, 15_000)
+    const step = sessions.messages(id).find((message) => message.type === "assistant") as any
+    const tools = step.content.filter((content: any) => content.type === "tool")
+    expect(tools.map((tool: any) => tool.name)).toEqual(["subagent", "subagent"])
+    expect(tools.map((tool: any) => tool.state.status)).toEqual(["completed", "completed"])
+    const children = tools.map((tool: any) => tool.state.metadata.sessionID)
+    expect(children.map((child: string) => sessions.get(child).title)).toEqual(["Timer Worker 1", "Timer Worker 2"])
+    expect(sessions.messages(children[0])[0]).toMatchObject({ type: "user", text: "Wait 3 minutes" })
+    expect(sessions.messages(children[0]).at(-1)).toMatchObject({ type: "idle", outcome: "succeeded" })
   })
 
   test("a subagent still at work when the turn is stopped is stopped with it", async () => {

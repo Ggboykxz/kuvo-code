@@ -5,7 +5,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
-import type { RunInput, RunResult, Thread, TurnHooks } from "./agent"
+import type { RunInput, RunResult, Thread, TurnHooks, SubagentTask } from "./agent"
 import { failure } from "./agent"
 import type { Limit } from "./auto"
 import { fileDiff } from "./diff"
@@ -58,6 +58,10 @@ export interface AcpFlavor {
   restartAfterInterrupt?: boolean
   /** What a usage limit holds back: the whole account (the default), or the model. */
   limitScope?: "provider" | "model"
+  /** The subagents a tool call starts, when it's one that does (Antigravity's invoke_subagent). */
+  subagents?(call: any): SubagentTask[] | undefined
+  /** A tool call that isn't worth a row (Antigravity's start_subagent, which only says it started). */
+  hides?(call: any): boolean
   /** Changes when the agent's program was updated: a process started before starts again. */
   program?(): number
 }
@@ -89,6 +93,8 @@ interface Active {
   answered?: boolean
   /** How much of its context the conversation fills, as the agent last said (usage_update). */
   used?: number
+  /** Subagents its tool calls started, by the call that started them; their rows, one each. */
+  spawns: Map<string, string[]>
 }
 
 export class AcpThread implements Thread {
@@ -269,7 +275,7 @@ export class AcpThread implements Thread {
     if (others.length) text += `\n\nAttached files:\n${others.map((path) => `- ${path}`).join("\n")}`
     prompt.unshift({ type: "text", text })
     return new Promise<RunResult>((resolve) => {
-      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, instructed }
+      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, instructed, spawns: new Map() }
       this.active = active
       turn.startStep()
       const meta = this.flavor.promptMeta?.()
@@ -302,6 +308,8 @@ export class AcpThread implements Thread {
     }
     if (this.active === active) this.active = undefined
     if (active.plan) active.turn.toolSucceeded(active.plan.id, "", { todos: active.plan.todos })
+    // Its subagents are done when it is (it says no more of them).
+    if (outcome === "succeeded") for (const rows of active.spawns.values()) for (const row of rows) active.turn.toolSucceeded(row, "")
     active.turn.endStep({ tokens: this.stepTokens(active) })
     if (active.hooks.signal.aborted) active.resolve({ outcome: "interrupted" })
     // It had the message when it said something about it, or answered the prompt itself.
@@ -381,6 +389,21 @@ export class AcpThread implements Thread {
     if (!id) return
     const merged = { ...(active.tools.get(id) ?? {}), ...Object.fromEntries(Object.entries(update).filter(([, value]) => value !== undefined && value !== null)) }
     active.tools.set(id, merged)
+    // One that starts subagents: a row for each, with a session of its own, as the engine's do.
+    if (active.spawns.has(id)) return
+    const spawned = this.flavor.subagents?.(merged)
+    if (spawned?.length) {
+      const rows = spawned.map((task, index) => {
+        const row = `${id}:${index}`
+        active.toolsSinceText = true
+        turn.toolStart(row, "subagent", { description: task.title, prompt: task.prompt, agent: task.agent })
+        active.hooks.subagent(row, task)
+        return row
+      })
+      active.spawns.set(id, rows)
+      return
+    }
+    if (this.flavor.hides?.(merged)) return
     const kuvo = kuvoTool(merged)
     if (!turn.hasTool(id)) {
       active.toolsSinceText = true
