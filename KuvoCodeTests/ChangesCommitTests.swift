@@ -62,6 +62,27 @@ import Testing
         #expect(try remote.git("rev-parse", "feature") == repo.git("rev-parse", "HEAD"))
     }
 
+    /// The Branch scope: everything since the branch left its base, committed or not; not what
+    /// the base did meanwhile.
+    @Test func theBranchScopeShowsWhatTheBranchChanged() async throws {
+        try repo.git("checkout", "-q", "-b", "feature")
+        try repo.write("app/feature.swift", "let f = 1\n")
+        try repo.commitAll("Feature")
+        try repo.git("checkout", "-q", "main")
+        try repo.write("docs/notes.md", "main's own\n")
+        try repo.commitAll("Main")
+        try repo.git("checkout", "-q", "feature")
+        try repo.write("app/main.swift", "print(5)\n")
+        let changes = ProjectChanges(directory: repo.path)
+        changes.scope = .branch
+        changes.base = "main"
+        await changes.refresh()
+        #expect(changes.files.map(\.path) == ["app/feature.swift", "app/main.swift"])
+        changes.scope = .uncommitted
+        await changes.refresh()
+        #expect(changes.files.map(\.path) == ["app/main.swift"])
+    }
+
     /// A push that fails still leaves the commit, and says so.
     @Test func aFailedPushSaysTheCommitIsMade() async throws {
         try repo.git("remote", "add", "origin", repo.url.appending(path: "nowhere").path(percentEncoded: false))
