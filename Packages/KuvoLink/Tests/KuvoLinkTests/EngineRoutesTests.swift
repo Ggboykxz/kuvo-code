@@ -54,6 +54,12 @@ final class FakeEngine: URLProtocol, @unchecked Sendable {
         // Not by percent-encoding what's never allowed: the bridge decodes it.
         #expect(!EngineRoutes.allowsAgents("api/integration/claude-code/%75pdate", method: "POST"))
         #expect(!EngineRoutes.allowsAgents("api/kuvo/%65ngine"))
+        // Nor with parts the bridge drops: empty ones and "." ones.
+        for path in ["api/integration/claude-code//update", "api/integration/claude-code/./update", "api/integration/claude-code/%2e/update",
+                     "api/integration//claude-code/update", "api/integration/claude-code/update/", "api/kuvo//engine"] {
+            #expect(!EngineRoutes.allowsAgents(path, method: "POST"), "\(path)")
+        }
+        #expect(EngineRoutes.routed("api//integration/x/./%75pdate?y=1") == "api/integration/x/update?y=1")
         #expect(EngineRoutes.allowsAgents("api/kuvo/accounts/codex-cli@9a8b", method: "PATCH"))
         #expect(!EngineRoutes.allowsAgents("api/kuvo/engine", method: "PUT"))
         #expect(!EngineRoutes.allowsAgents("api/integration/claude-code/update", method: "POST"))

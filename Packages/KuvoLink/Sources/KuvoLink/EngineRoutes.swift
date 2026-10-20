@@ -27,13 +27,23 @@ public enum EngineRoutes {
     /// where the engine is, nor updating an agent's program (that runs an installer on the Mac).
     public static func allowsAgents(_ path: String, method: String = "GET") -> Bool {
         guard staysInProject(path) else { return false }
-        // As the bridge routes it: it decodes each part of the path ("%75pdate" is "update").
-        let routed = path.removingPercentEncoding ?? path
+        let routed = routed(path)
         if routed.prefixMatch(of: #/api/kuvo/engine(/|\?|$)/#) != nil { return false }
         if routed.prefixMatch(of: #/api/integration/[^/?]+/update(/|\?|$)/#) != nil { return false }
         return allows(path, method: method)
             || path.prefixMatch(of: #/api/integration(/|\?|$)/#) != nil
             || path.prefixMatch(of: #/api/kuvo/(auto|accounts)(/|\?|$)/#) != nil
+    }
+
+    /// `path` as the agents bridge routes it: split into parts, without empty ones or "." ones
+    /// (which its URL parser drops, "%2e" too), each decoded ("%75pdate" is "update"). So
+    /// "integration/x//update", ".../x/./update" and ".../x/%75pdate" are "integration/x/update".
+    static func routed(_ path: String) -> String {
+        let query = path.firstIndex(of: "?")
+        let parts = path[..<(query ?? path.endIndex)].split(separator: "/")
+            .filter { $0 != "." && $0.lowercased() != "%2e" }
+            .map { $0.removingPercentEncoding ?? String($0) }
+        return parts.joined(separator: "/") + (query.map { String(path[$0...]) } ?? "")
     }
 
     /// The sockets a phone may open: a terminal's.
