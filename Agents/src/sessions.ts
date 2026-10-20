@@ -19,8 +19,9 @@ import type { Roster } from "./roster"
 import { evaluate, matches, ruled } from "./rules"
 import type { Record_, Store } from "./store"
 import { Turn, type Outcome } from "./turn"
-import type { AssistantMessage, Attachment, Decision, FormAnswer, FormRequest, Message, ModelRef, PermissionRequest, PermissionRule, Session, ShellMessage } from "./wire"
+import type { AssistantMessage, Attachment, Decision, FormAnswer, FormRequest, Message, ModelRef, PermissionRequest, PermissionRule, Session, ShellMessage, FileDiff } from "./wire"
 import { plain, run } from "./proc"
+import type { Snapshots } from "./snapshots"
 import { noTokens } from "./wire"
 
 type Delivery = "steer" | "queue"
@@ -112,6 +113,8 @@ export class Sessions {
     private readonly policies?: (directory: string) => Promise<PermissionRule[]>,
     /** An agent of yours (Settings › Agents): its prompt, from the engine. */
     private readonly agentPrompt?: (name: string, directory: string) => Promise<string | undefined>,
+    /** What the project's files were before each of your messages, for undo. */
+    private readonly snapshots?: Snapshots,
   ) {
     // Turns a quit or crash cut short: ended, as Stop ends one.
     for (const session of store.all()) this.repair(session.id)
@@ -385,6 +388,72 @@ export class Sessions {
     })()
   }
 
+  // MARK: Undo
+
+  /**
+   * Takes the conversation back to before your message `messageID`, and the files the agents
+   * changed since; the next message makes it final, `clearRevert` brings it all back.
+   */
+  async stageRevert(id: string, messageID: string): Promise<NonNullable<Session["revert"]>> {
+    const record = this.record(id)
+    if (this.isRunning(id)) throw new BadRequest("Stop the agent first.")
+    if (!record.messages.some((message) => message.id === messageID && message.type === "user")) throw new NotFound("No such message of yours.")
+    const directory = record.session.location.directory
+    const before = ((record.agent.snapshots as Record<string, string> | undefined) ?? {})[messageID]
+    let files: FileDiff[] = []
+    if (before && this.snapshots) {
+      const now = await this.snapshots.take(directory)
+      if (now) {
+        files = await this.snapshots.changes(directory, before, now)
+        if (!(await this.snapshots.restore(directory, before, now))) throw new Error("Kuvo Code couldn't put the files back as they were.")
+        // As they were before any undo: what Redo brings back.
+        record.agent.revertNow ??= now
+      }
+    }
+    const revert = { messageID, files }
+    record.session.revert = revert
+    this.store.save(id, true)
+    emit("session.revert.staged", { sessionID: id, revert }, directory)
+    return revert
+  }
+
+  /** Takes an undo back: the conversation and the files, as they were. */
+  async clearRevert(id: string) {
+    const record = this.record(id)
+    if (!record.session.revert) return
+    if (this.isRunning(id)) throw new BadRequest("Stop the agent first.")
+    const directory = record.session.location.directory
+    const now = record.agent.revertNow as string | undefined
+    if (now && this.snapshots) {
+      const current = await this.snapshots.take(directory)
+      if (current && !(await this.snapshots.restore(directory, now, current))) throw new Error("Kuvo Code couldn't bring the files back.")
+    }
+    delete record.session.revert
+    delete record.agent.revertNow
+    this.store.save(id, true)
+    emit("session.revert.cleared", { sessionID: id }, directory)
+  }
+
+  /** An undo made final: what was taken back goes, and the agents start their conversations over, handed what's left. */
+  private commitRevert(id: string, record: Record_, live: Live) {
+    const revert = record.session.revert
+    if (!revert) return
+    const at = record.messages.findIndex((message) => message.id === revert.messageID)
+    if (at >= 0) {
+      const gone = record.messages.splice(at)
+      const kept = (record.agent.snapshots as Record<string, string> | undefined) ?? {}
+      for (const message of gone) delete kept[message.id]
+    }
+    delete record.session.revert
+    delete record.agent.revertNow
+    // Their own conversations still hold what was undone.
+    for (const thread of live.threads.values()) thread.close()
+    live.threads.clear()
+    record.agent.threads = {}
+    this.store.save(id, true)
+    emit("session.revert.committed", { sessionID: id, to: revert.messageID }, record.session.location.directory)
+  }
+
   setInstruction(id: string, key: string, text: string | undefined) {
     const record = this.record(id)
     const entries = (record.agent.kuvoInstructions as Record<string, string> | undefined) ?? {}
@@ -536,11 +605,26 @@ export class Sessions {
     const abort = new AbortController()
     live.abort = abort
     emit("session.inbox.delivered", { sessionID: id, inboxID: input.id }, directory)
+    // A message after an undo makes it final.
+    this.commitRevert(id, record, live)
     const attachments: Attachment[] = input.files.map((file) => ({ mime: mime(file.uri), name: file.name, source: { type: "uri", uri: file.uri } }))
     if (input.synthetic) record.messages.push({ type: "synthetic", id: input.id, time: { created: Date.now() }, text: input.text, description: input.synthetic.description })
     else record.messages.push({ type: "user", id: input.id, time: { created: Date.now() }, text: input.text, files: attachments.length ? attachments : undefined })
     session.time.updated = Date.now()
     this.store.save(id, true)
+    // The project's files as they are before it, to undo it (yours, not a note from the app).
+    if (!input.synthetic && this.snapshots) {
+      const tree = await this.snapshots.take(directory).catch(() => undefined)
+      if (tree) {
+        const kept = (record.agent.snapshots as Record<string, string> | undefined) ?? {}
+        kept[input.id] = tree
+        // The last hundred messages' are enough.
+        const ids = Object.keys(kept).sort()
+        for (const old of ids.slice(0, Math.max(0, ids.length - 100))) delete kept[old]
+        record.agent.snapshots = kept
+        this.store.save(id)
+      }
+    }
     // Blocks as they are now (once the message is in: one sent again meanwhile is known), and
     // what an agent of yours is told to be.
     live.blocks = (await this.policies?.(directory).catch(() => undefined)) ?? live.blocks

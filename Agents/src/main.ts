@@ -11,6 +11,7 @@ import { Accounts, parseProvider } from "./accounts"
 import { Auto } from "./auto"
 import { Deps } from "./deps"
 import { EngineAgent, EngineLink } from "./engine"
+import { Snapshots } from "./snapshots"
 import { Roster } from "./roster"
 import { cancelSignIns, handler } from "./server"
 import { Sessions } from "./sessions"
@@ -64,6 +65,7 @@ const sessions = new Sessions(
   engineAgent,
   (directory) => link.policies(directory),
   (name, directory) => link.agentPrompt(name, directory),
+  new Snapshots(join(home, "snapshots")),
 )
 
 const server = Bun.serve({

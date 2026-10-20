@@ -44,6 +44,8 @@ export interface Session {
   location: { directory: string }
   permissions?: PermissionRule[]
   metadata?: Record<string, unknown>
+  /** Taken back to before this message (undo), until the next message makes it final. */
+  revert?: { messageID: string; files?: FileDiff[] }
 }
 
 export interface MessageTime {

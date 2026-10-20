@@ -291,6 +291,13 @@ export function handler(context: Context) {
           }
           case "fork":
             return json({ data: sessions.fork(id, String((await body()).before ?? "")) })
+          case "revert":
+            if (c === "stage" && method === "POST") return json({ data: await sessions.stageRevert(id, String((await body()).messageID ?? "")) })
+            if (!c && method === "DELETE") {
+              await sessions.clearRevert(id)
+              return json({})
+            }
+            break
           case "shell":
             if (method !== "POST") break
             sessions.runShell(id, String((await body()).command ?? ""))

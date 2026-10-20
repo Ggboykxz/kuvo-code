@@ -2,7 +2,7 @@
 // Auto down its list, and what a session keeps. Each test has a folder of its own, removed after.
 
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { AcpThread } from "../src/acp"
@@ -11,6 +11,7 @@ import { Auto } from "../src/auto"
 import { subscribe } from "../src/events"
 import type { Roster } from "../src/roster"
 import { Sessions, timing } from "../src/sessions"
+import { Snapshots } from "../src/snapshots"
 import { Store } from "../src/store"
 import type { Turn } from "../src/turn"
 import type { Message, ServerEvent } from "../src/wire"
@@ -521,6 +522,51 @@ describe("asks and conversations", () => {
     await settled(id, 2)
     expect(a.runs[1].text).toContain("first thing")
     expect(a.runs[1].text).toContain("second thing")
+  })
+})
+
+describe("undo", () => {
+  test("undo puts the files back and hides the turn; redo brings them back; the next message makes it final", async () => {
+    const folder = mkdtempSync(join(root, "repo-"))
+    const git = (...args: string[]) => Bun.spawnSync(["git", "-C", folder, ...args], { env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } })
+    git("init", "-q")
+    writeFileSync(join(folder, "a.txt"), "one\n")
+    git("add", ".")
+    git("commit", "-q", "-m", "first")
+    const agents = new Map([a, b].map((agent) => [agent.providerID, agent]))
+    sessions = new Sessions(store, { find: (provider: string | undefined) => (provider ? agents.get(provider) : undefined) } as unknown as Roster, auto, undefined, undefined, undefined, new Snapshots(join(root, "snapshots")))
+    a.script = async (input, turn, hooks, thread) => {
+      if (input.text.includes("change")) {
+        writeFileSync(join(folder, "a.txt"), "two\n")
+        writeFileSync(join(folder, "b.txt"), "new\n")
+      }
+      return replies(input, turn, hooks, thread)
+    }
+    const id = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: folder } }).id
+    const first = send(id, "change it")
+    await settled(id, 1)
+    expect(readFileSync(join(folder, "a.txt"), "utf8")).toBe("two\n")
+
+    const revert = await sessions.stageRevert(id, first)
+    expect(readFileSync(join(folder, "a.txt"), "utf8")).toBe("one\n")
+    expect(existsSync(join(folder, "b.txt"))).toBe(false)
+    expect(revert.files?.map((file) => file.file.split("/").pop()).sort()).toEqual(["a.txt", "b.txt"])
+    expect(sessions.get(id).revert?.messageID).toBe(first)
+
+    await sessions.clearRevert(id)
+    expect(readFileSync(join(folder, "a.txt"), "utf8")).toBe("two\n")
+    expect(readFileSync(join(folder, "b.txt"), "utf8")).toBe("new\n")
+    expect(sessions.get(id).revert).toBeUndefined()
+
+    await sessions.stageRevert(id, first)
+    a.threads.forEach((thread) => (thread.closed = false))
+    send(id, "do something else")
+    await settled(id, 1)
+    // The undone turn is gone; the agent starts its conversation over.
+    expect(sessions.messages(id).some((message) => message.type === "user" && message.text === "change it")).toBe(false)
+    expect(events.some((event) => event.type === "session.revert.committed")).toBe(true)
+    expect(readFileSync(join(folder, "a.txt"), "utf8")).toBe("one\n")
+    expect(a.threads.length).toBe(2)
   })
 })
 

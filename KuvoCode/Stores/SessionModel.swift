@@ -1072,8 +1072,6 @@ final class SessionModel {
     /// send again. Redo brings it all back, until the next message makes it final.
     func undo(from message: Message.User) {
         guard canReach else { return }
-        // A coding agent changes files itself: there's nothing here to take them back with.
-        guard !OutsideAgents.isAgentSession(session) else { return }
         Analytics.shared.track("undo_used")
         Task {
             do {
@@ -1108,8 +1106,7 @@ final class SessionModel {
                 let files = (user.files ?? []).compactMap { file -> OpenCodeAPI.PromptFile? in
                     if case .uri(let uri) = file.source { .init(uri: uri, name: file.name) } else { nil }
                 }
-                // A coding agent's turn stays (there's no taking it back): the message goes again after it.
-                if !OutsideAgents.isAgentSession(session) { _ = try await api.stageRevert(session: id, messageID: user.id) }
+                _ = try await api.stageRevert(session: id, messageID: user.id)
                 if let command = CommandMessages.shared[user.id], let (name, arguments) = SlashCommands.split(command) {
                     runCommand(name, arguments: arguments, files: Self.files(of: user))
                     return
