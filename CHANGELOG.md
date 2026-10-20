@@ -5,6 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Settings › Skills no longer shows the folder each skill is in; hover over one to see it.
 - Settings › Accounts lists your machines under each coding agent, with who's signed in on each and Sign In for the rest; each machine keeps a sign-in of its own, and right after you sign in on your Mac, Kuvo Code offers your machines too. Signing in on a machine says it's installing the agent there first.
 - With Ask First, Grok and Antigravity ask before using Kuvo Code's tools that should ask, and before anything else they ask about that Kuvo Code can't tell the kind of.
 - In Ask First, an agent's watch asks you first with its check written out, also in older sessions and with the coding agents; a wake-up a coding agent's session set on a machine is no longer lost.
