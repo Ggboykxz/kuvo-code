@@ -56,7 +56,11 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         /// isn't there.
         var machine: String?
 
-        init(_ category: Notice.Category, group: String? = nil, request: (session: String, id: String)? = nil, ask: String? = nil, machine: String? = nil) {
+        /// Whether its notification's buttons may answer it (see `Workspace.showsAll`).
+        var answerable = true
+
+        init(_ category: Notice.Category, group: String? = nil, request: (session: String, id: String)? = nil, ask: String? = nil, machine: String? = nil, answerable: Bool = true) {
+            self.answerable = answerable
             self.category = category
             self.group = group
             self.request = request
@@ -102,10 +106,30 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     /// password or Authorization (Bearer), and long runs of letters and digits like a key's.
     nonisolated static func masked(_ text: String) -> String {
         var text = text
-        let named = #"(?i)((?:token|api[_-]?key|secret|password|passwd|authorization)["']?\s*[:=]\s*["']?(?:bearer\s+|basic\s+)?|bearer\s+)[^\s"'&;]{6,}"#
+        // After a name that says it's one (token=…, "password": …, Authorization: Bearer …,
+        // --token …, aws_secret_access_key …).
+        let named = #"(?i)((?:token|api[_-]?key|secret(?:[_-]?access[_-]?key)?|password|passwd|authorization)["']?\s*[:=]\s*["']?(?:bearer\s+|basic\s+)?|bearer\s+|--(?:token|password|passwd|secret|api-key|key)[=\s]+)[^\s"'&;]{3,}"#
         text = text.replacingOccurrences(of: named, with: "$1•••", options: .regularExpression)
-        text = text.replacingOccurrences(of: #"\b[A-Za-z0-9_\-]{32,}\b"#, with: "•••", options: .regularExpression)
-        return text
+        // A password in an address (https://user:pass@host) or curl -u user:pass.
+        text = text.replacingOccurrences(of: #"(://[^\s/:@]+:)[^\s/@]+@"#, with: "$1•••@", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"(\s-u\s+[^\s:]+:)\S+"#, with: "$1•••", options: .regularExpression)
+        // A long run of letters and digits, as a key is: 24 or more with both, or a key's own
+        // start (sk-, ghp_, xoxb-, AKIA…). Not a commit's hash or a UUID, which aren't secret.
+        guard let long = try? NSRegularExpression(pattern: #"[A-Za-z0-9_\-+/=]{24,}"#) else { return text }
+        let source = text as NSString
+        var result = ""
+        var at = 0
+        for match in long.matches(in: text, range: NSRange(location: 0, length: source.length)) {
+            let run = source.substring(with: match.range)
+            let isHash = run.range(of: #"^([0-9a-f]{40}|[0-9a-f]{64}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"#, options: .regularExpression) != nil
+            let isPath = run.contains("/") && run.range(of: #"^[A-Za-z0-9_\-]+(/[A-Za-z0-9_\-.]+)+$"#, options: .regularExpression) != nil && run.range(of: #"\d"#, options: .regularExpression) == nil
+            let looksKey = run.range(of: #"^(sk-|ghp_|gho_|github_pat_|xox[abp]-|AKIA|AIza)"#, options: .regularExpression) != nil
+                || (run.range(of: #"[A-Za-z]"#, options: .regularExpression) != nil && run.range(of: #"\d"#, options: .regularExpression) != nil)
+            guard looksKey, !isHash, !isPath else { continue }
+            result += source.substring(with: NSRange(location: at, length: match.range.location - at)) + "•••"
+            at = match.range.location + match.range.length
+        }
+        return result + source.substring(from: at)
     }
 
     func start() {
@@ -117,7 +141,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
                 UNNotificationAction(identifier: answer.rawValue, title: answer.title, options: answer == .reject ? [.destructive] : [.authenticationRequired])
             }, intentIdentifiers: []),
             UNNotificationCategory(identifier: Self.replyCategory, actions: [
-                UNTextInputNotificationAction(identifier: Self.replyAction, title: "Reply", options: [], textInputButtonTitle: "Send", textInputPlaceholder: "Message"),
+                // Replying gives the agent work: it needs the Mac unlocked too.
+                UNTextInputNotificationAction(identifier: Self.replyAction, title: "Reply", options: [.authenticationRequired], textInputButtonTitle: "Send", textInputPlaceholder: "Message"),
             ], intentIdentifiers: []),
         ]
         center.setNotificationCategories(Set(categories))
@@ -127,10 +152,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     private func category(for question: Question) -> String {
         let identifier = "question.\(question.form)"
         var actions: [UNNotificationAction] = question.choices.prefix(4).enumerated().map { index, choice in
-            UNNotificationAction(identifier: Self.choicePrefix + "\(index)", title: choice.label, options: [])
+            UNNotificationAction(identifier: Self.choicePrefix + "\(index)", title: choice.label, options: [.authenticationRequired])
         }
         if question.allowsText {
-            actions.append(UNTextInputNotificationAction(identifier: Self.answerAction, title: question.choices.isEmpty ? "Answer" : "Other…", options: [],
+            actions.append(UNTextInputNotificationAction(identifier: Self.answerAction, title: question.choices.isEmpty ? "Answer" : "Other…", options: [.authenticationRequired],
                                                          textInputButtonTitle: "Send", textInputPlaceholder: "Your answer"))
         }
         questionCategories[question.form] = UNNotificationCategory(identifier: identifier, actions: actions, intentIdentifiers: [])
@@ -174,6 +199,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             } else if replies, !session.isEmpty {
                 content.categoryIdentifier = Self.replyCategory
             }
+            // One with no buttons still goes once it's answered elsewhere.
+            if content.userInfo["request"] == nil, let request = push?.request { content.userInfo["request"] = request.id }
             try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
         }
     }
@@ -184,6 +211,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         if let request = push.request {
             data["request"] = request.id
             if request.session != session { data["requestSession"] = request.session }
+            if !push.answerable { data["answerable"] = "0" }
         }
         if let ask = push.ask { data["ask"] = ask }
         toPhones(Notice(title: title, subtitle: subtitle, body: body, category: push.category, thread: push.group ?? (session.isEmpty ? push.ask ?? "" : session), data: data),
