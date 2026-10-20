@@ -11,12 +11,15 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const css = fs.readFileSync(path.join(here, "harness", "ui", "style.css"), "utf8");
-const store = fs.readFileSync(path.join(here, "app", "src", "store.ts"), "utf8");
-const settings = fs.readFileSync(path.join(here, "app", "src", "Settings.tsx"), "utf8");
-const overlays = fs.readFileSync(path.join(here, "app", "src", "Overlays.tsx"), "utf8");
-const app = fs.readFileSync(path.join(here, "app", "src", "App.tsx"), "utf8");
-const design = fs.readFileSync(path.join(here, "harness", "ui", "DESIGN.md"), "utf8");
+/// The sources as they are, with the line endings of the platform put to one: the checks
+/// below look at the text of a rule, and a file checked out on Windows has \r\n in it.
+const read = (...parts) => fs.readFileSync(path.join(here, ...parts), "utf8").replace(/\r\n/g, "\n");
+const css = read("harness", "ui", "style.css");
+const store = read("app", "src", "store.ts");
+const settings = read("app", "src", "Settings.tsx");
+const overlays = read("app", "src", "Overlays.tsx");
+const app = read("app", "src", "App.tsx");
+const design = read("harness", "ui", "DESIGN.md");
 
 // The Mac binding is the last block of the file; a token's last declaration in that block is
 // the one the cascade uses. Test those, not the retired block at the top.
