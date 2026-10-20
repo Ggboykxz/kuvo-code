@@ -147,7 +147,9 @@ final class RowStackView: NSView {
             for id in heights.keys where rowIndex[id] == nil { heights[id] = nil }
             keptOrder.removeAll { rowIndex[$0] == nil }
             fresh = fresh.filter { rowIndex[$0] != nil }
-            if animatesNew, let last = newIDs.last, !before.contains(last) {
+            // Only while the end is in view, where they come: rows that came while you read
+            // further up would all come in at once when you went back to the end.
+            if animatesNew, isFollowingEnd, let last = newIDs.last, !before.contains(last) {
                 // Only rows added at the end come in; earlier messages put ahead are just there.
                 for id in newIDs.reversed() {
                     guard !before.contains(id) else { break }
@@ -320,6 +322,9 @@ final class RowStackView: NSView {
             host.view.removeFromSuperview()
             keptOrder.append(id)
         }
+        // Made but not shown (measured on the way, then out of view once what's above moved it,
+        // or to go to it): kept as those put away are, so they're let go in turn.
+        for (id, host) in hosts where !host.isShown && !keptOrder.contains(id) { keptOrder.append(id) }
         while keptOrder.count > Self.kept {
             let id = keptOrder.removeFirst()
             hosts[id]?.view.removeFromSuperview()

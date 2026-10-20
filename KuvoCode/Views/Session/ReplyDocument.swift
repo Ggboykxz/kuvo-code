@@ -93,7 +93,7 @@ struct ReplyDocument {
             for part in parts.dropFirst() { joined = joined.joined(cached(markdown: part.text, parser: parser, style: style)) }
             document = joined
             #if DEBUG
-            PartsCheck.compare(joined, ReplyDocument(markdown: markdown, parser: parser, style: style), markdown: markdown)
+            if PartsCheck.isOn { PartsCheck.compare(joined, ReplyDocument(markdown: markdown, parser: parser, style: style), markdown: markdown) }
             #endif
         } else {
             document = ReplyDocument(markdown: markdown, parser: parser, style: style)
@@ -641,6 +641,8 @@ enum ReplyAttachments {
 /// where they differ written down.
 enum PartsCheck {
     private static let file = ProcessInfo.processInfo.environment["KUVO_PERF_PARTS_CHECK"]
+    /// Only then: reading each piece whole as well would hide what reading it in parts saves.
+    static var isOn: Bool { file != nil }
     private static var compared = 0
     private static var problems: [String] = []
 
