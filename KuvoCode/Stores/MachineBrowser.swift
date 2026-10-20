@@ -135,6 +135,8 @@ final class MachineBrowser {
 
     /// Pages this Mac took over.
     @ObservationIgnored private var myHolds: Set<String> = []
+    /// Pages handed back while there was no connection, to tell the keeper once there is.
+    @ObservationIgnored private var handedBackOffline: Set<String> = []
 
     /// Takes the page shown over from the agent, or hands it back.
     func takeOver(_ on: Bool) {
@@ -152,11 +154,21 @@ final class MachineBrowser {
         if on {
             heldPages.insert(page)
             myHolds.insert(page)
+            handedBackOffline.remove(page)
         } else {
             heldPages.remove(page)
             myHolds.remove(page)
+            if link == nil { handedBackOffline.insert(page) }
         }
         link?.fire("Kuvo.hold", ["targetId": page, "on": on])
+    }
+
+    /// Closing on purpose (the machine removed, nothing showing it, the app quitting): the pages
+    /// this Mac took over go back to their agents now, rather than when the keeper gives up on it.
+    private func handBackAll() {
+        for page in myHolds { link?.fire("Kuvo.hold", ["targetId": page, "on": false]) }
+        heldPages.subtract(myHolds)
+        myHolds = []
     }
 
     private func noteWorkers(_ status: [String: Any]) {
@@ -201,8 +213,11 @@ final class MachineBrowser {
         self.machine = machine
         // After the Mac sleeps, the connection is gone, though SSH takes a while to notice: start
         // a fresh one right away.
-        NotificationCenter.default.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main, using: { [weak self] _ in
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main, using: { [weak self] _ in
             MainActor.assumeIsolated { self?.wake() }
+        })
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main, using: { [weak self] _ in
+            MainActor.assumeIsolated { self?.handBackAll() }
         })
     }
 
@@ -287,6 +302,7 @@ final class MachineBrowser {
 
     /// The machine was removed, or you disconnected it: the live view ends with it.
     func reset() {
+        handBackAll()
         disconnect()
         state = .idle
         pages = []
@@ -349,6 +365,7 @@ final class MachineBrowser {
             dropTask = Task {
                 try? await Task.sleep(for: .seconds(5))
                 guard !Task.isCancelled, !isWanted else { return }
+                handBackAll()
                 disconnect()
             }
         }
@@ -448,7 +465,11 @@ final class MachineBrowser {
             noteWorkers(params["status"] as? [String: Any] ?? [:])
             heldPages = Set(params["held"] as? [String] ?? [])
             // A new connection (after a sleep, a dropped one): the pages this Mac took over are
-            // taken again, which the keeper kept a while for it, so their agents don't go on in them.
+            // taken again, which the keeper kept a while for it, so their agents don't go on in
+            // them; those handed back meanwhile go back now.
+            for page in handedBackOffline { link?.fire("Kuvo.hold", ["targetId": page, "on": false]) }
+            heldPages.subtract(handedBackOffline)
+            handedBackOffline = []
             myHolds.formIntersection(heldPages)
             for page in myHolds { link?.fire("Kuvo.hold", ["targetId": page, "on": true]) }
             for ask in params["asks"] as? [[String: Any]] ?? [] { asked(ask) }
