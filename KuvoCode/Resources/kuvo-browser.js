@@ -1504,7 +1504,7 @@ const siteOf = (host) => (host === "a file on this machine" ? "a file on this Ma
 async function fileAccess(session) {
   let found = null;
   for (let id = session, step = 0; id && step < 6; step++) {
-    found = (await engine("GET", `api/session/${encodeURIComponent(id)}`).catch(() => null))?.data ?? null;
+    found = (await findSession(id))?.data ?? null;
     id = found?.parentID ?? null;
   }
   // Ask First asks before commands; a group chat's seat refuses them all. (Approve All keeps
@@ -1712,9 +1712,11 @@ function messageID() {
   return "msg_" + value.toString(16).padStart(12, "0") + random;
 }
 
-async function engine(method, pathname, body) {
-  const record = readJSON(path.join(K, "run", "engine.json"));
-  if (!record) throw new ToolError("This machine's engine isn't running.");
+/// The machine's engine, or (`place` "bridge") the agents bridge beside it, whose sessions are
+/// the coding agents' (Claude Code, Codex…): the same paths answer on both.
+async function engine(method, pathname, body, place = "engine") {
+  const record = readJSON(path.join(K, "run", place === "bridge" ? "bridge.json" : "engine.json"));
+  if (!record) throw new ToolError(place === "bridge" ? "The coding agents aren't running on this machine." : "This machine's engine isn't running.");
   const response = await fetch(`http://127.0.0.1:${record.port}/${pathname}`, {
     method,
     headers: { Authorization: "Basic " + Buffer.from("opencode:" + record.password).toString("base64"), "Content-Type": "application/json" },
@@ -1723,6 +1725,25 @@ async function engine(method, pathname, body) {
   if (!response.ok) throw new ToolError(`This machine's engine said ${response.status}.`);
   const answer = await response.text();
   return answer ? JSON.parse(answer) : null;
+}
+
+/// A session on this machine, where it runs: the engine's, or the agents bridge's. Null when
+/// neither has it.
+const places = new Map();
+async function findSession(id) {
+  const known = places.get(id);
+  for (const place of known ? [known] : ["engine", "bridge"]) {
+    const data = (await engine("GET", `api/session/${encodeURIComponent(id)}`, undefined, place).catch(() => null))?.data;
+    if (!data) continue;
+    places.set(id, place);
+    return { place, data };
+  }
+  return null;
+}
+
+/// Where a session runs, as far as is known (the engine, when neither says).
+async function placeOf(id) {
+  return (await findSession(id))?.place ?? "engine";
 }
 
 /// What an agent is, for one on this machine to read: "bot, on the Mac", "session, here, in api".
@@ -1794,9 +1815,10 @@ async function mail(name, args, from) {
     return text(`Left for ${target.name}: it goes on as soon as Kuvo Code on the user's Mac is connected (at once, if it is)${waits ? "; across machines there's no waiting for the answer, which comes to you as a message" : ""}.`);
   }
   const id = messageID();
-  await engine("POST", `api/session/${encodeURIComponent(target.session)}/prompt`, { id, text: composeMail(sender, from ?? "unknown", words, waits), delivery: "steer" });
+  const place = await placeOf(target.session);
+  await engine("POST", `api/session/${encodeURIComponent(target.session)}/prompt`, { id, text: composeMail(sender, from ?? "unknown", words, waits), delivery: "steer" }, place);
   if (!waits) return text(`Sent to ${target.name}. Its answer, if it writes one, comes to you as a message.`);
-  const answer = await replyTo(target.session, id);
+  const answer = await replyTo(target.session, id, place);
   return text(answer ? `${target.name} answered:\n\n` + answer : `${target.name} hasn't answered yet. It may still write back with send_message.`);
 }
 
@@ -1814,15 +1836,16 @@ async function readConversation(args, from, agents, here) {
     return text(`${target.name} runs ${target.machine ? `on ${target.machine}` : "on the user's Mac"}, and from here only the conversations on this machine can be read. Ask it what you need with send_message.`, true);
   }
   const address = encodeURIComponent(target.session);
-  const session = (await engine("GET", `api/session/${address}`).catch(() => null))?.data;
+  const located = await findSession(target.session);
+  const session = located?.data;
   if (!session) return text(`Couldn't read ${target.name}'s conversation: there's no such session here.`, true);
   // The whole of it, oldest first, as the Mac's export reads it.
-  let page = await engine("GET", `api/session/${address}/message?limit=200&order=desc`);
+  let page = await engine("GET", `api/session/${address}/message?limit=200&order=desc`, undefined, located.place);
   let messages = [...(page?.data ?? [])].reverse();
   for (let count = 0; count < 100 && page?.data?.length; count++) {
     const cursor = page.cursor?.next ?? page.cursor?.previous;
     if (!cursor) break;
-    const older = await engine("GET", `api/session/${address}/message?limit=200&cursor=${encodeURIComponent(cursor)}`);
+    const older = await engine("GET", `api/session/${address}/message?limit=200&cursor=${encodeURIComponent(cursor)}`, undefined, located.place);
     const data = [...(older?.data ?? [])].reverse();
     if (!data.length || messages.some((message) => message.id === data[data.length - 1].id)) break;
     messages = [...data, ...messages];
@@ -2012,7 +2035,7 @@ const startedSessions = new Map();
 async function startSession(args, from, agents, here) {
   const task = typeof args.task === "string" ? args.task.trim() : "";
   if (!task) return text("Say what it's to do (task).", true);
-  const parent = from ? (await engine("GET", `api/session/${encodeURIComponent(from)}`).catch(() => null))?.data : null;
+  const parent = from ? (await findSession(from))?.data : null;
   let folder = parent?.location?.directory ?? null;
   if (typeof args.folder === "string" && args.folder.trim()) {
     const given = args.folder.trim().replace(/^~(?=$|\/)/, os.homedir());
@@ -2050,18 +2073,18 @@ async function startSession(args, from, agents, here) {
 }
 
 /// The words in `session` after the message `id`, once its agent is done with it: ten minutes at most.
-async function replyTo(session, id) {
+async function replyTo(session, id, place = "engine") {
   const began = Date.now();
   let started = false;
   while (Date.now() - began < 600_000) {
     await sleep(2000);
-    const active = (await engine("GET", "api/session/active").catch(() => null))?.data ?? {};
+    const active = (await engine("GET", "api/session/active", undefined, place).catch(() => null))?.data ?? {};
     if (Array.isArray(active) ? active.includes(session) : active[session]) {
       started = true;
       continue;
     }
     if (!started && Date.now() - began < 6000) continue;
-    const page = await engine("GET", `api/session/${encodeURIComponent(session)}/message?limit=20&order=desc`).catch(() => null);
+    const page = await engine("GET", `api/session/${encodeURIComponent(session)}/message?limit=20&order=desc`, undefined, place).catch(() => null);
     const replies = (page?.data ?? [])
       .filter((message) => message.type === "assistant" && message.id > id)
       .reverse()
@@ -2524,7 +2547,9 @@ async function mcp() {
       case "tools/list":
         return reply({ tools: CONFIG.tools });
       case "tools/call": {
-        call = { id: message.id, name: params.name || "", args: params.arguments || {}, session: params._meta?.["ai.opencode/sessionID"] ?? null, cancelled: false, stops: new Set(), notes: [], pages: new Set() };
+        // The session it's for: the engine says so with each call; an agent of the agents bridge
+        // starts this for one session, named in KUVO_SESSION.
+        call = { id: message.id, name: params.name || "", args: params.arguments || {}, session: params._meta?.["ai.opencode/sessionID"] ?? (process.env.KUVO_SESSION || null), cancelled: false, stops: new Set(), notes: [], pages: new Set() };
         calls.set(call.id, call);
         // Showing something in Kuvo Code's panel needs no browser, nor a turn in the line.
         // Nor does writing to another agent.
@@ -2533,12 +2558,12 @@ async function mcp() {
           return;
         }
         if (params.name === "list_agents" || params.name === "send_message" || params.name === "read_conversation" || params.name === "start_session") {
-          mail(params.name, params.arguments || {}, params._meta?.["ai.opencode/sessionID"] ?? null).then(reply, (error) => reply(text(error instanceof ToolError ? error.message : String(error), true)));
+          mail(params.name, params.arguments || {}, call.session).then(reply, (error) => reply(text(error instanceof ToolError ? error.message : String(error), true)));
           return;
         }
         // An added integration's site: to its tools instead, with no browser needed.
         if (params.name === "browser_navigate" || params.name === "browser_new_tab") {
-          const note = integrationNote(params.arguments?.url, params._meta?.["ai.opencode/sessionID"] ?? null);
+          const note = integrationNote(params.arguments?.url, call.session);
           if (note) return reply(text(note));
         }
         if (params.name === "show_in_panel" || params.name === "show_widget") {
