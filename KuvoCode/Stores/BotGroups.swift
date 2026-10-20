@@ -324,10 +324,13 @@ final class BotGroups {
         for bot in old.members where !group.members.contains(bot) {
             if let seat = group.seats.removeValue(forKey: bot) { leaving.append((bot, seat)) }
             group.heard[bot] = nil
+            // What it was told to set aside goes too: back in the chat later, it hasn't heard it.
+            group.retracted?[bot] = nil
         }
         list[index] = group
         save()
-        for (bot, seat) in leaving { await deleteSeat(seat, of: bot) }
+        // Where each seat is, by the chat as it was (it's gone from the chat now).
+        for (bot, seat) in leaving { await deleteSeat(seat, of: bot, in: old) }
         await refreshSeats(of: list.first { $0.id == group.id } ?? group)
         // One that left forgets the chat (its transcript goes from its folder); the rest remember.
         for bot in Set(old.members + group.members) {
@@ -344,7 +347,7 @@ final class BotGroups {
         logs[group.id] = nil
         save()
         try? FileManager.default.removeItem(at: Self.folder.appending(path: "\(group.id).json"))
-        for (bot, seat) in group.seats { await deleteSeat(seat, of: bot) }
+        for (bot, seat) in group.seats { await deleteSeat(seat, of: bot, in: group) }
         for bot in group.members { await remember(bot, changed: group.id, forgetting: group.id) }
         Analytics.shared.track("group_deleted")
     }

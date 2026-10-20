@@ -6,6 +6,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A message for a coding agent on a machine that couldn't go as the machine connected (its agents still starting) goes within a minute, rather than at the machine's next connection.
+- Editing a bot while a personality it used was changed or removed no longer undoes your edit.
 - A bot's job keeps all of its section in its memory, its own sub-headings and code included; it used to stop at the first line starting with #. A job written in Edit Bot by an older version is no longer lost when the bot's memory has an empty Job heading.
 - In a group chat, a bot's message that only starts with "Pass" ("Pass rate is 98% on main.") is no longer taken as passing its turn and left out.
 - Closing the window with a machine's conversation in view no longer leaves two start tabs in its panel.

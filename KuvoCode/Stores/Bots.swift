@@ -419,12 +419,14 @@ final class Bots {
     /// A personality you changed or deleted: the bots with it hear the new words, or go back to
     /// their own way.
     func personalityChanged(_ id: String) async {
-        for var bot in list where bot.personality == id {
-            if Personalities.shared.personality(id) == nil { bot.personality = nil }
+        for bot in list.filter({ $0.personality == id }).map(\.id) {
+            // Each as it is by then: one edited while another was being told (renamed, given
+            // another personality) keeps that.
+            guard let index = list.firstIndex(where: { $0.id == bot }), list[index].personality == id else { continue }
+            if Personalities.shared.personality(id) == nil { list[index].personality = nil }
             // Saved even when unchanged, so its session hears the new wording.
-            if let index = list.firstIndex(where: { $0.id == bot.id }) { list[index] = bot }
             save()
-            await tell(bot.id, ["instructions"])
+            await tell(bot, ["instructions"])
         }
     }
 

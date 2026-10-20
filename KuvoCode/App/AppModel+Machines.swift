@@ -291,6 +291,9 @@ extension AppModel {
                     guard let engine, self?.live(engine) == true, !Task.isCancelled else { return }
                     await AgentMail.shared.share(with: engine)
                     await AgentMail.shared.collect(from: engine)
+                    // What waited for it and couldn't go as it connected (its coding agents'
+                    // bridge was still starting): now, not at its next connection.
+                    await AgentMail.shared.deliverWaiting(to: engine)
                     await self?.wakeUps.share(with: engine)
                 }
             }
