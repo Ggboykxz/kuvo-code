@@ -7,6 +7,7 @@ import { join } from "node:path"
 import { AcpThread, acpTiming } from "../src/acp"
 import type { Agent } from "../src/agent"
 import { Auto } from "../src/auto"
+import { subscribe } from "../src/events"
 import type { Roster } from "../src/roster"
 import { Sessions } from "../src/sessions"
 import { Store } from "../src/store"
@@ -122,6 +123,25 @@ describe("ACP agents, nothing dropped", () => {
     expect(JSON.stringify(gone.state)).toContain("There's no such file.")
     expect(own).toMatchObject({ id: "r3", name: "read", state: { status: "completed" } })
     expect(notes).toMatchObject({ id: "r2", name: "read", state: { status: "completed", content: [{ type: "text", text: "first\nsecond" }] } })
+  })
+
+  test("a tool whose name is known only later is told with its new name", async () => {
+    const started: string[] = []
+    const unsubscribe = subscribe((event: any) => {
+      if (event.type === "session.tool.input.started") started.push(event.data?.name ?? event.properties?.name)
+    })
+    try {
+      const id = await run(
+        agentSaying([
+          ["s1", { sessionUpdate: "tool_call", toolCallId: "t1", title: "Working", kind: "other", status: "in_progress" }],
+          ["s1", { sessionUpdate: "tool_call_update", toolCallId: "t1", kind: "read", locations: [{ path: "/tmp/a.txt" }], status: "completed" }],
+        ]),
+      )
+      expect(tools(id)[0].name).toBe("read")
+      expect(started).toEqual(["working", "read"])
+    } finally {
+      unsubscribe()
+    }
   })
 
   test("a subagent's session (another session of the agent's), with its task", async () => {

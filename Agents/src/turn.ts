@@ -218,10 +218,14 @@ export class Turn {
     this.save()
   }
 
-  /** The tool's name, and the input it has, changed as more is known (Codex names a command once it runs). */
+  /** The tool's name, changed as more is known: told as its start again, with the name it has now. */
   toolRename(id: string, name: string) {
     const tool = this.tools.get(id)
-    if (tool) tool.call.name = name
+    if (!tool || tool.call.name === name) return
+    tool.call.name = name
+    if (this.ended) return
+    this.send("session.tool.input.started", { assistantMessageID: tool.step.id, id, name })
+    this.save()
   }
 
   toolInputDelta(id: string, delta: string) {

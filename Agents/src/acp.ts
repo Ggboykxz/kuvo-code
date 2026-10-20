@@ -281,6 +281,8 @@ export class AcpThread implements Thread {
     if (input.adopt) return this.adopt(turn, hooks)
     this.own = undefined
     const rpc = await this.open(input, hooks)
+    // Kuvo Code's tools' names, known before the agent calls one (a call is shown by its name from the start).
+    await loadKuvoTools()
     // Stopped while the agent was starting.
     if (hooks.signal.aborted) return { outcome: "interrupted" }
     const sessionId = this.sessionID!
