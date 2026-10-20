@@ -82,13 +82,15 @@ captures is in `docs/captures/`, written by `windows/harness/captures.mjs`.
 **What is left, and why.** The rows still marked ◐ or ⬜ are: the Settings pages the
 maintainer has not reopened (Notifications, Privacy, Panel) and the usage of a provider's
 plan (which needs the account's keys). The worktrees are out of reach on both sides — the
-engine exposes no worktrees to ask, and the Mac's own page is the maintainer's to reopen. The provider's marks, which the Mac
-takes from models.dev, are fetched and drawn in 0.5.63.
+engine exposes no worktrees to ask, and the Mac's own page is the maintainer's to reopen.
+The provider's marks, which the Mac takes from models.dev, are fetched and drawn in 0.5.63.
 The native menus became a real menu bar in 0.5.61, the code block's copy mark became the
 Mac's mark that becomes a check, the double-click on a title bar zooms the window as it
 does on the Mac, and in 0.5.62 the sidebar holds every project with its own sessions, and
-the Recents — the last of the behaviour differences this port had. Everything else in
-§1–§9 is now the Mac's, and the checks hold it there.
+the Recents — the last of the behaviour differences this port had. In 0.5.64 the engine's
+events reached the conversation (the words of a reply arrived only on a reload, and the Stop
+button stayed), and the working mark became the Mac's own, drawing itself in dashes at the
+Mac's weight. Everything else in §1–§9 is now the Mac's, and the checks hold it there.
 
 **The wording is finished with the screens it lives in.** The shell's strings are the Mac's,
 word for word, and a check holds them to the Mac's own source
@@ -549,7 +551,7 @@ Behaviour that is not a colour or a curve, and that a screenshot cannot prove.
 | Inline rename | All text selected; Return commits; Escape cancels; click-away keeps (except a branch, which needs Return) | `InlineTitleField.swift:4-55` | ✅ (0.5.48) | 7 |
 | File drop | Anywhere over the window, text fields included; only during a file drag; clicks pass through | `FileDrop.swift:4-70` | ✅ | — |
 | Right-click | Message actions, title-bar menus; one window-level watcher | `RightClickMenu.swift:4-65` | ✅ (the rows' and the messages' menus) | 7 |
-| Double-click title | Follows the system preference: zoom, minimise, or nothing | `Card.swift:186-198` | ⬜ (the shell's own title bar does this) | 7 |
+| Double-click title | Follows the system preference: zoom, minimise, or nothing | `Card.swift:186-198` | ✅ (0.5.61: a double-click on the title bar zooms the window, as on the Mac) | 7 |
 | Pane resize | 8 pt gap is the handle; 3 pt tint capsule appears at 50 %; `column-resize` cursor | `WindowGlass.swift:43-81` | ✅ (0.5.48) | 2, 7 |
 | Hover actions | Time, Copy, New Session, Undo appear under the pointer with no layout shift; 0.12 s | `YourMessage.swift:41-64` | ✅ (0.5.52) | 7 |
 | Composer history | ↑ / ↓ walk sent messages, as in a shell | `Composer.swift:22-24` | ✅ (0.5.48) | 7 |
