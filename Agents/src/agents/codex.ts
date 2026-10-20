@@ -13,6 +13,7 @@ import { fromPatch } from "../diff"
 import { emit } from "../events"
 import { kuvoTools, toolServerName } from "../kuvotools"
 import { pictureData, pictureFile, withPictures } from "../pictures"
+import { elicitationField } from "../forms"
 import { newID } from "../ids"
 import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
 import { which } from "../proc"
@@ -1315,20 +1316,6 @@ export const codexItems = new Set([
   "exitedReviewMode",
   "contextCompaction",
 ])
-
-/** One field of an MCP server's form (its JSON schema), as the app asks it. */
-function elicitationField(key: string, field: any, required: boolean): FormField {
-  const title = field?.title ?? key
-  const description = field?.description ?? undefined
-  if (field?.type === "boolean") return { key, title, description, required, type: "boolean" }
-  if (field?.type === "array") {
-    const options = (field.items?.anyOf ?? field.items?.oneOf ?? (field.items?.enum ?? []).map((value: string) => ({ const: value, title: value }))).map((option: any) => ({ value: String(option.const), label: String(option.title ?? option.const) }))
-    return { key, title, description, required, type: "multiselect", options }
-  }
-  const named = field?.oneOf ?? field?.anyOf
-  const options = named ? named.map((option: any) => ({ value: String(option.const), label: String(option.title ?? option.const) })) : field?.enum?.map((value: string, index: number) => ({ value, label: field.enumNames?.[index] ?? value }))
-  return { key, title, description, required, type: "string", options, custom: !options, ...(field?.format === "password" ? { format: "password" } : {}) }
-}
 
 /** Codex's file changes, as the bridge keeps them (a rename says where it went). */
 function codexChanges(raw: unknown): { path: string; kind: string; diff: string; movedTo?: string }[] {

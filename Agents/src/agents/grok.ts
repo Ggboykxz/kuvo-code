@@ -145,6 +145,8 @@ export class GrokAgent implements Agent {
         notification(method, params, context) {
           // Grok can say the prompt is over before answering it.
           const name = method.replace(/^_/, "")
+          // One it ran on its own after a task of its own completed: that turn's end.
+          if (name === "x.ai/session/prompt_complete" && String(params?.promptId ?? "").startsWith("task-completed-")) context.endOwn()
           if (name === "x.ai/session/prompt_complete" && !String(params?.promptId ?? "").startsWith("task-completed-")) {
             context.endPrompt(params?.stopReason ?? "end_turn", params?.stopReason === "rate_limit" ? "You've reached your Grok usage limit for now." : params?.stopReason === "error" ? String(params?.agentResult ?? "Grok stopped with an error.") : undefined)
           }
@@ -166,6 +168,12 @@ export class GrokAgent implements Agent {
             })()
           }
           if (name === "x.ai/exit_plan_mode") {
+            // Its plan, shown (it says the plan is in front of you).
+            const plan = [call?.plan, call?.planText, call?.content].find((value) => typeof value === "string" && value.trim())
+            if (plan && context.turn) {
+              context.turn.text(plan)
+              context.turn.endBlock()
+            }
             return Promise.resolve({ outcome: "abandoned", feedback: "The plan is shown to the user. Stop here and wait: they'll switch out of plan mode and ask you to build it when they're ready." })
           }
           return undefined

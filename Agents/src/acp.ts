@@ -5,13 +5,15 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
-import type { RunInput, RunResult, Thread, TurnHooks, SubagentRun, SubagentTask } from "./agent"
+import type { OwnTurn, RunInput, RunResult, Thread, TurnHooks, SubagentRun, SubagentTask } from "./agent"
 import { failure } from "./agent"
 import type { Limit } from "./auto"
 import { fileDiff } from "./diff"
 import { newID } from "./ids"
 import { RPC, RPCError } from "./rpc"
 import { kuvoToolName, kuvoTools, loadKuvoTools } from "./kuvotools"
+import { pictureData, withPictures } from "./pictures"
+import { elicitationField } from "./forms"
 import type { Turn } from "./turn"
 import type { Decision, FormField, Session, TokenUsage } from "./wire"
 
@@ -76,6 +78,8 @@ export interface AcpContext {
   hooks?: TurnHooks
   /** Ends the prompt under way, as its response would. */
   endPrompt(stopReason: string, error?: string): void
+  /** Ends a turn the agent began on its own (Grok's prompt after a task of its own completed). */
+  endOwn(): void
 }
 
 interface Active {
@@ -100,7 +104,16 @@ interface Active {
   used?: number
   /** What follows the agent's own record of the turn, when it keeps one. */
   follower?: { stop(): void }
+  /** A turn the agent began on its own, taken here: it ends when it says, or goes quiet. */
+  own?: boolean
+  quiet?: ReturnType<typeof setTimeout>
+  compacted?: boolean
+    /** Sessions of its subagents (updates for another session of the agent's), by that session. */
+  children: Map<string, { run: SubagentRun; row: string; toolsSinceText: boolean; tools: Map<string, any> } | { prompt: string }>
 }
+
+/** How long a turn the agent began on its own goes with nothing from it before it's over. */
+export const acpTiming = { ownQuiet: 20_000 }
 
 export class AcpThread implements Thread {
   private rpc?: RPC
@@ -113,6 +126,9 @@ export class AcpThread implements Thread {
   private stale?: RPC
   /** The conversation it had couldn't be picked up again: a new one took its place. */
   private startedOver = false
+  onOwnTurn?: (note: OwnTurn) => boolean
+  /** Updates of a turn the agent began on its own, until a turn here takes them; or turned away. */
+  private own?: { updates: any[]; turnedAway: boolean }
 
   constructor(
     private readonly flavor: AcpFlavor,
@@ -255,6 +271,8 @@ export class AcpThread implements Thread {
   }
 
   async run(input: RunInput, turn: Turn, hooks: TurnHooks): Promise<RunResult> {
+    if (input.adopt) return this.adopt(turn, hooks)
+    this.own = undefined
     const rpc = await this.open(input, hooks)
     // Stopped while the agent was starting.
     if (hooks.signal.aborted) return { outcome: "interrupted" }
@@ -282,7 +300,7 @@ export class AcpThread implements Thread {
     if (others.length) text += `\n\nAttached files:\n${others.map((path) => `- ${path}`).join("\n")}`
     prompt.unshift({ type: "text", text })
     return new Promise<RunResult>((resolve) => {
-      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, instructed }
+      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, instructed, children: new Map() }
       this.active = active
       turn.startStep()
       active.follower = this.flavor.follow?.(sessionId, turn, hooks)
@@ -315,8 +333,14 @@ export class AcpThread implements Thread {
       active.hooks.saveState()
     }
     if (this.active === active) this.active = undefined
+    clearTimeout(active.quiet)
     if (active.plan) active.turn.toolSucceeded(active.plan.id, "", { todos: active.plan.todos })
     active.follower?.stop()
+    // Its subagents are done when it is.
+    for (const child of active.children.values()) if ("run" in child) {
+      active.turn.toolSucceeded(child.row, "", { sessionID: child.run.sessionID })
+      child.run.end(outcome === "failed" ? "interrupted" : outcome)
+    }
     active.turn.endStep({ tokens: this.stepTokens(active) })
     if (active.hooks.signal.aborted) active.resolve({ outcome: "interrupted" })
     // It had the message when it said something about it, or answered the prompt itself.
@@ -330,9 +354,44 @@ export class AcpThread implements Thread {
       turn: active?.turn,
       hooks: active?.hooks,
       endPrompt: (stopReason, error) => {
-        if (active) this.end(active, error ? "failed" : stopReason === "cancelled" ? "interrupted" : "succeeded", error, stopReason === "rate_limit" ? this.limit(error) : undefined)
+        if (active && !active.own) this.end(active, error ? "failed" : stopReason === "cancelled" ? "interrupted" : "succeeded", error, stopReason === "rate_limit" ? this.limit(error) : undefined)
+      },
+      endOwn: () => {
+        if (active?.own) this.end(active, "succeeded")
+        else if (this.own && !this.own.turnedAway) this.own.turnedAway = true
       },
     }
+  }
+
+  /** A turn the agent began on its own: taken here, with what it said so far. */
+  private adopt(turn: Turn, hooks: TurnHooks): Promise<RunResult> {
+    const own = this.own
+    this.own = undefined
+    const rpc = this.rpc
+    if (!own || own.turnedAway || !rpc) return Promise.resolve({ outcome: "succeeded" })
+    return new Promise<RunResult>((resolve) => {
+      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, children: new Map(), own: true }
+      this.active = active
+      turn.startStep()
+      this.quietly(active)
+      for (const update of own.updates) this.notification("session/update", update)
+    })
+  }
+
+  private noticed = new Set<string>()
+
+  private noticeOnce(active: Active, key: string, text: string) {
+    if (this.noticed.has(key)) return
+    this.noticed.add(key)
+    active.turn.notice(text)
+  }
+
+  /** An own turn with nothing more from the agent for a while: over. */
+  private quietly(active: Active) {
+    clearTimeout(active.quiet)
+    active.quiet = setTimeout(() => {
+      if (this.active === active) this.end(active, "succeeded")
+    }, acpTiming.ownQuiet)
   }
 
   private notification(method: string, params: any) {
@@ -342,27 +401,54 @@ export class AcpThread implements Thread {
     }
     const active = this.active
     // What a load replays is already in the conversation.
-    if (!active || this.loading || params?._meta?.isReplay) return
-    // Another session's (a subagent's child session, where the agent keeps it on this connection):
-    // not this conversation's words.
-    if (params?.sessionId && this.sessionID && params.sessionId !== this.sessionID) return
-    active.heard = true
+    if (this.loading || params?._meta?.isReplay) return
     const update = params?.update ?? {}
+    const ours = !params?.sessionId || !this.sessionID || params.sessionId === this.sessionID
+    // Nothing under way here: a turn the agent began on its own (Grok after a task of its own).
+    if (!active) {
+      if (ours && this.sessionID) this.ownUpdate(params, update)
+      return
+    }
+    if (active.own) this.quietly(active)
+    // Another session's: a subagent's (where the agent keeps it on this connection), in its session.
+    if (!ours) return this.childUpdate(active, String(params.sessionId), update)
+    active.heard = true
     const turn = active.turn
     switch (update.sessionUpdate) {
       case "agent_message_chunk":
         this.words(active)
-        turn.text(contentText(update.content))
+        this.content(active, turn, update.content, "text")
         return
       case "agent_thought_chunk":
         this.words(active)
-        turn.reasoning(contentText(update.content))
+        this.content(active, turn, update.content, "reasoning")
         return
       case "tool_call":
       case "tool_call_update":
         return this.tool(active, update)
       case "usage_update":
         if (typeof update.used === "number") active.used = update.used
+        // What it cost, when it says (in dollars).
+        if (typeof update.cost?.amount === "number" && (update.cost.currency ?? "USD") === "USD") turn.addUsage(undefined, update.cost.amount)
+        return
+      case "current_mode_update":
+        if (this.setup && update.currentModeId) this.setup.kuvoMode = update.currentModeId
+        if (update.currentModeId) turn.notice(`${this.name} switched to its ${update.currentModeId} mode.`)
+        return
+      case "config_option_update":
+        if (this.setup && Array.isArray(update.configOptions)) this.setup.configOptions = update.configOptions
+        return
+      case "notice":
+        if (typeof update.message === "string" || typeof update.text === "string") turn.notice(String(update.message ?? update.text))
+        return
+      case "compaction_update":
+      case "compaction_summary_chunk":
+        if (!active.compacted) turn.notice(`${this.name} summarized the conversation to make room.`)
+        active.compacted = true
+        return
+      case "user_message_chunk":
+      case "available_commands_update":
+      case "session_info_update":
         return
       case "plan": {
         // One to-do list a turn, brought up to date as the agent works through it.
@@ -374,7 +460,82 @@ export class AcpThread implements Thread {
         else turn.toolCalled(id, { todos })
         return
       }
+      default: {
+        // A kind this bridge doesn't know (a newer agent's): its words shown, and logged.
+        const words = contentText(update.content) || (typeof update.message === "string" ? update.message : "")
+        if (words.trim()) turn.notice(words.trim())
+        console.error(`${this.name} sent ${update.sessionUpdate}, which Kuvo Code doesn't know.`)
+      }
     }
+  }
+
+  /** What the agent said, with pictures (one it made or sends) shown as such, and links as links. */
+  private content(active: Active, turn: Turn, content: any, kind: "text" | "reasoning") {
+    const picture = content?.type === "image" ? pictureData(content.data, content.mimeType) : content?.type === "resource" && content.resource?.blob ? pictureData(content.resource.blob, content.resource.mimeType) : undefined
+    if (picture) {
+      const id = newID("call")
+      active.toolsSinceText = true
+      turn.toolStart(id, "generate_image", {})
+      turn.toolSucceeded(id, withPictures("", [picture]))
+      return
+    }
+    const text = content?.type === "resource_link" ? `[${content.name ?? content.title ?? content.uri}](${content.uri})` : content?.type === "audio" ? "(a sound clip)" : contentText(content)
+    if (kind === "text") turn.text(text)
+    else turn.reasoning(text)
+  }
+
+  /** A subagent's session's update (the agent keeps its subagents as sessions of their own). */
+  private childUpdate(active: Active, sessionId: string, update: any) {
+    let child = active.children.get(sessionId)
+    // Its task comes first, as its "user" message: kept for its session.
+    if (!child || "prompt" in child) {
+      if (update.sessionUpdate === "user_message_chunk") {
+        active.children.set(sessionId, { prompt: ((child as { prompt: string } | undefined)?.prompt ?? "") + contentText(update.content) })
+        return
+      }
+      const prompt = (child as { prompt: string } | undefined)?.prompt?.trim()
+      const row = `acp-subagent:${sessionId}`
+      active.toolsSinceText = true
+      active.turn.toolStart(row, "subagent", { description: firstLine(prompt) || "A subagent's task", prompt })
+      const run = active.hooks.subagent(row, { title: firstLine(prompt) || "A subagent's task", prompt })
+      child = { run, row, toolsSinceText: false, tools: new Map() }
+      active.children.set(sessionId, child)
+    }
+    const turn = child.run.turn
+    switch (update.sessionUpdate) {
+      case "agent_message_chunk":
+        turn.text(contentText(update.content))
+        return
+      case "agent_thought_chunk":
+        turn.reasoning(contentText(update.content))
+        return
+      case "tool_call":
+      case "tool_call_update": {
+        const id = update.toolCallId
+        if (!id) return
+        const merged = { ...(child.tools.get(id) ?? {}), ...Object.fromEntries(Object.entries(update).filter(([, value]) => value !== undefined && value !== null)) }
+        child.tools.set(id, merged)
+        const kuvo = kuvoTool(merged)
+        if (!turn.hasTool(id)) turn.toolStart(id, kuvo.name, kuvo.input)
+        const { text, pictures } = toolOutput(merged)
+        if (merged.status === "completed") turn.toolSucceeded(id, withPictures(text, pictures))
+        else if (merged.status === "failed") turn.toolFailed(id, text || "The tool failed.")
+        return
+      }
+    }
+  }
+
+  /** An update with no turn here: the start of one the agent began on its own asks the session to take it. */
+  private ownUpdate(params: any, update: any) {
+    const known = this.own
+    if (known) {
+      if (!known.turnedAway) known.updates.push(params)
+      return
+    }
+    if (!["agent_message_chunk", "agent_thought_chunk", "tool_call"].includes(update.sessionUpdate)) return
+    const own = { updates: [params], turnedAway: false }
+    this.own = own
+    if (!(this.onOwnTurn?.({ text: `${this.name} carried on by itself.` }) ?? false)) own.turnedAway = true
   }
 
   /** Words after a tool begin a new step. */
@@ -405,7 +566,7 @@ export class AcpThread implements Thread {
       turn.toolRename(id, kuvo.name)
       if (merged.status !== "completed" && merged.status !== "failed") turn.toolCalled(id, kuvo.input)
     }
-    const output = toolOutput(merged)
+    const { text: output, pictures } = toolOutput(merged)
     const files = (merged.content ?? [])
       .filter((part: any) => part?.type === "diff" && part.path)
       .map((part: any) => fileDiff(part.path, part.oldText ?? undefined, part.newText ?? ""))
@@ -415,7 +576,7 @@ export class AcpThread implements Thread {
     if (typeof exit === "number") metadata.exit = exit
     if (output) metadata.output = output
     const made = merged.status === "completed" && this.sessionID ? (this.flavor.madeFiles?.(merged, this.sessionID) ?? []) : []
-    if (merged.status === "completed") turn.toolSucceeded(id, made.length ? [{ type: "text", text: output }, ...made] : output, metadata)
+    if (merged.status === "completed") turn.toolSucceeded(id, withPictures(output, [...pictures, ...made]), metadata)
     else if (merged.status === "failed") turn.toolFailed(id, output || "The tool failed.", metadata)
     else if (output) turn.toolProgress(id, metadata)
   }
@@ -467,7 +628,30 @@ export class AcpThread implements Thread {
         writeFileSync(params.path, params.content ?? "")
         return {}
       }
+      case "elicitation/create": {
+        // A form the agent (or a tool of its) asks you to fill in, or a page to open.
+        if (!active) return { action: "decline" }
+        if (params?.mode === "url" && params.url) {
+          const answer = await active.hooks.question({ title: `${this.name} asks`, fields: [{ key: "open", title: params.message ?? "Open this page to go on.", type: "external", url: params.url }] })
+          return { action: answer ? "accept" : "decline" }
+        }
+        const schema = params?.requestedSchema ?? {}
+        const required = new Set<string>(Array.isArray(schema.required) ? schema.required : [])
+        const fields = Object.entries((schema.properties ?? {}) as Record<string, any>).map(([key, field]) => elicitationField(key, field, required.has(key)))
+        if (fields[0] && params?.message) fields[0] = { ...fields[0], description: [params.message, fields[0].description].filter(Boolean).join("\n\n") }
+        const answer = await active.hooks.question({ title: `${this.name} asks`, fields: fields.length ? fields : [{ key: "ok", title: params?.message ?? "Go on?", type: "boolean", required: true }] })
+        if (!answer) return { action: "decline" }
+        const content: Record<string, unknown> = {}
+        for (const [key, field] of Object.entries((schema.properties ?? {}) as Record<string, any>)) {
+          const value = answer[key]
+          if (value === undefined || value === null || value === "") continue
+          content[key] = field?.type === "number" || field?.type === "integer" ? Number(value) : field?.type === "boolean" ? value === true || value === "true" : value
+        }
+        return { action: "accept", content }
+      }
     }
+    // One this bridge doesn't answer: said, so its tool isn't silently refused.
+    if (active && !method.startsWith("terminal/")) this.noticeOnce(active, method, `${this.name} asked Kuvo Code for something it can't do yet (${method}).`)
     throw new RPCError(-32601, `Method not found: ${method}`)
   }
 
@@ -501,13 +685,13 @@ function kuvoTool(call: any): { name: string; input: Record<string, unknown> } {
     case "execute":
       return { name: "shell", input: { command: command ?? backticked(call.title) ?? call.title, description: raw.description } }
     case "read":
-      return { name: "read", input: { path } }
+      return { name: "read", input: { ...raw, path, description: call.title } }
     case "edit":
     case "delete":
     case "move":
-      return { name: "edit", input: { path } }
+      return { name: "edit", input: { ...raw, path, description: call.title } }
     case "search":
-      return { name: "grep", input: { pattern: raw.pattern ?? raw.query ?? call.title, path } }
+      return { name: "grep", input: { ...raw, pattern: raw.pattern ?? raw.query ?? call.title, path, description: call.title } }
     case "fetch":
       return { name: raw.url ? "webfetch" : "websearch", input: { url: raw.url, query: raw.query ?? call.title } }
     case "think":
@@ -562,24 +746,42 @@ function contentText(content: any): string {
   return ""
 }
 
-function toolOutput(call: any): string {
+function toolOutput(call: any): { text: string; pictures: ReturnType<typeof pictureData>[] } {
   const parts: string[] = []
+  const pictures: ReturnType<typeof pictureData>[] = []
   for (const part of call.content ?? []) {
-    if (part?.type === "content") parts.push(contentText(part.content))
-    else if (part?.type === "terminal") continue
+    if (part?.type === "content") {
+      const content = part.content
+      if (content?.type === "image") pictures.push(pictureData(content.data, content.mimeType))
+      else if (content?.type === "resource" && content.resource?.blob) pictures.push(pictureData(content.resource.blob, content.resource.mimeType))
+      else if (content?.type === "resource_link") parts.push(`${content.name ?? content.title ?? "Link"}: ${content.uri ?? ""}`)
+      else parts.push(contentText(content))
+    } else if (part?.type === "terminal") continue
   }
   const raw = call.rawOutput
   if (!parts.length && raw) {
-    for (const key of ["output_for_prompt", "combinedOutput", "combined_output", "output", "stdout", "content"]) {
-      const value = raw[key]
-      if (typeof value === "string" && value) {
-        parts.push(value)
-        break
+    // A command's output, its errors too.
+    if (typeof raw === "string") parts.push(raw)
+    else {
+      for (const key of ["output_for_prompt", "combinedOutput", "combined_output", "output", "stdout", "content"]) {
+        const value = raw[key]
+        if (typeof value === "string" && value) {
+          parts.push(value)
+          break
+        }
       }
+      for (const key of ["stderr", "error", "message"]) if (typeof raw[key] === "string" && raw[key] && !parts.includes(raw[key])) parts.push(raw[key])
+      if (!parts.length && typeof raw === "object" && Object.keys(raw).length) parts.push(JSON.stringify(raw, null, 2))
     }
   }
   const text = parts.filter(Boolean).join("\n")
-  return text.length > outputLimit ? text.slice(-outputLimit) : text
+  return { text: text.length > outputLimit ? text.slice(-outputLimit) : text, pictures }
+}
+
+/** A text's first line, short. */
+function firstLine(text: string | undefined): string {
+  const line = (text ?? "").split("\n").find((part) => part.trim())?.trim() ?? ""
+  return line.length > 80 ? line.slice(0, 79) + "…" : line
 }
 
 function errorText(error: unknown): string {
