@@ -18,6 +18,12 @@ struct CommandsSettings: View {
     /// The engine's own, and ones from plugins and MCP servers.
     private var others: [Command] { catalog.commands.filter { !names.contains($0.name) } }
 
+    /// The name a Claude Code command comes over as: its own, or with "-claude" where it's one of
+    /// the engine's (/init, /review), which it would take the place of.
+    private func importedName(_ command: ClaudeCommands.Command) -> String {
+        others.contains { $0.name == command.id } ? command.id + "-claude" : command.id
+    }
+
     var body: some View {
         ScrollingSettingsForm {
             Section {
@@ -53,9 +59,10 @@ struct CommandsSettings: View {
             if !claudeCommands.isEmpty {
                 Section {
                     ForEach(claudeCommands) { command in
+                        let name = importedName(command)
                         HStack(alignment: .firstTextBaseline) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("/" + command.id)
+                                Text("/" + name)
                                 if !command.description.isEmpty {
                                     Text(command.description)
                                         .font(.callout)
@@ -64,13 +71,13 @@ struct CommandsSettings: View {
                                 }
                             }
                             Spacer()
-                            if config.value(at: Self.path + [command.id]) != nil {
+                            if config.value(at: Self.path + [name]) != nil {
                                 Label("Imported", systemImage: "checkmark")
                                     .font(.callout)
                                     .foregroundStyle(.secondary)
                             } else {
                                 Button("Import") {
-                                    config.set(.object(["template": .string(command.template), "description": .string(command.description)]), at: Self.path + [command.id])
+                                    config.set(.object(["template": .string(command.template), "description": .string(command.description)]), at: Self.path + [name])
                                     Analytics.shared.track("command_created", ["from": "claude"])
                                 }
                             }
@@ -155,6 +162,8 @@ private struct CommandEditor: View {
 
     /// Why the name you typed can't be used, if it can't.
     private var problem: String? {
+        // Nothing would be written: what you fill in would be lost.
+        if let broken = config.problem { return "The engine's settings file can't be changed here: \(broken)" }
         if newID.isEmpty {
             return typedName.isEmpty ? nil : "A name needs a letter or a number."
         }

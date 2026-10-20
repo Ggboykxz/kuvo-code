@@ -204,6 +204,8 @@ private struct AgentEditor: View {
 
     /// Why the name you typed can't be used, if it can't.
     private var problem: String? {
+        // Nothing would be written: the instructions you write would be lost.
+        if let broken = app.engineConfig.problem { return "The engine's settings file can't be changed here: \(broken)" }
         if newID.isEmpty {
             return newName.trimmingCharacters(in: .whitespaces).isEmpty ? nil : "A name needs a letter or a number."
         }
