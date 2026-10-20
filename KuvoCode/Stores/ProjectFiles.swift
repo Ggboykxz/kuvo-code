@@ -58,12 +58,13 @@ nonisolated enum ProjectFiles {
         let skip: Set<String> = [".git", "node_modules", "build", "DerivedData", ".build", "Pods", "dist", ".next"]
         if !root.isFileURL { return RemoteShell.files(in: root, skipping: skip, limit: 20_000) ?? [] }
         var files: [String] = []
-        let base = root
-        guard let walker = FileManager.default.enumerator(at: base, includingPropertiesForKeys: [.isDirectoryKey]) else { return [] }
-        for case let url as URL in walker {
-            if skip.contains(url.lastPathComponent) { walker.skipDescendants(); continue }
-            if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == false {
-                files.append(String(url.path.dropFirst(base.path.count + 1)))
+        // Paths relative to the folder as the walk gives them, also where the folder, or one it's
+        // in, is a link (/tmp, a cloud drive's).
+        guard let walker = FileManager.default.enumerator(atPath: root.resolvingSymlinksInPath().path) else { return [] }
+        while let path = walker.nextObject() as? String {
+            if skip.contains((path as NSString).lastPathComponent) { walker.skipDescendants(); continue }
+            if walker.fileAttributes?[.type] as? FileAttributeType != .typeDirectory {
+                files.append(path)
                 if files.count >= 20_000 { break }
             }
         }
