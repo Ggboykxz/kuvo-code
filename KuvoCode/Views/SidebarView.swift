@@ -581,8 +581,12 @@ struct SidebarView: View {
     /// `place`: where the row is, for renaming it there; nil for a row that can't show it (a
     /// conversation search result).
     @ViewBuilder private func menu(for session: Session, in place: Place? = nil) -> some View {
-        // On a machine that's away, the session is as last seen: what it does waits for it.
-        if let engine = app.machines.engine(workspace.waitingMachine(for: session.id)) {
+        // A bot's own conversation (found by a search): the bot's menu. Deleting, archiving or
+        // renaming it as a session would leave the bot without its conversation.
+        if let bot = bots.list.first(where: { $0.sessionID == session.id }) {
+            Button("Edit Bot…") { editBot(bot) }
+        } else if let engine = app.machines.engine(workspace.waitingMachine(for: session.id)) {
+            // On a machine that's away, the session is as last seen: what it does waits for it.
             Text("\(engine.machine.name) isn’t connected")
             switch engine.state {
             case .starting, .downloading: Text("Connecting…")
