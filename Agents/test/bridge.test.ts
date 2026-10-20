@@ -462,6 +462,13 @@ describe("pictures", () => {
       expect(image.mime).toBe("image/jpeg")
       expect(generatedImages(folder, { ImageName: '"pear"' })[0].name).toBe("pear_3.png")
       expect(generatedImages(join(folder, "missing"), {})).toEqual([])
+      // Not named: only one made since the turn began, never your attachment or an older picture.
+      expect(generatedImages(folder, {})).toEqual([])
+      expect(generatedImages(folder, {}, Date.now() + 60_000)).toEqual([])
+      const since = Date.now()
+      await Bun.sleep(20)
+      writeFileSync(join(folder, "made_9.png"), "m")
+      expect(generatedImages(folder, {}, since)[0].name).toBe("made_9.png")
     } finally {
       rmSync(folder, { recursive: true, force: true })
     }

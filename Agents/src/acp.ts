@@ -68,7 +68,7 @@ export interface AcpFlavor {
   /** A tool call that isn't worth a row (Antigravity's start of subagents, which `follow` shows). */
   hides?(call: any): boolean
   /** Files a finished tool call made that it doesn't hand back (Antigravity's generated images). */
-  madeFiles?(call: any, sessionId: string): { type: "file"; uri: string; mime: string; name?: string }[]
+  madeFiles?(call: any, sessionId: string, since: number): { type: "file"; uri: string; mime: string; name?: string }[]
   /** Changes when the agent's program was updated: a process started before starts again. */
   program?(): number
 }
@@ -113,6 +113,8 @@ interface Active {
    * to the tool call that read them: the agent says its reads are done only as the turn ends.
    */
   served: Map<string, { text?: string; error?: string }[]>
+  /** When it began (ms). */
+  started: number
   /** Sessions of its subagents (updates for another session of the agent's), by that session. */
   children: Map<string, { run: SubagentRun; row: string; toolsSinceText: boolean; tools: Map<string, any> } | { prompt: string }>
 }
@@ -305,7 +307,7 @@ export class AcpThread implements Thread {
     if (others.length) text += `\n\nAttached files:\n${others.map((path) => `- ${path}`).join("\n")}`
     prompt.unshift({ type: "text", text })
     return new Promise<RunResult>((resolve) => {
-      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, instructed, children: new Map(), served: new Map() }
+      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, instructed, children: new Map(), served: new Map(), started: Date.now() }
       this.active = active
       turn.startStep()
       active.follower = this.flavor.follow?.(sessionId, turn, hooks)
@@ -377,9 +379,10 @@ export class AcpThread implements Thread {
     const rpc = this.rpc
     if (!own || own.turnedAway || !rpc) return Promise.resolve({ outcome: "succeeded" })
     return new Promise<RunResult>((resolve) => {
-      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, children: new Map(), served: new Map(), own: true }
+      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, children: new Map(), served: new Map(), started: Date.now(), own: true }
       this.active = active
       turn.startStep()
+      if (this.sessionID) active.follower = this.flavor.follow?.(this.sessionID, turn, hooks)
       this.quietly(active)
       for (const update of own.updates) this.notification("session/update", update)
       if (own.ended && this.active === active) this.end(active, "succeeded")
@@ -613,7 +616,7 @@ export class AcpThread implements Thread {
     const exit = merged.rawOutput?.exit_code ?? merged.rawOutput?.exitCode
     if (typeof exit === "number") metadata.exit = exit
     if (output) metadata.output = output
-    const made = merged.status === "completed" && this.sessionID ? (this.flavor.madeFiles?.(merged, this.sessionID) ?? []) : []
+    const made = merged.status === "completed" && this.sessionID ? (this.flavor.madeFiles?.(merged, this.sessionID, active.started) ?? []) : []
     if (merged.status === "completed") turn.toolSucceeded(id, withPictures(output, [...pictures, ...made]), metadata)
     else if (merged.status === "failed") turn.toolFailed(id, output || "The tool failed.", metadata)
     else if (output) turn.toolProgress(id, metadata)

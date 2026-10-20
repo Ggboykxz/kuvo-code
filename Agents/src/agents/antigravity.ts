@@ -71,9 +71,14 @@ export function antigravitySubagents(args: any): SubagentTask[] {
   }))
 }
 
-/** The image a generate_image call saved in the conversation's folder (`<image_name>_<time>.jpg`), newest first. */
-export function generatedImages(folder: string, input: Record<string, unknown>): { type: "file"; uri: string; mime: string; name: string }[] {
+/**
+ * The image a generate_image call saved in the conversation's folder (`<image_name>_<time>.jpg`),
+ * the newest; one saved since the turn began (`since`, ms), when it isn't named (the folder holds
+ * your attachments and earlier pictures too).
+ */
+export function generatedImages(folder: string, input: Record<string, unknown>, since?: number): { type: "file"; uri: string; mime: string; name: string }[] {
   const stem = String(decoded(input.image_name ?? input.ImageName ?? "") ?? "")
+  if (!stem && since === undefined) return []
   let names: string[]
   try {
     names = readdirSync(folder)
@@ -91,6 +96,7 @@ export function generatedImages(folder: string, input: Record<string, unknown>):
         return 0
       }
     })() }))
+    .filter((file) => stem || file.at >= since!)
     .sort((a, b) => b.at - a.at)
   const newest = images[0]
   return newest ? [{ type: "file", uri: pathToFileURL(join(folder, newest.name)).href, mime: newest.type!, name: newest.name }] : []
@@ -128,20 +134,33 @@ export class AntigravityFollower {
   private seen = new Set<number>()
   private pending: SubagentTask[] = []
   private children = new Map<string, Child>()
-  private timer: ReturnType<typeof setInterval>
+  private timer?: ReturnType<typeof setInterval>
+  private turn?: Turn
+  private hooks?: TurnHooks
 
   constructor(
     private readonly brain: string,
     private readonly sessionId: string,
-    private readonly turn: Turn,
-    private readonly hooks: TurnHooks,
-    every = 1_000,
+    private readonly every = 1_000,
   ) {
-    this.timer = setInterval(() => this.read(), every)
+    // What's there already (a conversation picked up again) was shown with its own turns.
+    for (const step of this.steps(sessionId)) this.seen.add(step.step_index)
+  }
+
+  /** Follows a turn of the conversation: each of its turns in turn, the one it began on its own too. */
+  follow(turn: Turn, hooks: TurnHooks): this {
+    clearInterval(this.timer)
+    this.turn = turn
+    this.hooks = hooks
+    // One still at work as the last turn ended was ended with it: what it does next opens its session again.
+    for (const child of this.children.values()) if (!child.ended && child.run.turn.isEnded) child.ended = true
+    this.timer = setInterval(() => this.read(), this.every)
+    return this
   }
 
   stop() {
     clearInterval(this.timer)
+    this.timer = undefined
     this.read()
     // One that finished its work is done; the rest end with the turn.
     for (const child of this.children.values()) if (!child.ended && this.isDone(child)) this.end(child)
@@ -165,7 +184,7 @@ export class AntigravityFollower {
   }
 
   read() {
-    if (this.turn.isEnded) return
+    if (!this.turn || this.turn.isEnded) return
     for (const step of this.steps(this.sessionId)) {
       if (this.seen.has(step.step_index) || step.status === "RUNNING") continue
       this.seen.add(step.step_index)
@@ -182,9 +201,9 @@ export class AntigravityFollower {
     if (this.children.has(id)) return
     const task = this.pending.shift() ?? { title: "A subagent's task" }
     const row = `agy-subagent:${id}`
-    this.turn.toolStart(row, "subagent", { description: task.title, prompt: task.prompt, agent: task.agent })
-    const run = this.hooks.subagent(row, task)
-    this.turn.toolSucceeded(row, "Started.", { sessionID: run.sessionID })
+    this.turn!.toolStart(row, "subagent", { description: task.title, prompt: task.prompt, agent: task.agent })
+    const run = this.hooks!.subagent(row, task)
+    this.turn!.toolSucceeded(row, "Started.", { sessionID: run.sessionID })
     this.children.set(id, { id, row, task, run, shown: new Map(), open: [], results: new Map(), toolsSinceText: false, ended: false })
   }
 
@@ -195,7 +214,7 @@ export class AntigravityFollower {
       if (was === step.status) continue
       // More to do after it was done (a message for it, a timer of its own): its session goes on.
       if (child.ended && was === undefined) {
-        child.run = this.hooks.subagent(child.row, { ...child.task, sessionID: child.run.sessionID })
+        child.run = this.hooks!.subagent(child.row, { ...child.task, sessionID: child.run.sessionID })
         child.ended = false
         child.toolsSinceText = false
       }
@@ -571,6 +590,7 @@ export class AntigravityAgent implements Agent {
 
   thread(session: Session, state: Record<string, unknown>): Thread {
     const agent = this
+    const followers = new Map<string, AntigravityFollower>()
     return new AcpThread(
       {
         fileSystem: true,
@@ -579,10 +599,15 @@ export class AntigravityAgent implements Agent {
         // Google's quotas are each model's own.
         limitScope: "model",
         // Its subagents: from its own record of the conversation (it doesn't tell them).
-        follow: (sessionId, turn, hooks) => new AntigravityFollower(join(agent.profile, "antigravity-acp", "brain"), sessionId, turn, hooks),
+        // (One for the conversation, from turn to turn: what it has shown isn't shown again.)
+        follow: (sessionId, turn, hooks) => {
+          let follower = followers.get(sessionId)
+          if (!follower) followers.set(sessionId, (follower = new AntigravityFollower(join(agent.profile, "antigravity-acp", "brain"), sessionId)))
+          return follower.follow(turn, hooks)
+        },
         hides: (call) => /\b(start_subagent|invoke_subagent)\b/.test(`${call?.title ?? ""} ${call?.rawInput?.name ?? ""}`),
         // An image it made is saved in its folder for the conversation, not handed back.
-        madeFiles: (call, sessionId) => (/\bgenerate_image\b/.test(String(call?.title ?? "")) ? generatedImages(join(agent.profile, "antigravity-acp", "brain", sessionId), call?.rawInput ?? {}) : []),
+        madeFiles: (call, sessionId, since) => (/\bgenerate_image\b/.test(String(call?.title ?? "")) ? generatedImages(join(agent.profile, "antigravity-acp", "brain", sessionId), call?.rawInput ?? {}, since) : []),
         authMethod: () => "oauth-personal",
         async command() {
           if (!agent.isInstalled) throw new Error("Sign in to Antigravity in Settings › Accounts first.")
