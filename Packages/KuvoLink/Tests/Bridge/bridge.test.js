@@ -157,7 +157,9 @@ test("the host lets in a phone with the pairing token once, then by its key", as
   assert.deepEqual(saved.phones.map(p => [p.key, p.name]), [[link.publicOf(phone.key).toString("base64url"), "Test iPhone"]]);
   // Where its notifications go.
   assert.equal(saved.phones[0].address, phone.address.toString("base64url"));
-  assert.equal((fs.statSync(link.LINK_FILE).mode & 0o777).toString(8), "600");
+  // The key's own file: 600 where the system has such modes. Windows has none — the
+  // profile folder's own permissions are what keep the key there.
+  if (process.platform !== "win32") assert.equal((fs.statSync(link.LINK_FILE).mode & 0o777).toString(8), "600");
 
   // The token is used up; the paired phone comes back without it.
   const late = phoneFor(host, hostKey);
