@@ -189,7 +189,7 @@ struct SkillsSettings: View {
     }
 
     private func remove(_ id: String) {
-        try? FileManager.default.trashItem(at: folder.appending(path: id), resultingItemURL: nil)
+        try? FileManager.default.moveToTrash(folder.appending(path: id))
         Task { await refresh() }
     }
 
@@ -341,7 +341,7 @@ private struct SkillEditor: View {
 
     private func delete() {
         do {
-            try FileManager.default.trashItem(at: file.deletingLastPathComponent(), resultingItemURL: nil)
+            try FileManager.default.moveToTrash(file.deletingLastPathComponent())
             done()
         } catch {
             failure = error.localizedDescription
@@ -466,7 +466,7 @@ private struct RepositorySkills: View {
                         RemoteSkillRow(skill: skill, installed: installed[skill.name], isWorking: working == skill.id) {
                             confirming = skill
                         } remove: {
-                            try? FileManager.default.trashItem(at: folder.appending(path: skill.name), resultingItemURL: nil)
+                            try? FileManager.default.moveToTrash(folder.appending(path: skill.name))
                             reload()
                         }
                     }

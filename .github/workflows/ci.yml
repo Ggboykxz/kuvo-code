@@ -66,6 +66,9 @@ jobs:
           bun run check
           bun test
 
+      - name: Test the app
+        run: ./scripts/test-app.sh
+
       # The same scripts the release workflow runs, signed ad hoc here.
       - name: Build the app
         run: ./scripts/build-app.sh

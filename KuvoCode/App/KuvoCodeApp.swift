@@ -2,7 +2,20 @@ import SwiftUI
 import OpenCodeKit
 import UsageKit
 
+/// Starts the app, or, when it only hosts the app's tests, an app that does nothing: no window,
+/// engine, menu bar item or stores reading the real data. The tests build what they need.
 @main
+enum Launch {
+    static func main() {
+        if AppInfo.isHostingTests {
+            NSApplication.shared.setActivationPolicy(.accessory)
+            NSApplication.shared.run()
+        } else {
+            KuvoCodeApp.main()
+        }
+    }
+}
+
 struct KuvoCodeApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
 

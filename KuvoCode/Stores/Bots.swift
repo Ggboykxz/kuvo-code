@@ -407,7 +407,7 @@ final class Bots {
         await app?.workspace.delete(bot.sessionID)
         if bot.machine == nil, FileManager.default.fileExists(atPath: bot.folder) {
             do {
-                try FileManager.default.trashItem(at: URL(filePath: bot.folder), resultingItemURL: nil)
+                try FileManager.default.moveToTrash(URL(filePath: bot.folder))
             } catch {
                 log.error("A deleted bot's folder couldn't go to the Trash: \(error.localizedDescription, privacy: .public)")
             }

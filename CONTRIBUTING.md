@@ -57,14 +57,24 @@ it, set `KUVO_OPENCODE_BINARY` to its path in the scheme's environment.
 
 ### Tests
 
-The engine client and the usage tracker have tests:
+The app, the engine client and the usage tracker have tests:
 
 ```sh
+./scripts/test-app.sh
 cd Packages/OpenCodeKit && swift test
 cd Packages/UsageKit && swift test
 cd Packages/KuvoLink && swift test && node --test Tests/Bridge/*.test.js
 cd Agents && bun install && bun test && bunx tsc --noEmit
 ```
+
+`KuvoCodeTests` tries what the app does on its own code, scenario by scenario:
+Discard in Changes on throwaway git repositories, say, checking what's on disk
+after. The app hosting them starts nothing (no window, engine or menu bar item),
+and the tests keep their repositories, data and Trash in the temporary folder.
+Run them with the script, not from a checkout's own build folder: a copy of the
+app built under Desktop or Documents waits on a privacy prompt while tests run.
+`ONLY=KuvoCodeTests/ChangesDiscardTests` runs one suite. Test what people see
+happen, with the app's real parts; leave out what only restates the code.
 
 Recorded engine responses in `Tests/OpenCodeKitTests/Fixtures` drive most of
 OpenCodeKit's tests. `LiveServerTests` run against a real binary when

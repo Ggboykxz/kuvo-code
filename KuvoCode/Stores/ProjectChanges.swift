@@ -285,7 +285,7 @@ nonisolated enum Git {
 
     /// To the Trash on this Mac; on a machine, which has none, to `~/.kuvo-code/trash` there.
     private static func trash(_ url: URL) throws {
-        if url.isFileURL { return try FileManager.default.trashItem(at: url, resultingItemURL: nil) }
+        if url.isFileURL { return try FileManager.default.moveToTrash(url) }
         if let failure = RemoteShell.trash(url) { throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: failure]) }
     }
 
