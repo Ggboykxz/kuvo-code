@@ -20,6 +20,26 @@ export function sanitizeHtml(html: string): string {
   return doc.body.innerHTML;
 }
 
+/// The matches of a find, marked in the text — the text nodes only, so the markup the
+/// markdown made is left as it is.
+function highlight(root: Node, query: string) {
+  const needle = query.toLowerCase();
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const texts: Text[] = [];
+  while (walker.nextNode()) texts.push(walker.currentNode as Text);
+  for (const node of texts) {
+    const value = node.textContent ?? "";
+    const at = value.toLowerCase().indexOf(needle);
+    if (at < 0) continue;
+    const mark = document.createElement("mark");
+    mark.className = "find-mark";
+    mark.textContent = value.slice(at, at + needle.length);
+    const rest = document.createTextNode(value.slice(at + needle.length));
+    const before = document.createTextNode(value.slice(0, at));
+    node.replaceWith(before, mark, rest);
+  }
+}
+
 /// The formulas, as the Mac app's MathText renders them: $inline$ and $$block$$.
 /// The code is put aside first, so a dollar sign in a snippet stays a dollar sign.
 export function renderMath(text: string): string {
@@ -46,7 +66,7 @@ export function renderMath(text: string): string {
   return source.replace(/\u0000(\d+)\u0000/g, (_, index) => kept[Number(index)]);
 }
 
-export function renderMarkdown(text: string, files: string[] = []): string {
+export function renderMarkdown(text: string, files: string[] = [], query = ""): string {
   const html = sanitizeHtml(marked.parse(renderMath(text), { breaks: true, gfm: true }) as string);
   const doc = new DOMParser().parseFromString(html, "text/html");
   doc.querySelectorAll("pre").forEach(pre => {
@@ -76,6 +96,8 @@ export function renderMarkdown(text: string, files: string[] = []): string {
       code.replaceWith(link);
     });
   }
+  // The Mac's find: what is found is marked in the text (FindBar.swift).
+  if (query.trim().length > 1) highlight(doc.body, query.trim());
   return doc.body.innerHTML;
 }
 

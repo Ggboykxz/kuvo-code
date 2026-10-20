@@ -26,6 +26,7 @@ const sources = {
   design: read("harness", "ui", "DESIGN.md"),
   motion: read("app", "src", "motion.ts"),
   symbols: read("app", "src", "components", "symbols.tsx"),
+  lib: read("app", "src", "lib.ts"),
   changes: read("app", "src", "Changes.tsx"),
   styles: read("harness", "ui", "style.css"),
   shimmer: read("app", "src", "components", "ai-elements", "shimmer.tsx"),
@@ -483,6 +484,22 @@ const checks = [
     // (Composer.swift:22-24).
     assert.match(app, /The composer's history/);
     assert.match(app, /event\.key === "ArrowUp" \|\| event\.key === "ArrowDown"/);
+  }],
+
+  ["the find is invoked, and it is the Mac's bar (FindBar.swift:251-291)", ({ app, css, lib, rule }) => {
+    assert.match(app, /function FindBar\(/);
+    assert.match(app, /placeholder="Find in Conversation"/);
+    assert.match(app, /state\.findOpen = true;/);
+    assert.match(rule(".find-row {"), /height: 38px/);
+    // The count, the arrows, and Done.
+    assert.match(app, /places === 1 \? "result" : "results"/);
+    assert.match(app, /"No results"/);
+    assert.match(app, /id="find-previous"/);
+    assert.match(app, /id="find-next"/);
+    assert.match(app, /id="find-done"/);
+    // And what it found is marked in the words.
+    assert.match(lib, /mark\.className = "find-mark"/);
+    assert.match(css, /\.find-mark \{/);
   }],
 
   ["the window is built by Next.js, and exported as the static files the harness serves", ({ next, page, build }) => {

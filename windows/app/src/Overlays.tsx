@@ -96,7 +96,7 @@ export function Palette() {
   const coreActions: PaletteRow[] = [
     { id: "action:new-session", kind: "action", title: "New Session", shortcut: keysOf("new-session"), run: async () => { await newSession(); } },
     { id: "action:stop", kind: "action", title: "Stop", shortcut: keysOf("stop"), run: async () => { await stopRun(); } },
-    { id: "action:find", kind: "action", title: "Find in Conversation", shortcut: keysOf("find"), run: () => { (document.getElementById("find") as HTMLInputElement | null)?.focus(); } },
+    { id: "action:find", kind: "action", title: "Find in Conversation…", shortcut: keysOf("find"), run: () => { (document.getElementById("find") as HTMLInputElement | null)?.focus(); } },
     { id: "action:save", kind: "action", title: "Save the conversation as Markdown", shortcut: keysOf("save"), run: async () => { await exportConversation(); } },
     { id: "action:files", kind: "action", title: "Show Files", shortcut: keysOf("files"), run: () => { state.drawerOpen = true; state.drawerTab = "files"; render(); } },
     { id: "action:changes", kind: "action", title: "Show Changes", shortcut: keysOf("changes"), run: () => { state.drawerOpen = true; state.drawerTab = "changes"; render(); } },

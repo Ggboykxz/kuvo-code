@@ -22,6 +22,7 @@ export const state: AppState = {
   openSessions: [],
   transcripts: new Map(),
   findQuery: "",
+  findOpen: false,
   agent: "",
   split: null,
   projects: [],

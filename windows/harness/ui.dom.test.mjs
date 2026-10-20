@@ -349,6 +349,17 @@ test("the page, in a browser, against the real engine", {
   await page.element("settings-back").click();
   await page.seen("the settings to close", () => document.getElementById("settings-modal")?.hidden === true, null, 10_000);
 
+  // The find: it is invoked, and it is the Mac's bar over the conversation.
+  await page.page.keyboard.press("Control+f");
+  await page.seen("the find bar to open", () => Boolean(document.getElementById("find-bar")), null, 10_000);
+  await page.page.locator("#find").fill("hello");
+  await page.seen("the find to count what it found", () => {
+    const count = document.getElementById("find-bar")?.querySelector(".find-count")?.textContent ?? "";
+    return /\d+ \/ \d+ result/.test(count);
+  }, null, 10_000);
+  await page.page.keyboard.press("Escape");
+  await page.seen("the find bar to close", () => !document.getElementById("find-bar"), null, 10_000);
+
   // The palette: it finds things, and it shows the keys that do the things.
   await page.page.keyboard.press("Control+K");
   await page.seen("the palette to open", () => document.getElementById("palette")?.hidden === false, null, 10_000);

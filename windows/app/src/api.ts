@@ -166,6 +166,8 @@ export interface AppState {
   openSessions: string[];
   transcripts: Map<string, Transcript>;
   findQuery: string;
+  /** Whether the find bar is open (FindBar.swift:251-291). */
+  findOpen: boolean;
   agent: string;
   split: string | null;
   projects: string[];

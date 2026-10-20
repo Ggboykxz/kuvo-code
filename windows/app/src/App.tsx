@@ -230,6 +230,97 @@ function WorkingLine({ transcript }: { transcript: Transcript }) {
   );
 }
 
+/// The find bar, the Mac's (FindBar.swift:251-291): the magnifier and the field in a
+/// 38 pt row, the count of what was found, the two arrows that step through it, and Done.
+function FindBar() {
+  useStore();
+  const query = state.findQuery.trim();
+  const [at, setAt] = useState(0);
+  const input = useRef<HTMLInputElement>(null);
+  // What the find reads: the messages that have come, and the ones still on their way.
+  const messages = [
+    ...(state.transcript?.entries ?? []).filter(entry => entry.kind === "user" || entry.kind === "assistant"),
+    ...(state.transcript?.pending ?? []),
+  ];
+  const matches = messages
+    .map(entry => ({ entry, count: countOf(entryText(entry), query) }))
+    .filter(item => item.count > 0);
+  const places = matches.reduce((sum, item) => sum + item.count, 0);
+  const current = Math.min(at, Math.max(places - 1, 0));
+  useEffect(() => {
+    if (!state.findOpen) return;
+    input.current?.focus();
+    input.current?.select();
+  }, [state.findOpen]);
+  const step = (delta: number) => {
+    if (!places) return;
+    const next = (current + delta + places) % places;
+    setAt(next);
+    // The message the match is in is brought into view.
+    let seen = 0;
+    for (const item of matches) {
+      seen += item.count;
+      if (next < seen) {
+        const node = document.querySelector(`[data-entry="${item.entry.id ?? ""}"]`);
+        node?.scrollIntoView({ block: "center" });
+        break;
+      }
+    }
+  };
+  return (
+    <div id="find-bar" className="find-bar">
+      <div className="find-row">
+        <Symbol name="magnifyingglass" size={13} />
+        <input
+          ref={input}
+          id="find"
+          className="find-field"
+          placeholder="Find in Conversation"
+          spellCheck={false}
+          value={state.findQuery}
+          onChange={event => { state.findQuery = event.target.value; setAt(0); render(); }}
+          onKeyDown={event => {
+            if (event.key === "Enter") { event.preventDefault(); step(event.shiftKey ? -1 : 1); }
+            if (event.key === "Escape") { event.preventDefault(); state.findOpen = false; render(); }
+          }}
+        />
+        <span className="find-count">
+          {query.length < 2 ? "" : places ? `${current + 1} / ${places} ${places === 1 ? "result" : "results"}` : "No results"}
+        </span>
+        <button id="find-previous" className="find-action" title="Previous Result (Shift+Return)" aria-label="Previous Result" disabled={!places} onClick={() => step(-1)}>
+          <Symbol name="arrow.up" size={12} />
+        </button>
+        <button id="find-next" className="find-action" title="Next Result (Return)" aria-label="Next Result" disabled={!places} onClick={() => step(1)}>
+          <Symbol name="arrow.down" size={12} />
+        </button>
+        <button id="find-done" className="find-action" title="Done (Esc)" aria-label="Done" onClick={() => { state.findOpen = false; render(); }}>
+          <Symbol name="xmark" size={12} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/// The words of a message, as the find reads them.
+function entryText(entry: { text?: string; parts?: { type: string; text?: string }[] }) {
+  if (entry.text) return entry.text;
+  return (entry.parts ?? []).map(part => (part.type === "text" || part.type === "reasoning" ? part.text ?? "" : "")).join("\n");
+}
+
+/// How many times a phrase is in a text.
+function countOf(text: string, query: string) {
+  if (query.length < 2) return 0;
+  const haystack = text.toLowerCase();
+  const needle = query.toLowerCase();
+  let count = 0;
+  let at = haystack.indexOf(needle);
+  while (at >= 0) {
+    count += 1;
+    at = haystack.indexOf(needle, at + needle.length);
+  }
+  return count;
+}
+
 /// The row itself: the summary, and each step when it is opened.
 function StepsRow({ entry }: { entry: TranscriptEntry }) {
   const [open, setOpen] = useState(false);
@@ -716,14 +807,6 @@ function Header() {
             </button>
           </>
         )}
-        <input
-          id="find"
-          className="file-search header-find"
-          placeholder="Find in Conversation…"
-          spellCheck={false}
-          value={state.findQuery}
-          onChange={event => { state.findQuery = event.target.value; render(); }}
-        />
         <span id="engine" className={`engine sr-only ${running ? "up" : state.engine?.status === "starting" ? "starting" : "down"}`} title="The engine on this machine">
           {engineText}
         </span>
@@ -1458,7 +1541,9 @@ function runShortcut(id: string) {
       void exportConversation();
       return;
     case "find":
-      (document.getElementById("find") as HTMLInputElement | null)?.focus();
+      // The Mac's find is invoked, not always there (App menu › Find in Conversation…).
+      state.findOpen = true;
+      render();
       return;
     case "settings":
       state.settingsOpen = true;
@@ -1583,6 +1668,7 @@ export function App() {
         <section id="conversation" className="card conversation-card">
           <div className="card-fade" aria-hidden="true" />
           <CardHeader />
+          {state.findOpen ? <FindBar /> : null}
           <div id="empty" className="empty" hidden={hasSession}>
             <h1>{needsFolder ? "Open a folder" : "A session to work in"}</h1>
             <p>
