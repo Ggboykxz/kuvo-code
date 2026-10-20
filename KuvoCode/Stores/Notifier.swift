@@ -124,14 +124,13 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             // A path or a name made of words (a branch, a package, a test, web3Provider,
             // parseHTML5Document): each long part reads as words and numbers, a few letters
             // each on average, where a key's change case or turn to digits every letter or two.
-            // UUIDs, a hash on its own, in a path, after + or - (not a key's) or after a hash's name
-            // (a commit, an object, a cache key; see hashNames), macOS's temporary
+            // UUIDs, a hash (see markingHashes), macOS's temporary
             // folders and short hex names (a crate's registry, a container) are names too; a
             // longer run of hex digits with letters in it is a key's. A number (a timestamp) is a
             // word.
-            let plain = run
+            let before = source.substring(with: NSRange(location: max(0, match.range.location - 32), length: min(32, match.range.location)))
+            let plain = Self.markingHashes(in: run, after: before)
                 .replacingOccurrences(of: #"(?<![0-9A-Fa-f])[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![0-9A-Fa-f])"#, with: "u", options: .regularExpression)
-                .replacingOccurrences(of: #"(?:(?<![^/+-])(?<!(?i:secret|token|key|password|passwd|pass|pwd)-)|(?<=(?i:"# + hashNames + #")[=:_-]))([0-9a-f]{40}|[0-9a-f]{64})(?![0-9A-Za-z])"#, with: "h", options: .regularExpression)
                 .replacingOccurrences(of: #"/var/folders/[^/]+/[^/]+"#, with: "/var/folders/t/t", options: .regularExpression)
             let wordy = plain.split(whereSeparator: { "/-_.".contains($0) }).allSatisfy { part in
                 if part.count < 12 { return true }
@@ -147,12 +146,38 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     }
 
     /// Names that say the hex after them is a hash, not a key: a commit's, an object's, a
-    /// checksum, a cache key, a public key (GIT_COMMIT=…, --sha256=…, "cacheKey": …).
-    private nonisolated static let hashNames = #"commit|sha|sha1|sha256|sha512|rev|revision|hash|ref|head|onto|checksum|digest|etag|integrity|fingerprint|cache[ _.-]?key|public[ _.-]?key|object|oid|tree|parent|blob|base|id|uuid|tag|build|version"#
+    /// checksum, a cache key, a public key (GIT_COMMIT=…, --sha256=…, "cacheKey": …, md5: …).
+    private nonisolated static let hashNames = #"commit|sha|sha1|sha256|sha512|md5|rev|revision|hash|ref|head|onto|checksum|digest|etag|integrity|fingerprint|cache[ _.-]?key|public[ _.-]?key|object|oid|tree|parent|blob|base|id|uuid|tag|build|version|release"#
 
-    /// A run of hex digits after a name and = or : (however it's quoted), as a key's value is.
-    private nonisolated static let hexAfterName = try! NSRegularExpression(pattern: #"(?<=[A-Za-z0-9_])["']?\s*[:=]\s*["']?([0-9a-fA-F]{32,})(?![0-9A-Za-z])"#)
-    private nonisolated static let endsInHashName = try! NSRegularExpression(pattern: "(?i)(?:" + hashNames + #")["']?$"#)
+    /// The name just before a value (in `prefix`, the text up to it), without what's between
+    /// them: `"encryptionKey` of `"encryptionKey": "`.
+    private nonisolated static func trimmedName(_ prefix: String) -> String {
+        prefix.replacingOccurrences(of: #"[\s:=>"'\]\\_-]+$"#, with: "", options: .regularExpression)
+    }
+
+    /// Whether the name ending `prefix` is a secret's: one with secret, private, pass or token in
+    /// it (SECRET_KEY_BASE), or a key's (not a cache key's or a public key's).
+    nonisolated static func isSecretName(_ prefix: String) -> Bool {
+        let name = trimmedName(prefix)
+        let word = name.split(whereSeparator: { $0.isWhitespace || "([{,;\"'=/".contains($0) }).last.map(String.init) ?? ""
+        if word.range(of: #"(?i)secret|private|pass|pwd|token|credential"#, options: .regularExpression) != nil { return true }
+        return name.range(of: #"(?i)key$"#, options: .regularExpression) != nil
+            && name.range(of: #"(?i)(cache|public)[ _.-]?key$"#, options: .regularExpression) == nil
+    }
+
+    /// Whether `prefix`, the text just before a hex value, says it's a hash: a hash's name ends it
+    /// and no secret's word is in that name, or it's an image's tag (ghcr.io/acme/web:…).
+    nonisolated static func namesHash(_ prefix: String) -> Bool {
+        if prefix.hasSuffix(":"), let token = prefix.dropLast().split(whereSeparator: \.isWhitespace).last,
+           token.contains(where: { "/.".contains($0) }), prefix.dropLast().last.map({ !$0.isWhitespace }) == true {
+            return true
+        }
+        return !isSecretName(prefix) && trimmedName(prefix).range(of: "(?i)(?:" + hashNames + ")s?$", options: .regularExpression) != nil
+    }
+
+    /// A run of hex digits after a name, a separator and maybe quotes (=, :, :=, =>,
+    /// ENV['…'] =, an escaped JSON quote), on one line: a key's value, as it's written.
+    private nonisolated static let hexAfterName = try! NSRegularExpression(pattern: #"(?<=[A-Za-z0-9_])(?:\\?["'])?\]?[ \t]*(?::=|=>|[:=])[ \t]*(?:\\?["'])?([0-9a-fA-F]{32,})(?![0-9A-Za-z])"#)
 
     /// `text` with each run of hex digits after a name as dots, unless the name says it's a hash:
     /// ENCRYPTION_KEY="…", "AESKey": …, SIGNATURE=… hidden; GIT_COMMIT=…, sha256: … shown.
@@ -160,11 +185,35 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         let source = text as NSString
         var result = text
         for match in hexAfterName.matches(in: text, range: NSRange(location: 0, length: source.length)).reversed() {
-            let nameStart = max(0, match.range.location - 24)
-            let before = source.substring(with: NSRange(location: nameStart, length: match.range.location - nameStart))
-            guard endsInHashName.firstMatch(in: before, range: NSRange(location: 0, length: (before as NSString).length)) == nil,
-                  let value = Range(match.range(at: 1), in: result) else { continue }
-            result.replaceSubrange(value, with: "•••")
+            let value = match.range(at: 1)
+            let start = max(0, value.location - 32)
+            let prefix = source.substring(with: NSRange(location: start, length: value.location - start))
+            guard !namesHash(prefix), let range = Range(value, in: result) else { continue }
+            result.replaceSubrange(range, with: "•••")
+        }
+        return result
+    }
+
+    private nonisolated static let hexPart = try! NSRegularExpression(pattern: #"(?<![0-9A-Za-z])[0-9a-f]{32,}(?![0-9A-Za-z])"#)
+
+    /// `run` (after `before`, the text ahead of it) with each hash in it as "h", to be read as a
+    /// name: a commit's (40 or 64 digits) on its own, in a path or after + or - (not a key's, as
+    /// api-key-…), or any run of hex digits a hash's name comes before (md5: …, GIT_COMMIT=…).
+    nonisolated static func markingHashes(in run: String, after before: String) -> String {
+        let source = run as NSString
+        var result = run
+        for hit in hexPart.matches(in: run, range: NSRange(location: 0, length: source.length)).reversed() {
+            let prefix = String((before + source.substring(to: hit.range.location)).suffix(32))
+            let isCommit = hit.range.length == 40 || hit.range.length == 64
+            let isHash: Bool
+            if isCommit, prefix.last.map({ $0.isWhitespace || "/+\"'([".contains($0) }) ?? true {
+                isHash = true
+            } else if isCommit, prefix.hasSuffix("-") {
+                isHash = !isSecretName(prefix)
+            } else {
+                isHash = namesHash(prefix)
+            }
+            if isHash, let range = Range(hit.range, in: result) { result.replaceSubrange(range, with: "h") }
         }
         return result
     }
