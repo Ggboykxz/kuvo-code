@@ -125,6 +125,18 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     new shape — the command line a process tells on Windows (the process list, where there
     is no `/proc`), the bridge's own `isBridge` and `bridgeSpawnOptions`, and the pid file
     that has to go when Windows gives no `SIGTERM`. The pull request is mergeable again.
+  - **2.63 (this change). The engine's events reach the conversation, and the working
+    mark is the Mac's own.** The page was listening for event names the engine never sends
+    (`message.part.updated`), so the words of a reply arrived only when the page was
+    reloaded, and the Stop button stayed: the run never ended on screen. The names are the
+    engine's own now (`session.text.delta`, `session.execution.succeeded`) — the same ones
+    the Mac's transcript reads (`OpenCodeKit/Events/Transcript.swift`). The measure of "the
+    agent is at work" takes both halves of the Mac's own: the conversation's last words are
+    unfinished *and* the engine still has the session among the active ones
+    (`SessionModel.swift:573-587`). And the app's prompt mark painted a stroke of 0.019 pt
+    where the Mac's is 1.21 pt — the icon's own proportions are the mark's now, and the
+    mark draws itself in short dashes over a faint copy of itself, as the Mac's spinner
+    does (`Spinner.swift:1-177`).
   - **2.61 (this change). The provider's marks.** The Mac draws the maker's mark beside
     each model (`ProviderLogo.swift`), monochrome so it follows the ink, or in the maker's
     own colour where it has one. The marks themselves are not published as a package, but
