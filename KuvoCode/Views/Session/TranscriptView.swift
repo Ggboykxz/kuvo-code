@@ -192,7 +192,7 @@ struct TranscriptView: View {
     /// The rows, laid out by a stack of their own (see `RowStack`).
     private func rowStack(_ rows: [Row]) -> some View {
         RowStack(items: rows, id: \.id, same: ==, estimate: Self.estimate, animatesNew: !rowCache.isBulk) { row, index in
-            RowView(row: row, directory: model.session.location.directory, folders: model.folders, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" && !isOffline ? { model.buildPlan() } as () -> Void : nil, reply: model.reply(to:))
+            RowView(row: row, directory: model.session.location.directory, folders: model.folders, heard: model.heard, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" && !isOffline ? { model.buildPlan() } as () -> Void : nil, reply: model.reply(to:))
                 .equatable()
                 .environment(\.findHighlight, find.highlight(for: row.id))
                 .padding(.top, index == 0 ? 0 : row.spacing(after: rows[index - 1]))
@@ -203,7 +203,7 @@ struct TranscriptView: View {
     /// The rows, in the lazy stack (KUVO_PERF_LAZY).
     @ViewBuilder private func stackRows(_ rows: [Row]) -> some View {
         ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-            RowView(row: row, directory: model.session.location.directory, folders: model.folders, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" && !isOffline ? { model.buildPlan() } as () -> Void : nil, reply: model.reply(to:))
+            RowView(row: row, directory: model.session.location.directory, folders: model.folders, heard: model.heard, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" && !isOffline ? { model.buildPlan() } as () -> Void : nil, reply: model.reply(to:))
                 .equatable()
                 .environment(\.findHighlight, find.highlight(for: row.id))
                 .conversationRow(row.id)
@@ -423,17 +423,19 @@ struct TranscriptView: View {
             // Since when nothing has come back from the model: your message, or a step, with no
             // step writing or running a tool after it (a step stays open while its tools run).
             var quiet: Milliseconds?
+            var followsHeard = false
             switch messages.last {
             case .assistant(let step)?:
                 // Partway through its reply (not a tool at work): since it last sent anything, so a
                 // reply that stalls midway says so as well.
                 let toolRuns = step.content.contains { if case .tool(let call) = $0, case .running = call.state { true } else { false } }
                 quiet = step.time.completed ?? (step.content.isEmpty ? step.time.created : toolRuns ? nil : model.transcript.lastHeard)
+                followsHeard = step.time.completed == nil && !step.content.isEmpty && !toolRuns
             case .user(let message)?: quiet = message.time.created
             case .synthetic(let notice)?, .system(let notice)?: quiet = notice.time.created
             default: break
             }
-            rows.append(.working(since: turn.started, quiet: quiet))
+            rows.append(.working(since: turn.started, quiet: quiet, followsHeard: followsHeard))
         }
         return rows
     }
@@ -538,7 +540,9 @@ enum Row: Identifiable, Hashable {
     case undone(Int)
     /// The agent at work, since the time of your message.
     /// `quiet`: since when nothing has come back from the model.
-    case working(since: Milliseconds?, quiet: Milliseconds?)
+    /// `followsHeard`: quiet since the model last sent anything, which new words move on without
+    /// the rows being made again (see `RowView.heard`).
+    case working(since: Milliseconds?, quiet: Milliseconds?, followsHeard: Bool)
 
     /// The words Find looks in, as the row shows them: messages, replies, and commands you ran
     /// with what they printed.
@@ -615,6 +619,9 @@ private struct RowView: View, Equatable {
     @Environment(\.bot) private var bot
     let directory: String
     let folders: () -> [String]
+    /// When the model was last heard, and how far this Mac's clock is ahead of the engine's, as of
+    /// now: the working line reads them each second.
+    let heard: () -> (last: Milliseconds?, offset: Milliseconds)
     let cancel: (Transcript.Pending) -> Void
     let undo: (Message.User) -> Void
     let redo: () -> Void
@@ -717,7 +724,7 @@ private struct RowView: View, Equatable {
             .background(.quaternary.opacity(0.5), in: .capsule)
             .frame(maxWidth: .infinity)
             .help("Sending a message makes the undo final")
-        case .working(let since, let quiet):
+        case .working(let since, let quiet, let followsHeard):
             HStack(spacing: 8) {
                 // A bot shows itself at work.
                 if let bot {
@@ -725,7 +732,9 @@ private struct RowView: View, Equatable {
                         .frame(width: 16)
                 }
                 TimelineView(.periodic(from: .now, by: 1)) { context in
-                    ShimmerText(text: Self.working(since: since, quiet: quiet, now: context.date))
+                    let latest = heard()
+                    // Against the engine's clock, as its times are: a machine's may be behind.
+                    ShimmerText(text: Self.working(since: since, quiet: followsHeard ? latest.last ?? quiet : quiet, now: context.date.addingTimeInterval(-latest.offset / 1000)))
                         .font(.callout)
                 }
             }

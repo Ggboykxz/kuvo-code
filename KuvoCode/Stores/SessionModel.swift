@@ -1230,6 +1230,12 @@ final class SessionModel {
         }
     }
 
+    /// When the model was last heard, and how far this Mac's clock is ahead of the engine's, as of
+    /// now (new words move the first on without the conversation's rows being made again).
+    func heard() -> (last: Milliseconds?, offset: Milliseconds) {
+        (storedTranscript.lastHeard, storedTranscript.clockOffset)
+    }
+
     /// What the agent hears when you switch its model mid-run (the conversation doesn't show it).
     static let switchedModelNote = "<system-reminder>The user switched the model while you were working. Carry on with the task from where you left off.</system-reminder>"
 
