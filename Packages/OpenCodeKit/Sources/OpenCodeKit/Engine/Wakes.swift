@@ -312,6 +312,9 @@ public enum Wakes {
       o_value=$(printenv "KUVO_OWN_$o_name"); unset "KUVO_OWN_$o_name"
       if [ -n "$o_value" ]; then export "$o_name=$o_value"; else unset "$o_name"; fi
     done
+    # Nor the engine's password or settings, which a check printing its environment would show
+    # (`fire` reads the password from the engine's record, and never puts it on a command line).
+    unset OPENCODE_PASSWORD OPENCODE_SERVER_PASSWORD OPENCODE_CONFIG_CONTENT OPENCODE_CONFIG
 
     usage() {
       echo "Usage:"
@@ -574,7 +577,7 @@ public enum Wakes {
           folder=$(sed -e 's/%/%25/g' -e 's/ /%20/g' "${bot}directory")
           while [ "$tries" -lt 80 ]; do
             tries=$((tries + 1))
-            curl -sf -m 5 -u "opencode:$password" -H "x-opencode-directory: $folder" "http://127.0.0.1:$port/api/mcp" | grep -q '"pending"' || break
+            printf 'user = "opencode:%s"\n' "$password" | curl -sf -m 5 -K - -H "x-opencode-directory: $folder" "http://127.0.0.1:$port/api/mcp" | grep -q '"pending"' || break
             waited=1; sleep 0.25
           done
           [ -n "$waited" ] && sleep 1.5
@@ -583,11 +586,18 @@ public enum Wakes {
         id=msg_$(printf '%012x' $(((ms * 4096 + 1) & 0xFFFFFFFFFFFF)))$(random 14)
         body="{\"id\":\"$id\",\"text\":\"$(json "[Wake-up] $1")\",\"delivery\":\"queue\"}"
         url="http://127.0.0.1:$port/api/session/$session/prompt"
+        # The password from its standard input (curl) or a file only this user can read (wget):
+        # on a command line, any user on the machine could read it while it runs.
         if command -v curl >/dev/null 2>&1; then
-          curl -sf -m 20 -u "opencode:$password" -H 'Content-Type: application/json' --data-binary "$body" "$url" >/dev/null
+          printf 'user = "opencode:%s"\n' "$password" | curl -sf -m 20 -K - -H 'Content-Type: application/json' --data-binary "$body" "$url" >/dev/null
         elif command -v wget >/dev/null 2>&1; then
           auth=$(printf 'opencode:%s' "$password" | base64 | tr -d '\n')
-          wget -q -T 20 -O /dev/null --header="Authorization: Basic $auth" --header='Content-Type: application/json' --post-data="$body" "$url"
+          settings="${record%/*}/.wget-$$"
+          (umask 077; printf 'header = Authorization: Basic %s\n' "$auth" >"$settings")
+          wget -q --config="$settings" -T 20 -O /dev/null --header='Content-Type: application/json' --post-data="$body" "$url"
+          sent=$?
+          rm -f "$settings"
+          return $sent
         else
           return 1
         fi
