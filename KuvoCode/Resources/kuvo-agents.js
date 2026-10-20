@@ -1,6 +1,6 @@
 // @bun
 // Agents/src/main.ts
-import { mkdirSync as mkdirSync11, readdirSync as readdirSync5, rmSync as rmSync8 } from "fs";
+import { mkdirSync as mkdirSync12, readdirSync as readdirSync5, rmSync as rmSync8 } from "fs";
 import { join as join15 } from "path";
 
 // Agents/src/accounts.ts
@@ -1742,7 +1742,7 @@ class AcpThread {
     if (hooks.signal.aborted)
       return { outcome: "interrupted" };
     const sessionId = this.sessionID;
-    await this.flavor.selectModel(rpc, sessionId, input.model.id, this.setup).catch(() => {});
+    await this.flavor.selectModel(rpc, sessionId, input.model.id, this.setup, input.model.variant).catch(() => {});
     await this.flavor.selectMode?.(rpc, sessionId, { approvesAll: hooks.approvesAll(), plan: input.plan }, this.setup).catch(() => {});
     if (hooks.signal.aborted)
       return { outcome: "interrupted" };
@@ -1776,28 +1776,48 @@ ${others.map((path) => `- ${path}`).join(`
 `)}`;
     prompt.unshift({ type: "text", text });
     return new Promise((resolve3) => {
-      const active = { turn, hooks, resolve: resolve3, rpc, tools: new Map, toolsSinceText: false, ended: false, instructed, children: new Map, served: new Map, started: Date.now() };
+      const active = { turn, hooks, resolve: resolve3, rpc, tools: new Map, toolsSinceText: false, ended: false, instructed, children: new Map, served: new Map, started: Date.now(), prompt: 0 };
       this.active = active;
       turn.startStep();
       active.follower = this.flavor.follow?.(sessionId, turn, hooks);
-      const meta = this.flavor.promptMeta?.();
-      rpc.request("session/prompt", { sessionId, prompt, ...meta ? { _meta: meta } : {} }).then((result) => {
-        active.answered = true;
-        if (result?.stopReason === "rate_limit")
-          this.end(active, "failed", `You've reached your ${this.name} usage limit for now.`, this.limit());
-        else
-          this.end(active, result?.stopReason === "cancelled" ? "interrupted" : "succeeded");
-      }, (error) => {
-        const limited = error instanceof RPCError && error.code === -32003 || limitWords.test(errorText(error));
-        this.end(active, "failed", limited ? `You've reached your ${this.name} usage limit for now.` : errorText(error), limited ? this.limit(errorText(error)) : undefined);
-      });
+      this.prompt(active, sessionId, prompt);
     });
+  }
+  prompt(active, sessionId, prompt) {
+    const number = ++active.prompt;
+    const meta = this.flavor.promptMeta?.();
+    active.promptID = typeof meta?.promptId === "string" ? meta.promptId : undefined;
+    active.rpc.request("session/prompt", { sessionId, prompt, ...meta ? { _meta: meta } : {} }).then((result) => {
+      if (number !== active.prompt)
+        return;
+      active.answered = true;
+      if (result?.stopReason === "rate_limit")
+        this.end(active, "failed", `You've reached your ${this.name} usage limit for now.`, this.limit());
+      else
+        this.end(active, result?.stopReason === "cancelled" ? "interrupted" : "succeeded");
+    }, (error) => {
+      if (number !== active.prompt)
+        return;
+      const limited = error instanceof RPCError && error.code === -32003 || limitWords.test(errorText(error));
+      this.end(active, "failed", limited ? `You've reached your ${this.name} usage limit for now.` : errorText(error), limited ? this.limit(errorText(error)) : undefined);
+    });
+  }
+  carryOn(active) {
+    const refused = active.refused;
+    if (!refused || active.own || active.hooks.signal.aborted || !this.sessionID || (active.carriedOn ?? 0) >= 3)
+      return false;
+    active.refused = undefined;
+    active.carriedOn = (active.carriedOn ?? 0) + 1;
+    this.prompt(active, this.sessionID, [{ type: "text", text: `<system-reminder>Kuvo Code didn't allow ${refused}: the user's settings (Settings \u203A Permissions, the session's agent, or Plan mode) don't allow it here. The user didn't stop you. Carry on with the task without it, or say what you'd need.</system-reminder>` }]);
+    return true;
   }
   limit(message) {
     return { scope: this.flavor.limitScope ?? "provider", message };
   }
   end(active, outcome, message, limit) {
     if (active.ended)
+      return;
+    if (outcome === "interrupted" && this.carryOn(active))
       return;
     active.ended = true;
     if (active.instructed && (outcome !== "failed" || active.heard)) {
@@ -1829,7 +1849,9 @@ ${others.map((path) => `- ${path}`).join(`
     return {
       turn: active?.turn,
       hooks: active?.hooks,
-      endPrompt: (stopReason, error) => {
+      endPrompt: (stopReason, error, promptID) => {
+        if (active && promptID && active.promptID && promptID !== active.promptID)
+          return;
         if (active && !active.own)
           this.end(active, error ? "failed" : stopReason === "cancelled" ? "interrupted" : "succeeded", error, stopReason === "rate_limit" ? this.limit(error) : undefined);
       },
@@ -1850,7 +1872,7 @@ ${others.map((path) => `- ${path}`).join(`
     if (!own || own.turnedAway || !rpc)
       return Promise.resolve({ outcome: "succeeded" });
     return new Promise((resolve3) => {
-      const active = { turn, hooks, resolve: resolve3, rpc, tools: new Map, toolsSinceText: false, ended: false, children: new Map, served: new Map, started: Date.now(), own: true };
+      const active = { turn, hooks, resolve: resolve3, rpc, tools: new Map, toolsSinceText: false, ended: false, children: new Map, served: new Map, started: Date.now(), prompt: 0, own: true };
       this.active = active;
       turn.startStep();
       if (this.sessionID)
@@ -2151,13 +2173,17 @@ ${others.map((path) => `- ${path}`).join(`
         }
         const kuvo = kuvoTool(call);
         const files = (call.content ?? []).filter((part) => part?.type === "diff" && part.path).map((part) => fileDiff(part.path, part.oldText ?? undefined, part.newText ?? ""));
-        const decision = await active.hooks.permission({
+        const ask = {
           toolCallID: call.toolCallId,
           action: permissionAction(call.kind, kuvo.name),
           resources: resources(call),
           metadata: files.length ? { files } : undefined,
           message: call.title
-        });
+        };
+        const automatic = active.hooks.check(ask) === "deny";
+        const decision = await active.hooks.permission(ask);
+        if (decision === "reject" && automatic)
+          active.refused = refusedWhat(ask.action, ask.resources);
         const pick = (kinds2) => kinds2.map((kind) => options.find((option2) => option2.kind === kind)).find(Boolean);
         const option = decision === "reject" ? pick(["reject_once", "reject_always"]) : decision === "always" ? pick(["allow_always", "allow_once"]) : pick(["allow_once", "allow_always"]);
         return option ? { outcome: { outcome: "selected", optionId: option.optionId } } : { outcome: { outcome: "cancelled" } };
@@ -2297,6 +2323,18 @@ function resources(call) {
 function clientRead(call) {
   const title = String(call.title ?? "");
   return /client/i.test(title) || !/view_file/i.test(title);
+}
+function refusedWhat(action, resources2) {
+  const what = resources2.filter((resource) => resource !== "*").join(", ");
+  if (action === "shell")
+    return what ? `running \`${what}\`` : "running that command";
+  if (action === "edit")
+    return what ? `editing ${what}` : "editing files";
+  if (action === "webfetch")
+    return what ? `opening ${what}` : "opening that page";
+  if (action === "read")
+    return what ? `reading ${what}` : "reading that";
+  return what ? `${action} on ${what}` : `that (${action})`;
 }
 function readPath(call) {
   const raw = call.rawInput ?? {};
@@ -6155,6 +6193,7 @@ function firstLine2(text) {
 // Agents/src/agents/cursor.ts
 import { existsSync as existsSync9, mkdirSync as mkdirSync9, readFileSync as readFileSync9, rmSync as rmSync6 } from "fs";
 import { join as join12 } from "path";
+var effortParameters = ["effort", "reasoning", "reasoning_effort"];
 var SDK2 = [{ name: "@cursor/sdk", version: "1.0.35" }];
 var outputLimit5 = 30000;
 
@@ -6187,7 +6226,8 @@ class CursorAgent {
     ];
   }
   async sdk() {
-    await this.context.deps.ensure(this.id, SDK2);
+    const folder = await this.context.deps.ensure(this.id, SDK2);
+    process.argv[1] = join12(folder, "package.json");
     return this.context.deps.load(this.id, SDK2[0].name);
   }
   async store(sdk) {
@@ -6282,7 +6322,9 @@ class CursorAgent {
     const list = await withTimeout(sdk.Cursor.models.list({ apiKey }), 15000);
     const seen = new Set;
     const models = list.filter((info) => info?.id && !seen.has(info.id) && seen.add(info.id)).map((info, index) => {
-      const effort = (info.parameters ?? []).find((parameter) => parameter.id === "effort" || parameter.id === "reasoning");
+      const effort = (info.parameters ?? []).find((parameter) => effortParameters.includes(parameter.id));
+      if (effort)
+        this.efforts.set(info.id, effort.id);
       return model(this.providerID, info.id, info.id === "default" ? "Auto" : info.displayName ?? info.id, {
         variants: effort?.values?.map((value) => String(value.value)) ?? [],
         images: true,
@@ -6294,6 +6336,14 @@ class CursorAgent {
   }
   forgetModels() {
     this.modelList = undefined;
+  }
+  efforts = new Map;
+  async effort(model2) {
+    if (!model2.variant)
+      return { id: model2.id };
+    if (!this.efforts.has(model2.id))
+      await this.models().catch(() => []);
+    return { id: model2.id, params: [{ id: this.efforts.get(model2.id) ?? "effort", value: model2.variant }] };
   }
   async prime(sdk, apiKey, cwd) {
     if (this.primed)
@@ -6335,14 +6385,13 @@ class CursorThread {
       return;
     if (hooks.approvesAll(false))
       await this.owner.prime(sdk, apiKey, this.session.location.directory);
-    await this.ensureAgent(sdk, this.options(sdk, input, hooks, apiKey), hooks);
+    await this.ensureAgent(sdk, this.options(sdk, input, hooks, apiKey, await this.owner.effort(input.model)), hooks);
     const fresh = this.startedOver;
     this.startedOver = false;
     return { fresh };
   }
-  options(sdk, input, hooks, apiKey) {
+  options(sdk, input, hooks, apiKey, selection) {
     const approvesAll = hooks.approvesAll(false);
-    const selection = { id: input.model.id, ...input.model.variant ? { params: [{ id: "effort", value: input.model.variant }] } : {} };
     const mode = input.plan ? "plan" : "agent";
     const cwd = this.session.location.directory;
     return {
@@ -6395,9 +6444,9 @@ class CursorThread {
       return { outcome: "interrupted" };
     const cwd = this.session.location.directory;
     const approvesAll = hooks.approvesAll(false);
-    const selection = { id: input.model.id, ...input.model.variant ? { params: [{ id: "effort", value: input.model.variant }] } : {} };
+    const selection = await this.owner.effort(input.model);
     const mode = input.plan ? "plan" : "agent";
-    const options = this.options(sdk, input, hooks, apiKey);
+    const options = this.options(sdk, input, hooks, apiKey, selection);
     if (approvesAll)
       await this.owner.prime(sdk, apiKey, cwd);
     if (!approvesAll && !input.plan && !this.state.cursorAskNoted) {
@@ -6781,7 +6830,8 @@ function withTimeout(promise, milliseconds) {
 
 // Agents/src/agents/grok.ts
 import { homedir as homedir3 } from "os";
-import { join as join13 } from "path";
+import { mkdirSync as mkdirSync10, readFileSync as readFileSync10, writeFileSync as writeFileSync7 } from "fs";
+import { dirname as dirname3, join as join13 } from "path";
 var places3 = [join13(homedir3(), ".grok/bin"), join13(homedir3(), ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin"];
 
 class GrokAgent {
@@ -6795,6 +6845,31 @@ class GrokAgent {
   install = "npm install -g @xai-official/grok";
   status;
   promptCount = 0;
+  get effortsFile() {
+    return join13(this.context.home, "grok", `efforts-${this.instance.id}.json`);
+  }
+  efforts() {
+    try {
+      return JSON.parse(readFileSync10(this.effortsFile, "utf8"));
+    } catch {
+      return {};
+    }
+  }
+  saveEfforts(setup) {
+    const known = {};
+    for (const info of setup?.models?.availableModels ?? []) {
+      const levels = info?._meta?.reasoningEfforts ?? [];
+      if (!info?.modelId || !levels.length)
+        continue;
+      known[info.modelId] = { values: levels.map((level) => String(level.value)), default: levels.find((level) => level.default)?.value ?? info._meta?.reasoningEffort };
+    }
+    if (!Object.keys(known).length || JSON.stringify(known) === JSON.stringify(this.efforts()))
+      return;
+    try {
+      mkdirSync10(dirname3(this.effortsFile), { recursive: true });
+      writeFileSync7(this.effortsFile, JSON.stringify(known));
+    } catch {}
+  }
   constructor(context, instance = { id: "default" }) {
     this.context = context;
     this.instance = instance;
@@ -6872,7 +6947,8 @@ class GrokAgent {
   }
   async models() {
     const status = await this.read(false);
-    return status.models.map((info, index) => model(this.providerID, info.id, info.name, { released: info.isDefault ? 1000 : 500 - index, context: 256000 }));
+    const efforts = this.efforts();
+    return status.models.map((info, index) => model(this.providerID, info.id, info.name, { released: info.isDefault ? 1000 : 500 - index, context: 256000, variants: efforts[info.id]?.values ?? ["low", "medium", "high"] }));
   }
   thread(session, state) {
     const agent = this;
@@ -6889,13 +6965,20 @@ class GrokAgent {
         const argv = plan ? [executable, "--permission-mode", "plan", "agent", "stdio"] : approvesAll ? [executable, "agent", "--always-approve", "stdio"] : [executable, "--permission-mode", "default", "agent", "stdio"];
         return { argv, env: agent.env() };
       },
-      async selectModel(rpc, sessionId, modelID, setup) {
-        const current = setup?.models?.currentModelId;
-        if (current === modelID)
+      async selectModel(rpc, sessionId, modelID, setup, variant) {
+        agent.saveEfforts(setup);
+        if (setup?.models?.currentModelId !== modelID) {
+          await rpc.request("session/set_model", { sessionId, modelId: modelID }, 30000);
+          if (setup?.models)
+            setup.models.currentModelId = modelID;
+        }
+        const option = (setup?.configOptions ?? []).find((option2) => option2.id === "reasoning_effort" || option2.category === "thought_level");
+        const wanted = variant ?? (setup?.kuvoEffort ? agent.efforts()[modelID]?.default : undefined);
+        const key = `${modelID}:${variant ?? ""}`;
+        if (!option || !wanted || setup.kuvoEffort === key)
           return;
-        await rpc.request("session/set_model", { sessionId, modelId: modelID }, 30000);
-        if (setup?.models)
-          setup.models.currentModelId = modelID;
+        await rpc.request("session/set_config_option", { sessionId, configId: option.id, value: wanted }, 30000);
+        setup.kuvoEffort = variant ? key : undefined;
       },
       promptMeta() {
         const id = `kuvo-prompt-${++agent.promptCount}`;
@@ -6906,7 +6989,7 @@ class GrokAgent {
         if (name === "x.ai/session/prompt_complete" && String(params?.promptId ?? "").startsWith("task-completed-"))
           context.endOwn();
         if (name === "x.ai/session/prompt_complete" && !String(params?.promptId ?? "").startsWith("task-completed-")) {
-          context.endPrompt(params?.stopReason ?? "end_turn", params?.stopReason === "rate_limit" ? "You've reached your Grok usage limit for now." : params?.stopReason === "error" ? String(params?.agentResult ?? "Grok stopped with an error.") : undefined);
+          context.endPrompt(params?.stopReason ?? "end_turn", params?.stopReason === "rate_limit" ? "You've reached your Grok usage limit for now." : params?.stopReason === "error" ? String(params?.agentResult ?? "Grok stopped with an error.") : undefined, params?.promptId);
         }
       },
       request(method, params, context) {
@@ -6995,7 +7078,7 @@ class Roster {
 // Agents/src/sessions.ts
 import { createHash as createHash3 } from "crypto";
 import { spawn as spawnProcess } from "child_process";
-import { readFileSync as readFileSync10, statSync as statSync3 } from "fs";
+import { readFileSync as readFileSync11, statSync as statSync3 } from "fs";
 import { fileURLToPath } from "url";
 
 // Agents/src/handover.ts
@@ -9287,7 +9370,7 @@ function withTextFiles(text, files) {
     let contents;
     if (!file.mime.startsWith("image/") && file.mime !== "application/pdf") {
       try {
-        const bytes = file.data ? Buffer.from(file.data, "base64") : file.path && statSync3(file.path).isFile() && statSync3(file.path).size <= textFileLimit ? readFileSync10(file.path) : undefined;
+        const bytes = file.data ? Buffer.from(file.data, "base64") : file.path && statSync3(file.path).isFile() && statSync3(file.path).size <= textFileLimit ? readFileSync11(file.path) : undefined;
         if (bytes && !bytes.includes(0))
           contents = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
       } catch {}
@@ -9762,7 +9845,7 @@ ${all}`;
 }
 
 // Agents/src/store.ts
-import { mkdirSync as mkdirSync10, readdirSync as readdirSync4, readFileSync as readFileSync11, renameSync as renameSync4, rmSync as rmSync7, statSync as statSync4, writeFileSync as writeFileSync7 } from "fs";
+import { mkdirSync as mkdirSync11, readdirSync as readdirSync4, readFileSync as readFileSync12, renameSync as renameSync4, rmSync as rmSync7, statSync as statSync4, writeFileSync as writeFileSync8 } from "fs";
 import { join as join14 } from "path";
 
 class Store {
@@ -9771,18 +9854,18 @@ class Store {
   pending = new Map;
   constructor(root) {
     this.root = root;
-    mkdirSync10(root, { recursive: true });
+    mkdirSync11(root, { recursive: true });
     for (const id of readdirSync4(root)) {
       try {
         const folder = join14(root, id);
-        const session = JSON.parse(readFileSync11(join14(folder, "session.json"), "utf8"));
+        const session = JSON.parse(readFileSync12(join14(folder, "session.json"), "utf8"));
         let messages = [];
         try {
-          messages = JSON.parse(readFileSync11(join14(folder, "messages.json"), "utf8"));
+          messages = JSON.parse(readFileSync12(join14(folder, "messages.json"), "utf8"));
         } catch {}
         let agent = {};
         try {
-          agent = JSON.parse(readFileSync11(join14(folder, "agent.json"), "utf8"));
+          agent = JSON.parse(readFileSync12(join14(folder, "agent.json"), "utf8"));
         } catch {}
         this.records.set(session.id, { session, messages, agent });
       } catch {}
@@ -9832,14 +9915,14 @@ class Store {
     if (!record)
       return;
     const folder = join14(this.root, id);
-    mkdirSync10(folder, { recursive: true });
+    mkdirSync11(folder, { recursive: true });
     for (const [name, value] of [
       ["session.json", record.session],
       ["messages.json", record.messages],
       ["agent.json", record.agent]
     ]) {
       const file = join14(folder, name);
-      writeFileSync7(file + ".new", JSON.stringify(value));
+      writeFileSync8(file + ".new", JSON.stringify(value));
       renameSync4(file + ".new", file);
     }
   }
@@ -9854,7 +9937,7 @@ if (!home || !password) {
   process.exit(2);
 }
 var temporary = process.env.TMPDIR?.replace(/\/$/, "") || join15(home, "tmp");
-mkdirSync11(temporary, { recursive: true });
+mkdirSync12(temporary, { recursive: true });
 rmSync8(join15(temporary, "antigravity"), { recursive: true, force: true });
 try {
   for (const name of readdirSync5(join15(home, "antigravity")))
