@@ -243,6 +243,16 @@ class Auto {
     renameSync3(this.file + ".new", this.file);
   }
 }
+function resetsIn(text, now = Date.now()) {
+  const found = text?.match(/(?:resets?|try again|available again)\s+in\s+((?:\d+\s*(?:days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b[\s,]*(?:and\s+)?)+)/i);
+  if (!found)
+    return;
+  const units = { d: 86400000, h: 3600000, m: 60000, s: 1000 };
+  let total = 0;
+  for (const part of found[1].matchAll(/(\d+)\s*([dhms])/gi))
+    total += Number(part[1]) * (units[part[2].toLowerCase()] ?? 0);
+  return total ? now + total : undefined;
+}
 function resetTime(at) {
   const date = new Date(at);
   const today = new Date;
@@ -1770,7 +1780,8 @@ function elicitationField(key, field, required) {
 // Agents/src/acp.ts
 var outputLimit2 = 30000;
 var limitWords = /RESOURCE_EXHAUSTED|usage limit (?:reached|exceeded)|quota exceeded|exceeded your (?:current )?quota|rate limit exceeded|too many requests/i;
-var acpTiming = { ownQuiet: 20000 };
+var limitReply = /usage limit reached|reached your (?:current )?(?:usage )?(?:quota|limit)|limit will reset/i;
+var acpTiming = { ownQuiet: 20000, signInGrace: 60000 };
 
 class AcpThread {
   flavor;
@@ -1801,6 +1812,8 @@ class AcpThread {
     this.close();
     const launch = await this.flavor.command(mode);
     const flavor = this.flavor;
+    const startedAt = Date.now();
+    let asksSignIn = false;
     const rpc = new RPC(launch.argv, {
       cwd: launch.cwd ?? this.session.location.directory,
       env: launch.env,
@@ -1808,6 +1821,14 @@ class AcpThread {
       jsonrpc: true,
       firstID: 2 ** 30,
       filter: (line) => {
+        if (!asksSignIn && flavor.asksSignIn?.(line)) {
+          asksSignIn = true;
+          setTimeout(() => {
+            rpc.stderr = `${this.name} needs you to sign in again: Settings \u203A Accounts.`;
+            rpc.kill();
+          });
+          return false;
+        }
         const fatal = flavor.fatalLine?.(line);
         if (fatal) {
           setTimeout(() => {
@@ -1825,9 +1846,19 @@ class AcpThread {
       launch.onExit?.();
       if (this.rpc === rpc)
         this.rpc = undefined;
+      const young = Date.now() - startedAt < acpTiming.signInGrace;
+      if (asksSignIn && young)
+        flavor.signInEnded?.();
       const active = this.active;
-      if (active && !active.ended && active.rpc === rpc)
-        this.end(active, "failed", rpc.stderr.trim().split(`
+      if (!active || active.ended || active.rpc !== rpc)
+        return;
+      if (asksSignIn && !young && !active.renewed && active.input) {
+        active.renewed = true;
+        active.replaced = rpc;
+        this.renew(active, active.input);
+        return;
+      }
+      this.end(active, "failed", rpc.stderr.trim().split(`
 `).slice(-3).join(`
 `) || `${this.name} stopped.`);
     };
@@ -1918,6 +1949,24 @@ class AcpThread {
       return [{ name: tools.name, command: tools.command, args: tools.args, env: Object.entries(tools.env).map(([name, value]) => ({ name, value })) }];
     return [{ type: "http", name: tools.name, url: tools.url, headers: Object.entries(tools.headers).map(([name, value]) => ({ name, value })) }];
   }
+  async renew(active, input) {
+    try {
+      const rpc = await this.open(input, active.hooks);
+      active.rpc = rpc;
+      if (active.ended)
+        return;
+      if (active.hooks.signal.aborted)
+        return this.end(active, "interrupted");
+      const sessionId = this.sessionID;
+      await this.flavor.selectModel(rpc, sessionId, input.model.id, this.setup, input.model.variant).catch(() => {});
+      await this.flavor.selectMode?.(rpc, sessionId, { approvesAll: active.hooks.approvesAll(), plan: input.plan }, this.setup).catch(() => {});
+      if (active.ended)
+        return;
+      this.prompt(active, sessionId, [{ type: "text", text: "<system-reminder>Your connection was renewed partway through your work, and what was under way then was cut off. Carry on with the task from where you were.</system-reminder>" }]);
+    } catch (error) {
+      this.end(active, "failed", failure(error).message);
+    }
+  }
   async prepare(input, hooks) {
     await this.open(input, hooks);
     const fresh = this.startedOver;
@@ -1967,7 +2016,7 @@ ${others.map((path) => `- ${path}`).join(`
 `)}`;
     prompt.unshift({ type: "text", text });
     return new Promise((resolve3) => {
-      const active = { turn, hooks, resolve: resolve3, rpc, tools: new Map, toolsSinceText: false, ended: false, instructed, children: new Map, served: new Map, started: Date.now(), prompt: 0 };
+      const active = { turn, hooks, resolve: resolve3, rpc, tools: new Map, toolsSinceText: false, ended: false, instructed, children: new Map, served: new Map, started: Date.now(), prompt: 0, input };
       this.active = active;
       turn.startStep();
       active.follower = this.flavor.follow?.(sessionId, turn, hooks);
@@ -1978,6 +2027,7 @@ ${others.map((path) => `- ${path}`).join(`
     const number = ++active.prompt;
     const meta = this.flavor.promptMeta?.();
     active.promptID = typeof meta?.promptId === "string" ? meta.promptId : undefined;
+    const sentOn = active.rpc;
     active.rpc.request("session/prompt", { sessionId, prompt, ...meta ? { _meta: meta } : {} }).then((result) => {
       if (number !== active.prompt)
         return;
@@ -1987,7 +2037,7 @@ ${others.map((path) => `- ${path}`).join(`
       else
         this.end(active, result?.stopReason === "cancelled" ? "interrupted" : "succeeded");
     }, (error) => {
-      if (number !== active.prompt)
+      if (number !== active.prompt || active.replaced === sentOn)
         return;
       const limited = error instanceof RPCError && error.code === -32003 || limitWords.test(errorText(error));
       this.end(active, "failed", limited ? `You've reached your ${this.name} usage limit for now.` : errorText(error), limited ? this.limit(errorText(error)) : undefined);
@@ -2003,11 +2053,17 @@ ${others.map((path) => `- ${path}`).join(`
     return true;
   }
   limit(message) {
-    return { scope: this.flavor.limitScope ?? "provider", message };
+    const resetsAt = resetsIn(message);
+    return { scope: this.flavor.limitScope ?? "provider", message, ...resetsAt ? { resetsAt } : {} };
   }
   end(active, outcome, message, limit) {
     if (active.ended)
       return;
+    if (outcome === "succeeded" && !active.own && active.said && active.said.length < 800 && limitReply.test(active.said)) {
+      outcome = "failed";
+      limit = this.limit(active.said);
+      message = `You've reached your ${this.name} usage limit for now.`;
+    }
     if (outcome === "interrupted" && this.carryOn(active))
       return;
     active.ended = true;
@@ -2115,6 +2171,7 @@ ${others.map((path) => `- ${path}`).join(`
     const turn = active.turn;
     switch (update.sessionUpdate) {
       case "agent_message_chunk":
+        active.said = ((active.toolsSinceText ? "" : active.said) ?? "").concat(contentText(update.content)).slice(-2000);
         this.words(active);
         this.content(active, turn, update.content, "text");
         return;
@@ -2633,6 +2690,56 @@ function questionFields(questions) {
   }));
 }
 
+// Agents/src/events.ts
+var listeners = new Set;
+function emit(type, data, directory) {
+  const event = { id: newID("evt"), type, created: Date.now(), data };
+  if (directory)
+    event.location = { directory };
+  for (const listener of listeners)
+    listener(event);
+  return event;
+}
+function feed() {
+  const encoder = new TextEncoder;
+  let listener;
+  let heartbeat;
+  const stream = new ReadableStream({
+    start(controller) {
+      const send = (event) => {
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}
+
+`));
+        } catch {
+          stop();
+        }
+      };
+      const stop = () => {
+        if (listener)
+          listeners.delete(listener);
+        if (heartbeat)
+          clearInterval(heartbeat);
+        listener = undefined;
+        heartbeat = undefined;
+      };
+      send({ id: newID("evt"), type: "server.connected", created: Date.now(), data: {} });
+      listener = send;
+      listeners.add(send);
+      heartbeat = setInterval(() => send({ id: newID("evt"), type: "server.heartbeat", created: Date.now(), data: {} }), 15000);
+    },
+    cancel() {
+      if (listener)
+        listeners.delete(listener);
+      if (heartbeat)
+        clearInterval(heartbeat);
+    }
+  });
+  return new Response(stream, {
+    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" }
+  });
+}
+
 // Agents/src/signin.ts
 import { chmodSync as chmodSync2, existsSync as existsSync5, mkdirSync as mkdirSync7, readFileSync as readFileSync8, rmSync as rmSync3, writeFileSync as writeFileSync7 } from "fs";
 import { join as join8 } from "path";
@@ -3070,10 +3177,26 @@ class AntigravityAgent {
   methods() {
     return [{ type: "oauth", id: "oauth-personal", label: "Sign in with Google" }];
   }
+  endedSignIn;
+  signInEnded() {
+    try {
+      this.endedSignIn = statSync(this.tokenFile).mtimeMs;
+    } catch {}
+    emit("integration.updated", { integrationID: this.providerID });
+  }
   async account() {
     const release = releases[`${process.platform}-${process.arch}`];
     if (!release)
       return { installed: false, signedIn: false, message: "Google doesn't make Antigravity's agent for this computer." };
+    if (this.endedSignIn !== undefined) {
+      let now;
+      try {
+        now = statSync(this.tokenFile).mtimeMs;
+      } catch {}
+      if (now === this.endedSignIn)
+        return { installed: this.isInstalled, signedIn: false, ended: true, message: "Google ended this sign-in. Sign in again." };
+      this.endedSignIn = undefined;
+    }
     if (!existsSync6(this.tokenFile)) {
       return {
         installed: this.isInstalled,
@@ -3305,9 +3428,8 @@ class AntigravityAgent {
           throw new Error("Sign in to Antigravity in Settings \u203A Accounts first.");
         return agent.launch();
       },
-      fatalLine(line) {
-        return line.includes(signInLine) ? "Antigravity needs you to sign in again: Settings \u203A Accounts." : undefined;
-      },
+      asksSignIn: (line) => line.includes(signInLine),
+      signInEnded: () => agent.signInEnded(),
       async selectModel(rpc, sessionId, modelID, setup) {
         if (setup?.kuvoModel === modelID)
           return;
@@ -3509,56 +3631,6 @@ function homebrewLatest(json, cask) {
   } catch {
     return;
   }
-}
-
-// Agents/src/events.ts
-var listeners = new Set;
-function emit(type, data, directory) {
-  const event = { id: newID("evt"), type, created: Date.now(), data };
-  if (directory)
-    event.location = { directory };
-  for (const listener of listeners)
-    listener(event);
-  return event;
-}
-function feed() {
-  const encoder = new TextEncoder;
-  let listener;
-  let heartbeat;
-  const stream = new ReadableStream({
-    start(controller) {
-      const send = (event) => {
-        try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}
-
-`));
-        } catch {
-          stop();
-        }
-      };
-      const stop = () => {
-        if (listener)
-          listeners.delete(listener);
-        if (heartbeat)
-          clearInterval(heartbeat);
-        listener = undefined;
-        heartbeat = undefined;
-      };
-      send({ id: newID("evt"), type: "server.connected", created: Date.now(), data: {} });
-      listener = send;
-      listeners.add(send);
-      heartbeat = setInterval(() => send({ id: newID("evt"), type: "server.heartbeat", created: Date.now(), data: {} }), 15000);
-    },
-    cancel() {
-      if (listener)
-        listeners.delete(listener);
-      if (heartbeat)
-        clearInterval(heartbeat);
-    }
-  });
-  return new Response(stream, {
-    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" }
-  });
 }
 
 // Agents/src/queue.ts
@@ -9363,16 +9435,23 @@ ${text.slice(0, 4000)}
       try {
         last2 = await this.runOn(id, record, live, model2, input, turn, signal, userMessage2);
       } catch (error) {
-        if (signal.aborted || record.messages.slice(from).some(didWork))
+        if (signal.aborted)
           throw error;
         last2 = { outcome: "failed", error: failure(error) };
       }
       if (last2.outcome !== "failed" || signal.aborted)
         return last2;
       if (!last2.limit) {
-        if (record.messages.slice(from).some(didWork))
-          return last2;
-        note = `${this.entryName(entry)} couldn't take it: ${last2.error?.message ?? "it stopped with an error"}`;
+        const agent = this.agent(entry.providerID);
+        const account = agent ? await Promise.race([agent.account(true).catch(() => {
+          return;
+        }), Bun.sleep(1e4).then(() => {
+          return;
+        })]) : undefined;
+        if (account && !account.signedIn)
+          emit("integration.updated", { integrationID: entry.providerID });
+        const message = last2.error?.message?.trim() || "it stopped with an error";
+        note = account && !account.signedIn ? `${this.entryName(entry, true)} needs you to sign in again.` : `${this.entryName(entry)} stopped: ${message.replace(/\.$/, "")}.`;
         continue;
       }
       this.auto.hold(entry, last2.limit);

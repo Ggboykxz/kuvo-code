@@ -10,6 +10,7 @@ import { providerID, type AgentAccount } from "../accounts"
 import type { Agent, AgentContext, Account, SignInAttempt, SubagentRun, Thread, SubagentTask, TurnHooks } from "../agent"
 import { accountName, failure, model } from "../agent"
 import { AcpThread } from "../acp"
+import { emit } from "../events"
 import { newID } from "../ids"
 import { run, which } from "../proc"
 import { RPC } from "../rpc"
@@ -382,9 +383,28 @@ export class AntigravityAgent implements Agent {
     return [{ type: "oauth" as const, id: "oauth-personal", label: "Sign in with Google" }]
   }
 
+  /** Its sign-in file as it was when Google ended the sign-in (its agent asked for a new one): until it's new. */
+  private endedSignIn?: number
+
+  /** Google ended the sign-in: shown, and skipped by Custom Auto, until you sign in again. */
+  signInEnded() {
+    try {
+      this.endedSignIn = statSync(this.tokenFile).mtimeMs
+    } catch {}
+    emit("integration.updated", { integrationID: this.providerID })
+  }
+
   async account(): Promise<Account> {
     const release = releases[`${process.platform}-${process.arch}`]
     if (!release) return { installed: false, signedIn: false, message: "Google doesn't make Antigravity's agent for this computer." }
+    if (this.endedSignIn !== undefined) {
+      let now: number | undefined
+      try {
+        now = statSync(this.tokenFile).mtimeMs
+      } catch {}
+      if (now === this.endedSignIn) return { installed: this.isInstalled, signedIn: false, ended: true, message: "Google ended this sign-in. Sign in again." }
+      this.endedSignIn = undefined
+    }
     if (!existsSync(this.tokenFile)) {
       return {
         installed: this.isInstalled,
@@ -615,9 +635,10 @@ export class AntigravityAgent implements Agent {
           if (!agent.isInstalled) throw new Error("Sign in to Antigravity in Settings › Accounts first.")
           return agent.launch()
         },
-        fatalLine(line) {
-          return line.includes(signInLine) ? "Antigravity needs you to sign in again: Settings › Accounts." : undefined
-        },
+        // Its access lasts an hour, renewed from the sign-in it keeps: one that asks for a new
+        // sign-in partway is started again, which renews it.
+        asksSignIn: (line) => line.includes(signInLine),
+        signInEnded: () => agent.signInEnded(),
         async selectModel(rpc, sessionId, modelID, setup) {
           if (setup?.kuvoModel === modelID) return
           await rpc.request("session/set_config_option", { sessionId, configId: "model", value: modelID }, 30_000)

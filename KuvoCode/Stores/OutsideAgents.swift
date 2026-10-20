@@ -406,6 +406,52 @@ nonisolated struct AutoList: Codable, Hashable, Sendable {
     func list(_ id: String?) -> Named? {
         all.first { $0.id == id } ?? all.first
     }
+
+    /// When the account `provider` is held back at its usage limit (all its models), if it is.
+    func limit(for provider: String, now: Date = .now) -> Date? {
+        limits.filter { $0.isWholeAccount && $0.key == provider && $0.resets > now }.map(\.resets).max()
+    }
+}
+
+/// An account that needs you, as Accounts and the sidebar show it: its sign-in ended, or Custom
+/// Auto holds it back at its usage limit.
+nonisolated enum AccountProblem: Hashable, Sendable {
+    case signInEnded
+    case atLimit(until: Date)
+
+    /// "Sign-in ended", "Usage limit · Resets in 3 hr".
+    var text: String {
+        switch self {
+        case .signInEnded: "Sign-in ended"
+        case .atLimit(let until): "Usage limit · " + ContextGauge.resets(until)
+        }
+    }
+
+    /// "sign in again", "at its usage limit": after its name, in a list.
+    var short: String {
+        switch self {
+        case .signInEnded: "sign in again"
+        case .atLimit: "at its usage limit"
+        }
+    }
+}
+
+extension Catalog {
+    /// Your accounts that need you, by name: a coding agent's or a plan's whose sign-in ended, and
+    /// those Custom Auto holds back at their usage limit.
+    @MainActor func accountProblems(limits auto: AutoList) -> [(name: String, problem: AccountProblem)] {
+        var found: [(name: String, problem: AccountProblem)] = []
+        for agent in codingAgents {
+            let name = [OutsideAgents.name(agent.id), agent.metadata?["accountLabel"]?.string].compactMap(\.self).joined(separator: " ")
+            if agent.metadata?["signInEnded"]?.bool == true { found.append((name, .signInEnded)) }
+            else if let until = auto.limit(for: agent.id) { found.append((name, .atLimit(until: until))) }
+        }
+        for plan in providers where plan.isConnected || plan.connections.contains(where: { $0.status?.status == "needs_auth" }) {
+            if plan.connections.contains(where: { $0.status?.status == "needs_auth" }) { found.append((plan.name, .signInEnded)) }
+            else if let until = auto.limit(for: plan.id) { found.append((plan.name, .atLimit(until: until))) }
+        }
+        return found
+    }
 }
 
 extension OpenCodeAPI {

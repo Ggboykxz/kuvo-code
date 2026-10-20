@@ -422,10 +422,13 @@ private struct AgentAccountRow: View {
         }
     }
 
+    /// Custom Auto holds it back at its usage limit.
+    private var limit: Date? { account.isConnected ? app.agents.auto.limit(for: account.id) : nil }
+
     var body: some View {
         AccountLine(label: label, who: account.isConnected ? (who ?? "Signed in") : nil,
                     note: account.isConnected || ended ? nil : "Not signed in",
-                    problem: ended ? "Sign-in ended" : nil,
+                    problem: ended ? AccountProblem.signInEnded.text : limit.map { AccountProblem.atLimit(until: $0).text },
                     signIn: account.isConnected ? nil : connect) {
             Button("Sign In Again…", action: connect)
             if isAdded {
@@ -511,8 +514,13 @@ private struct PlanAccountRow: View {
         return connection.label ?? (connection.method == "key" ? "API key" : "Signed in")
     }
 
+    /// The one in use, held back by Custom Auto at its usage limit.
+    private var limit: Date? { isInUse && !needsSignIn ? app.agents.auto.limit(for: plan.id) : nil }
+
     var body: some View {
-        AccountLine(label: nil, who: needsSignIn ? nil : who, note: nil, problem: needsSignIn ? "Sign-in ended" : nil, signIn: needsSignIn ? connect : nil,
+        AccountLine(label: nil, who: needsSignIn ? nil : who, note: nil,
+                    problem: needsSignIn ? AccountProblem.signInEnded.text : limit.map { AccountProblem.atLimit(until: $0).text },
+                    signIn: needsSignIn ? connect : nil,
                     badge: isInUse && !isOnly ? "In use" : nil) {
             if connection.type == "credential" {
                 if !isInUse, let id = connection.credentialID {

@@ -1210,13 +1210,29 @@ private struct AccountsRow: View {
                 Text(label)
                     .font(.system(size: 14))
                 Spacer()
+                // One needs you: its sign-in ended, or it's at its usage limit.
+                if !problems.isEmpty {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.orange)
+                        .accessibilityLabel(problemsText)
+                }
             }
             .padding(.horizontal, 10)
             .frame(height: 38)
             .contentShape(.rect)
             .hoverHighlight(selected: false)
         }
-        .help("Accounts, usage, Settings and help")
+        .help(problems.isEmpty ? "Accounts, usage, Settings and help" : problemsText)
+    }
+
+    private var problems: [(name: String, problem: AccountProblem)] {
+        catalog.accountProblems(limits: app.agents.auto)
+    }
+
+    /// "Antigravity: sign in again. Claude Code: at its usage limit."
+    private var problemsText: String {
+        problems.map { "\($0.name): \($0.problem.short)." }.joined(separator: " ")
     }
 
     private func makeMenu() -> NSMenu {
@@ -1224,7 +1240,7 @@ private struct AccountsRow: View {
         let providers = catalog.connectedProviders
         let accounts = ActionItem(
             providers.isEmpty ? "Connect an Account" : "Accounts",
-            subtitle: providers.isEmpty ? "Sign in with a subscription, or add an API key" : Self.list(providers.map(\.name)),
+            subtitle: !problems.isEmpty ? problemsText : providers.isEmpty ? "Sign in with a subscription, or add an API key" : Self.list(providers.map(\.name)),
             image: Self.symbol("person.crop.circle"),
             handler: { showProviders() }
         )

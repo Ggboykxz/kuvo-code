@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import type { OwnTurn, RunInput, RunResult, Thread, TurnHooks, SubagentRun, SubagentTask } from "./agent"
 import { failure } from "./agent"
-import type { Limit } from "./auto"
+import { resetsIn, type Limit } from "./auto"
 import { fileDiff } from "./diff"
 import { newID } from "./ids"
 import { RPC, RPCError } from "./rpc"
@@ -20,6 +20,8 @@ import type { Decision, FormField, Session, TokenUsage } from "./wire"
 const outputLimit = 30_000
 /** An agent's words for a usage limit (not any error that mentions a quota). */
 const limitWords = /RESOURCE_EXHAUSTED|usage limit (?:reached|exceeded)|quota exceeded|exceeded your (?:current )?quota|rate limit exceeded|too many requests/i
+/** An answer that is only its plan's limit (Antigravity says it in its reply, and ends the turn as done). */
+const limitReply = /usage limit reached|reached your (?:current )?(?:usage )?(?:quota|limit)|limit will reset/i
 
 export interface AcpFlavor {
   /** The command that starts the agent, for this session's approval mode. */
@@ -50,6 +52,13 @@ export interface AcpFlavor {
   filter?(line: string): boolean
   /** A line that means the agent can't go on (it wants a sign-in): why, in words. */
   fatalLine?(line: string): string | undefined
+  /**
+   * A line saying its sign-in is gone (it asks for a new one). Partway through a run, its access
+   * ran out and it didn't renew it: started again, it renews it from the sign-in it keeps, once
+   * per turn. One that asks as it starts has lost it: `signInEnded`.
+   */
+  asksSignIn?(line: string): boolean
+  signInEnded?(): void
   /** Requests of the agent's own (`x.ai/ask_user_question`…). */
   request?(method: string, params: any, context: AcpContext): Promise<unknown> | undefined
   /** Notifications of the agent's own; true when one ended the prompt. */
@@ -98,6 +107,13 @@ interface Active {
   instructed?: { value: string }
   /** The agent said something about this prompt. */
   heard?: boolean
+  /** What it said since its last tool: how its answer ends. */
+  said?: string
+  /** What the turn runs with, to start the agent again partway (its sign-in renewed). */
+  input?: RunInput
+  renewed?: boolean
+  /** The process it was renewed from: what was asked of it isn't the turn's end. */
+  replaced?: RPC
   /** The prompt came back answered (not turned away). */
   answered?: boolean
   /** How much of its context the conversation fills, as the agent last said (usage_update). */
@@ -129,7 +145,8 @@ interface Active {
 }
 
 /** How long a turn the agent began on its own goes with nothing from it before it's over. */
-export const acpTiming = { ownQuiet: 20_000 }
+/** `signInGrace`: a process that asks for a sign-in sooner than this after it started has lost it. */
+export const acpTiming = { ownQuiet: 20_000, signInGrace: 60_000 }
 
 export class AcpThread implements Thread {
   private rpc?: RPC
@@ -162,6 +179,8 @@ export class AcpThread implements Thread {
     this.close()
     const launch = await this.flavor.command(mode)
     const flavor = this.flavor
+    const startedAt = Date.now()
+    let asksSignIn = false
     const rpc: RPC = new RPC(launch.argv, {
       cwd: launch.cwd ?? this.session.location.directory,
       env: launch.env,
@@ -169,6 +188,14 @@ export class AcpThread implements Thread {
       jsonrpc: true,
       firstID: 2 ** 30,
       filter: (line) => {
+        if (!asksSignIn && flavor.asksSignIn?.(line)) {
+          asksSignIn = true
+          setTimeout(() => {
+            rpc.stderr = `${this.name} needs you to sign in again: Settings › Accounts.`
+            rpc.kill()
+          })
+          return false
+        }
         const fatal = flavor.fatalLine?.(line)
         if (fatal) {
           // What's waiting on it fails with this, rather than what it last wrote.
@@ -186,9 +213,19 @@ export class AcpThread implements Thread {
     rpc.onExit = () => {
       launch.onExit?.()
       if (this.rpc === rpc) this.rpc = undefined
+      // Asked for a new sign-in as it started: the one it keeps is gone.
+      const young = Date.now() - startedAt < acpTiming.signInGrace
+      if (asksSignIn && young) flavor.signInEnded?.()
       // The turn this process ran, not one a newer process runs.
       const active = this.active
-      if (active && !active.ended && active.rpc === rpc) this.end(active, "failed", rpc.stderr.trim().split("\n").slice(-3).join("\n") || `${this.name} stopped.`)
+      if (!active || active.ended || active.rpc !== rpc) return
+      if (asksSignIn && !young && !active.renewed && active.input) {
+        active.renewed = true
+        active.replaced = rpc
+        void this.renew(active, active.input)
+        return
+      }
+      this.end(active, "failed", rpc.stderr.trim().split("\n").slice(-3).join("\n") || `${this.name} stopped.`)
     }
     this.rpc = rpc
     this.spawnedWith = key
@@ -280,6 +317,26 @@ export class AcpThread implements Thread {
     return [{ type: "http", name: tools.name, url: tools.url, headers: Object.entries(tools.headers).map(([name, value]) => ({ name, value })) }]
   }
 
+  /**
+   * Its access ran out partway and it asked for a new sign-in: started again, it renews it from the
+   * sign-in it keeps, takes up its conversation, and carries on with the turn.
+   */
+  private async renew(active: Active, input: RunInput) {
+    try {
+      const rpc = await this.open(input, active.hooks)
+      active.rpc = rpc
+      if (active.ended) return
+      if (active.hooks.signal.aborted) return this.end(active, "interrupted")
+      const sessionId = this.sessionID!
+      await this.flavor.selectModel(rpc, sessionId, input.model.id, this.setup, input.model.variant).catch(() => {})
+      await this.flavor.selectMode?.(rpc, sessionId, { approvesAll: active.hooks.approvesAll(), plan: input.plan }, this.setup).catch(() => {})
+      if (active.ended) return
+      this.prompt(active, sessionId, [{ type: "text", text: "<system-reminder>Your connection was renewed partway through your work, and what was under way then was cut off. Carry on with the task from where you were.</system-reminder>" }])
+    } catch (error) {
+      this.end(active, "failed", failure(error).message)
+    }
+  }
+
   async prepare(input: RunInput, hooks: TurnHooks) {
     await this.open(input, hooks)
     const fresh = this.startedOver
@@ -319,7 +376,7 @@ export class AcpThread implements Thread {
     if (others.length) text += `\n\nAttached files:\n${others.map((path) => `- ${path}`).join("\n")}`
     prompt.unshift({ type: "text", text })
     return new Promise<RunResult>((resolve) => {
-      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, instructed, children: new Map(), served: new Map(), started: Date.now(), prompt: 0 }
+      const active: Active = { turn, hooks, resolve, rpc, tools: new Map(), toolsSinceText: false, ended: false, instructed, children: new Map(), served: new Map(), started: Date.now(), prompt: 0, input }
       this.active = active
       turn.startStep()
       active.follower = this.flavor.follow?.(sessionId, turn, hooks)
@@ -332,6 +389,7 @@ export class AcpThread implements Thread {
     const number = ++active.prompt
     const meta = this.flavor.promptMeta?.()
     active.promptID = typeof meta?.promptId === "string" ? meta.promptId : undefined
+    const sentOn = active.rpc
     active.rpc.request("session/prompt", { sessionId, prompt, ...(meta ? { _meta: meta } : {}) }).then(
       (result: any) => {
         if (number !== active.prompt) return
@@ -340,7 +398,7 @@ export class AcpThread implements Thread {
         else this.end(active, result?.stopReason === "cancelled" ? "interrupted" : "succeeded")
       },
       (error) => {
-        if (number !== active.prompt) return
+        if (number !== active.prompt || active.replaced === sentOn) return
         const limited = (error instanceof RPCError && error.code === -32003) || limitWords.test(errorText(error))
         this.end(active, "failed", limited ? `You've reached your ${this.name} usage limit for now.` : errorText(error), limited ? this.limit(errorText(error)) : undefined)
       },
@@ -362,11 +420,18 @@ export class AcpThread implements Thread {
   }
 
   private limit(message?: string): Limit {
-    return { scope: this.flavor.limitScope ?? "provider", message }
+    const resetsAt = resetsIn(message)
+    return { scope: this.flavor.limitScope ?? "provider", message, ...(resetsAt ? { resetsAt } : {}) }
   }
 
   private end(active: Active, outcome: RunResult["outcome"], message?: string, limit?: Limit) {
     if (active.ended) return
+    // Done, with an answer that only says its plan is at its limit: that limit.
+    if (outcome === "succeeded" && !active.own && active.said && active.said.length < 800 && limitReply.test(active.said)) {
+      outcome = "failed"
+      limit = this.limit(active.said)
+      message = `You've reached your ${this.name} usage limit for now.`
+    }
     if (outcome === "interrupted" && this.carryOn(active)) return
     active.ended = true
     // The instructions went with a message it took (not one turned away before it said anything).
@@ -468,6 +533,7 @@ export class AcpThread implements Thread {
     const turn = active.turn
     switch (update.sessionUpdate) {
       case "agent_message_chunk":
+        active.said = ((active.toolsSinceText ? "" : active.said) ?? "").concat(contentText(update.content)).slice(-2_000)
         this.words(active)
         this.content(active, turn, update.content, "text")
         return

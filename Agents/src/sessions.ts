@@ -1720,17 +1720,21 @@ export class Sessions {
       try {
         last = await this.runOn(id, record, live, model, input, turn, signal, userMessage)
       } catch (error) {
-        // It couldn't start (its process, its sign-in): as a model that couldn't take it.
-        if (signal.aborted || record.messages.slice(from).some(didWork)) throw error
+        // It couldn't start or went wrong (its process, its sign-in): as a model that failed.
+        if (signal.aborted) throw error
         last = { outcome: "failed", error: failure(error) }
       }
       if (last.outcome !== "failed" || signal.aborted) return last
       if (!last.limit) {
-        // It couldn't take the message at all (its model is gone, its sign-in ended): the next
-        // one does, as nothing was done. Once it had done something, the error stands: going
-        // on with another could do it twice.
-        if (record.messages.slice(from).some(didWork)) return last
-        note = `${this.entryName(entry)} couldn't take it: ${last.error?.message ?? "it stopped with an error"}`
+        // An error (its sign-in ended, its model is gone, it crashed): the next model carries on,
+        // as at a limit, from what this one did, which the handover tells it (what was under way
+        // was stopped). A sign-in that ended holds back that account's every model until you
+        // sign in again (`nextEntry` skips it).
+        const agent = this.agent(entry.providerID)
+        const account = agent ? await Promise.race([agent.account(true).catch(() => undefined), Bun.sleep(10_000).then(() => undefined)]) : undefined
+        if (account && !account.signedIn) emit("integration.updated", { integrationID: entry.providerID })
+        const message = last.error?.message?.trim() || "it stopped with an error"
+        note = account && !account.signedIn ? `${this.entryName(entry, true)} needs you to sign in again.` : `${this.entryName(entry)} stopped: ${message.replace(/\.$/, "")}.`
         continue
       }
       this.auto.hold(entry, last.limit)

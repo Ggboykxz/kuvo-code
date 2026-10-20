@@ -155,6 +155,19 @@ export class Auto {
   }
 }
 
+/**
+ * When a limit resets, from an agent's words for it ("Your limit will reset in 6 days, 19 hours",
+ * "try again in 3h 20m"), if they say (milliseconds since 1970).
+ */
+export function resetsIn(text: string | undefined, now = Date.now()): number | undefined {
+  const found = text?.match(/(?:resets?|try again|available again)\s+in\s+((?:\d+\s*(?:days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b[\s,]*(?:and\s+)?)+)/i)
+  if (!found) return undefined
+  const units: Record<string, number> = { d: 86_400_000, h: 3_600_000, m: 60_000, s: 1_000 }
+  let total = 0
+  for (const part of found[1]!.matchAll(/(\d+)\s*([dhms])/gi)) total += Number(part[1]) * (units[part[2]!.toLowerCase()] ?? 0)
+  return total ? now + total : undefined
+}
+
 /** "4:30 PM", or "Oct 21, 9:00 AM" when it isn't today. */
 export function resetTime(at: number): string {
   const date = new Date(at)

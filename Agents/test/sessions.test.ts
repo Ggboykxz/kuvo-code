@@ -2140,7 +2140,7 @@ process.stdin.on("data", (chunk) => {
     expect(second).toContain("Carry on with my last message")
   })
 
-  test("a model that can't take the message is passed by; one that did some of it isn't", async () => {
+  test("a model that fails is passed by, also one that did some of it", async () => {
     auto.set([
       { providerID: "alpha", modelID: "gone" },
       { providerID: "beta", modelID: "one" },
@@ -2151,7 +2151,7 @@ process.stdin.on("data", (chunk) => {
     await settled(id, 1)
     expect(idles(id)[0].outcome).toBe("succeeded")
     expect(b.runs).toHaveLength(1)
-    expect(sessions.messages(id).some((message) => message.type === "synthetic" && message.text.includes("couldn't take it"))).toBe(true)
+    expect(sessions.messages(id).some((message) => message.type === "synthetic" && message.text.includes("stopped: Unknown model gone"))).toBe(true)
     // Nothing held: it's tried again next time.
     expect(auto.limits()).toHaveLength(0)
 
@@ -2164,8 +2164,9 @@ process.stdin.on("data", (chunk) => {
     }
     send(id, "again")
     await settled(id, 2)
-    expect(idles(id)[1].outcome).toBe("failed")
-    expect(b.runs).toHaveLength(1)
+    // The next one carries on from what it did.
+    expect(idles(id)[1].outcome).toBe("succeeded")
+    expect(b.runs).toHaveLength(2)
   })
 
   test("a short rate limit is held a few minutes", () => {
