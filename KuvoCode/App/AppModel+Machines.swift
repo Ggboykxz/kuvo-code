@@ -63,7 +63,9 @@ extension AppModel {
         }
         // A bot on this Mac browses in tabs of its own.
         BrowserAgent.botOwner = { [weak self] session in
-            self?.bots.bot(actingAs: session).flatMap { $0.machine == nil ? $0.id : nil }
+            guard let self else { return nil }
+            // A bot's subagent browses in the bot's tabs.
+            return bots.bot(actingAs: workspace.root(of: session)).flatMap { $0.machine == nil ? $0.id : nil }
         }
         browserAsks.askerName = { [weak self] session in
             self?.bots.bot(forSession: session)?.name ?? self?.workspace.session(session)?.title
@@ -74,7 +76,8 @@ extension AppModel {
         }
         workspace.onBrowserAsk = { [weak self] session, machine in
             guard let self else { return }
-            let name = bots.bot(forSession: session)?.name ?? workspace.session(session)?.title ?? "The agent"
+            let root = workspace.root(of: session)
+            let name = bots.bot(forSession: root)?.name ?? workspace.session(root)?.title ?? "The agent"
             browserAsks.noteAsker(name, session: session, machine: machine)
             if let machine { machines.engine(machine)?.browser.expectAsk() }
         }
@@ -89,7 +92,8 @@ extension AppModel {
         // subagent's is where it shows.
         utilities.panelOf = { [weak self] session in
             guard let self else { return session }
-            return bots.bot(forSession: session)?.id ?? utilities.shownIn(session)
+            let shown = utilities.shownIn(session)
+            return bots.bot(forSession: shown)?.id ?? shown
         }
         // A machine whose connection dropped while the Mac slept, and that gave up trying, gets
         // another go once it's awake and the network is back. (NSWorkspace says so on its own

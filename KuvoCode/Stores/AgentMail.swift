@@ -157,6 +157,9 @@ final class AgentMail {
 
     /// The tools' calls from this Mac's conversations.
     func call(_ name: String, arguments: [String: Any], caller: String?) async -> (text: String, isError: Bool) {
+        // A subagent writes, reads and starts sessions as its conversation: its name, its
+        // folder, its approval, where answers go.
+        let caller = caller.map { app?.workspace.root(of: $0) ?? $0 }
         // A bot's seat in a group chat only talks and looks things up, whatever agent it runs on:
         // the work happens in each bot's own conversation, handed out after the wrap-up.
         if let caller, app?.workspace.seats.contains(caller) == true, name == "send_message" || name == "start_session" {
@@ -271,7 +274,7 @@ final class AgentMail {
         }
         Analytics.shared.track("agent_message_sent", ["waits": waits, "bot": target.kind == "bot"])
         guard waits else { return .done("Sent to \(target.name). Its answer, if it writes one, comes to you as a message.") }
-        if let reply = await reply(in: target.session, known: known ?? [], api: api) {
+        if let reply = await reply(in: target.session, to: id, known: known ?? [], api: api) {
             return .done("\(target.name) answered:\n\n" + reply)
         }
         return .done("\(target.name) hasn't answered yet. It may still write back with send_message.")
@@ -381,7 +384,7 @@ final class AgentMail {
             guard path.hasPrefix("/"), FileManager.default.fileExists(atPath: path, isDirectory: &isFolder), isFolder.boolValue else {
                 return ("\(given) isn't a folder on this Mac. Give a full path to one.", true)
             }
-            folder = path
+            folder = Workspace.isBotFolder(path) ? Workspace.chatsFolder : path
         }
         guard let folder else { return ("Give the folder it works in (folder), as a full path.", true) }
         // A few at a time: an agent shouldn't fill the window with sessions unattended.
@@ -418,7 +421,7 @@ final class AgentMail {
             return ("Started \(name)\(place)\(shown) (address \(session.id)). It's on it now. Write to it with send_message; it can write back to you the same way.", false)
         }
         // A new session: anything it says is its answer.
-        if let reply = await reply(in: session.id, known: [], api: api) {
+        if let reply = await reply(in: session.id, to: id, known: [], api: api) {
             return ("Started \(name)\(place) (address \(session.id)). It answered:\n\n" + reply, false)
         }
         return ("Started \(name)\(place) (address \(session.id)). It hasn't answered yet; it may still write back with send_message.", false)
@@ -435,14 +438,17 @@ final class AgentMail {
         return nil
     }
 
-    /// The answer in `session` to a message sent to it: its words once it's done, ten minutes at
-    /// most; what it says that isn't among the replies `known` from before. (Not by comparing
-    /// IDs, nor where they come in the list: a machine's are made from its own clock.)
-    private func reply(in session: String, known: Set<String>, api: OpenCodeAPI) async -> String? {
+    /// The answer in `session` to the message `id` sent to it: its words once it's done, ten
+    /// minutes at most, or until the caller stops. What it says after `id` once that's there
+    /// (not what a turn already under way said, nor while it still waits to go in); what isn't
+    /// among the replies `known` from before when it's further back than the latest. (Not by
+    /// comparing IDs' order, nor where they come in the list: a machine's are made from its own
+    /// clock.)
+    private func reply(in session: String, to id: String, known: Set<String>, api: OpenCodeAPI) async -> String? {
         let began = Date.now
         var started = false
-        while Date.now.timeIntervalSince(began) < 600 {
-            try? await Task.sleep(for: .seconds(2))
+        while Date.now.timeIntervalSince(began) < 600, !Task.isCancelled {
+            guard (try? await Task.sleep(for: .seconds(2))) != nil else { return nil }
             if app?.workspace.running.contains(session) == true {
                 started = true
                 continue
@@ -450,7 +456,18 @@ final class AgentMail {
             // Done; or not seen at work (a quick one, between looks): its words after ours.
             guard started || Date.now.timeIntervalSince(began) > 6 else { continue }
             guard let messages = try? await api.messages(session: session, limit: 20).data else { continue }
-            let words = messages.compactMap { message -> String? in
+            let after: ArraySlice<Message>
+            if let ours = messages.firstIndex(where: { $0.id == id }) {
+                after = messages[(ours + 1)...]
+            } else if messages.count >= 20, messages.allSatisfy({ if case .assistant(let step) = $0 { !known.contains(step.id) } else { true } }) {
+                // A long answer: ours is further back.
+                after = messages[...]
+            } else {
+                // Still waiting to go in, after the turn it found under way.
+                started = false
+                continue
+            }
+            let words = after.compactMap { message -> String? in
                 guard case .assistant(let assistant) = message, !known.contains(assistant.id) else { return nil }
                 let text = assistant.content.compactMap { if case .text(let part) = $0 { part.text } else { nil } }.joined(separator: "\n")
                 return text.isEmpty ? nil : text

@@ -159,13 +159,18 @@ final class BrowserToolServer {
             // Not the browser's: no page to serve it.
             if name == BrowserTools.showInPanel { return reply(BrowserTools.showInPanelCall(arguments, caller: caller)) }
             if name == BrowserTools.showWidget { return reply(BrowserTools.showWidgetCall(arguments)) }
-            if BrowserTools.mailTools.contains(name) {
-                let result = await BrowserTools.mail(name, arguments, caller)
-                return reply(["content": [["type": "text", "text": result.text]], "isError": result.isError])
-            }
-            let agent = agent.serving(caller)
             let key = Self.key(id, client: client)
-            let call = Task { CallResult(value: await BrowserTools.call(name, arguments: arguments, agent: agent, caller: caller)) }
+            let call: Task<CallResult, Never>
+            if BrowserTools.mailTools.contains(name) {
+                // Stopped as the others are: one waiting for an answer stops waiting.
+                call = Task {
+                    let result = await BrowserTools.mail(name, arguments, caller)
+                    return CallResult(value: ["content": [["type": "text", "text": result.text]], "isError": result.isError])
+                }
+            } else {
+                let agent = agent.serving(caller)
+                call = Task { CallResult(value: await BrowserTools.call(name, arguments: arguments, agent: agent, caller: caller)) }
+            }
             calls[key] = call
             defer { if calls[key] == call { calls[key] = nil } }
             // The connection closing stops it too.

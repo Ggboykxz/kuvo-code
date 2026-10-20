@@ -38,6 +38,9 @@ final class BrowserAsks {
         var session: String?
         /// The page it's about, for Show Page: on a machine its target, on this Mac its tab.
         var page: String?
+        /// The session whose agent asks, when it's a subagent of `session`'s: the run whose end
+        /// takes the card away.
+        var asking: String?
     }
 
     /// Waiting for you, the oldest first.
@@ -121,7 +124,7 @@ final class BrowserAsks {
     /// A conversation's run ended (done, stopped or failed): nothing of its waits for an answer on
     /// this Mac any more, so its cards here go.
     func runEnded(_ session: String) {
-        for ask in asks where ask.session == session && ask.machine == nil { end(ask.id) }
+        for ask in asks where (ask.asking ?? ask.session) == session && ask.machine == nil { end(ask.id) }
     }
 
     /// An ask on this Mac whose tool call has ended: its card goes, and the call hears no.
@@ -136,16 +139,18 @@ final class BrowserAsks {
     /// An ask from a machine's browser; `respond` sends the answer back there.
     func add(_ ask: Ask, respond: @escaping (Answer) -> Void) {
         var ask = ask
-        // A subagent's goes to the conversation it works for, which shows it and waits on you.
-        ask.session = ask.session.map(conversation)
-        if let session = ask.session {
+        var noted: String?
+        if let asking = ask.session {
             // The engine said whose it is: that session's start of asking is accounted for.
-            askers[ask.machine ?? ""]?.removeAll { $0.session == session }
-            ask.asker = askerName(session)
+            askers[ask.machine ?? ""]?.removeAll { $0.session == asking }
+            ask.asking = asking
         } else if let asker = nextAsker(on: ask.machine) {
-            ask.asker = asker.name
-            ask.session = asker.session
+            ask.asking = asker.session
+            noted = asker.name
         }
+        // A subagent's goes to the conversation it works for, which shows it and waits on you.
+        ask.session = ask.asking.map(conversation)
+        ask.asker = ask.session.flatMap(askerName) ?? noted
         // A site you let agents sign in to on their own: its saved password, without asking.
         if case .signIn = ask.kind, let login = Passwords.agentLogin(for: ask.host), let password = Passwords.password(for: login) {
             remember(key(ask), username: login.account.isEmpty ? nil : login.account, password: password, session: ask.session)
