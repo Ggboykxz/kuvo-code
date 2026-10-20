@@ -106,6 +106,8 @@ export interface NoticeMessage {
   time: MessageTime
   text: string
   description?: string
+  /** What it's about, for the app (`source: "shell"`: a command left running ended). */
+  metadata?: Record<string, unknown>
 }
 
 export interface IdleMessage {

@@ -7,7 +7,7 @@ import { existsSync, readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { providerID, type AgentAccount } from "../accounts"
-import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, SubagentRun, Thread, TurnHooks, PromptFile } from "../agent"
+import type { Agent, AgentContext, Account, OwnTurn, RunInput, RunResult, SignInAttempt, SubagentRun, Thread, TurnHooks, PromptFile } from "../agent"
 import type { Limit } from "../auto"
 import { accountName, failure, model } from "../agent"
 import { fileDiff, fromPatch } from "../diff"
@@ -17,6 +17,7 @@ import { run, which } from "../proc"
 import { Queue } from "../queue"
 import { commandSignIn } from "../signin"
 import { kuvoTools } from "../kuvotools"
+import { addShell, endShell } from "../shells"
 import type { Turn } from "../turn"
 import type { FileDiff, FormField, Model, ModelRef, Session, TokenUsage } from "../wire"
 
@@ -340,7 +341,10 @@ interface Active extends Lane {
   auto?: boolean
   /** You pressed Stop. */
   stopping?: boolean
-  /** Messages you sent partway, not taken yet: Claude Code's id for each, and the session's. */
+  /**
+   * Messages sent to it this turn, not taken yet: Claude Code's id for each, and the session's
+   * (none for the one that started the turn).
+   */
   steered: Map<string, string>
   /** Claude Code ended its turn before taking one of those: it goes on with them, and this waits. */
   goingOn?: ReturnType<typeof setTimeout>
@@ -357,6 +361,20 @@ class ClaudeThread implements Thread {
   private active?: Active
   /** The last turn's hooks: its rules still hold for a subagent at work after it. */
   private lastHooks?: TurnHooks
+  onOwnTurn?: (note: OwnTurn) => boolean
+  /**
+   * A turn Claude Code began on its own between ours (a command it left running ended, and it
+   * carries on): what it said so far, until a turn here takes it; or turned away.
+   */
+  private own?: { frames: any[]; turnedAway: boolean; taken?: Promise<void>; take?: () => void }
+  /** Its background tasks (commands, subagents), by its id: commands are in the bar. */
+  private tasks = new Map<string, { type: string; description: string; toolUseID?: string; shell?: string; outputFile?: string; last?: { output: string; total: number } }>()
+  /** Its live background tasks, as it last listed them. */
+  private liveTasks = new Set<string>()
+  /** Commands it ran, by their call: what a background one runs. */
+  private commands = new Map<string, string>()
+  /** The last of its tasks to end: what began a turn it starts on its own. */
+  private lastEnded?: { type: string; description: string; command?: string; status: string; summary?: string }
   private opened?: { model: string; effort?: string; plan: boolean; append: string; program: number; tools?: string }
 
   constructor(
@@ -366,6 +384,11 @@ class ClaudeThread implements Thread {
   ) {}
 
   async run(input: RunInput, turn: Turn, hooks: TurnHooks): Promise<RunResult> {
+    if (input.adopt) return this.adopt(input, turn, hooks)
+    // One it began on its own and nobody took: what's left of it goes into this turn.
+    const own = this.own
+    this.own = undefined
+    own?.take?.()
     const sdk = await this.agent.sdk()
     // Stopped while its SDK was coming.
     if (hooks.signal.aborted) return { outcome: "interrupted" }
@@ -391,9 +414,149 @@ class ClaudeThread implements Thread {
     if (hooks.signal.aborted) return { outcome: "interrupted" }
     return new Promise<RunResult>((resolve) => {
       this.lastHooks = hooks
-      this.active = { turn, hooks, resolve, streamed: new Set(), blockTools: new Map(), calls: new Map(), subagents: new Map(), auto: input.auto, steered: new Map() }
-      this.input!.push(userMessage(input))
+      const message = userMessage(input)
+      // The turn ends with the result that answers it (one of its own before, like a command's
+      // end it took up, doesn't end it).
+      this.active = { turn, hooks, resolve, streamed: new Set(), blockTools: new Map(), calls: new Map(), subagents: new Map(), auto: input.auto, steered: new Map([[message.uuid, ""]]) }
+      this.input!.push(message)
     })
+  }
+
+  /** A turn it began on its own: taken here, with what it said so far. */
+  private adopt(input: RunInput, turn: Turn, hooks: TurnHooks): Promise<RunResult> {
+    const own = this.own
+    this.own = undefined
+    own?.take?.()
+    // Gone meanwhile (closed, or the turn already over and turned away): nothing to take.
+    if (!this.query || !own || own.turnedAway) return Promise.resolve({ outcome: "succeeded" })
+    return new Promise<RunResult>((resolve) => {
+      this.lastHooks = hooks
+      this.active = { turn, hooks, resolve, streamed: new Set(), blockTools: new Map(), calls: new Map(), subagents: new Map(), auto: input.auto, steered: new Map() }
+      for (const frame of own.frames) {
+        if (!this.active) break
+        this.handle(frame)
+      }
+    })
+  }
+
+  /**
+   * Something it said with no turn here: the start of one it began on its own (its main
+   * conversation, not a subagent's) asks the session to take it, and what follows waits for that.
+   */
+  private ownFrame(message: any) {
+    const known = this.own
+    if (known) {
+      if (!known.turnedAway) known.frames.push(message)
+      else if (message.type === "result") this.own = undefined
+      return
+    }
+    const begins = !message.parent_tool_use_id && (message.type === "stream_event" || message.type === "assistant")
+    if (!begins) return
+    let take!: () => void
+    const taken = new Promise<void>((resolve) => (take = resolve))
+    const own: NonNullable<ClaudeThread["own"]> = { frames: [message], turnedAway: false, taken, take }
+    this.own = own
+    // Taken now (what's here is told to the turn at once) or soon; or turned away.
+    if (!(this.onOwnTurn?.(this.ownNote()) ?? false)) {
+      own.turnedAway = true
+      take()
+      return
+    }
+    // Not taken in a while (the session went meanwhile): turned away.
+    setTimeout(() => {
+      if (this.own === own) own.turnedAway = true
+      take()
+    }, 15_000)
+  }
+
+  /** What began a turn it started on its own, as the conversation says it. */
+  private ownNote(): OwnTurn {
+    const ended = this.lastEnded
+    this.lastEnded = undefined
+    if (ended?.type === "local_bash") {
+      const exit = /exit code (\d+)/i.exec(ended.summary ?? "")?.[1]
+      const metadata: Record<string, unknown> = { source: "shell", state: ended.status === "completed" ? "completed" : "error" }
+      if (exit !== undefined) metadata.exit = Number(exit)
+      if (ended.status === "stopped") metadata.signal = "SIGTERM"
+      return { text: `A command left running in the background ${ended.status === "completed" ? "finished" : ended.status}.`, description: ended.command ?? ended.description, metadata }
+    }
+    if (ended) return { text: `A task it had going ${ended.status === "completed" ? "finished" : ended.status}.`, description: `${ended.status === "completed" ? "Finished" : "Ended"}: ${ended.description}` }
+    return { text: "Claude Code carried on by itself." }
+  }
+
+  /** Its background tasks: commands go in the bar while they run; what ends last is noted. */
+  private noteTask(message: any) {
+    switch (message.subtype) {
+      case "task_started": {
+        const known = this.tasks.get(message.task_id)
+        this.tasks.set(message.task_id, { ...known, type: message.task_type ?? known?.type ?? "", description: message.description ?? known?.description ?? "", toolUseID: message.tool_use_id ?? known?.toolUseID })
+        if (message.is_backgrounded && !message.ambient) this.shellFor(message.task_id)
+        return
+      }
+      case "task_updated":
+        if (message.patch?.is_backgrounded) this.shellFor(message.task_id)
+        return
+      case "task_notification": {
+        const task = this.tasks.get(message.task_id)
+        if (task && typeof message.output_file === "string") task.outputFile = message.output_file
+        const command = task?.toolUseID ? this.commands.get(task.toolUseID) : undefined
+        this.lastEnded = { type: task?.type ?? "", description: task?.description ?? String(message.summary ?? ""), command, status: String(message.status ?? "completed"), summary: message.summary }
+        if (task?.shell) endShell(task.shell, message.status === "completed" ? 0 : undefined)
+        return
+      }
+      case "background_tasks_changed": {
+        const tasks = (Array.isArray(message.tasks) ? message.tasks : []).filter((task: any) => !task?.ambient)
+        this.liveTasks = new Set(tasks.map((task: any) => String(task.task_id)))
+        for (const task of tasks) {
+          const known = this.tasks.get(task.task_id)
+          this.tasks.set(task.task_id, { ...known, type: task.task_type ?? known?.type ?? "", description: task.description ?? known?.description ?? "" })
+          this.shellFor(task.task_id)
+        }
+        for (const [id, task] of this.tasks) if (task.shell && !this.liveTasks.has(id)) endShell(task.shell)
+        return
+      }
+    }
+  }
+
+  /** A command it left running, in the bar. */
+  private shellFor(taskID: string) {
+    const task = this.tasks.get(taskID)
+    if (!task || task.shell || task.type !== "local_bash") return
+    const command = (task.toolUseID ? this.commands.get(task.toolUseID) : undefined) ?? task.description
+    task.shell = addShell(
+      this.session.id,
+      this.session.location.directory,
+      command,
+      () => this.taskOutput(taskID),
+      async () => {
+        await this.query?.stopTask?.(taskID)
+      },
+    )
+  }
+
+  /** The end of what a command printed: as Claude Code reads it, or from its file once it's gone. */
+  private async taskOutput(taskID: string): Promise<{ output: string; total: number }> {
+    const task = this.tasks.get(taskID)
+    try {
+      if (this.query?.getTaskOutput) {
+        const read = await this.query.getTaskOutput(taskID)
+        const last = { output: String(read?.output ?? ""), total: Number(read?.total_bytes ?? 0) }
+        if (task) task.last = last
+        return last
+      }
+    } catch {}
+    if (task?.outputFile) {
+      try {
+        const bytes = readFileSync(task.outputFile)
+        return { output: bytes.subarray(Math.max(0, bytes.length - 64_000)).toString("utf8"), total: bytes.length }
+      } catch {}
+    }
+    return task?.last ?? { output: "", total: 0 }
+  }
+
+  /** Commands or subagents it left going: closing it would end them. */
+  get keepsWorking(): boolean {
+    return Boolean(this.query) && this.liveTasks.size > 0
   }
 
   private open(sdk: any, modelID: string, effort: string | undefined, plan: boolean, append: string, hooks: TurnHooks) {
@@ -448,7 +611,7 @@ class ClaudeThread implements Thread {
     if (!active || this.query) return
     this.active = undefined
     clearTimeout(active.goingOn)
-    const missed = active.steered.size ? [...active.steered.values()] : undefined
+    const missed = this.unseen(active)
     const resolve = active.resolve
     active.resolve = (value) => resolve(missed ? { ...value, missed } : value)
     if (active.stopping || active.hooks.signal.aborted) active.resolve({ outcome: "interrupted" })
@@ -465,8 +628,13 @@ class ClaudeThread implements Thread {
       }
       return
     }
+    if (message.type === "system") this.noteTask(message)
+    if (message.type === "assistant" && !message.parent_tool_use_id) {
+      for (const block of message.message?.content ?? []) if (block?.type === "tool_use" && block.name === "Bash" && typeof block.input?.command === "string") this.commands.set(block.id, block.input.command)
+      if (this.commands.size > 200) for (const key of [...this.commands.keys()].slice(0, 100)) this.commands.delete(key)
+    }
     const active = this.active
-    if (!active) return
+    if (!active) return this.ownFrame(message)
     if (!message.parent_tool_use_id && Array.isArray(message.user_message_uuids)) for (const uuid of message.user_message_uuids) active.steered.delete(uuid)
     // Waiting for it to take a message it was sent after its result: it's still there while it
     // says something, and once it has taken them all, its next result ends the turn.
@@ -656,8 +824,7 @@ class ClaudeThread implements Thread {
     this.active = undefined
     // Ending with one it never took (you stopped it, it failed): it would run that unseen, so
     // this Claude Code goes (the next message opens it again) and the message is handed over then.
-    const missed = says && active.steered.size ? [...active.steered.values()] : undefined
-    if (missed) this.close()
+    const missed = says ? this.unseen(active) : undefined
     const resolve = active.resolve
     active.resolve = (value) => resolve(missed ? { ...value, missed } : value)
     // A turn that went through went through, whatever was said of limits on the way.
@@ -712,6 +879,9 @@ class ClaudeThread implements Thread {
    */
   private async preToolUse(input: any): Promise<any> {
     if (input?.hook_event_name !== "PreToolUse") return {}
+    // What a command runs, before it does (one left running is named by it in the bar).
+    if (input.tool_name === "Bash" && typeof input.tool_use_id === "string" && typeof input.tool_input?.command === "string") this.commands.set(input.tool_use_id, input.tool_input.command)
+    await this.ownTaken()
     const hooks = this.active?.hooks ?? this.lastHooks
     if (!hooks) return {}
     let verdict = hooks.check(permissionAsk(String(input.tool_name ?? ""), input.tool_input ?? {}), true)
@@ -723,7 +893,13 @@ class ClaudeThread implements Thread {
     return {}
   }
 
+  /** A turn it began on its own, being taken here: its tools wait for that. */
+  private async ownTaken() {
+    if (!this.active && this.own && !this.own.turnedAway) await this.own.taken
+  }
+
   private async canUseTool(name: string, input: Record<string, any>, options: any): Promise<any> {
+    await this.ownTaken()
     const active = this.active
     const toolUseID = options?.toolUseID
     if (!active) return { behavior: "deny", message: "There's no turn under way for this.", toolUseID }
@@ -784,9 +960,18 @@ class ClaudeThread implements Thread {
     if (this.active !== active) return
     clearTimeout(active.goingOn)
     this.active = undefined
-    const missed = active.steered.size ? [...active.steered.values()] : undefined
-    if (missed) this.close()
-    active.resolve({ outcome: "succeeded", missed })
+    active.resolve({ outcome: "succeeded", missed: this.unseen(active) })
+  }
+
+  /**
+   * Messages sent this turn that it never took: this Claude Code goes (it would run them with no
+   * turn here), and those of yours are named, to hand over next time.
+   */
+  private unseen(active: Active): string[] | undefined {
+    if (!active.steered.size) return undefined
+    const yours = [...active.steered.values()].filter(Boolean)
+    this.close()
+    return yours.length ? yours : undefined
   }
 
   async interrupt() {
@@ -799,10 +984,11 @@ class ClaudeThread implements Thread {
     // Code, not one a later message started).
     for (let waited = 0; waited < 5_000 && this.active === active; waited += 100) await Bun.sleep(100)
     if (this.active === active && this.query === query) {
-      this.close()
       this.active = undefined
       clearTimeout(active.goingOn)
-      active.resolve({ outcome: "interrupted", missed: active.steered.size ? [...active.steered.values()] : undefined })
+      const missed = this.unseen(active)
+      this.close()
+      active.resolve({ outcome: "interrupted", missed })
     }
   }
 
@@ -813,6 +999,10 @@ class ClaudeThread implements Thread {
     } catch {}
     this.query = undefined
     this.input = undefined
+    // What it left running ends with it.
+    for (const task of this.tasks.values()) if (task.shell) endShell(task.shell)
+    this.liveTasks.clear()
+    this.own = undefined
   }
 }
 

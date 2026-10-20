@@ -57,6 +57,15 @@ export interface RunInput {
   plan: boolean
   /** On Auto: a usage limit ends the run (the next model in your list goes on) rather than waiting. */
   auto?: boolean
+  /** A turn the agent began on its own (a command it left running ended): nothing to send, it's under way. */
+  adopt?: boolean
+}
+
+/** What began a turn an agent started on its own, as the conversation says it. */
+export interface OwnTurn {
+  text: string
+  description?: string
+  metadata?: Record<string, unknown>
 }
 
 export interface PermissionAsk {
@@ -159,6 +168,13 @@ export interface Thread {
   /** Stops the turn under way; `run` then ends with `interrupted`. */
   interrupt(): Promise<void>
   close(): void
+  /**
+   * Set by the session: the agent began a turn of its own between turns (a command it left
+   * running ended, and it carries on). True when a turn here takes it (`run` with `adopt`).
+   */
+  onOwnTurn?: (note: OwnTurn) => boolean
+  /** It has work going that closing it would end (commands left running): it's kept open. */
+  readonly keepsWorking?: boolean
 }
 
 export interface Agent {

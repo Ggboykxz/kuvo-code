@@ -13,6 +13,7 @@ import { refreshLoginPath } from "./proc"
 import { setToolServer } from "./kuvotools"
 import { newID } from "./ids"
 import { BadRequest, NotFound, Sessions } from "./sessions"
+import { shell, shellOutput, shells, stopShell } from "./shells"
 import type { Integration, Model } from "./wire"
 
 export interface Context {
@@ -238,6 +239,23 @@ export function handler(context: Context) {
       }
       if (area === "agent" || area === "command" || area === "skill" || area === "mcp") return located([])
       if (area === "provider") return located([])
+
+      // Commands agents left running in the background (the bar over the composer)
+      if (area === "shell") {
+        const header = request.headers.get("x-opencode-directory")
+        const directory = url.searchParams.get("directory") ?? (header ? decodeURIComponent(header) : undefined)
+        if (!a && method === "GET") return located(shells(directory))
+        if (a && !b && method === "GET") {
+          const job = shell(a)
+          return job ? located(job) : error(404, "No such command.")
+        }
+        if (a && b === "output" && method === "GET") {
+          const limit = url.searchParams.get("limit")
+          const read = await shellOutput(a, Number(url.searchParams.get("cursor") ?? 0) || 0, limit ? Number(limit) : undefined)
+          return read ? located(read) : error(404, "No such command.")
+        }
+        if (a && !b && method === "DELETE") return (await stopShell(a)) ? json({}) : error(404, "No such command.")
+      }
 
       // Sessions
       if (area === "session") {

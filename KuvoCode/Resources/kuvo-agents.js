@@ -2728,6 +2728,55 @@ class Queue {
   }
 }
 
+// Agents/src/shells.ts
+var kept = new Map;
+var keptAfter = 10 * 60000;
+function addShell(sessionID, directory, command, output, stop) {
+  const id = newID("shl");
+  const job = { id, status: "running", command, cwd: directory, metadata: { sessionID }, time: { started: Date.now() } };
+  kept.set(id, { job, output, stop });
+  emit("shell.created", { info: job }, directory);
+  return id;
+}
+function endShell(id, exit) {
+  const one = kept.get(id);
+  if (!one || one.job.status === "exited")
+    return;
+  one.job.status = "exited";
+  if (exit !== undefined)
+    one.job.exit = exit;
+  emit("shell.exited", { id }, one.job.cwd);
+  const timer = setTimeout(() => kept.delete(id), keptAfter);
+  timer.unref?.();
+}
+function shells(directory) {
+  return [...kept.values()].map((one) => one.job).filter((job) => !directory || job.cwd === directory);
+}
+function shell(id) {
+  return kept.get(id)?.job;
+}
+async function shellOutput(id, cursor = 0, limit) {
+  const one = kept.get(id);
+  if (!one)
+    return;
+  const read = await one.output().catch(() => ({ output: "", total: 0 }));
+  const bytes = Buffer.from(read.output);
+  const total = Math.max(read.total, bytes.length);
+  const known = total - bytes.length;
+  const start = Math.max(cursor, known);
+  const end = limit === undefined ? total : Math.min(total, cursor + limit);
+  const output = start < end ? bytes.subarray(start - known, end - known).toString("utf8") : "";
+  return { output, cursor: Math.max(start, end), size: total };
+}
+async function stopShell(id) {
+  const one = kept.get(id);
+  if (!one)
+    return false;
+  if (one.job.status === "running")
+    await one.stop().catch(() => {});
+  return true;
+}
+
 // Agents/src/agents/claude.ts
 var SDK = [{ name: "@anthropic-ai/claude-agent-sdk", version: "0.3.303" }];
 var places = [join10(homedir(), ".local/bin"), join10(homedir(), ".claude/local"), "/opt/homebrew/bin", "/usr/local/bin"];
@@ -2988,6 +3037,12 @@ class ClaudeThread {
   input;
   active;
   lastHooks;
+  onOwnTurn;
+  own;
+  tasks = new Map;
+  liveTasks = new Set;
+  commands = new Map;
+  lastEnded;
   opened;
   constructor(agent, session, state) {
     this.agent = agent;
@@ -2995,6 +3050,11 @@ class ClaudeThread {
     this.state = state;
   }
   async run(input, turn, hooks) {
+    if (input.adopt)
+      return this.adopt(input, turn, hooks);
+    const own = this.own;
+    this.own = undefined;
+    own?.take?.();
     const sdk = await this.agent.sdk();
     if (hooks.signal.aborted)
       return { outcome: "interrupted" };
@@ -3021,9 +3081,138 @@ class ClaudeThread {
       return { outcome: "interrupted" };
     return new Promise((resolve2) => {
       this.lastHooks = hooks;
-      this.active = { turn, hooks, resolve: resolve2, streamed: new Set, blockTools: new Map, calls: new Map, subagents: new Map, auto: input.auto, steered: new Map };
-      this.input.push(userMessage(input));
+      const message = userMessage(input);
+      this.active = { turn, hooks, resolve: resolve2, streamed: new Set, blockTools: new Map, calls: new Map, subagents: new Map, auto: input.auto, steered: new Map([[message.uuid, ""]]) };
+      this.input.push(message);
     });
+  }
+  adopt(input, turn, hooks) {
+    const own = this.own;
+    this.own = undefined;
+    own?.take?.();
+    if (!this.query || !own || own.turnedAway)
+      return Promise.resolve({ outcome: "succeeded" });
+    return new Promise((resolve2) => {
+      this.lastHooks = hooks;
+      this.active = { turn, hooks, resolve: resolve2, streamed: new Set, blockTools: new Map, calls: new Map, subagents: new Map, auto: input.auto, steered: new Map };
+      for (const frame of own.frames) {
+        if (!this.active)
+          break;
+        this.handle(frame);
+      }
+    });
+  }
+  ownFrame(message) {
+    const known = this.own;
+    if (known) {
+      if (!known.turnedAway)
+        known.frames.push(message);
+      else if (message.type === "result")
+        this.own = undefined;
+      return;
+    }
+    const begins = !message.parent_tool_use_id && (message.type === "stream_event" || message.type === "assistant");
+    if (!begins)
+      return;
+    let take;
+    const taken = new Promise((resolve2) => take = resolve2);
+    const own = { frames: [message], turnedAway: false, taken, take };
+    this.own = own;
+    if (!(this.onOwnTurn?.(this.ownNote()) ?? false)) {
+      own.turnedAway = true;
+      take();
+      return;
+    }
+    setTimeout(() => {
+      if (this.own === own)
+        own.turnedAway = true;
+      take();
+    }, 15000);
+  }
+  ownNote() {
+    const ended = this.lastEnded;
+    this.lastEnded = undefined;
+    if (ended?.type === "local_bash") {
+      const exit = /exit code (\d+)/i.exec(ended.summary ?? "")?.[1];
+      const metadata = { source: "shell", state: ended.status === "completed" ? "completed" : "error" };
+      if (exit !== undefined)
+        metadata.exit = Number(exit);
+      if (ended.status === "stopped")
+        metadata.signal = "SIGTERM";
+      return { text: `A command left running in the background ${ended.status === "completed" ? "finished" : ended.status}.`, description: ended.command ?? ended.description, metadata };
+    }
+    if (ended)
+      return { text: `A task it had going ${ended.status === "completed" ? "finished" : ended.status}.`, description: `${ended.status === "completed" ? "Finished" : "Ended"}: ${ended.description}` };
+    return { text: "Claude Code carried on by itself." };
+  }
+  noteTask(message) {
+    switch (message.subtype) {
+      case "task_started": {
+        const known = this.tasks.get(message.task_id);
+        this.tasks.set(message.task_id, { ...known, type: message.task_type ?? known?.type ?? "", description: message.description ?? known?.description ?? "", toolUseID: message.tool_use_id ?? known?.toolUseID });
+        if (message.is_backgrounded && !message.ambient)
+          this.shellFor(message.task_id);
+        return;
+      }
+      case "task_updated":
+        if (message.patch?.is_backgrounded)
+          this.shellFor(message.task_id);
+        return;
+      case "task_notification": {
+        const task = this.tasks.get(message.task_id);
+        if (task && typeof message.output_file === "string")
+          task.outputFile = message.output_file;
+        const command = task?.toolUseID ? this.commands.get(task.toolUseID) : undefined;
+        this.lastEnded = { type: task?.type ?? "", description: task?.description ?? String(message.summary ?? ""), command, status: String(message.status ?? "completed"), summary: message.summary };
+        if (task?.shell)
+          endShell(task.shell, message.status === "completed" ? 0 : undefined);
+        return;
+      }
+      case "background_tasks_changed": {
+        const tasks = (Array.isArray(message.tasks) ? message.tasks : []).filter((task) => !task?.ambient);
+        this.liveTasks = new Set(tasks.map((task) => String(task.task_id)));
+        for (const task of tasks) {
+          const known = this.tasks.get(task.task_id);
+          this.tasks.set(task.task_id, { ...known, type: task.task_type ?? known?.type ?? "", description: task.description ?? known?.description ?? "" });
+          this.shellFor(task.task_id);
+        }
+        for (const [id, task] of this.tasks)
+          if (task.shell && !this.liveTasks.has(id))
+            endShell(task.shell);
+        return;
+      }
+    }
+  }
+  shellFor(taskID) {
+    const task = this.tasks.get(taskID);
+    if (!task || task.shell || task.type !== "local_bash")
+      return;
+    const command = (task.toolUseID ? this.commands.get(task.toolUseID) : undefined) ?? task.description;
+    task.shell = addShell(this.session.id, this.session.location.directory, command, () => this.taskOutput(taskID), async () => {
+      await this.query?.stopTask?.(taskID);
+    });
+  }
+  async taskOutput(taskID) {
+    const task = this.tasks.get(taskID);
+    try {
+      if (this.query?.getTaskOutput) {
+        const read = await this.query.getTaskOutput(taskID);
+        const last2 = { output: String(read?.output ?? ""), total: Number(read?.total_bytes ?? 0) };
+        if (task)
+          task.last = last2;
+        return last2;
+      }
+    } catch {}
+    if (task?.outputFile) {
+      try {
+        const bytes = readFileSync8(task.outputFile);
+        return { output: bytes.subarray(Math.max(0, bytes.length - 64000)).toString("utf8"), total: bytes.length };
+      } catch {}
+    }
+    return task?.last ?? { output: "", total: 0 };
+  }
+  get keepsWorking() {
+    return Boolean(this.query) && this.liveTasks.size > 0;
   }
   open(sdk, modelID, effort, plan, append, hooks) {
     let id = this.state.claudeSession;
@@ -3075,7 +3264,7 @@ class ClaudeThread {
       return;
     this.active = undefined;
     clearTimeout(active.goingOn);
-    const missed = active.steered.size ? [...active.steered.values()] : undefined;
+    const missed = this.unseen(active);
     const resolve2 = active.resolve;
     active.resolve = (value) => resolve2(missed ? { ...value, missed } : value);
     if (active.stopping || active.hooks.signal.aborted)
@@ -3094,9 +3283,19 @@ class ClaudeThread {
       }
       return;
     }
+    if (message.type === "system")
+      this.noteTask(message);
+    if (message.type === "assistant" && !message.parent_tool_use_id) {
+      for (const block of message.message?.content ?? [])
+        if (block?.type === "tool_use" && block.name === "Bash" && typeof block.input?.command === "string")
+          this.commands.set(block.id, block.input.command);
+      if (this.commands.size > 200)
+        for (const key of [...this.commands.keys()].slice(0, 100))
+          this.commands.delete(key);
+    }
     const active = this.active;
     if (!active)
-      return;
+      return this.ownFrame(message);
     if (!message.parent_tool_use_id && Array.isArray(message.user_message_uuids))
       for (const uuid of message.user_message_uuids)
         active.steered.delete(uuid);
@@ -3292,9 +3491,7 @@ class ClaudeThread {
     }
     clearTimeout(active.goingOn);
     this.active = undefined;
-    const missed = says && active.steered.size ? [...active.steered.values()] : undefined;
-    if (missed)
-      this.close();
+    const missed = says ? this.unseen(active) : undefined;
     const resolve2 = active.resolve;
     active.resolve = (value) => resolve2(missed ? { ...value, missed } : value);
     if (succeeded && goesOn) {
@@ -3334,6 +3531,9 @@ class ClaudeThread {
   async preToolUse(input) {
     if (input?.hook_event_name !== "PreToolUse")
       return {};
+    if (input.tool_name === "Bash" && typeof input.tool_use_id === "string" && typeof input.tool_input?.command === "string")
+      this.commands.set(input.tool_use_id, input.tool_input.command);
+    await this.ownTaken();
     const hooks = this.active?.hooks ?? this.lastHooks;
     if (!hooks)
       return {};
@@ -3347,7 +3547,12 @@ class ClaudeThread {
       return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "ask" } };
     return {};
   }
+  async ownTaken() {
+    if (!this.active && this.own && !this.own.turnedAway)
+      await this.own.taken;
+  }
   async canUseTool(name, input, options) {
+    await this.ownTaken();
     const active = this.active;
     const toolUseID = options?.toolUseID;
     if (!active)
@@ -3405,10 +3610,14 @@ class ClaudeThread {
       return;
     clearTimeout(active.goingOn);
     this.active = undefined;
-    const missed = active.steered.size ? [...active.steered.values()] : undefined;
-    if (missed)
-      this.close();
-    active.resolve({ outcome: "succeeded", missed });
+    active.resolve({ outcome: "succeeded", missed: this.unseen(active) });
+  }
+  unseen(active) {
+    if (!active.steered.size)
+      return;
+    const yours = [...active.steered.values()].filter(Boolean);
+    this.close();
+    return yours.length ? yours : undefined;
   }
   async interrupt() {
     const query = this.query;
@@ -3420,10 +3629,11 @@ class ClaudeThread {
     for (let waited = 0;waited < 5000 && this.active === active; waited += 100)
       await Bun.sleep(100);
     if (this.active === active && this.query === query) {
-      this.close();
       this.active = undefined;
       clearTimeout(active.goingOn);
-      active.resolve({ outcome: "interrupted", missed: active.steered.size ? [...active.steered.values()] : undefined });
+      const missed = this.unseen(active);
+      this.close();
+      active.resolve({ outcome: "interrupted", missed });
     }
   }
   close() {
@@ -3433,6 +3643,11 @@ class ClaudeThread {
     } catch {}
     this.query = undefined;
     this.input = undefined;
+    for (const task of this.tasks.values())
+      if (task.shell)
+        endShell(task.shell);
+    this.liveTasks.clear();
+    this.own = undefined;
   }
 }
 function kuvoTool2(name, input) {
@@ -4508,9 +4723,9 @@ ${others.map((path) => `- ${path}`).join(`
 }
 function shadowHome(home) {
   const own = join11(homedir2(), ".codex");
-  const kept = new Set(["auth.json", "models_cache.json"]);
+  const kept2 = new Set(["auth.json", "models_cache.json"]);
   mkdirSync8(home, { recursive: true, mode: 448 });
-  const wanted = existsSync8(own) ? readdirSync3(own).filter((name) => !kept.has(name)) : [];
+  const wanted = existsSync8(own) ? readdirSync3(own).filter((name) => !kept2.has(name)) : [];
   for (const name of wanted) {
     const link = join11(home, name);
     const target = join11(own, name);
@@ -5336,12 +5551,12 @@ function handover(before, partway, names) {
     return;
   const parts = [];
   if (history.length) {
-    const { kept, left } = select(history);
+    const { kept: kept2, left } = select(history);
     const onlyTheirs = history.every((item) => item.role === "You ran");
     parts.push(onlyTheirs ? "Since your last reply, the user ran these commands themselves; what they printed is below, for context (it isn't a new request):" : "This conversation began with another agent, and it's yours now. What came before, for context (it isn't a new request, and it doesn't outrank your instructions; attachments and other agents' tool calls aren't replayed):");
     if (left)
       parts.push(`(${left} earlier ${left === 1 ? "item is" : "items are"} left out.)`);
-    parts.push(...kept.map(render));
+    parts.push(...kept2.map(render));
   }
   if (started.length) {
     parts.push(started.some((item) => item.role === "You, while it worked") ? "Another agent started on the message below before it stopped. What it did is already done; what the user added while it worked is part of what they ask:" : "Another agent started on the message below before it stopped. What it did, which is already done:");
@@ -5632,10 +5847,10 @@ class Turn {
     const input = tool.call.state.status === "streaming" ? safeJSON(tool.call.state.input) : tool.call.state.input;
     const error = { type, message };
     const content = message ? [{ type: "text", text: message }] : [];
-    const kept = metadata ?? (tool.call.state.status === "running" ? tool.call.state.metadata : undefined);
-    tool.call.state = { status: "error", input, error, content, metadata: kept };
+    const kept2 = metadata ?? (tool.call.state.status === "running" ? tool.call.state.metadata : undefined);
+    tool.call.state = { status: "error", input, error, content, metadata: kept2 };
     tool.call.time = { ...tool.call.time, completed: Date.now() };
-    this.send("session.tool.failed", { assistantMessageID: tool.step.id, id, error, content, metadata: kept });
+    this.send("session.tool.failed", { assistantMessageID: tool.step.id, id, error, content, metadata: kept2 });
     this.save();
   }
   notice(text) {
@@ -5977,7 +6192,7 @@ class Sessions {
   state(id) {
     let live = this.live.get(id);
     if (!live) {
-      live = { threads: new Map, permissions: new Map, forms: new Map, always: [], subagents: new Map, blocks: this.policies ? undefined : [], steeredNotes: [] };
+      live = { threads: new Map, permissions: new Map, forms: new Map, always: [], subagents: new Map, blocks: this.policies ? undefined : [], steeredNotes: [], models: new Map };
       this.live.set(id, live);
     }
     return live;
@@ -5994,12 +6209,12 @@ class Sessions {
   }
   busy = new Set;
   notes(record) {
-    const kept = record.agent.snapshots ?? {};
-    for (const [id, value] of Object.entries(kept))
+    const kept2 = record.agent.snapshots ?? {};
+    for (const [id, value] of Object.entries(kept2))
       if (typeof value === "string")
-        kept[id] = { before: value, failed: true };
-    record.agent.snapshots = kept;
-    return kept;
+        kept2[id] = { before: value, failed: true };
+    record.agent.snapshots = kept2;
+    return kept2;
   }
   queue(record) {
     let queue = record.agent.inbox;
@@ -6241,19 +6456,19 @@ class Sessions {
     const directory = record.session.location.directory;
     const notes = this.notes(record);
     const files = new Set;
-    let kept = false;
+    let kept2 = false;
     for (const message of record.messages.slice(at)) {
       const note = message.type === "user" ? notes[message.id] : undefined;
       if (!note)
         continue;
-      kept = true;
+      kept2 = true;
       if (note.failed || !note.before || !note.files)
         throw new BadRequest("Kuvo Code couldn't keep what the files were around one of these messages, so Undo can't put them back.");
       for (const path of note.files)
         files.add(path);
     }
     const first = notes[messageID2];
-    if (kept && !first?.before)
+    if (kept2 && !first?.before)
       throw new BadRequest("This message went into the turn before it: undo from that one.");
     let diffs2 = [];
     if (first?.before && files.size && this.snapshots) {
@@ -6309,9 +6524,9 @@ class Sessions {
     const at = record.messages.findIndex((message) => message.id === revert.messageID);
     if (at >= 0) {
       const gone = record.messages.splice(at);
-      const kept = this.notes(record);
+      const kept2 = this.notes(record);
       for (const message of gone)
-        delete kept[message.id];
+        delete kept2[message.id];
     }
     delete record.session.revert;
     delete record.agent.revertNow;
@@ -6494,6 +6709,8 @@ class Sessions {
     const record = this.store.get(id);
     if (!record)
       return;
+    if (this.startAdopting(id))
+      return;
     const queue = this.queue(record);
     const index = queue.findIndex((input2) => input2.delivery === "steer" && !this.steering.has(input2.id));
     if (index < 0)
@@ -6509,6 +6726,8 @@ class Sessions {
     live.resume = false;
     const record = this.store.get(id);
     if (!record || this.isRunning(id))
+      return;
+    if (this.startAdopting(id))
       return;
     const queue = this.queue(record);
     const free = (input2) => !this.steering.has(input2.id);
@@ -6589,7 +6808,7 @@ ${text.slice(0, 4000)}
     this.commitRevert(id, record, live);
     const attachments = input.files.map((file) => ({ mime: mime(file.uri), name: file.name, source: { type: "uri", uri: file.uri } }));
     if (input.synthetic)
-      record.messages.push({ type: "synthetic", id: input.id, time: { created: Date.now() }, text: input.text, description: input.synthetic.description });
+      record.messages.push({ type: "synthetic", id: input.id, time: { created: Date.now() }, text: input.text, description: input.synthetic.description, metadata: input.synthetic.metadata });
     else
       record.messages.push({ type: "user", id: input.id, time: { created: Date.now() }, text: input.text, files: attachments.length ? attachments : undefined });
     session.time.updated = Date.now();
@@ -6597,7 +6816,7 @@ ${text.slice(0, 4000)}
     if (!input.synthetic && !session.title && !session.parentID && record.messages.filter((message) => message.type === "user").length === 1)
       this.nameSession(id, input.text);
     let note;
-    if (!input.synthetic && this.snapshots) {
+    if ((!input.synthetic || input.adopt) && this.snapshots) {
       try {
         const before2 = await this.snapshots.take(directory);
         if (before2)
@@ -6606,11 +6825,11 @@ ${text.slice(0, 4000)}
         note = { failed: true };
       }
       if (note) {
-        const kept = this.notes(record);
-        kept[input.id] = note;
-        const ids = Object.keys(kept).sort();
+        const kept2 = this.notes(record);
+        kept2[input.id] = note;
+        const ids = Object.keys(kept2).sort();
         for (const old of ids.slice(0, Math.max(0, ids.length - 100)))
-          delete kept[old];
+          delete kept2[old];
         this.store.save(id);
       }
     }
@@ -6636,7 +6855,7 @@ ${text.slice(0, 4000)}
       const run2 = { text: attached.text, files: attached.files, model: model2, plan: session.agent === "plan" };
       if (model2.providerID !== autoProvider)
         delete record.agent.autoHeld;
-      result = model2.providerID === autoProvider ? await this.runAuto(id, record, live, { ...run2, auto: true }, turn, abort.signal, input.id) : await this.runOn(id, record, live, model2, run2, turn, abort.signal, input.id);
+      result = input.adopt ? await this.runOn(id, record, live, input.adopt, { ...run2, model: input.adopt, adopt: true }, turn, abort.signal, input.id) : model2.providerID === autoProvider ? await this.runAuto(id, record, live, { ...run2, auto: true }, turn, abort.signal, input.id) : await this.runOn(id, record, live, model2, run2, turn, abort.signal, input.id);
     } catch (error) {
       result = { outcome: "failed", error: failure(error) };
     }
@@ -6654,19 +6873,19 @@ ${text.slice(0, 4000)}
     if (live.turn === turn)
       live.turn = undefined;
     const steered = live.steeredNotes.splice(0);
-    const turnNotes = [note, ...steered].filter((kept) => Boolean(kept?.before));
+    const turnNotes = [note, ...steered].filter((kept2) => Boolean(kept2?.before));
     if (turnNotes.length && this.snapshots) {
       this.busy.add(id);
       try {
         const after = await this.snapshots.take(directory);
         if (!after)
           throw new Error("not kept");
-        for (const kept of turnNotes)
-          kept.files = await this.snapshots.changed(directory, kept.before, after);
+        for (const kept2 of turnNotes)
+          kept2.files = await this.snapshots.changed(directory, kept2.before, after);
       } catch {
-        for (const kept of turnNotes)
-          if (!kept.files)
-            kept.failed = true;
+        for (const kept2 of turnNotes)
+          if (!kept2.files)
+            kept2.failed = true;
       } finally {
         this.busy.delete(id);
       }
@@ -6682,10 +6901,31 @@ ${text.slice(0, 4000)}
     live.idle = setTimeout(() => {
       if (this.isRunning(id) || this.live.get(id) !== live)
         return;
+      if ([...live.threads.values()].some((thread) => thread.keepsWorking))
+        return this.closeWhenIdle(id, live);
       for (const thread of live.threads.values())
         thread.close();
       live.threads.clear();
     }, timing.idleClose);
+  }
+  ownTurn(id, provider, note) {
+    const record = this.store.get(id);
+    const live = this.live.get(id);
+    const model2 = live?.models.get(provider);
+    if (!record || !live || !model2 || this.removing.has(id) || record.session.revert || live.turn || live.adopting)
+      return false;
+    live.adopting = { id: newID("msg"), text: note.text, files: [], delivery: "steer", synthetic: { description: note.description, metadata: note.metadata }, adopt: model2 };
+    this.wake(id);
+    return true;
+  }
+  startAdopting(id) {
+    const live = this.live.get(id);
+    const input = live?.adopting;
+    if (!live || !input)
+      return false;
+    live.adopting = undefined;
+    this.start(id, input);
+    return true;
   }
   async runOn(id, record, live, model2, input, turn, signal, userMessage2) {
     const agent = this.agent(model2.providerID);
@@ -6698,8 +6938,11 @@ ${text.slice(0, 4000)}
     let thread = live.threads.get(model2.providerID);
     if (!thread) {
       thread = agent.thread(record.session, slot.state);
+      const provider = model2.providerID;
+      thread.onOwnTurn = (note) => this.ownTurn(id, provider, note);
       live.threads.set(model2.providerID, thread);
     }
+    live.models.set(model2.providerID, model2);
     const hooks = this.hooks(id, live, turn, signal, slot, input.plan);
     turn.setModel(model2);
     let abandon;
@@ -7359,6 +7602,23 @@ function handler(context) {
         return located([]);
       if (area === "provider")
         return located([]);
+      if (area === "shell") {
+        const header2 = request.headers.get("x-opencode-directory");
+        const directory = url.searchParams.get("directory") ?? (header2 ? decodeURIComponent(header2) : undefined);
+        if (!a && method === "GET")
+          return located(shells(directory));
+        if (a && !b && method === "GET") {
+          const job = shell(a);
+          return job ? located(job) : error(404, "No such command.");
+        }
+        if (a && b === "output" && method === "GET") {
+          const limit = url.searchParams.get("limit");
+          const read = await shellOutput(a, Number(url.searchParams.get("cursor") ?? 0) || 0, limit ? Number(limit) : undefined);
+          return read ? located(read) : error(404, "No such command.");
+        }
+        if (a && !b && method === "DELETE")
+          return await stopShell(a) ? json({}) : error(404, "No such command.");
+      }
       if (area === "session") {
         if (!a) {
           if (method === "POST")

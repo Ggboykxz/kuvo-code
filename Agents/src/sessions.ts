@@ -11,7 +11,7 @@ import { createHash } from "node:crypto"
 import { spawn as spawnProcess } from "node:child_process"
 import { readFileSync, statSync } from "node:fs"
 import { fileURLToPath } from "node:url"
-import type { Agent, PermissionAsk, PromptFile, QuestionAsk, RunInput, RunResult, SubagentRun, SubagentTask, Thread, TurnHooks } from "./agent"
+import type { Agent, OwnTurn, PermissionAsk, PromptFile, QuestionAsk, RunInput, RunResult, SubagentRun, SubagentTask, Thread, TurnHooks } from "./agent"
 import { failure } from "./agent"
 import { Auto, autoProvider, resetTime, type AutoEntry } from "./auto"
 import { emit } from "./events"
@@ -34,7 +34,9 @@ interface Input {
   files: { uri: string; name?: string }[]
   delivery: Delivery
   /** From the app, not you ("you switched the model while it worked"): the agent gets it as a note. */
-  synthetic?: { description?: string }
+  synthetic?: { description?: string; metadata?: Record<string, unknown> }
+  /** A turn the agent on this model began on its own (a command it left running ended): it's taken, not sent. */
+  adopt?: ModelRef
 }
 
 interface Live {
@@ -66,6 +68,10 @@ interface Live {
   rulesFor?: string
   /** What the files were before each message you sent partway through this turn, for Undo. */
   steeredNotes: SnapshotNote[]
+  /** The model each agent here ran last, by provider: a turn it begins on its own is on it. */
+  models: Map<string, ModelRef>
+  /** A turn an agent began on its own, to start as soon as nothing else runs. */
+  adopting?: Input
 }
 
 /** What the bridge keeps of each agent's conversation in a session. */
@@ -383,7 +389,7 @@ export class Sessions {
     let live = this.live.get(id)
     if (!live) {
       // Blocks aren't known until the engine says (none, without an engine to ask).
-      live = { threads: new Map(), permissions: new Map(), forms: new Map(), always: [], subagents: new Map(), blocks: this.policies ? undefined : [], steeredNotes: [] }
+      live = { threads: new Map(), permissions: new Map(), forms: new Map(), always: [], subagents: new Map(), blocks: this.policies ? undefined : [], steeredNotes: [], models: new Map() }
       this.live.set(id, live)
     }
     return live
@@ -941,6 +947,7 @@ export class Sessions {
     if (this.isRunning(id) || this.removing.has(id)) return
     const record = this.store.get(id)
     if (!record) return
+    if (this.startAdopting(id)) return
     const queue = this.queue(record)
     const index = queue.findIndex((input) => input.delivery === "steer" && !this.steering.has(input.id))
     if (index < 0) return
@@ -956,6 +963,8 @@ export class Sessions {
     live.resume = false
     const record = this.store.get(id)
     if (!record || this.isRunning(id)) return
+    // A turn its agent began on its own goes first, however the last one ended.
+    if (this.startAdopting(id)) return
     const queue = this.queue(record)
     // One being handed to the turn that just ended is settled by that (sent, or back here).
     const free = (input: Input) => !this.steering.has(input.id)
@@ -1037,7 +1046,7 @@ export class Sessions {
     // A message after an undo makes it final.
     this.commitRevert(id, record, live)
     const attachments: Attachment[] = input.files.map((file) => ({ mime: mime(file.uri), name: file.name, source: { type: "uri", uri: file.uri } }))
-    if (input.synthetic) record.messages.push({ type: "synthetic", id: input.id, time: { created: Date.now() }, text: input.text, description: input.synthetic.description })
+    if (input.synthetic) record.messages.push({ type: "synthetic", id: input.id, time: { created: Date.now() }, text: input.text, description: input.synthetic.description, metadata: input.synthetic.metadata })
     else record.messages.push({ type: "user", id: input.id, time: { created: Date.now() }, text: input.text, files: attachments.length ? attachments : undefined })
     session.time.updated = Date.now()
     this.store.save(id, true)
@@ -1046,7 +1055,7 @@ export class Sessions {
     // The project's files as they are before it (yours, not a note from the app), and after its
     // turn: what the turn changed, which Undo puts back.
     let note: SnapshotNote | undefined
-    if (!input.synthetic && this.snapshots) {
+    if ((!input.synthetic || input.adopt) && this.snapshots) {
       try {
         const before = await this.snapshots.take(directory)
         if (before) note = { before }
@@ -1082,8 +1091,9 @@ export class Sessions {
       const run: RunInput = { text: attached.text, files: attached.files, model, plan: session.agent === "plan" }
       // A message on a model you picked: what Auto held back before isn't news when it's back on.
       if (model.providerID !== autoProvider) delete record.agent.autoHeld
-      result =
-        model.providerID === autoProvider
+      result = input.adopt
+        ? await this.runOn(id, record, live, input.adopt, { ...run, model: input.adopt, adopt: true }, turn, abort.signal, input.id)
+        : model.providerID === autoProvider
           ? await this.runAuto(id, record, live, { ...run, auto: true }, turn, abort.signal, input.id)
           : await this.runOn(id, record, live, model, run, turn, abort.signal, input.id)
     } catch (error) {
@@ -1127,9 +1137,36 @@ export class Sessions {
     clearTimeout(live.idle)
     live.idle = setTimeout(() => {
       if (this.isRunning(id) || this.live.get(id) !== live) return
+      // Commands it left running would end with it: later.
+      if ([...live.threads.values()].some((thread) => thread.keepsWorking)) return this.closeWhenIdle(id, live)
       for (const thread of live.threads.values()) thread.close()
       live.threads.clear()
     }, timing.idleClose)
+  }
+
+  /**
+   * An agent began a turn of its own (a command it left running ended, and it carries on): a turn
+   * here takes it, saying what began it, unless another runs now or an undo waits (it would make
+   * the undo final), when it's turned away.
+   */
+  private ownTurn(id: string, provider: string, note: OwnTurn): boolean {
+    const record = this.store.get(id)
+    const live = this.live.get(id)
+    const model = live?.models.get(provider)
+    if (!record || !live || !model || this.removing.has(id) || record.session.revert || live.turn || live.adopting) return false
+    live.adopting = { id: newID("msg"), text: note.text, files: [], delivery: "steer", synthetic: { description: note.description, metadata: note.metadata }, adopt: model }
+    // Now, or once what's kept of the files (after the last turn) is done.
+    this.wake(id)
+    return true
+  }
+
+  private startAdopting(id: string): boolean {
+    const live = this.live.get(id)
+    const input = live?.adopting
+    if (!live || !input) return false
+    live.adopting = undefined
+    void this.start(id, input)
+    return true
   }
 
   /** The message on one agent's model, with what that agent hasn't seen of the conversation. */
@@ -1142,8 +1179,11 @@ export class Sessions {
     let thread = live.threads.get(model.providerID)
     if (!thread) {
       thread = agent.thread(record.session, slot.state)
+      const provider = model.providerID
+      thread.onOwnTurn = (note) => this.ownTurn(id, provider, note)
       live.threads.set(model.providerID, thread)
     }
+    live.models.set(model.providerID, model)
     const hooks = this.hooks(id, live, turn, signal, slot, input.plan)
     turn.setModel(model)
     // Given up on (it didn't stop when asked): the turn ends without it.

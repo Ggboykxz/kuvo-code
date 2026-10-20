@@ -9,6 +9,7 @@ import { Auto } from "../src/auto"
 import { Queue } from "../src/queue"
 import type { Roster } from "../src/roster"
 import { Sessions } from "../src/sessions"
+import { shellOutput, shells } from "../src/shells"
 import { Store } from "../src/store"
 import type { Message } from "../src/wire"
 
@@ -17,6 +18,8 @@ class FakeClaude {
   sent: any[] = []
   out = new Queue<any>()
   interrupts = 0
+  outputs = new Map<string, string>()
+  stopped: string[] = []
   closed = false
   onInterrupt?: () => void
 
@@ -41,6 +44,10 @@ class FakeClaude {
       setModel: async () => {},
       applyFlagSettings: async () => {},
       setPermissionMode: async () => {},
+      getTaskOutput: async (task: string) => ({ output: this.outputs.get(task) ?? "", total_bytes: Buffer.byteLength(this.outputs.get(task) ?? ""), truncated: false }),
+      stopTask: async (task: string) => {
+        this.stopped.push(task)
+      },
       interrupt: async () => {
         this.interrupts++
         this.onInterrupt?.()
@@ -163,5 +170,51 @@ describe("Claude Code, messages sent partway", () => {
     const text = fake.sent[0].message.content.find((part: any) => part.type === "text").text
     expect(text).toContain("the missed one")
     expect(text).toContain("go on")
+  })
+})
+
+describe("Claude Code, on its own", () => {
+  test("a command it leaves running shows in the bar; when it ends, the turn it starts on its own shows too", async () => {
+    const id = sessions.create({ model: { providerID: provider, id: "default" }, location: { directory: root } }).id
+    sessions.prompt(id, { id: "msg_claude_bg_00001", text: "start the server", files: [], delivery: "steer" })
+    await until(() => fake.sent.length === 1)
+    const [first] = fake.sent.map((message) => message.uuid)
+    fake.out.push({ type: "assistant", message: { id: "m1", content: [{ type: "tool_use", id: "tool1", name: "Bash", input: { command: "npm run dev", run_in_background: true } }] }, parent_tool_use_id: null, user_message_uuids: [first] })
+    fake.out.push({ type: "system", subtype: "task_started", task_id: "t1", task_type: "local_bash", description: "Start the dev server", tool_use_id: "tool1", is_backgrounded: true })
+    fake.out.push({ type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "t1", task_type: "local_bash", description: "Start the dev server" }] })
+    fake.say("It's running.", [first])
+    fake.result([first])
+    await until(() => idles(id).length === 1)
+    // In the bar, with what it printed.
+    const [job] = shells(root).filter((job) => job.metadata.sessionID === id && job.status === "running")
+    expect(job.command).toBe("npm run dev")
+    fake.outputs.set("t1", "ready on :3000\n")
+    expect((await shellOutput(job.id, 0, 24_000))?.output).toBe("ready on :3000\n")
+    // It ends; Claude Code carries on by itself, and a turn here takes it.
+    fake.out.push({ type: "system", subtype: "task_notification", task_id: "t1", status: "completed", tool_use_id: "tool1", output_file: "/nonexistent", summary: "exit code 0" })
+    fake.out.push({ type: "system", subtype: "background_tasks_changed", tasks: [] })
+    fake.say("The server stopped.", [])
+    fake.result([])
+    await until(() => idles(id).length === 2)
+    expect(shells(root).find((one) => one.id === job.id)?.status).toBe("exited")
+    const notice = sessions.messages(id).find((message) => message.type === "synthetic") as any
+    expect(notice.metadata).toMatchObject({ source: "shell", state: "completed", exit: 0 })
+    expect(notice.description).toBe("npm run dev")
+    expect(texts(id).join(" ")).toContain("The server stopped.")
+  })
+
+  test("a turn of its own answered before your message: your turn ends with the result that answers yours", async () => {
+    const id = sessions.create({ model: { providerID: provider, id: "default" }, location: { directory: root } }).id
+    sessions.prompt(id, { id: "msg_claude_bg_00002", text: "hello", files: [], delivery: "steer" })
+    await until(() => fake.sent.length === 1)
+    const [mine] = fake.sent.map((message) => message.uuid)
+    fake.say("about the command that ended", [])
+    fake.result([])
+    await Bun.sleep(50)
+    expect(idles(id)).toHaveLength(0)
+    fake.say("hello to you", [mine])
+    fake.result([mine])
+    await until(() => idles(id).length === 1)
+    expect(texts(id).join(" ")).toContain("hello to you")
   })
 })
