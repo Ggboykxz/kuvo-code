@@ -5064,6 +5064,7 @@ class Roster {
 
 // Agents/src/sessions.ts
 import { createHash as createHash3 } from "crypto";
+import { spawn as spawnProcess } from "child_process";
 import { readFileSync as readFileSync9, statSync as statSync2 } from "fs";
 import { fileURLToPath } from "url";
 
@@ -5547,6 +5548,54 @@ var timing = { stopGrace: 8000, idleClose: 15 * 60000 };
 var changes = new Set(["edit", "write", "patch"]);
 var shellTimeout = 10 * 60000;
 var shellOutputLimit = 50000;
+function runCommand(command, directory) {
+  return new Promise((resolve2) => {
+    let output = "";
+    let truncated = false;
+    let timedOut = false;
+    let done = false;
+    const take = (chunk) => {
+      output += chunk.toString("utf8");
+      if (output.length > shellOutputLimit * 2) {
+        output = output.slice(-shellOutputLimit);
+        truncated = true;
+      }
+    };
+    const finish = (code) => {
+      if (done)
+        return;
+      done = true;
+      clearTimeout(timer);
+      const text = plain(output).trimEnd();
+      resolve2({ code, output: text.length > shellOutputLimit ? text.slice(-shellOutputLimit) : text, truncated: truncated || text.length > shellOutputLimit, timedOut });
+    };
+    let child;
+    try {
+      child = spawnProcess(process.env.SHELL || "/bin/zsh", ["-c", command], { cwd: directory, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    } catch (error) {
+      output = String(error?.message ?? error);
+      return finish(1);
+    }
+    const group = (signal) => {
+      try {
+        if (child.pid)
+          process.kill(-child.pid, signal);
+      } catch {}
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      group("SIGTERM");
+      setTimeout(() => group("SIGKILL"), 5000);
+    }, shellTimeout);
+    child.stdout?.on("data", take);
+    child.stderr?.on("data", take);
+    child.on("error", (error) => {
+      output += String(error?.message ?? error);
+      finish(1);
+    });
+    child.on("exit", (code, signal) => setTimeout(() => finish(code ?? (signal ? 128 + 15 : 1)), 500));
+  });
+}
 var engineDefaults = [
   { action: "read", resource: "*.env", effect: "ask" },
   { action: "read", resource: "*.env.*", effect: "ask" },
@@ -5845,24 +5894,24 @@ class Sessions {
       throw new BadRequest("Type a command after the !.");
     const directory = record.session.location.directory;
     const shellID = newID("shl");
-    const message = { type: "shell", id: newID("msg"), time: { created: Date.now() }, shellID, command: text, status: "running" };
+    const event = emit("session.shell.started", { sessionID: id, shell: { id: shellID, command: text, status: "running" } }, directory);
+    const message = { type: "shell", id: messageID(event.id), time: { created: event.created }, shellID, command: text, status: "running" };
     record.messages.push(message);
     record.session.time.updated = Date.now();
+    if (this.isRunning(id))
+      record.agent.lateShells = [...record.agent.lateShells ?? [], message.id];
     this.store.save(id, true);
-    emit("session.shell.started", { sessionID: id, shell: { id: shellID, command: text, status: "running" } }, directory);
-    (async () => {
-      const ran = await run(process.env.SHELL || "/bin/zsh", ["-c", text], { cwd: directory, timeout: shellTimeout }).catch((error) => ({ code: 1, stdout: "", stderr: String(error?.message ?? error) }));
-      const all = plain([ran.stdout, ran.stderr].filter(Boolean).join(`
-`)).trimEnd();
-      message.status = ran.code === 0 ? "completed" : "failed";
+    runCommand(text, directory).then((ran) => {
+      message.status = ran.code === 0 && !ran.timedOut ? "completed" : "failed";
       message.exit = ran.code;
-      message.output = { output: all.length > shellOutputLimit ? all.slice(-shellOutputLimit) : all, truncated: all.length > shellOutputLimit };
+      message.output = { output: ran.timedOut ? `${ran.output}
+(Stopped: it ran past ${shellTimeout / 60000} minutes.)`.trim() : ran.output, truncated: ran.truncated };
       message.time.completed = Date.now();
       if (!this.store.get(id))
         return;
       this.store.save(id, true);
       emit("session.shell.ended", { sessionID: id, shell: { id: shellID, command: text, status: message.status, exit: ran.code }, output: message.output }, directory);
-    })();
+    });
   }
   async stageRevert(id, messageID2) {
     const record = this.record(id);
@@ -6259,7 +6308,10 @@ class Sessions {
       const at = record.messages.findIndex((message) => message.id === userMessage2);
       const seenAt = slot.seen ? record.messages.findIndex((message) => message.id === slot.seen) : -1;
       const hasMessage = at >= 0 && seenAt >= at;
-      const before = hasMessage ? [] : record.messages.slice(seenAt + 1, at < 0 ? undefined : at);
+      const late = new Set(record.agent.lateShells ?? []);
+      const before = hasMessage ? [] : record.messages.slice(0, at < 0 ? undefined : at).filter((message, index) => index > seenAt || late.has(message.id));
+      if (!hasMessage && late.size)
+        delete record.agent.lateShells;
       const partway = at < 0 ? [] : record.messages.slice(Math.max(at, seenAt) + 1);
       const handed = handover(before, partway, (message) => this.stepName(message));
       const text = withHandover(hasMessage ? carryOn : input.text, handed);

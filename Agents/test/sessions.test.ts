@@ -749,6 +749,34 @@ describe("undo, carefully", () => {
 })
 
 describe("commands you run yourself", () => {
+  test("a command's output a job it left running keeps open still comes, and a lot of it is kept to its end", async () => {
+    const folder = mkdtempSync(join(root, "project-"))
+    const id = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: folder } }).id
+    sessions.runShell(id, "(sleep 30 &) ; echo done-here")
+    sessions.runShell(id, "yes line | head -n 200000")
+    const shells = () => sessions.messages(id).filter((message) => message.type === "shell") as any[]
+    await until(() => shells().every((shell) => shell.status !== "running"), 10_000)
+    expect(shells()[0].output.output).toContain("done-here")
+    expect(shells()[1].output.truncated).toBe(true)
+    expect(shells()[1].output.output.length).toBeLessThanOrEqual(50_000)
+  })
+
+  test("one run while the agent works reaches it with your next message", async () => {
+    const folder = mkdtempSync(join(root, "project-"))
+    a.script = works
+    const id = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: folder } }).id
+    send(id, "first")
+    await until(() => a.runs.length === 1)
+    sessions.runShell(id, "echo while-it-worked")
+    await until(() => (sessions.messages(id).find((message) => message.type === "shell") as any)?.status === "completed")
+    a.script = replies
+    a.threads[0].onStop!()
+    await settled(id, 1)
+    send(id, "second")
+    await settled(id, 2)
+    expect(a.runs.at(-1)!.text).toContain("echo while-it-worked")
+  })
+
   test("a command run with ! joins the conversation, and the agent gets it with your next message", async () => {
     const folder = mkdtempSync(join(root, "project-"))
     const id = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: folder } }).id

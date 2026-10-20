@@ -8,6 +8,7 @@
 // on its own the next one starts; after Stop, or an error, nothing does until the app says.
 
 import { createHash } from "node:crypto"
+import { spawn as spawnProcess } from "node:child_process"
 import { readFileSync, statSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import type { Agent, PermissionAsk, PromptFile, QuestionAsk, RunInput, RunResult, SubagentRun, SubagentTask, Thread, TurnHooks } from "./agent"
@@ -21,7 +22,7 @@ import { matches, ruled } from "./rules"
 import type { Record_, Store } from "./store"
 import { Turn, type Outcome } from "./turn"
 import type { AssistantMessage, Attachment, Decision, FormAnswer, FormRequest, Message, ModelRef, PermissionRequest, PermissionRule, Session, ShellMessage, FileDiff } from "./wire"
-import { plain, run } from "./proc"
+import { plain } from "./proc"
 import type { Snapshots } from "./snapshots"
 import { noTokens } from "./wire"
 
@@ -86,6 +87,58 @@ const changes = new Set(["edit", "write", "patch"])
 /** How long a command you run with "!" may take, and how much of what it printed is kept. */
 const shellTimeout = 10 * 60_000
 const shellOutputLimit = 50_000
+
+/**
+ * A command you typed with "!", run through your shell in its own process group: what it printed
+ * (its end, when there's a lot), kept as it comes; stopped whole when it runs too long. Its output
+ * stops being waited for a moment after it ends (a job it left running may keep it open).
+ */
+function runCommand(command: string, directory: string): Promise<{ code: number; output: string; truncated: boolean; timedOut: boolean }> {
+  return new Promise((resolve) => {
+    let output = ""
+    let truncated = false
+    let timedOut = false
+    let done = false
+    const take = (chunk: Buffer) => {
+      output += chunk.toString("utf8")
+      if (output.length > shellOutputLimit * 2) {
+        output = output.slice(-shellOutputLimit)
+        truncated = true
+      }
+    }
+    const finish = (code: number) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      const text = plain(output).trimEnd()
+      resolve({ code, output: text.length > shellOutputLimit ? text.slice(-shellOutputLimit) : text, truncated: truncated || text.length > shellOutputLimit, timedOut })
+    }
+    let child: ReturnType<typeof spawnProcess>
+    try {
+      child = spawnProcess(process.env.SHELL || "/bin/zsh", ["-c", command], { cwd: directory, detached: true, stdio: ["ignore", "pipe", "pipe"] })
+    } catch (error: any) {
+      output = String(error?.message ?? error)
+      return finish(1)
+    }
+    const group = (signal: NodeJS.Signals) => {
+      try {
+        if (child.pid) process.kill(-child.pid, signal)
+      } catch {}
+    }
+    const timer = setTimeout(() => {
+      timedOut = true
+      group("SIGTERM")
+      setTimeout(() => group("SIGKILL"), 5_000)
+    }, shellTimeout)
+    child.stdout?.on("data", take)
+    child.stderr?.on("data", take)
+    child.on("error", (error) => {
+      output += String(error?.message ?? error)
+      finish(1)
+    })
+    child.on("exit", (code, signal) => setTimeout(() => finish(code ?? (signal ? 128 + 15 : 1)), 500))
+  })
+}
 
 /** What's kept of the project's files around one of your messages, for Undo. */
 interface SnapshotNote {
@@ -443,22 +496,23 @@ export class Sessions {
     if (!text) throw new BadRequest("Type a command after the !.")
     const directory = record.session.location.directory
     const shellID = newID("shl")
-    const message: ShellMessage = { type: "shell", id: newID("msg"), time: { created: Date.now() }, shellID, command: text, status: "running" }
+    // Named after its event, as the app names it from the event.
+    const event = emit("session.shell.started", { sessionID: id, shell: { id: shellID, command: text, status: "running" } }, directory)
+    const message: ShellMessage = { type: "shell", id: messageID(event.id), time: { created: event.created }, shellID, command: text, status: "running" }
     record.messages.push(message)
     record.session.time.updated = Date.now()
+    // Run while an agent works: it hasn't seen it when its turn ends, and gets it with your next message.
+    if (this.isRunning(id)) record.agent.lateShells = [...((record.agent.lateShells as string[] | undefined) ?? []), message.id]
     this.store.save(id, true)
-    emit("session.shell.started", { sessionID: id, shell: { id: shellID, command: text, status: "running" } }, directory)
-    void (async () => {
-      const ran = await run(process.env.SHELL || "/bin/zsh", ["-c", text], { cwd: directory, timeout: shellTimeout }).catch((error) => ({ code: 1, stdout: "", stderr: String(error?.message ?? error) }))
-      const all = plain([ran.stdout, ran.stderr].filter(Boolean).join("\n")).trimEnd()
-      message.status = ran.code === 0 ? "completed" : "failed"
+    void runCommand(text, directory).then((ran) => {
+      message.status = ran.code === 0 && !ran.timedOut ? "completed" : "failed"
       message.exit = ran.code
-      message.output = { output: all.length > shellOutputLimit ? all.slice(-shellOutputLimit) : all, truncated: all.length > shellOutputLimit }
+      message.output = { output: ran.timedOut ? `${ran.output}\n(Stopped: it ran past ${shellTimeout / 60_000} minutes.)`.trim() : ran.output, truncated: ran.truncated }
       message.time.completed = Date.now()
       if (!this.store.get(id)) return
       this.store.save(id, true)
       emit("session.shell.ended", { sessionID: id, shell: { id: shellID, command: text, status: message.status, exit: ran.code }, output: message.output }, directory)
-    })()
+    })
   }
 
   // MARK: Undo
@@ -862,7 +916,10 @@ export class Sessions {
       // It has your message already (Auto went on with another of its models): it carries on from
       // what it hasn't seen since, rather than getting the message again.
       const hasMessage = at >= 0 && seenAt >= at
-      const before = hasMessage ? [] : record.messages.slice(seenAt + 1, at < 0 ? undefined : at)
+      // Commands you ran while it (or another) worked come along, though it was there for them.
+      const late = new Set((record.agent.lateShells as string[] | undefined) ?? [])
+      const before = hasMessage ? [] : record.messages.slice(0, at < 0 ? undefined : at).filter((message, index) => index > seenAt || late.has(message.id))
+      if (!hasMessage && late.size) delete record.agent.lateShells
       const partway = at < 0 ? [] : record.messages.slice(Math.max(at, seenAt) + 1)
       const handed = handover(before, partway, (message) => this.stepName(message))
       const text = withHandover(hasMessage ? carryOn : input.text, handed)
