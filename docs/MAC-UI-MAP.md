@@ -614,7 +614,7 @@ interpretation of it.
 | **2b. Title bar & overlays** | Title-bar tabs, drawer, palette 600/18, settings card, gauge popover, wells | §1 rows 15, 16; §2; §4 | 0.5.39 ✅ |
 | **3. Motion** | Analytic spring `linear()`, hover 0.12, press fills, list tint, shimmer, spinner, image-viewer transitions, reduced motion | §5 | 0.5.40 ✅ |
 | **— The platform** | The window is built by Next.js (a static export the harness serves) and the page is read in a real browser in CI; the look and the behaviour do not move | — | 0.5.41 |
-| **4. Icons** | 89 symbols → drawn SVGs; FolderIcon; PromptMark; provider logos; remove text glyphs and the naked `@` | §7 | 0.5.42 |
+| **4. Icons** | 89 symbols → drawn SVGs; FolderIcon; PromptMark; provider logos; remove text glyphs and the naked `@` | §7 | 0.5.42 ✅ |
 | **5. Wording** | 1 208 sites compared; menus, tooltips, accessibility labels; punctuation | §8 | 0.5.43 |
 | **6. Screens** | Sidebar + title bar; transcript; composer + queue + gauge; palette + drawer; settings (14 existing + 3 missing: Notifications, Privacy, Panel; Worktrees maps to Projects); files/changes/terminal | §6.1–6.3 | 0.5.44 → 0.5.49 |
 | **7. Gestures & micro-UX** | Rename, double-click, resize grabber, history, popover flip, clear/remove/badge behaviours, find and search field shape | §9 | 0.5.50 |
