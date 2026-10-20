@@ -5,6 +5,11 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+- Review comments you haven't sent stay with the session when you close its tab or quit, and go when it's deleted.
+- In Changes, Stage, Unstage and Discard act on just that file, even when its name looks like a pattern (`app/[slug]/page.tsx`); discarding a new file only noted with `git add -N` moves it to the Trash instead of emptying it.
+- A bot on a machine saves a long memory too, and a command a machine can't decode fails rather than reporting success.
+- Notifications hide more kinds of keys (Stripe, webhook secrets, Slack hooks) and no longer hide long branch, package or test names.
+- In split view, the panel stays the session's beside while the expanded panel covers it.
 - Machines whose login shell is fish (or another that isn't like sh) work: a backslash in a file name, a bot's memory or a wake-up note no longer breaks the commands Kuvo Code runs there.
 - Answering from a notification (Allow, Reply, a question's choices) needs your Mac unlocked; a notification that can't show everything a request covers has no Allow button; and what looks like a password, token or key in a notification shows as dots.
 - Removing a provider you set up in Accounts also removes its key, here and on your machines.
