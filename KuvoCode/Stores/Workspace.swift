@@ -1050,6 +1050,8 @@ final class Workspace {
     }
 
     @ObservationIgnored private var refreshes: [String: Task<Bool, Never>] = [:]
+    /// Folders a machine had commands running in when it went away, to read again when it's back.
+    @ObservationIgnored private var jobFolders: [String: Set<String>] = [:]
 
     private func refreshOnce(_ engine: MachineEngine) async -> Bool {
         guard let api = engine.api else { return true }
@@ -1081,12 +1083,10 @@ final class Workspace {
                 Task { try? await api.markViewed(id, idle: idle) }
             }
             // Commands its agents left running, as it lists them now (they were forgotten while it
-            // was away, and a restart ended some): in the folders its sessions work in, open and
-            // working ones first, then the latest, forty at most.
-            let first = theirs.filter { models[$0.id] != nil || running.contains($0.id) }
-            let rest = theirs.filter { models[$0.id] == nil && !running.contains($0.id) }.sorted { $0.time.updated > $1.time.updated }
-            var folders: [String] = []
-            for session in first + rest where !folders.contains(session.location.directory) && folders.count < 40 { folders.append(session.location.directory) }
+            // was away, and a restart ended some): in its open and working sessions' folders and
+            // those that had one running, not every folder (reading one starts its tools there).
+            var folders = Set(theirs.filter { models[$0.id] != nil || running.contains($0.id) }.map(\.location.directory))
+            folders.formUnion(jobFolders.removeValue(forKey: machine) ?? [])
             Task { [weak self] in for folder in folders { await self?.readShellJobs(in: folder) } }
             if let active = try? await api.activeSessions(), isCurrent() {
                 // A subagent's session has no row: its machine is the one its events came from.
@@ -1157,8 +1157,12 @@ final class Workspace {
         let gone = Set(sessions.filter { RemoteFolder.machine(of: $0.location.directory) == machine }.map(\.id))
         if !forGood, connectedMachines.contains(machine) { saveList(of: machine) }
         running.subtract(gone)
-        // Its commands left running (its subagents' too): unknown until it's back (and read again then).
-        for id in shellJobs.keys where gone.contains(id) || sessionMachines[id] == machine { shellJobs[id] = nil }
+        // Its commands left running (its subagents' too): unknown until it's back, and read again
+        // then in the folders they were in.
+        for id in shellJobs.keys where gone.contains(id) || sessionMachines[id] == machine {
+            if let folder = session(root(of: id))?.location.directory { jobFolders[machine, default: []].insert(folder) }
+            shellJobs[id] = nil
+        }
         lastingShellJobs.formIntersection(Set(shellJobs.values.joined().map(\.id)))
         // And its subagents', which have no row.
         running = running.filter { sessionMachines[$0] != machine || session($0) != nil }

@@ -320,9 +320,12 @@ final class MachineEngine {
                     isLive = true
                     downCheck?.cancel()
                     downCheck = nil
+                    // Apart from this loop: its events (replies streaming, asks) go on meanwhile.
                     if !wasLive {
-                        await catalog.refresh()
-                        await onReconnect()
+                        Task { [weak self] in
+                            await self?.catalog.refresh()
+                            await self?.onReconnect()
+                        }
                     }
                 case .disconnected:
                     isLive = false
