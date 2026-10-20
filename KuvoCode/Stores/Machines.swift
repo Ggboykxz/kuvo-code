@@ -320,12 +320,12 @@ final class MachineEngine {
                     isLive = true
                     downCheck?.cancel()
                     downCheck = nil
-                    // Apart from this loop: its events (replies streaming, asks) go on meanwhile.
                     if !wasLive {
-                        Task { [weak self] in
-                            await self?.catalog.refresh()
-                            await self?.onReconnect()
-                        }
+                        // Its models apart from this loop; its sessions in it, so the events that
+                        // come meanwhile apply after the refresh rather than being overwritten by
+                        // what it read before them.
+                        Task { [weak self] in await self?.catalog.refresh() }
+                        await onReconnect()
                     }
                 case .disconnected:
                     isLive = false
