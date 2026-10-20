@@ -1493,10 +1493,14 @@ export class Sessions {
     live.agentPrompt = own ? info?.system : undefined
 
     let result: RunResult
+    let earlier = new Set<string>()
     try {
       // A text file you attached goes in the message, as the engine puts it (the agent reads the rest).
       const attached = withTextFiles(input.text, input.files.map(promptFile))
       const run: RunInput = { text: attached.text, files: attached.files, model, plan: session.agent === "plan" }
+      // Subagents an earlier turn sent off in the background, still at work: this turn's end
+      // leaves them be.
+      earlier = new Set(live.subagents.keys())
       // A message on a model you picked: what Auto held back before isn't news when it's back on.
       if (model.providerID !== autoProvider) delete record.agent.autoHeld
       result = input.adopt
@@ -1515,6 +1519,7 @@ export class Sessions {
     // what they asked goes with them).
     for (const [child, childTurn] of [...live.subagents]) {
       if (outcome === "succeeded" && live.background.has(child) && !childTurn.isEnded) continue
+      if (earlier.has(child) && live.background.has(child) && !childTurn.isEnded) continue
       const run = live.runs.get(child)
       if (run && outcome !== "succeeded" && !childTurn.isEnded) void run.stop?.().catch(() => {})
       if (run?.turn === childTurn) run.end(outcome === "failed" ? "interrupted" : outcome)
@@ -1698,6 +1703,9 @@ export class Sessions {
     const tried = new Set<string>()
     let last: RunResult | undefined
     let note: string | undefined
+    // Subagents at work before the model that just stopped began (sent off in the background by
+    // an earlier turn): they go on; that model's own stop with it.
+    let earlier = new Set<string>()
     for (;;) {
       if (signal.aborted) return { outcome: "interrupted" }
       const entry = await this.nextEntry(tried, input.model.id)
@@ -1712,10 +1720,18 @@ export class Sessions {
       const model: ModelRef = { providerID: entry.providerID, id: entry.modelID, ...(entry.variant ? { variant: entry.variant } : {}) }
       if (note) {
         turn.stopTools("Stopped: going on with another model.")
-        for (const child of live.subagents.values()) child.finish("interrupted")
-        live.subagents.clear()
+        for (const [child, childTurn] of [...live.subagents]) {
+          if (earlier.has(child)) continue
+          const run = live.runs.get(child)
+          if (run && !childTurn.isEnded) void run.stop?.().catch(() => {})
+          if (run?.turn === childTurn) run.end("interrupted")
+          else childTurn.finish("interrupted")
+          live.subagents.delete(child)
+          live.background.delete(child)
+        }
         turn.notice(`${note} Going on with ${this.entryName(entry)}.`)
       }
+      earlier = new Set(live.subagents.keys())
       const from = record.messages.length
       try {
         last = await this.runOn(id, record, live, model, input, turn, signal, userMessage)

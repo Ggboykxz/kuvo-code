@@ -19,7 +19,7 @@ import { Queue } from "../queue"
 import { commandSignIn } from "../signin"
 import { newID } from "../ids"
 import { kuvoTools } from "../kuvotools"
-import { claudeProgram, managedNote, onMachine } from "../machine"
+import { claudeProgram, managedNote, onMachine, ownFoldersScript } from "../machine"
 import { addShell, endShell } from "../shells"
 import { pictureData, pictureFile, withPictures } from "../pictures"
 import type { Turn } from "../turn"
@@ -187,6 +187,10 @@ export class ClaudeAgent implements Agent {
   env(): Record<string, string | undefined> {
     const env: Record<string, string | undefined> = { ...process.env, CLAUDE_CODE_TMPDIR: join(this.context.temporary, "claude") }
     if (this.instance.home) env.CLAUDE_CONFIG_DIR = this.instance.home
+    // On a machine, its commands get the machine's own folders back (it keeps its own in Kuvo
+    // Code's folder).
+    const own = onMachine ? ownFoldersScript(this.context.home) : undefined
+    if (own) env.CLAUDE_ENV_FILE = own
     return env
   }
 

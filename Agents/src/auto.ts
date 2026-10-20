@@ -8,6 +8,7 @@
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { emit } from "./events"
 
 export const autoProvider = "auto"
 
@@ -62,6 +63,22 @@ export class Auto {
       if (read.length) this.lists = read
       this.held = (saved.limits ?? []).filter((held: Held) => held?.key && held.until > Date.now())
     } catch {}
+    this.schedule()
+  }
+
+  private expiry?: ReturnType<typeof setTimeout>
+
+  /** As the first hold ends, it's let go and said (the app's marks of accounts at a limit go then). */
+  private schedule() {
+    clearTimeout(this.expiry)
+    if (!this.held.length) return
+    const next = Math.min(...this.held.map((held) => held.until))
+    this.expiry = setTimeout(() => {
+      this.prune()
+      emit("kuvo.auto.updated", {})
+      this.schedule()
+    }, Math.min(Math.max(next - Date.now(), 0) + 500, 2 ** 31 - 1))
+    ;(this.expiry as any).unref?.()
   }
 
   /** Lists as given, kept to what one can be: an ID, a name, models (not Auto itself). */
@@ -117,6 +134,20 @@ export class Auto {
   clearLimits() {
     this.held = []
     this.save()
+    this.schedule()
+  }
+
+  /**
+   * An account's holds go (its sign-in changed: another account, or a new sign-in): it's tried
+   * again. True when it had any.
+   */
+  release(providerID: string): boolean {
+    const before = this.held.length
+    this.held = this.held.filter((held) => held.key !== providerID && !held.key.startsWith(providerID + "/"))
+    if (this.held.length === before) return false
+    this.save()
+    this.schedule()
+    return true
   }
 
   private prune() {
@@ -146,6 +177,7 @@ export class Auto {
     this.held = this.held.filter((held) => held.key !== key)
     this.held.push({ key, until, scope: limit.scope, known })
     this.save()
+    this.schedule()
   }
 
   private save() {
@@ -160,12 +192,13 @@ export class Auto {
  * "try again in 3h 20m"), if they say (milliseconds since 1970).
  */
 export function resetsIn(text: string | undefined, now = Date.now()): number | undefined {
-  const found = text?.match(/(?:resets?|try again|available again)\s+in\s+((?:\d+\s*(?:days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b[\s,]*(?:and\s+)?)+)/i)
+  const found = text?.match(/(?:resets?|try again|available again)\s+in\s+((?:\d+(?:\.\d+)?\s*(?:days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)(?![a-z])[\s,]*(?:and\s+)?)+)/i)
   if (!found) return undefined
   const units: Record<string, number> = { d: 86_400_000, h: 3_600_000, m: 60_000, s: 1_000 }
   let total = 0
-  for (const part of found[1]!.matchAll(/(\d+)\s*([dhms])/gi)) total += Number(part[1]) * (units[part[2]!.toLowerCase()] ?? 0)
-  return total ? now + total : undefined
+  for (const part of found[1]!.matchAll(/(\d+(?:\.\d+)?)\s*([dhms])/gi)) total += Number(part[1]) * (units[part[2]!.toLowerCase()] ?? 0)
+  // (A month at most: a plan's allowance comes back within one.)
+  return total > 0 ? now + Math.min(total, 31 * 86_400_000) : undefined
 }
 
 /** "4:30 PM", or "Oct 21, 9:00 AM" when it isn't today. */

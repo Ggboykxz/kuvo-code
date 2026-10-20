@@ -14,6 +14,47 @@ import { dirname, join } from "path";
 import { brotliDecompressSync } from "zlib";
 var onMachine = process.env.KUVO_AGENTS_REMOTE === "1";
 var machineHome = process.env.KUVO_HOME;
+var ownFolders = {};
+function takeOwnFolders() {
+  for (const key of Object.keys(process.env)) {
+    if (!key.startsWith("KUVO_OWN_"))
+      continue;
+    const name = key.slice("KUVO_OWN_".length);
+    if (name)
+      ownFolders[name] = process.env[key] || undefined;
+    delete process.env[key];
+  }
+}
+function ownFoldersScript(folder) {
+  const names = Object.keys(ownFolders);
+  if (!names.length)
+    return;
+  const quoted = (value) => "'" + value.replace(/'/g, `'\\''`) + "'";
+  const text = names.map((name) => ownFolders[name] ? `export ${name}=${quoted(ownFolders[name])}` : `unset ${name}`).join(`
+`) + `
+`;
+  const file = join(folder, "own-folders.sh");
+  try {
+    if (readFileSync(file, "utf8") === text)
+      return file;
+  } catch {}
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(file, text, { mode: 384 });
+  return file;
+}
+function ownFoldersConfig() {
+  const config = {};
+  const unset = [];
+  for (const [name, value] of Object.entries(ownFolders)) {
+    if (value)
+      config[`shell_environment_policy.set.${name}`] = value;
+    else
+      unset.push(name);
+  }
+  if (unset.length)
+    config["shell_environment_policy.exclude"] = unset;
+  return config;
+}
 var arch = process.arch === "arm64" ? "arm64" : "x64";
 function musl() {
   try {
@@ -155,6 +196,77 @@ class Accounts {
 // Agents/src/auto.ts
 import { mkdirSync as mkdirSync3, readFileSync as readFileSync3, renameSync as renameSync3, writeFileSync as writeFileSync3 } from "fs";
 import { join as join3 } from "path";
+
+// Agents/src/ids.ts
+var alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+var last = { timestamp: 0, counter: 0 };
+function ascending() {
+  const timestamp = Date.now();
+  if (last.timestamp !== timestamp)
+    last = { timestamp, counter: 0 };
+  last.counter += 1;
+  const value = BigInt(timestamp) * 0x1000n + BigInt(last.counter) & 0xffffffffffffn;
+  const time = value.toString(16).padStart(12, "0");
+  let random = "";
+  const bytes = crypto.getRandomValues(new Uint8Array(14));
+  for (const byte of bytes)
+    random += alphabet[byte % alphabet.length];
+  return time + random;
+}
+var newID = (prefix) => `${prefix}_${ascending()}`;
+var messageID = (eventID) => "msg_" + eventID.slice("evt_".length);
+
+// Agents/src/events.ts
+var listeners = new Set;
+function emit(type, data, directory) {
+  const event = { id: newID("evt"), type, created: Date.now(), data };
+  if (directory)
+    event.location = { directory };
+  for (const listener of listeners)
+    listener(event);
+  return event;
+}
+function feed() {
+  const encoder = new TextEncoder;
+  let listener;
+  let heartbeat;
+  const stream = new ReadableStream({
+    start(controller) {
+      const send = (event) => {
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}
+
+`));
+        } catch {
+          stop();
+        }
+      };
+      const stop = () => {
+        if (listener)
+          listeners.delete(listener);
+        if (heartbeat)
+          clearInterval(heartbeat);
+        listener = undefined;
+        heartbeat = undefined;
+      };
+      send({ id: newID("evt"), type: "server.connected", created: Date.now(), data: {} });
+      listener = send;
+      listeners.add(send);
+      heartbeat = setInterval(() => send({ id: newID("evt"), type: "server.heartbeat", created: Date.now(), data: {} }), 15000);
+    },
+    cancel() {
+      if (listener)
+        listeners.delete(listener);
+      if (heartbeat)
+        clearInterval(heartbeat);
+    }
+  });
+  return new Response(stream, {
+    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" }
+  });
+}
+
+// Agents/src/auto.ts
 var autoProvider = "auto";
 var firstList = "auto";
 var unknownReset = 30 * 60000;
@@ -174,6 +286,20 @@ class Auto {
         this.lists = read;
       this.held = (saved.limits ?? []).filter((held) => held?.key && held.until > Date.now());
     } catch {}
+    this.schedule();
+  }
+  expiry;
+  schedule() {
+    clearTimeout(this.expiry);
+    if (!this.held.length)
+      return;
+    const next = Math.min(...this.held.map((held) => held.until));
+    this.expiry = setTimeout(() => {
+      this.prune();
+      emit("kuvo.auto.updated", {});
+      this.schedule();
+    }, Math.min(Math.max(next - Date.now(), 0) + 500, 2 ** 31 - 1));
+    this.expiry.unref?.();
   }
   static clean(lists) {
     const seen = new Set;
@@ -212,6 +338,16 @@ class Auto {
   clearLimits() {
     this.held = [];
     this.save();
+    this.schedule();
+  }
+  release(providerID2) {
+    const before = this.held.length;
+    this.held = this.held.filter((held) => held.key !== providerID2 && !held.key.startsWith(providerID2 + "/"));
+    if (this.held.length === before)
+      return false;
+    this.save();
+    this.schedule();
+    return true;
   }
   prune() {
     const before = this.held.length;
@@ -236,6 +372,7 @@ class Auto {
     this.held = this.held.filter((held) => held.key !== key);
     this.held.push({ key, until, scope: limit.scope, known });
     this.save();
+    this.schedule();
   }
   save() {
     mkdirSync3(this.root, { recursive: true });
@@ -244,14 +381,14 @@ class Auto {
   }
 }
 function resetsIn(text, now = Date.now()) {
-  const found = text?.match(/(?:resets?|try again|available again)\s+in\s+((?:\d+\s*(?:days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)\b[\s,]*(?:and\s+)?)+)/i);
+  const found = text?.match(/(?:resets?|try again|available again)\s+in\s+((?:\d+(?:\.\d+)?\s*(?:days?|d|hours?|hrs?|h|minutes?|mins?|m|seconds?|secs?|s)(?![a-z])[\s,]*(?:and\s+)?)+)/i);
   if (!found)
     return;
   const units = { d: 86400000, h: 3600000, m: 60000, s: 1000 };
   let total = 0;
-  for (const part of found[1].matchAll(/(\d+)\s*([dhms])/gi))
+  for (const part of found[1].matchAll(/(\d+(?:\.\d+)?)\s*([dhms])/gi))
     total += Number(part[1]) * (units[part[2].toLowerCase()] ?? 0);
-  return total ? now + total : undefined;
+  return total > 0 ? now + Math.min(total, 31 * 86400000) : undefined;
 }
 function resetTime(at) {
   const date = new Date(at);
@@ -359,25 +496,6 @@ function failure(error, type = "agent") {
   const message = error instanceof Error ? error.message : typeof error === "string" ? error : JSON.stringify(error);
   return { type, message: message || "The agent stopped with an error." };
 }
-
-// Agents/src/ids.ts
-var alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-var last = { timestamp: 0, counter: 0 };
-function ascending() {
-  const timestamp = Date.now();
-  if (last.timestamp !== timestamp)
-    last = { timestamp, counter: 0 };
-  last.counter += 1;
-  const value = BigInt(timestamp) * 0x1000n + BigInt(last.counter) & 0xffffffffffffn;
-  const time = value.toString(16).padStart(12, "0");
-  let random = "";
-  const bytes = crypto.getRandomValues(new Uint8Array(14));
-  for (const byte of bytes)
-    random += alphabet[byte % alphabet.length];
-  return time + random;
-}
-var newID = (prefix) => `${prefix}_${ascending()}`;
-var messageID = (eventID) => "msg_" + eventID.slice("evt_".length);
 
 // Agents/src/engine.ts
 class EngineLink {
@@ -1342,6 +1460,7 @@ class Snapshots {
   root;
   queues = new Map;
   taken = 0;
+  collecting = new Set;
   constructor(root) {
     this.root = root;
   }
@@ -1412,8 +1531,10 @@ class Snapshots {
       const ignored = await this.git(repository, ["ls-files", "-z", "-o", "-i", "--exclude-standard", "--directory", "--", repository.prefix || "."]);
       if (ignored.code === 0)
         this.keepIgnored(store, tree.stdout.trim(), ignored.stdout.split("\x00").filter(Boolean));
-      if (++this.taken % 50 === 0)
-        this.exclusive(repository, () => this.git(repository, ["gc", "--auto", "--quiet"], { timeout: 600000, packs: true })).catch(() => {});
+      if (++this.taken % 50 === 0 && !this.collecting.has(store)) {
+        this.collecting.add(store);
+        this.git(repository, ["gc", "--auto", "--quiet"], { timeout: 600000, packs: true }).catch(() => {}).finally(() => this.collecting.delete(store));
+      }
       return tree.stdout.trim();
     });
   }
@@ -1780,7 +1901,6 @@ function elicitationField(key, field, required) {
 // Agents/src/acp.ts
 var outputLimit2 = 30000;
 var limitWords = /RESOURCE_EXHAUSTED|usage limit (?:reached|exceeded)|quota exceeded|exceeded your (?:current )?quota|rate limit exceeded|too many requests/i;
-var limitReply = /usage limit reached|reached your (?:current )?(?:usage )?(?:quota|limit)|limit will reset/i;
 var acpTiming = { ownQuiet: 20000, signInGrace: 60000 };
 
 class AcpThread {
@@ -1872,6 +1992,7 @@ class AcpThread {
         if (!existsSync4(file))
           return;
         clearInterval(watch);
+        asksSignIn = true;
         rpc.stderr = `${this.name} needs you to sign in again: Settings \u203A Accounts.`;
         rpc.kill();
       }, 500);
@@ -1957,6 +2078,8 @@ class AcpThread {
         return;
       if (active.hooks.signal.aborted)
         return this.end(active, "interrupted");
+      if (this.startedOver)
+        return this.end(active, "failed", `${this.name} started again and couldn't take up this conversation. Send your message again.`);
       const sessionId = this.sessionID;
       await this.flavor.selectModel(rpc, sessionId, input.model.id, this.setup, input.model.variant).catch(() => {});
       await this.flavor.selectMode?.(rpc, sessionId, { approvesAll: active.hooks.approvesAll(), plan: input.plan }, this.setup).catch(() => {});
@@ -2059,7 +2182,7 @@ ${others.map((path) => `- ${path}`).join(`
   end(active, outcome, message, limit) {
     if (active.ended)
       return;
-    if (outcome === "succeeded" && !active.own && active.said && active.said.length < 800 && limitReply.test(active.said)) {
+    if (outcome === "succeeded" && !active.own && !active.tools.size && active.said && this.flavor.limitReply?.(active.said)) {
       outcome = "failed";
       limit = this.limit(active.said);
       message = `You've reached your ${this.name} usage limit for now.`;
@@ -2688,56 +2811,6 @@ function questionFields(questions) {
     options: (question.options ?? []).map((option) => ({ value: option.label, label: option.label, description: option.description })),
     custom: true
   }));
-}
-
-// Agents/src/events.ts
-var listeners = new Set;
-function emit(type, data, directory) {
-  const event = { id: newID("evt"), type, created: Date.now(), data };
-  if (directory)
-    event.location = { directory };
-  for (const listener of listeners)
-    listener(event);
-  return event;
-}
-function feed() {
-  const encoder = new TextEncoder;
-  let listener;
-  let heartbeat;
-  const stream = new ReadableStream({
-    start(controller) {
-      const send = (event) => {
-        try {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}
-
-`));
-        } catch {
-          stop();
-        }
-      };
-      const stop = () => {
-        if (listener)
-          listeners.delete(listener);
-        if (heartbeat)
-          clearInterval(heartbeat);
-        listener = undefined;
-        heartbeat = undefined;
-      };
-      send({ id: newID("evt"), type: "server.connected", created: Date.now(), data: {} });
-      listener = send;
-      listeners.add(send);
-      heartbeat = setInterval(() => send({ id: newID("evt"), type: "server.heartbeat", created: Date.now(), data: {} }), 15000);
-    },
-    cancel() {
-      if (listener)
-        listeners.delete(listener);
-      if (heartbeat)
-        clearInterval(heartbeat);
-    }
-  });
-  return new Response(stream, {
-    headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive" }
-  });
 }
 
 // Agents/src/signin.ts
@@ -3429,6 +3502,10 @@ class AntigravityAgent {
         return agent.launch();
       },
       asksSignIn: (line) => line.includes(signInLine),
+      limitReply: (text) => {
+        const plain2 = text.replace(/[#*_>`]/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+        return /^usage limit reached\.? you have reached your current quota for this period\.?(?: your limit will reset in [^.]{1,80}\.?)?$/.test(plain2);
+      },
       signInEnded: () => agent.signInEnded(),
       async selectModel(rpc, sessionId, modelID, setup) {
         if (setup?.kuvoModel === modelID)
@@ -3852,6 +3929,9 @@ class ClaudeAgent {
     const env = { ...process.env, CLAUDE_CODE_TMPDIR: join11(this.context.temporary, "claude") };
     if (this.instance.home)
       env.CLAUDE_CONFIG_DIR = this.instance.home;
+    const own = onMachine ? ownFoldersScript(this.context.home) : undefined;
+    if (own)
+      env.CLAUDE_ENV_FILE = own;
     return env;
   }
   async removeAccount() {
@@ -5112,6 +5192,9 @@ class CodexAgent {
   }
   install = onMachine ? undefined : "npm install -g @openai/codex";
   server;
+  get running() {
+    return this.server && !this.server.isClosed ? this.server : undefined;
+  }
   starting;
   threads = new Map;
   oneOffs = new Map;
@@ -5497,7 +5580,7 @@ class CodexThread {
     this.instructions = instructions;
     const timeout = tools ? { tool_timeout_sec: Math.ceil(tools.timeout / 1000) } : {};
     const server2 = tools?.kind === "http" ? { url: tools.url, http_headers: tools.headers, ...timeout } : tools?.kind === "stdio" ? { command: tools.command, args: tools.args, env: tools.env, ...timeout } : undefined;
-    const config = { "shell_environment_policy.set.OPENCODE_SESSION_ID": this.session.id, ...tools && server2 ? { [`mcp_servers.${tools.name}`]: server2 } : {} };
+    const config = { "shell_environment_policy.set.OPENCODE_SESSION_ID": this.session.id, ...onMachine ? ownFoldersConfig() : {}, ...tools && server2 ? { [`mcp_servers.${tools.name}`]: server2 } : {} };
     const common = { cwd: this.session.location.directory, model: input.model.id, developerInstructions: instructions, config };
     if (this.nativeID) {
       try {
@@ -5621,7 +5704,7 @@ ${others.map((path) => `- ${path}`).join(`
           if (result.outcome === "succeeded") {
             this.backgroundLanes.set(threadID, lane);
           } else {
-            this.interruptLane(threadID, lane);
+            this.interruptLane(threadID, lane, rpc);
             this.endSubagent(lane, "interrupted");
           }
         }
@@ -5932,15 +6015,12 @@ ${others.map((path) => `- ${path}`).join(`
   async stopSubagent(threadID) {
     const lane = this.active?.subagents.get(threadID) ?? this.backgroundLanes.get(threadID);
     if (lane && !lane.ended)
-      await this.interruptLane(threadID, lane);
+      await this.interruptLane(threadID, lane, this.agent.running);
   }
-  async interruptLane(threadID, lane) {
-    if (!lane.turnID)
+  async interruptLane(threadID, lane, rpc) {
+    if (!lane.turnID || !rpc || rpc.isClosed)
       return;
-    const rpc = await this.agent.rpc().catch(() => {
-      return;
-    });
-    await rpc?.request("turn/interrupt", { threadId: threadID, turnId: lane.turnID }, 1e4).catch(() => {});
+    await rpc.request("turn/interrupt", { threadId: threadID, turnId: lane.turnID }, 1e4).catch(() => {});
   }
   endSubagent(lane, outcome, message) {
     if (lane.ended)
@@ -9227,9 +9307,11 @@ ${text.slice(0, 4000)}
     const own = session.agent && session.agent !== "build" && session.agent !== "plan" ? session.agent : undefined;
     live.agentPrompt = own ? info?.system : undefined;
     let result;
+    let earlier = new Set;
     try {
       const attached = withTextFiles(input.text, input.files.map(promptFile));
       const run2 = { text: attached.text, files: attached.files, model: model2, plan: session.agent === "plan" };
+      earlier = new Set(live.subagents.keys());
       if (model2.providerID !== autoProvider)
         delete record.agent.autoHeld;
       result = input.adopt ? await this.runOn(id, record, live, input.adopt, { ...run2, model: input.adopt, adopt: true, auto: model2.providerID === autoProvider || undefined }, turn, abort.signal, input.id) : model2.providerID === autoProvider ? await this.runAuto(id, record, live, { ...run2, auto: true }, turn, abort.signal, input.id) : await this.runOn(id, record, live, model2, run2, turn, abort.signal, input.id);
@@ -9241,6 +9323,8 @@ ${text.slice(0, 4000)}
     turn.finish(outcome, outcome === "interrupted" ? undefined : result.error);
     for (const [child, childTurn] of [...live.subagents]) {
       if (outcome === "succeeded" && live.background.has(child) && !childTurn.isEnded)
+        continue;
+      if (earlier.has(child) && live.background.has(child) && !childTurn.isEnded)
         continue;
       const run2 = live.runs.get(child);
       if (run2 && outcome !== "succeeded" && !childTurn.isEnded)
@@ -9408,6 +9492,7 @@ ${text.slice(0, 4000)}
     const tried = new Set;
     let last2;
     let note;
+    let earlier = new Set;
     for (;; ) {
       if (signal.aborted)
         return { outcome: "interrupted" };
@@ -9427,11 +9512,22 @@ ${text.slice(0, 4000)}
       const model2 = { providerID: entry.providerID, id: entry.modelID, ...entry.variant ? { variant: entry.variant } : {} };
       if (note) {
         turn.stopTools("Stopped: going on with another model.");
-        for (const child of live.subagents.values())
-          child.finish("interrupted");
-        live.subagents.clear();
+        for (const [child, childTurn] of [...live.subagents]) {
+          if (earlier.has(child))
+            continue;
+          const run2 = live.runs.get(child);
+          if (run2 && !childTurn.isEnded)
+            run2.stop?.().catch(() => {});
+          if (run2?.turn === childTurn)
+            run2.end("interrupted");
+          else
+            childTurn.finish("interrupted");
+          live.subagents.delete(child);
+          live.background.delete(child);
+        }
         turn.notice(`${note} Going on with ${this.entryName(entry)}.`);
       }
+      earlier = new Set(live.subagents.keys());
       const from = record.messages.length;
       try {
         last2 = await this.runOn(id, record, live, model2, input, turn, signal, userMessage2);
@@ -9920,7 +10016,7 @@ async function maintainedSoon(agent, fresh) {
   answered = true;
   return value;
 }
-async function integration(agent, fresh = false) {
+async function integration(agent, fresh = false, auto) {
   const [account, maintained] = await Promise.all([
     agent.account(fresh).catch((error2) => ({ installed: false, signedIn: false, message: String(error2?.message ?? error2) })),
     maintainedSoon(agent, fresh)
@@ -9931,6 +10027,8 @@ async function integration(agent, fresh = false) {
   if (before !== undefined && before !== seen) {
     agent.forgetModels?.();
     emit("integration.updated", { integrationID: agent.providerID });
+    if (account.signedIn && auto?.release(agent.providerID))
+      emit("kuvo.auto.updated", {});
   }
   return {
     id: agent.providerID,
@@ -10006,13 +10104,13 @@ function handler(context) {
           const fresh = url.searchParams.get("fresh") === "1";
           if (fresh)
             await refreshLoginPath();
-          return located(await Promise.all(roster.all().map((agent2) => integration(agent2, fresh))));
+          return located(await Promise.all(roster.all().map((agent2) => integration(agent2, fresh, auto))));
         }
         const agent = agentFor(a);
         if (!agent)
           return error(404, `No agent ${a}.`);
         if (!b)
-          return located(await integration(agent, true));
+          return located(await integration(agent, true, auto));
         if (b === "connect" && c === "oauth") {
           if (!d && method === "POST") {
             const { methodID } = await body();
@@ -10274,7 +10372,11 @@ function handler(context) {
       }
       if (area === "kuvo" && a === "auto") {
         if (b === "limits" && method === "DELETE") {
-          auto.clearLimits();
+          const provider = url.searchParams.get("provider");
+          if (provider)
+            auto.release(provider);
+          else
+            auto.clearLimits();
           emit("kuvo.auto.updated", {});
           return json({});
         }
@@ -10429,17 +10531,7 @@ var machineEngine = onMachine ? { url: `http://127.0.0.1:${process.env.KUVO_ENGI
 var port = onMachine ? Number(process.env.KUVO_AGENTS_PORT) : 0;
 if (onMachine) {
   setToolProgram(process.env.OPENCODE_CONFIG_CONTENT);
-  for (const key of Object.keys(process.env)) {
-    if (!key.startsWith("KUVO_OWN_"))
-      continue;
-    const own = process.env[key];
-    delete process.env[key];
-    const name = key.slice("KUVO_OWN_".length);
-    if (own)
-      process.env[name] = own;
-    else
-      delete process.env[name];
-  }
+  takeOwnFolders();
   process.env.KUVO_BIN = join16(machineHome, "bin");
   process.env.KUVO_BOTS ??= join16(machineHome, "bots");
   process.env.KUVO_WAKES ??= join16(machineHome, "wakes");

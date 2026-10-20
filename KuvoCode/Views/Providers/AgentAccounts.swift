@@ -541,7 +541,10 @@ private struct PlanAccountRow: View {
                     badge: isInUse && !isOnly ? "In use" : nil) {
             if connection.type == "credential" {
                 if !isInUse, let id = connection.credentialID {
-                    Button("Use This Account") { Task { try? await app.api?.activateCredential(id) } }
+                    Button("Use This Account") {
+                        Task { try? await app.api?.activateCredential(id) }
+                        app.releaseLimit(plan.id)
+                    }
                 }
                 Button("Sign In Again…", action: connect)
                 Divider()

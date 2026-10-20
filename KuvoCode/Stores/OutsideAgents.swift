@@ -326,6 +326,14 @@ final class OutsideAgents {
         }
     }
 
+    /// An account you just signed in to again, or switched to another of: Custom Auto tries it
+    /// again, rather than waiting out a limit the account before reached.
+    func releaseLimit(_ provider: String) async {
+        guard let api, auto.limits.contains(where: { $0.key == provider || $0.key.hasPrefix(provider + "/") }) else { return }
+        try? await api.releaseAutoLimit(provider)
+        await loadAuto()
+    }
+
     /// A machine's copy of your lists, as this Mac has them now.
     func copyLists(_ lists: [AutoList.Named]) async {
         guard let api, lists != auto.all, let saved = try? await api.saveAutoLists(lists) else { return }
@@ -538,6 +546,11 @@ extension OpenCodeAPI {
 
     func clearAutoLimits() async throws {
         _ = try await client.send(try client.request("DELETE", "api/kuvo/auto/limits"), as: Empty.self)
+    }
+
+    /// One account's limits (`provider`), let go.
+    func releaseAutoLimit(_ provider: String) async throws {
+        _ = try await client.send(try client.request("DELETE", "api/kuvo/auto/limits", query: ["provider": provider]), as: Empty.self)
     }
 
     /// Another account with an agent (`claude`, `codex`…): its provider ID.

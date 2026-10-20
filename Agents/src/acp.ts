@@ -20,8 +20,6 @@ import type { Decision, FormField, Session, TokenUsage } from "./wire"
 const outputLimit = 30_000
 /** An agent's words for a usage limit (not any error that mentions a quota). */
 const limitWords = /RESOURCE_EXHAUSTED|usage limit (?:reached|exceeded)|quota exceeded|exceeded your (?:current )?quota|rate limit exceeded|too many requests/i
-/** An answer that is only its plan's limit (Antigravity says it in its reply, and ends the turn as done). */
-const limitReply = /usage limit reached|reached your (?:current )?(?:usage )?(?:quota|limit)|limit will reset/i
 
 export interface AcpFlavor {
   /** The command that starts the agent, for this session's approval mode. */
@@ -52,6 +50,8 @@ export interface AcpFlavor {
   filter?(line: string): boolean
   /** A line that means the agent can't go on (it wants a sign-in): why, in words. */
   fatalLine?(line: string): string | undefined
+  /** Its whole answer is its plan's limit, which it says in a reply and ends as done (Antigravity). */
+  limitReply?(text: string): boolean
   /**
    * A line saying its sign-in is gone (it asks for a new one). Partway through a run, its access
    * ran out and it didn't renew it: started again, it renews it from the sign-in it keeps, once
@@ -236,6 +236,8 @@ export class AcpThread implements Thread {
         if (rpc.isClosed) return clearInterval(watch)
         if (!existsSync(file)) return
         clearInterval(watch)
+        // (Asking for a sign-in, as its line does.)
+        asksSignIn = true
         rpc.stderr = `${this.name} needs you to sign in again: Settings › Accounts.`
         rpc.kill()
       }, 500)
@@ -328,6 +330,8 @@ export class AcpThread implements Thread {
       active.rpc = rpc
       if (active.ended) return
       if (active.hooks.signal.aborted) return this.end(active, "interrupted")
+      // Its conversation couldn't be taken up: told to carry on, it wouldn't know with what.
+      if (this.startedOver) return this.end(active, "failed", `${this.name} started again and couldn't take up this conversation. Send your message again.`)
       const sessionId = this.sessionID!
       await this.flavor.selectModel(rpc, sessionId, input.model.id, this.setup, input.model.variant).catch(() => {})
       await this.flavor.selectMode?.(rpc, sessionId, { approvesAll: active.hooks.approvesAll(), plan: input.plan }, this.setup).catch(() => {})
@@ -427,8 +431,8 @@ export class AcpThread implements Thread {
 
   private end(active: Active, outcome: RunResult["outcome"], message?: string, limit?: Limit) {
     if (active.ended) return
-    // Done, with an answer that only says its plan is at its limit: that limit.
-    if (outcome === "succeeded" && !active.own && active.said && active.said.length < 800 && limitReply.test(active.said)) {
+    // Done, having run nothing, with an answer that only says its plan is at its limit: that limit.
+    if (outcome === "succeeded" && !active.own && !active.tools.size && active.said && this.flavor.limitReply?.(active.said)) {
       outcome = "failed"
       limit = this.limit(active.said)
       message = `You've reached your ${this.name} usage limit for now.`

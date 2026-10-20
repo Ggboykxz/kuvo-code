@@ -28,6 +28,8 @@ export class Snapshots {
   /** One git operation at a time on a store (two at once fail on its index). */
   private queues = new Map<string, Promise<unknown>>()
   private taken = 0
+  /** Stores being kept small now (`gc`). */
+  private collecting = new Set<string>()
 
   constructor(private readonly root: string) {}
 
@@ -98,8 +100,14 @@ export class Snapshots {
       // those, though the rules change after.
       const ignored = await this.git(repository, ["ls-files", "-z", "-o", "-i", "--exclude-standard", "--directory", "--", repository.prefix || "."])
       if (ignored.code === 0) this.keepIgnored(store, tree.stdout.trim(), ignored.stdout.split("\0").filter(Boolean))
-      // Kept small now and then: once this is done, before the store's next operation.
-      if (++this.taken % 50 === 0) void this.exclusive(repository, () => this.git(repository, ["gc", "--auto", "--quiet"], { timeout: 600_000, packs: true })).catch(() => {})
+      // Kept small now and then, beside what comes next (which never waits for it: nothing here is
+      // ever pruned, so it takes nothing away from under them), one at a time for a store.
+      if (++this.taken % 50 === 0 && !this.collecting.has(store)) {
+        this.collecting.add(store)
+        void this.git(repository, ["gc", "--auto", "--quiet"], { timeout: 600_000, packs: true })
+          .catch(() => {})
+          .finally(() => this.collecting.delete(store))
+      }
       return tree.stdout.trim()
     })
   }

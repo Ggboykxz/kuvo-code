@@ -14,6 +14,51 @@ export const onMachine = process.env.KUVO_AGENTS_REMOTE === "1"
 /** The machine's Kuvo Code folder (`~/.kuvo-code`). */
 export const machineHome = process.env.KUVO_HOME
 
+/**
+ * The machine's own folders (XDG_…, npm's cache, Bun's), as they were before its engine's launch
+ * pointed them into Kuvo Code's folder (`KUVO_OWN_…`; undefined: not set). The agents keep theirs
+ * there (Claude Code's caches and logs, say); only the commands they run get these back, as the
+ * engine's commands do, so tools find their sign-ins and settings (`gh`, git's own).
+ */
+export const ownFolders: Record<string, string | undefined> = {}
+
+/** Takes them out of the environment, into `ownFolders`. */
+export function takeOwnFolders() {
+  for (const key of Object.keys(process.env)) {
+    if (!key.startsWith("KUVO_OWN_")) continue
+    const name = key.slice("KUVO_OWN_".length)
+    if (name) ownFolders[name] = process.env[key] || undefined
+    delete process.env[key]
+  }
+}
+
+/** A script that gives a command them back (Claude Code sources it before each: `CLAUDE_ENV_FILE`). */
+export function ownFoldersScript(folder: string): string | undefined {
+  const names = Object.keys(ownFolders)
+  if (!names.length) return undefined
+  const quoted = (value: string) => "'" + value.replace(/'/g, `'\\''`) + "'"
+  const text = names.map((name) => (ownFolders[name] ? `export ${name}=${quoted(ownFolders[name]!)}` : `unset ${name}`)).join("\n") + "\n"
+  const file = join(folder, "own-folders.sh")
+  try {
+    if (readFileSync(file, "utf8") === text) return file
+  } catch {}
+  mkdirSync(folder, { recursive: true })
+  writeFileSync(file, text, { mode: 0o600 })
+  return file
+}
+
+/** The same for Codex, as settings of a thread's commands (`shell_environment_policy`). */
+export function ownFoldersConfig(): Record<string, unknown> {
+  const config: Record<string, unknown> = {}
+  const unset: string[] = []
+  for (const [name, value] of Object.entries(ownFolders)) {
+    if (value) config[`shell_environment_policy.set.${name}`] = value
+    else unset.push(name)
+  }
+  if (unset.length) config["shell_environment_policy.exclude"] = unset
+  return config
+}
+
 /** The machine's engine, as its launch wrote it down (`run/engine.json`): its process, where it listens, its password. */
 export function machineEngine(): { pid: number; url: string; password: string } | undefined {
   if (!machineHome) return undefined

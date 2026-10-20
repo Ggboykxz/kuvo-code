@@ -17,7 +17,7 @@ import { Auto } from "./auto"
 import { Deps } from "./deps"
 import { EngineAgent, EngineLink } from "./engine"
 import { setToolProgram } from "./kuvotools"
-import { machineHome, onMachine } from "./machine"
+import { machineHome, onMachine, takeOwnFolders } from "./machine"
 import { Snapshots } from "./snapshots"
 import { Roster } from "./roster"
 import { cancelSignIns, handler } from "./server"
@@ -37,17 +37,9 @@ const machineEngine = onMachine ? { url: `http://127.0.0.1:${process.env.KUVO_EN
 const port = onMachine ? Number(process.env.KUVO_AGENTS_PORT) : 0
 if (onMachine) {
   setToolProgram(process.env.OPENCODE_CONFIG_CONTENT)
-  // The agents, and the commands they run, get the machine's own folders back, as the engine's
-  // commands do (Kuvo Code's plugin there): tools find their sign-ins and settings (`gh`, git's
-  // own). Each agent keeps what it has in this bridge's home all the same (accounts.ts).
-  for (const key of Object.keys(process.env)) {
-    if (!key.startsWith("KUVO_OWN_")) continue
-    const own = process.env[key]
-    delete process.env[key]
-    const name = key.slice("KUVO_OWN_".length)
-    if (own) process.env[name] = own
-    else delete process.env[name]
-  }
+  // The bridge and its agents keep their folders in Kuvo Code's (XDG_… there); the commands the
+  // agents run get the machine's own back (machine.ts).
+  takeOwnFolders()
   // Kuvo Code's commands (kuvo-wake) first, as for the engine, and where bots' and sessions'
   // wake-ups are kept.
   process.env.KUVO_BIN = join(machineHome!, "bin")

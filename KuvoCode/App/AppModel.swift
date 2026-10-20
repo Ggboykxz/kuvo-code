@@ -326,6 +326,15 @@ final class AppModel {
         }
     }
 
+    /// An account you signed in to again, or switched to another of: Custom Auto tries it again,
+    /// here and on your machines (each holds its own limits).
+    func releaseLimit(_ provider: String) {
+        Task {
+            await agents.releaseLimit(provider)
+            for engine in machines.engines.values where engine.isReady { await engine.agents.releaseLimit(provider) }
+        }
+    }
+
     /// The agents bridge, with the engine's Bun, once: it goes on through the engine's restarts.
     private func startAgents(engine binary: URL) {
         workspace.agents = agents

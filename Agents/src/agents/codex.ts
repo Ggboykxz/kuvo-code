@@ -15,7 +15,7 @@ import { kuvoTools, toolServerName } from "../kuvotools"
 import { pictureData, pictureFile, withPictures } from "../pictures"
 import { elicitationField } from "../forms"
 import { newID } from "../ids"
-import { installCodex, codexProgram, managedNote, onMachine } from "../machine"
+import { installCodex, codexProgram, managedNote, onMachine, ownFoldersConfig } from "../machine"
 import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
 import { which } from "../proc"
 import { RPC, RPCError } from "../rpc"
@@ -34,6 +34,11 @@ export class CodexAgent implements Agent {
   // (On a machine, Kuvo Code installs it.)
   install = onMachine ? undefined : "npm install -g @openai/codex"
   private server?: RPC
+
+  /** Its app-server while one runs (none is started for this). */
+  get running(): RPC | undefined {
+    return this.server && !this.server.isClosed ? this.server : undefined
+  }
   private starting?: Promise<RPC>
   private threads = new Map<string, CodexThread>()
   /** One-off answers under way (`generate`), by their thread: what each is told. */
@@ -511,7 +516,8 @@ class CodexThread implements Thread {
     const timeout = tools ? { tool_timeout_sec: Math.ceil(tools.timeout / 1000) } : {}
     const server = tools?.kind === "http" ? { url: tools.url, http_headers: tools.headers, ...timeout } : tools?.kind === "stdio" ? { command: tools.command, args: tools.args, env: tools.env, ...timeout } : undefined
     // Its commands know their conversation, as the engine's do (kuvo-wake schedules for it).
-    const config = { "shell_environment_policy.set.OPENCODE_SESSION_ID": this.session.id, ...(tools && server ? { [`mcp_servers.${tools.name}`]: server } : {}) }
+    // (On a machine, the machine's own folders too: Codex keeps its own in Kuvo Code's folder.)
+    const config = { "shell_environment_policy.set.OPENCODE_SESSION_ID": this.session.id, ...(onMachine ? ownFoldersConfig() : {}), ...(tools && server ? { [`mcp_servers.${tools.name}`]: server } : {}) }
     const common = { cwd: this.session.location.directory, model: input.model.id, developerInstructions: instructions, config }
     if (this.nativeID) {
       try {
@@ -627,8 +633,9 @@ class CodexThread implements Thread {
           if (result.outcome === "succeeded") {
             this.backgroundLanes.set(threadID, lane)
           } else {
-            // Codex doesn't stop them itself.
-            void this.interruptLane(threadID, lane)
+            // Codex doesn't stop them itself (through the Codex that ran them: one that stopped
+            // took them with it).
+            void this.interruptLane(threadID, lane, rpc)
             this.endSubagent(lane, "interrupted")
           }
         }
@@ -941,13 +948,13 @@ class CodexThread implements Thread {
   /** A spawned agent stopped from Kuvo Code: its turn on its thread is interrupted (it then says so). */
   private async stopSubagent(threadID: string) {
     const lane = this.active?.subagents.get(threadID) ?? this.backgroundLanes.get(threadID)
-    if (lane && !lane.ended) await this.interruptLane(threadID, lane)
+    if (lane && !lane.ended) await this.interruptLane(threadID, lane, this.agent.running)
   }
 
-  private async interruptLane(threadID: string, lane: SubagentLane) {
-    if (!lane.turnID) return
-    const rpc = await this.agent.rpc().catch(() => undefined)
-    await rpc?.request("turn/interrupt", { threadId: threadID, turnId: lane.turnID }, 10_000).catch(() => {})
+  /** Interrupts a spawned agent's turn, through `rpc`, the Codex its thread is in (none running: nothing to stop). */
+  private async interruptLane(threadID: string, lane: SubagentLane, rpc: RPC | undefined) {
+    if (!lane.turnID || !rpc || rpc.isClosed) return
+    await rpc.request("turn/interrupt", { threadId: threadID, turnId: lane.turnID }, 10_000).catch(() => {})
   }
 
   private endSubagent(lane: SubagentLane, outcome: "succeeded" | "failed" | "interrupted", message?: string) {

@@ -594,6 +594,8 @@ struct ConnectView: View {
 
     private func finish(method: String) {
         forward.stop()
+        // Signed in anew: Custom Auto tries it again.
+        app.releaseLimit(integrationID)
         Analytics.shared.track("account_connected", ["provider": Analytics.provider(integrationID), "method": method])
         Analytics.shared.accountConnected()
         pollTask?.cancel()

@@ -638,6 +638,12 @@ export class AntigravityAgent implements Agent {
         // Its access lasts an hour, renewed from the sign-in it keeps: one that asks for a new
         // sign-in partway is started again, which renews it.
         asksSignIn: (line) => line.includes(signInLine),
+        // "Usage Limit Reached. You have reached your current quota for this period. Your limit
+        // will reset in 6 days, 19 hours.", as its whole answer.
+        limitReply: (text) => {
+          const plain = text.replace(/[#*_>`]/g, " ").replace(/\s+/g, " ").trim().toLowerCase()
+          return /^usage limit reached\.? you have reached your current quota for this period\.?(?: your limit will reset in [^.]{1,80}\.?)?$/.test(plain)
+        },
         signInEnded: () => agent.signInEnded(),
         async selectModel(rpc, sessionId, modelID, setup) {
           if (setup?.kuvoModel === modelID) return

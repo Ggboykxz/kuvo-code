@@ -73,7 +73,7 @@ async function maintainedSoon(agent: Agent, fresh: boolean): Promise<Maintenance
   return value
 }
 
-export async function integration(agent: Agent, fresh = false): Promise<Integration> {
+export async function integration(agent: Agent, fresh = false, auto?: Auto): Promise<Integration> {
   const [account, maintained] = await Promise.all([
     agent.account(fresh).catch((error): Account => ({ installed: false, signedIn: false, message: String(error?.message ?? error) })),
     maintainedSoon(agent, fresh),
@@ -84,6 +84,8 @@ export async function integration(agent: Agent, fresh = false): Promise<Integrat
   if (before !== undefined && before !== seen) {
     agent.forgetModels?.()
     emit("integration.updated", { integrationID: agent.providerID })
+    // Signed in anew (or as someone else): Custom Auto tries it again.
+    if (account.signedIn && auto?.release(agent.providerID)) emit("kuvo.auto.updated", {})
   }
   return {
     id: agent.providerID,
@@ -169,11 +171,11 @@ export function handler(context: Context) {
           // `fresh`: asked anew (you refreshed, or came back to the app), with your shell's PATH read again.
           const fresh = url.searchParams.get("fresh") === "1"
           if (fresh) await refreshLoginPath()
-          return located(await Promise.all(roster.all().map((agent) => integration(agent, fresh))))
+          return located(await Promise.all(roster.all().map((agent) => integration(agent, fresh, auto))))
         }
         const agent = agentFor(a)
         if (!agent) return error(404, `No agent ${a}.`)
-        if (!b) return located(await integration(agent, true))
+        if (!b) return located(await integration(agent, true, auto))
         if (b === "connect" && c === "oauth") {
           if (!d && method === "POST") {
             const { methodID } = await body()
@@ -430,7 +432,10 @@ export function handler(context: Context) {
       // Auto: your list of models, and the ones held back at a limit until it resets.
       if (area === "kuvo" && a === "auto") {
         if (b === "limits" && method === "DELETE") {
-          auto.clearLimits()
+          // One account's (you signed in to it again, or switched to another of it), or all.
+          const provider = url.searchParams.get("provider")
+          if (provider) auto.release(provider)
+          else auto.clearLimits()
           emit("kuvo.auto.updated", {})
           return json({})
         }
