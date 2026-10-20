@@ -29,6 +29,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - A conversation that comes into view (a bot's, opening it from the sidebar, switching tabs, hiding or showing the sidebar) shows its messages straight away, rather than only once you scroll.
 - Replies being written, code especially, cost less to draw with each few words.
 - Window › Fill, Center and Move & Resize work again, and so do their keys: since 0.5.20 they were greyed out.
+- Find marks its matches in replies already on screen, and the marks go when Find closes. A group chat's faces in replies update too.
 
 ## 0.5.22
 

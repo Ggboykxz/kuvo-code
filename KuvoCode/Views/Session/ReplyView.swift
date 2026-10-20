@@ -39,10 +39,11 @@ struct ReplyView: NSViewRepresentable {
     private func update(_ view: ReplyPieceView) {
         view.openURL = openURL
         view.cardIsFocused = cardIsFocused
+        let marks = (parser as? FileLinkingParser).flatMap { $0.highlight == nil && $0.mentions.isEmpty ? nil : AnyHashable(ParserMarks(highlight: $0.highlight, mentions: $0.mentions)) }
         view.show(markdown, document: {
             if let parser = parser as? FileLinkingParser, images == nil { return ReplyDocument.cached(markdown: markdown, parser: parser, style: style) }
             return ReplyDocument(markdown: markdown, parser: parser, style: style, images: images)
-        }, style: style)
+        }, style: style, marks: marks)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: ReplyPieceView, context: Context) -> CGSize? {
@@ -50,6 +51,12 @@ struct ReplyView: NSViewRepresentable {
         guard width.isFinite, width > 0 else { return nil }
         return CGSize(width: width, height: nsView.height(for: width))
     }
+}
+
+/// What a reply's parser draws besides its words: Find's marks and a group chat's faces.
+private struct ParserMarks: Hashable {
+    var highlight: FindHighlight?
+    var mentions: [Bot]
 }
 
 extension Look.Typeface {
@@ -75,7 +82,9 @@ final class ReplyPieceView: NSView {
     var cardIsFocused = true {
         didSet { if cardIsFocused != oldValue { for case let code as ReplyCodeView in segmentViews { code.cardIsFocused = cardIsFocused } } }
     }
-    private var shown: (markdown: String, style: ReplyDocument.Style)?
+    /// What it shows: the Markdown, its look, and what else the parser draws into it (Find's
+    /// marks, a group chat's faces), which change it as much as the words do.
+    private var shown: (markdown: String, style: ReplyDocument.Style, marks: AnyHashable?)?
     private var segmentViews: [NSView] = []
     private var gaps: [CGFloat] = []
     /// Heights laid out, by width.
@@ -88,11 +97,13 @@ final class ReplyPieceView: NSView {
         removeFromSuperview()
         for case let text as ReplyTextView in segmentViews { text.setSelectedRange(NSRange(location: 0, length: 0)) }
         openURL = { _ in false }
+        // Made again for whatever it shows next: one with Find's marks would keep them otherwise.
+        shown = nil
     }
 
-    func show(_ markdown: String, document: () -> ReplyDocument, style: ReplyDocument.Style) {
-        guard shown?.markdown != markdown || shown?.style != style else { return }
-        shown = (markdown, style)
+    func show(_ markdown: String, document: () -> ReplyDocument, style: ReplyDocument.Style, marks: AnyHashable? = nil) {
+        guard shown?.markdown != markdown || shown?.style != style || shown?.marks != marks else { return }
+        shown = (markdown, style, marks)
         let document = document()
         var views: [NSView] = []
         for (index, segment) in document.segments.enumerated() {
