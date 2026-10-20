@@ -1,7 +1,7 @@
 // What floats over the conversation: the command palette, the files and terminal drawer,
 // the changes of a session, and the little note that says what happened.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import { errorText } from "./lib";
 import { ChangesPanel } from "./Changes";
@@ -431,18 +431,14 @@ export function Drawer() {
             </div>
           ))}
         </div>
-        {state.files.map(file => (
-          <div key={file.path} className="file-row">
-            <button className="small" onClick={async () => {
-              try {
-                const { content } = await api<{ content: string }>(`/api/file?path=${encodeURIComponent(file.path)}`);
-                state.openFile = file.path;
-                state.openFileContent = content;
-                render();
-              } catch (error) { complain(error); }
-            }}>{file.name}</button>
-          </div>
-        ))}
+        <FileTree files={state.files} onOpen={async path => {
+          try {
+            const { content } = await api<{ content: string }>(`/api/file?path=${encodeURIComponent(path)}`);
+            state.openFile = path;
+            state.openFileContent = content;
+            render();
+          } catch (error) { complain(error); }
+        }} />
         {state.openFile ? (
           <pre className="file-view">{state.openFileContent}</pre>
         ) : null}
@@ -456,6 +452,70 @@ export function Drawer() {
       </div>
     </section>
   );
+}
+
+// ---- The files of the project, as a tree ----
+
+/// The project's files, as the Mac's panel shows them (FilesView.swift:250-275): the
+/// folders with a chevron that turns, the files with their own mark, the name in the
+/// middle, and the tree in the project's own ink.
+function FileTree({ files, onOpen }: {
+  files: { path: string; name: string; kind: string }[];
+  onOpen: (path: string) => void;
+}) {
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const project = state.project ?? "";
+  const root = useMemo(() => buildTree(files, project), [files, project]);
+  const draw = (nodes: TreeNode[], depth: number) => nodes.map(node => (
+    <div className="file-node" key={node.path}>
+      <button
+        className={`file-row ${node.kind === "dir" ? "dir" : ""}`}
+        style={{ paddingLeft: 6 + depth * 14 }}
+        onClick={() => {
+          if (node.kind === "dir") {
+            setOpen(current => ({ ...current, [node.path]: !current[node.path] }));
+            return;
+          }
+          void onOpen(node.path);
+        }}
+      >
+        {node.kind === "dir"
+          ? <Symbol name="chevron.right" size={10} className={open[node.path] ? "turned" : ""} />
+          : <Symbol name="doc" size={13} />}
+        <span className="file-name">{node.name}</span>
+      </button>
+      {node.kind === "dir" && open[node.path] ? draw(node.children ?? [], depth + 1) : null}
+    </div>
+  ));
+  return <div className="file-tree">{draw(root, 0)}</div>;
+}
+
+type TreeNode = { path: string; name: string; kind: string; children?: TreeNode[] };
+
+/// The flat list of files, as a tree: a folder for every part of their paths. The
+/// project's own folder is the root, as it is in the Mac's panel.
+function buildTree(files: { path: string; name: string; kind: string }[], project = ""): TreeNode[] {
+  const root: TreeNode[] = [];
+  const folders = new Map<string, TreeNode>();
+  const prefix = project ? project.replace(/[/\\]+$/, "") + "/" : "";
+  for (const file of files) {
+    const relative = file.path.startsWith(prefix) ? file.path.slice(prefix.length) : file.path;
+    const parts = relative.replace(/^[/\\]+/, "").split(/[/\\]+/).filter(Boolean);
+    let folder = "";
+    let level = root;
+    for (const part of parts.slice(0, -1)) {
+      folder = folder ? `${folder}/${part}` : part;
+      let node = folders.get(folder);
+      if (!node) {
+        node = { path: folder, name: part, kind: "dir", children: [] };
+        folders.set(folder, node);
+        level.push(node);
+      }
+      level = node.children ?? [];
+    }
+    level.push({ path: file.path, name: parts.at(-1) ?? file.name, kind: file.kind === "dir" ? "dir" : "file" });
+  }
+  return root;
 }
 
 // ---- The changes of a session ----

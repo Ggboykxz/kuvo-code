@@ -2992,3 +2992,25 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 .mode-choice-title { line-height: 1.2; }
+
+/* The files of the project, as a tree (FilesView.swift:250-275): the folders with a
+   chevron that turns, the files with their own mark, and the name in the project's ink. */
+.file-tree { display: flex; flex-direction: column; gap: 1px; }
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: var(--radius-row);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  text-align: left;
+}
+.file-row:hover { background: var(--hover); }
+.file-row.dir { color: var(--ink-soft); }
+.file-row svg { flex: 0 0 auto; color: var(--ink-soft); }
+.file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

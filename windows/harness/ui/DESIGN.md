@@ -245,7 +245,7 @@ same ones the App Router renders.
 | 3 | Motion: analytic spring, press, shimmer, reduced motion | 0.5.40 ✅ |
 | 4 | Icons: 89 symbols as SVG, six drawn marks | 0.5.42 ✅ |
 | 5 | Wording: 1,208 strings verbatim | 0.5.43 ✅ (the shell) |
-| 6 | Screens: 23 settings pages, transcript, drawers | 0.5.44 ✅ (the transcript, the gauge, the steps row) · 0.5.45 ✅ (the settings' grouped form) · 0.5.46 ✅ (the rest of the groups) |
+| 6 | Screens: 23 settings pages, transcript, drawers | 0.5.44 ✅ (the transcript, the gauge, the steps row) · 0.5.45 ✅ (the settings' grouped form) · 0.5.46 ✅ (the rest of the groups) · 0.5.47 ✅ (the panel's files, as a tree) |
 | 7 | Gestures and shortcuts | |
 | 8 | Verification: capture matrix, real-Mac screenshots | |
 

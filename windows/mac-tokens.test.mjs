@@ -448,6 +448,20 @@ const checks = [
     assert.match(rule(".mode-thumb {"), /width: 84px/);
   }],
 
+  ["the panel's files are a tree, the Mac's way (FilesView.swift:250-275)", ({ app, css, overlays, symbols, rule }) => {
+    assert.match(overlays, /function FileTree\(/);
+    assert.match(overlays, /function buildTree\(/);
+    // The folders carry a chevron that turns; the files carry their own mark.
+    assert.match(overlays, /<Symbol name="chevron\.right" size=\{10\} className=\{open\[node\.path\] \? "turned" : ""\} \/>/);
+    assert.match(overlays, /<Symbol name="doc" size=\{13\} \/>/);
+    assert.match(symbols, /"doc": \[/);
+    // And the tree is the project's own: the folder it sits in is the root.
+    assert.match(overlays, /file\.path\.startsWith\(prefix\)/);
+    assert.match(rule(".file-row {"), /gap: 6px/);
+    assert.match(rule(".file-row {"), /font-size: var\(--text-sm\)/);
+    assert.match(css, /\.file-tree \{ display: flex; flex-direction: column;/);
+  }],
+
   ["the window is built by Next.js, and exported as the static files the harness serves", ({ next, page, build }) => {
     // The app talks to the engine over the harness's API: there is no server to render
     // it, so the export is the whole app.
