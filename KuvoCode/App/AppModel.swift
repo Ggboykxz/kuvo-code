@@ -314,6 +314,7 @@ final class AppModel {
             automaticRestarts.removeAll { $0 < .now.addingTimeInterval(-300) }
             engineStoppedWhileRunning = !automaticRestarts.isEmpty
             engine = .failed(reason)
+            workspace.macEngineStopped()
         }
     }
 
@@ -447,6 +448,7 @@ final class AppModel {
         }
         engineStoppedWhileRunning = true
         engine = .failed("It stopped unexpectedly (exit code \(status)), and again after starting over.\(output.isEmpty ? "" : "\n\n" + String(output.suffix(600)))")
+        workspace.macEngineStopped()
     }
 }
 

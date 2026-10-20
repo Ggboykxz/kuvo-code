@@ -1042,6 +1042,14 @@ final class Workspace {
         session(id).map(OutsideAgents.isAgentSession) ?? bridgeSessions.contains(id)
     }
 
+    /// This Mac's engine stopped for good (it failed, and starting it again did too): its
+    /// sessions aren't at work, so they don't show as working, nor keep the Mac awake.
+    func macEngineStopped() {
+        running = running.filter { id in
+            isBridgeSession(id) || sessionMachines[id] != nil || session(id).map { RemoteFolder.isRemote($0.location.directory) } == true
+        }
+    }
+
     /// The agents bridge stopped for good: its sessions aren't at work, nor asking anything.
     func agentsStopped() {
         for (request, id) in asking where sharedForms[request] == nil && (session(id).map(OutsideAgents.isAgentSession) ?? false) {
@@ -1524,10 +1532,12 @@ final class Workspace {
     }
 
     /// A session the engine didn't name after its run (its title model gave nothing back, as
-    /// GLM-5.3 Flash's does, or a coding agent can't write one, as Antigravity can't): a title
-    /// from this Mac's engine's default model, else the start of its first message, as a chat app
-    /// names one, so the sidebar isn't a column of "New Session". Saved in the engine, for every
-    /// place that shows it.
+    /// GLM-5.3 Flash's does, or a coding agent can't write one, as Antigravity can't): for a
+    /// session with the coding agents (whose bridge tried your title model and your other agents
+    /// already), a title from this Mac's engine's default model; else the start of its first
+    /// message, as a chat app names one, so the sidebar isn't a column of "New Session". (An
+    /// engine session's message goes to no other model than the one you chose for titles.) Saved
+    /// in the engine, for every place that shows it.
     private func nameIfUntitled(_ id: String) {
         guard !seats.contains(id), !namingUntitled.contains(id) else { return }
         namingUntitled.insert(id)
@@ -1546,7 +1556,7 @@ final class Workspace {
                 return words.isEmpty ? nil : words
             }.first
             guard let first else { return }
-            let written = try? await self.api?.generate(Self.titlePrompt(for: first))
+            let written = OutsideAgents.runsInBridge(session.model?.providerID) ? try? await self.api?.generate(Self.titlePrompt(for: first)) : nil
             guard let title = written.flatMap(Self.cleanTitle) ?? Self.title(from: first),
                   self.session(id)?.title?.isEmpty != false else { return }
             try? await api.renameSession(id, title: title)
