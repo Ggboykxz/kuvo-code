@@ -117,19 +117,24 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
             let run = source.substring(with: match.range)
             // A key's own start, also as a part of a path (…/keys/sk-…).
             let prefixed = run.split(separator: "/").contains { part in
-                part.range(of: #"^(sk-|sk_live_|sk_test_|rk_live_|rk_test_|whsec_|ghp_|gho_|ghs_|github_pat_|xox[abp]-|AKIA|AIza|glpat-)"#, options: .regularExpression) != nil
+                part.range(of: #"^(sk-|sk_live_|sk_test_|rk_live_|rk_test_|whsec_|ghp_|gho_|ghs_|github_pat_|xox[abpe]-|AKIA|AIza|glpat-|dop_v1_|sbp_|pul-|npm_|hf_|gsk_|xai-|pplx-|r8_|lin_api_|ntn_|shp(at|ss|ca)_)"#, options: .regularExpression) != nil
             }
             let isHash = run.range(of: #"^([0-9a-fA-F]{40}|[0-9a-fA-F]{64}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$"#, options: .regularExpression) != nil
             // A path or a name made of words (a branch, a package, a test, web3Provider,
             // parseHTML5Document): each long part reads as words and numbers, a few letters
             // each on average, where a key's change case or turn to digits every letter or two.
-            // UUIDs and hashes in it (a simulator's folder, a commit) are names too; other long
-            // runs of hex digits aren't words.
+            // UUIDs, a hash that's a whole part of a path (a commit, an object), macOS's temporary
+            // folders and short hex names (a crate's registry, a container) are names too; a
+            // longer run of hex digits with letters in it is a key's. A number (a timestamp) is a
+            // word.
             let plain = run
                 .replacingOccurrences(of: #"(?<![0-9A-Fa-f])[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(?![0-9A-Fa-f])"#, with: "u", options: .regularExpression)
-                .replacingOccurrences(of: #"(?<![0-9A-Za-z])([0-9a-f]{40}|[0-9a-f]{64})(?![0-9A-Za-z])"#, with: "h", options: .regularExpression)
+                .replacingOccurrences(of: #"(?<![^/])([0-9a-f]{40}|[0-9a-f]{64})(?![^/])"#, with: "h", options: .regularExpression)
+                .replacingOccurrences(of: #"/var/folders/[^/]+/[^/]+"#, with: "/var/folders/t/t", options: .regularExpression)
             let wordy = plain.split(whereSeparator: { "/-_.".contains($0) }).allSatisfy { part in
-                part.count < 12 || part.range(of: #"^[0-9a-fA-F]+$"#, options: .regularExpression) == nil && Double(part.count) / Double(max(1, Self.words.numberOfMatches(in: String(part), range: NSRange(location: 0, length: (part as Substring).utf16.count)))) >= 3.5
+                if part.count < 12 { return true }
+                if part.range(of: #"^[0-9]*[a-fA-F][0-9a-fA-F]*$"#, options: .regularExpression) != nil { return part.count < 20 }
+                return Double(part.count) / Double(max(1, Self.words.numberOfMatches(in: String(part), range: NSRange(location: 0, length: (part as Substring).utf16.count)))) >= 3.5
             }
             let mixed = run.range(of: #"[A-Za-z]"#, options: .regularExpression) != nil && run.range(of: #"\d"#, options: .regularExpression) != nil
             guard prefixed || (mixed && !isHash && !wordy) else { continue }
@@ -147,17 +152,19 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
     nonisolated static func showsAll(_ text: String) -> Bool { masked(text) == text }
 
     /// `text` with the secrets it names as dots: after a name that says it's one (token=…,
-    /// "password": …, Authorization: Bearer …, --token …, aws_secret_access_key …), in an address
-    /// (https://user:pass@host, a Slack webhook's), curl -u user:pass and mysql -pPASS.
+    /// "password": …, Authorization: Bearer …, --token …, aws_secret_access_key …; not a number,
+    /// as in max_token=4096), in an address (https://user:pass@host, https://TOKEN@host, a Slack
+    /// webhook's), curl -u user:pass and mysql -pPASS.
     nonisolated static func maskedNamed(_ text: String) -> String {
         var text = text
-        let named = #"(?i)((?:token|api[_-]?key|secret(?:[_-]?access[_-]?key)?|password|passwd|authorization)["']?\s*[:=]\s*["']?(?:bearer\s+|basic\s+)?|bearer\s+|--(?:token|password|passwd|secret|api-key|key)[=\s]+)[^\s"'&;]{3,}"#
+        let named = #"(?i)((?:token|api[_-]?key|secret(?:[_-]?access[_-]?key)?|password|passwd|authorization)["']?\s*[:=]\s*["']?(?:bearer\s+|basic\s+)?|bearer\s+|--(?:token|password|passwd|secret|api-key|key)[=\s]+)(?![0-9]+(?:[\s"'&;,}]|$))[^\s"'&;]{3,}"#
         text = text.replacingOccurrences(of: named, with: "$1•••", options: .regularExpression)
         text = text.replacingOccurrences(of: #"(://[^\s/:@]+:)[^\s/@]+@"#, with: "$1•••@", options: .regularExpression)
-        text = text.replacingOccurrences(of: #"(\s-u\s+[^\s:]+:)\S+"#, with: "$1•••", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"(://)[^\s/:@]{20,}@"#, with: "$1•••@", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"(\bcurl\b[^\n]*?\s(?:-u|--user)\s+[^\s:]+:)\S+"#, with: "$1•••", options: .regularExpression)
         text = text.replacingOccurrences(of: #"(?i)(secret[_-]?access[_-]?key\s+)\S+"#, with: "$1•••", options: .regularExpression)
         text = text.replacingOccurrences(of: #"(hooks\.slack\.com/services/)[^\s"'<>]+"#, with: "$1•••", options: .regularExpression)
-        text = text.replacingOccurrences(of: #"(?i)(\b(?:mysql|mariadb|mysqldump|mysqladmin)\b[^\n]*?\s-p)\S+"#, with: "$1•••", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"(\b(?i:mysql|mariadb|mysqldump|mysqladmin)\b[^\n]*?\s-p)\S+"#, with: "$1•••", options: .regularExpression)
         return text
     }
 
