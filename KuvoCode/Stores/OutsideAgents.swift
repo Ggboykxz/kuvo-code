@@ -165,6 +165,8 @@ final class OutsideAgents {
         }
         var env = environment
         env["BUN_BE_BUN"] = "1"
+        // Bun would otherwise keep a copy of the script, compiled, in ~/Library/Caches/bun.
+        env["BUN_RUNTIME_TRANSPILER_CACHE_PATH"] = "0"
         env["KUVO_AGENTS_HOME"] = Self.home.path
         // Its temporary files (and the agents'), in the app's own temporary folder.
         let temporary = FileManager.default.temporaryDirectory.appending(path: Bundle.main.bundleIdentifier ?? "run.kuvo.code").appending(path: "agents")
