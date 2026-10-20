@@ -9751,7 +9751,7 @@ ${text.slice(0, 4000)}
     if (!signIn.size && !held.size && !gone.length)
       return;
     const where = onMachine ? " on this machine" : "";
-    const signInPage = onMachine ? "Settings \u203A Machines \u203A Coding Agents" : "Settings \u203A Accounts";
+    const signInPage = "Settings \u203A Accounts";
     const agents = [...signIn].join(", ").replace(/, ([^,]*)$/, " and $1");
     if (!held.size && !gone.length) {
       return { type: "signin", message: `${tried.size ? "The rest of the agents" : "None of the agents"} in your Custom Auto list ${tried.size ? "aren't" : "is"} signed in${where}. Sign in to ${agents} in ${signInPage}.` };

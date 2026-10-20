@@ -1809,7 +1809,8 @@ export class Sessions {
     }
     if (!signIn.size && !held.size && !gone.length) return undefined
     const where = onMachine ? " on this machine" : ""
-    const signInPage = onMachine ? "Settings › Machines › Coding Agents" : "Settings › Accounts"
+    // (Accounts lists your machines under each agent.)
+    const signInPage = "Settings › Accounts"
     const agents = [...signIn].join(", ").replace(/, ([^,]*)$/, " and $1")
     // Only sign-ins in the way: what to sign in to, and where.
     if (!held.size && !gone.length) {

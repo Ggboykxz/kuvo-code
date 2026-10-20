@@ -5,7 +5,7 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
-- After you sign in to a coding agent on your Mac, Kuvo Code offers to sign it in on each of your machines too, a click each; each machine keeps a sign-in of its own. The agent's menu in Settings › Accounts has Sign In on each machine as well.
+- Settings › Accounts lists your machines under each coding agent, with who's signed in on each and Sign In for the rest; each machine keeps a sign-in of its own, and right after you sign in on your Mac, Kuvo Code offers your machines too. Signing in on a machine says it's installing the agent there first.
 - With Ask First, Grok and Antigravity ask before using Kuvo Code's tools that should ask, and before anything else they ask about that Kuvo Code can't tell the kind of.
 - In Ask First, an agent's watch asks you first with its check written out, also in older sessions and with the coding agents; a wake-up a coding agent's session set on a machine is no longer lost.
 - When no model in a Custom Auto list can run, the conversation says why: which agents aren't signed in (on your Mac or on the machine), with a button to sign in, or which limits hold and when each resets, in your time zone.
