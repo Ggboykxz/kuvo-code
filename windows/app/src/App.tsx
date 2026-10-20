@@ -1,7 +1,7 @@
 // The conversation view, in React: sessions on the left, the transcript and the composer
 // on the right. The engine's events keep the transcript current, as they always did.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { Attachment, FormRequest, PermissionRequest, SessionSummary, Transcript, TranscriptEntry } from "./api";
 import { fromHistory } from "../../harness/transcript.mjs";
@@ -601,10 +601,25 @@ function ContextGauge() {
   const model = state.models.find(item => state.session?.model && `${item.providerID}/${item.id}` === `${state.session.model.providerID}/${state.session.model.id}`);
   const limit = model?.limit?.context ?? 0;
   const fraction = limit > 0 ? Math.min(total / limit, 1) : null;
+  // The popover sits by the gauge, and flips to the other side when it would not fit
+  // (ScreenRoom.swift:4-33).
+  const gauge = useRef<HTMLDivElement>(null);
+  const pop = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState<{ left: number; top: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!gaugeOpen) return;
+    const button = gauge.current?.getBoundingClientRect();
+    const box = pop.current?.getBoundingClientRect();
+    if (!button || !box) return;
+    const wanted = button.left + button.width - box.width;
+    const left = Math.min(Math.max(8, wanted), Math.max(8, window.innerWidth - box.width - 8));
+    setPlace({ left, top: button.bottom + 4 });
+  }, [gaugeOpen]);
   return (
     <>
       <div
         id="context-gauge"
+        ref={gauge}
         className={`context-gauge ${fraction !== null && fraction > 0.8 ? "warn" : ""}`}
         hidden={!total}
         title={limit ? `Context window: ${compactTokens(total)} of ${compactTokens(limit)} tokens` : "Context window"}
@@ -612,7 +627,13 @@ function ContextGauge() {
       >
         {fraction !== null ? `${Math.round(fraction * 100)}%` : compactTokens(total)}
       </div>
-      <div id="gauge-pop" className="gauge-pop" hidden={!gaugeOpen}>
+      <div
+        id="gauge-pop"
+        ref={pop}
+        className="gauge-pop"
+        hidden={!gaugeOpen}
+        style={place ? { left: place.left, top: place.top } : undefined}
+      >
         <div className="gauge-line big">
           {fraction !== null ? `${Math.round(fraction * 100)}% of the context window` : `${compactTokens(total)} tokens in the context window`}
         </div>
@@ -935,6 +956,19 @@ function Sidebar() {
           value={state.sessionQuery}
           onChange={event => { state.sessionQuery = event.target.value; render(); }}
         />
+        {/* The Mac's clear (Pressable.swift:73-91): quiet at rest, and brighter under the
+            pointer. */}
+        {state.sessionQuery ? (
+          <button
+            id="session-search-clear"
+            className="search-clear"
+            title="Clear Search"
+            aria-label="Clear Search"
+            onClick={() => { state.sessionQuery = ""; render(); }}
+          >
+            <Symbol name="xmark" size={10} />
+          </button>
+        ) : null}
       </label>
       <div className="sidebar-scroll">
       <ul id="sessions">

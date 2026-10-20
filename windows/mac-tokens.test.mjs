@@ -502,6 +502,17 @@ const checks = [
     assert.match(css, /\.find-mark \{/);
   }],
 
+  ["the popover flips, and the search can be cleared", ({ app, css, rule }) => {
+    // A popover that outgrows its side flips to the other (ScreenRoom.swift:4-33): the
+    // gauge's sits by the gauge, and never past the window's edge.
+    assert.match(app, /const wanted = button\.left \+ button\.width - box\.width;/);
+    assert.match(app, /Math\.min\(Math\.max\(8, wanted\), Math\.max\(8, window\.innerWidth - box\.width - 8\)\)/);
+    // And the clear in a search field (Pressable.swift:73-91).
+    assert.match(app, /id="session-search-clear"/);
+    assert.match(rule(".search-clear {"), /color: var\(--ink-faint\)/);
+    assert.match(css, /\.search-clear:hover \{ background: var\(--hover\); color: var\(--ink-soft\); \}/);
+  }],
+
   ["the window is built by Next.js, and exported as the static files the harness serves", ({ next, page, build }) => {
     // The app talks to the engine over the harness's API: there is no server to render
     // it, so the export is the whole app.
