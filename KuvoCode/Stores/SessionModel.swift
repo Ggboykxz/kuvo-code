@@ -820,7 +820,6 @@ final class SessionModel {
     /// there if the command can't run.
     func runShell(_ command: String, written: String? = nil) {
         guard canReach else { return notRun(written) }
-        if OutsideAgents.isAgentSession(session) { return notRun(written, because: OutsideAgents.Failure.unavailable("Running a command yourself with !")) }
         Analytics.shared.track("shell_run")
         let previous = sending
         sending = Task {

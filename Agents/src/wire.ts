@@ -130,7 +130,19 @@ export interface AgentSwitchMessage {
   previous?: string
 }
 
-export type Message = UserMessage | AssistantMessage | NoticeMessage | IdleMessage | ModelSwitchMessage | AgentSwitchMessage
+/** A command you ran yourself with "!": it and what it printed are in the conversation. */
+export interface ShellMessage {
+  type: "shell"
+  id: string
+  time: MessageTime
+  shellID: string
+  command: string
+  status: "running" | "completed" | "failed"
+  exit?: number
+  output?: { output: string; truncated: boolean }
+}
+
+export type Message = UserMessage | AssistantMessage | NoticeMessage | IdleMessage | ModelSwitchMessage | AgentSwitchMessage | ShellMessage
 
 export interface FileDiff {
   file: string

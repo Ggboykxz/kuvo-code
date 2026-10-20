@@ -291,6 +291,10 @@ export function handler(context: Context) {
           }
           case "fork":
             return json({ data: sessions.fork(id, String((await body()).before ?? "")) })
+          case "shell":
+            if (method !== "POST") break
+            sessions.runShell(id, String((await body()).command ?? ""))
+            return json({})
           case "synthetic": {
             const input = await body()
             sessions.synthetic(id, String(input.text ?? ""), typeof input.description === "string" ? input.description : undefined)

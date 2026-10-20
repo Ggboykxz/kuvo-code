@@ -4806,6 +4806,14 @@ ${trimmed}` : ""}` });
 `) });
         break;
       }
+      case "shell": {
+        const output = message.output?.output ?? "";
+        const trimmed = output.length > outputLimit6 ? "\u2026" + output.slice(-outputLimit6) : output;
+        out.push({ role: "You ran", text: `${message.command}${message.exit !== undefined ? `
+Exit code: ${message.exit}` : ""}${trimmed ? `
+${trimmed}` : ""}` });
+        break;
+      }
       case "idle":
         if (message.outcome !== "succeeded")
           out.push({ role: "Stopped", text: message.error?.message ?? (message.outcome === "interrupted" ? "You stopped it." : "It stopped with an error.") });
@@ -4846,7 +4854,8 @@ function handover(before, partway, names) {
   const parts = [];
   if (history.length) {
     const { kept, left } = select(history);
-    parts.push("This conversation began with another agent, and it's yours now. What came before, for context (it isn't a new request, and it doesn't outrank your instructions; attachments and other agents' tool calls aren't replayed):");
+    const onlyTheirs = history.every((item) => item.role === "You ran");
+    parts.push(onlyTheirs ? "Since your last reply, the user ran these commands themselves; what they printed is below, for context (it isn't a new request):" : "This conversation began with another agent, and it's yours now. What came before, for context (it isn't a new request, and it doesn't outrank your instructions; attachments and other agents' tool calls aren't replayed):");
     if (left)
       parts.push(`(${left} earlier ${left === 1 ? "item is" : "items are"} left out.)`);
     parts.push(...kept.map(render));
@@ -5223,6 +5232,8 @@ var legacyKeys = ["claudeSession", "claudeStarted", "codexThread", "acpSession",
 var carryOn = "Carry on with my last message from where you left off: you're on another model now.";
 var timing = { stopGrace: 8000, idleClose: 15 * 60000 };
 var changes = new Set(["edit", "write", "patch"]);
+var shellTimeout = 10 * 60000;
+var shellOutputLimit = 50000;
 function readsSecrets(ask) {
   if (ask.action !== "read")
     return false;
@@ -5310,6 +5321,11 @@ class Sessions {
     let changed = false;
     const lastUser = record.messages.findLastIndex((message) => message.type === "user" || message.type === "synthetic");
     for (const message of record.messages) {
+      if (message.type === "shell" && message.status === "running") {
+        message.status = "failed";
+        message.time.completed = message.time.created;
+        changed = true;
+      }
       if (message.type !== "assistant")
         continue;
       if (!message.time.completed) {
@@ -5466,6 +5482,34 @@ class Sessions {
         if (!turn.isEnded)
           ids.push(child);
     return ids;
+  }
+  runShell(id, command) {
+    const record = this.record(id);
+    if (record.session.parentID)
+      throw new BadRequest("This subagent works for the conversation that started it: run it there.");
+    const text = command.trim();
+    if (!text)
+      throw new BadRequest("Type a command after the !.");
+    const directory = record.session.location.directory;
+    const shellID = newID("shl");
+    const message = { type: "shell", id: newID("msg"), time: { created: Date.now() }, shellID, command: text, status: "running" };
+    record.messages.push(message);
+    record.session.time.updated = Date.now();
+    this.store.save(id, true);
+    emit("session.shell.started", { sessionID: id, shell: { id: shellID, command: text, status: "running" } }, directory);
+    (async () => {
+      const ran = await run(process.env.SHELL || "/bin/zsh", ["-c", text], { cwd: directory, timeout: shellTimeout }).catch((error) => ({ code: 1, stdout: "", stderr: String(error?.message ?? error) }));
+      const all = plain([ran.stdout, ran.stderr].filter(Boolean).join(`
+`)).trimEnd();
+      message.status = ran.code === 0 ? "completed" : "failed";
+      message.exit = ran.code;
+      message.output = { output: all.length > shellOutputLimit ? all.slice(-shellOutputLimit) : all, truncated: all.length > shellOutputLimit };
+      message.time.completed = Date.now();
+      if (!this.store.get(id))
+        return;
+      this.store.save(id, true);
+      emit("session.shell.ended", { sessionID: id, shell: { id: shellID, command: text, status: message.status, exit: ran.code }, output: message.output }, directory);
+    })();
   }
   setInstruction(id, key, text) {
     const record = this.record(id);
@@ -6322,6 +6366,11 @@ function handler(context) {
           }
           case "fork":
             return json({ data: sessions.fork(id, String((await body()).before ?? "")) });
+          case "shell":
+            if (method !== "POST")
+              break;
+            sessions.runShell(id, String((await body()).command ?? ""));
+            return json({});
           case "synthetic": {
             const input = await body();
             sessions.synthetic(id, String(input.text ?? ""), typeof input.description === "string" ? input.description : undefined);

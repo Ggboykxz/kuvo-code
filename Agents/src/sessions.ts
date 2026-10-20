@@ -19,7 +19,8 @@ import type { Roster } from "./roster"
 import { evaluate, matches, ruled } from "./rules"
 import type { Record_, Store } from "./store"
 import { Turn, type Outcome } from "./turn"
-import type { AssistantMessage, Attachment, Decision, FormAnswer, FormRequest, Message, ModelRef, PermissionRequest, PermissionRule, Session } from "./wire"
+import type { AssistantMessage, Attachment, Decision, FormAnswer, FormRequest, Message, ModelRef, PermissionRequest, PermissionRule, Session, ShellMessage } from "./wire"
+import { plain, run } from "./proc"
 import { noTokens } from "./wire"
 
 type Delivery = "steer" | "queue"
@@ -77,6 +78,10 @@ export const timing = { stopGrace: 8_000, idleClose: 15 * 60_000 }
 
 /** In plan mode, what changes files: refused, whatever your rules say. */
 const changes = new Set(["edit", "write", "patch"])
+
+/** How long a command you run with "!" may take, and how much of what it printed is kept. */
+const shellTimeout = 10 * 60_000
+const shellOutputLimit = 50_000
 
 /** Reading a .env file (not an example of one), which the engine asks first about. */
 function readsSecrets(ask: PermissionAsk): boolean {
@@ -176,6 +181,12 @@ export class Sessions {
     // A turn starts with your message, or with a note from the app (a mid-turn model switch).
     const lastUser = record.messages.findLastIndex((message) => message.type === "user" || message.type === "synthetic")
     for (const message of record.messages) {
+      // A command of yours the bridge stopped with: over.
+      if (message.type === "shell" && message.status === "running") {
+        message.status = "failed"
+        message.time.completed = message.time.created
+        changed = true
+      }
       if (message.type !== "assistant") continue
       if (!message.time.completed) {
         message.time.completed = message.time.streamed ?? message.time.created
@@ -342,6 +353,36 @@ export class Sessions {
     const ids = [...this.live.keys()].filter((id) => this.isRunning(id))
     for (const live of this.live.values()) for (const [child, turn] of live.subagents) if (!turn.isEnded) ids.push(child)
     return ids
+  }
+
+  /**
+   * A command you typed with "!", run in the session's folder as you, right away, without waking
+   * the agent: it and what it printed join the conversation, and the agent gets them with your
+   * next message.
+   */
+  runShell(id: string, command: string) {
+    const record = this.record(id)
+    if (record.session.parentID) throw new BadRequest("This subagent works for the conversation that started it: run it there.")
+    const text = command.trim()
+    if (!text) throw new BadRequest("Type a command after the !.")
+    const directory = record.session.location.directory
+    const shellID = newID("shl")
+    const message: ShellMessage = { type: "shell", id: newID("msg"), time: { created: Date.now() }, shellID, command: text, status: "running" }
+    record.messages.push(message)
+    record.session.time.updated = Date.now()
+    this.store.save(id, true)
+    emit("session.shell.started", { sessionID: id, shell: { id: shellID, command: text, status: "running" } }, directory)
+    void (async () => {
+      const ran = await run(process.env.SHELL || "/bin/zsh", ["-c", text], { cwd: directory, timeout: shellTimeout }).catch((error) => ({ code: 1, stdout: "", stderr: String(error?.message ?? error) }))
+      const all = plain([ran.stdout, ran.stderr].filter(Boolean).join("\n")).trimEnd()
+      message.status = ran.code === 0 ? "completed" : "failed"
+      message.exit = ran.code
+      message.output = { output: all.length > shellOutputLimit ? all.slice(-shellOutputLimit) : all, truncated: all.length > shellOutputLimit }
+      message.time.completed = Date.now()
+      if (!this.store.get(id)) return
+      this.store.save(id, true)
+      emit("session.shell.ended", { sessionID: id, shell: { id: shellID, command: text, status: message.status, exit: ran.code }, output: message.output }, directory)
+    })()
   }
 
   setInstruction(id: string, key: string, text: string | undefined) {

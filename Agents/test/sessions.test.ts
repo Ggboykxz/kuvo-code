@@ -524,6 +524,28 @@ describe("asks and conversations", () => {
   })
 })
 
+describe("commands you run yourself", () => {
+  test("a command run with ! joins the conversation, and the agent gets it with your next message", async () => {
+    const folder = mkdtempSync(join(root, "project-"))
+    const id = sessions.create({ model: { providerID: "alpha", id: "one" }, location: { directory: folder } }).id
+    send(id, "hello")
+    await settled(id, 1)
+    sessions.runShell(id, "echo printed-here")
+    const shell = () => sessions.messages(id).find((message) => message.type === "shell") as any
+    await until(() => shell()?.status === "completed")
+    expect(shell().output.output).toBe("printed-here")
+    expect(shell().exit).toBe(0)
+    expect(events.some((event) => event.type === "session.shell.ended")).toBe(true)
+    send(id, "what did it print?")
+    await settled(id, 2)
+    const told = a.runs.at(-1)!.text
+    expect(told).toContain("Since your last reply, the user ran these commands themselves")
+    expect(told).toContain("echo printed-here")
+    expect(told).toContain("printed-here")
+    expect(told.endsWith("User message:\nwhat did it print?")).toBe(true)
+  })
+})
+
 describe("subagents", () => {
   test("a subagent's work is told in a session of its own under the conversation, linked from its step", async () => {
     let child = ""
