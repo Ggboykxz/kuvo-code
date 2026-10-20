@@ -433,6 +433,28 @@ describe("asks and conversations", () => {
     expect(sessions.permissions(id)).toHaveLength(0)
   })
 
+  test("an agent of yours (Settings › Agents) keeps its name, and its agent is told what it's told", async () => {
+    const agents = new Map([a, b].map((agent) => [agent.providerID, agent]))
+    sessions = new Sessions(store, { find: (provider: string | undefined) => (provider ? agents.get(provider) : undefined) } as unknown as Roster, auto, undefined, undefined, async (name) =>
+      name === "reviewer" ? "Review the code; change nothing." : undefined,
+    )
+    let told = ""
+    a.script = async (input, turn, hooks, thread) => {
+      told = hooks.instructions()
+      return replies(input, turn, hooks, thread)
+    }
+    const id = sessions.create({ model: { providerID: "alpha", id: "one" }, agent: "reviewer", location: { directory: "/tmp/project" } }).id
+    expect(sessions.get(id).agent).toBe("reviewer")
+    send(id, "look at it")
+    await settled(id, 1)
+    expect(told).toContain("Review the code; change nothing.")
+    // Back to Build: it isn't told any more.
+    sessions.selectAgent(id, "build")
+    send(id, "now fix it")
+    await settled(id, 2)
+    expect(told).not.toContain("Review the code")
+  })
+
   test("reading a .env file asks first, as on the engine; an example of one doesn't", async () => {
     const decided: string[] = []
     a.script = async (_input, turn, hooks) => {

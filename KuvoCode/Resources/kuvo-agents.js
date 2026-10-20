@@ -333,29 +333,41 @@ class EngineLink {
     }
     return this.names.get(providerID2);
   }
-  blocks = new Map;
-  async policies(directory) {
-    const kept = this.blocks.get(directory);
+  settings = new Map;
+  async settingsFiles(directory) {
+    const kept = this.settings.get(directory);
     if (!this.url || kept && Date.now() - kept.at < 30000)
-      return kept?.rules ?? [];
+      return kept?.sources ?? [];
     try {
       const answer = await this.request("GET", "/api/config", undefined, 1e4, directory);
       const sources = Array.isArray(answer) ? answer : Array.isArray(answer?.data) ? answer.data : [{ info: answer?.data ?? answer }];
-      const policies = sources.flatMap((source) => Array.isArray(source?.info?.policies) ? source.info.policies : []);
-      const rules = [];
-      for (const policy of policies) {
-        if (policy?.action !== "tool.use" || typeof policy.resource !== "string")
-          continue;
-        if (policy.effect !== "deny" && policy.effect !== "allow")
-          continue;
-        const at = policy.resource.indexOf(":");
-        rules.push({ action: at < 0 ? policy.resource : policy.resource.slice(0, at), resource: at < 0 ? "*" : policy.resource.slice(at + 1) || "*", effect: policy.effect });
-      }
-      this.blocks.set(directory, { at: Date.now(), rules });
-      return rules;
+      this.settings.set(directory, { at: Date.now(), sources });
+      return sources;
     } catch {
-      return kept?.rules ?? [];
+      return kept?.sources ?? [];
     }
+  }
+  async policies(directory) {
+    const policies = (await this.settingsFiles(directory)).flatMap((source) => Array.isArray(source?.info?.policies) ? source.info.policies : []);
+    const rules = [];
+    for (const policy of policies) {
+      if (policy?.action !== "tool.use" || typeof policy.resource !== "string")
+        continue;
+      if (policy.effect !== "deny" && policy.effect !== "allow")
+        continue;
+      const at = policy.resource.indexOf(":");
+      rules.push({ action: at < 0 ? policy.resource : policy.resource.slice(0, at), resource: at < 0 ? "*" : policy.resource.slice(at + 1) || "*", effect: policy.effect });
+    }
+    return rules;
+  }
+  async agentPrompt(name, directory) {
+    let prompt;
+    for (const source of await this.settingsFiles(directory)) {
+      const own = source?.info?.agents?.[name]?.system ?? source?.info?.agent?.[name]?.prompt;
+      if (typeof own === "string" && own.trim())
+        prompt = own.trim();
+    }
+    return prompt;
   }
   async offered(providerID2) {
     if (!this.url)
@@ -5164,14 +5176,16 @@ class Sessions {
   auto;
   engine;
   policies;
+  agentPrompt;
   live = new Map;
   removing = new Set;
-  constructor(store, roster, auto, engine, policies) {
+  constructor(store, roster, auto, engine, policies, agentPrompt) {
     this.store = store;
     this.roster = roster;
     this.auto = auto;
     this.engine = engine;
     this.policies = policies;
+    this.agentPrompt = agentPrompt;
     for (const session of store.all())
       this.repair(session.id);
   }
@@ -5266,7 +5280,7 @@ class Sessions {
     const session = {
       id: newID("ses"),
       projectID: "prj_" + createHash2("sha1").update(directory).digest("hex").slice(0, 16),
-      agent: body.agent === "plan" ? "plan" : "build",
+      agent: typeof body.agent === "string" && body.agent ? body.agent : "build",
       model: body.model,
       cost: 0,
       tokens: noTokens(),
@@ -5406,7 +5420,7 @@ class Sessions {
   selectAgent(id, agent) {
     const record = this.record(id);
     const session = record.session;
-    const mode = agent === "plan" ? "plan" : "build";
+    const mode = typeof agent === "string" && agent ? agent : "build";
     const previous = session.agent;
     if (previous === mode)
       return;
@@ -5535,6 +5549,8 @@ class Sessions {
     live.blocks = await this.policies?.(directory).catch(() => {
       return;
     }) ?? live.blocks;
+    const own = session.agent && session.agent !== "build" && session.agent !== "plan" ? session.agent : undefined;
+    live.agentPrompt = own ? await this.agentPrompt?.(own, directory).catch(() => live.agentPrompt) : undefined;
     let result;
     try {
       const run2 = { text: input.text, files: input.files.map(promptFile), model: model2, plan: session.agent === "plan" };
@@ -5758,7 +5774,12 @@ class Sessions {
       signal,
       state: slot.state,
       saveState: () => this.store.save(id, true),
-      instructions: () => Object.values(record.agent.kuvoInstructions ?? {}).join(`
+      instructions: () => [
+        ...Object.values(record.agent.kuvoInstructions ?? {}),
+        live.agentPrompt ? `You work as the "${record.session.agent}" agent here. Its instructions:
+
+${live.agentPrompt}` : ""
+      ].filter(Boolean).join(`
 
 `),
       approvesAll: () => !plan && !(record.session.permissions ?? []).some((rule) => rule.effect === "ask" || rule.effect === "deny") && !live.blocks.some((rule) => rule.effect === "deny"),
@@ -6451,7 +6472,7 @@ function engineAgent(providerID2) {
     engineAgents.set(providerID2, agent = new EngineAgent(link, providerID2));
   return agent;
 }
-var sessions = new Sessions(store, roster, auto, engineAgent, (directory) => link.policies(directory));
+var sessions = new Sessions(store, roster, auto, engineAgent, (directory) => link.policies(directory), (name, directory) => link.agentPrompt(name, directory));
 var server = Bun.serve({
   hostname: "127.0.0.1",
   port: 0,

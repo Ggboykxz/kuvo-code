@@ -57,7 +57,14 @@ function engineAgent(providerID: string): EngineAgent | undefined {
   if (!agent) engineAgents.set(providerID, (agent = new EngineAgent(link, providerID)))
   return agent
 }
-const sessions = new Sessions(store, roster, auto, engineAgent, (directory) => link.policies(directory))
+const sessions = new Sessions(
+  store,
+  roster,
+  auto,
+  engineAgent,
+  (directory) => link.policies(directory),
+  (name, directory) => link.agentPrompt(name, directory),
+)
 
 const server = Bun.serve({
   hostname: "127.0.0.1",

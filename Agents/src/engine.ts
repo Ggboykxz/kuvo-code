@@ -92,32 +92,47 @@ export class EngineLink {
     return this.names.get(providerID)
   }
 
-  private blocks = new Map<string, { at: number; rules: PermissionRule[] }>()
+  private settings = new Map<string, { at: number; sources: any[] }>()
+
+  /** The engine's settings files for a folder (yours, the project's), each as written; as last known when it doesn't answer. */
+  private async settingsFiles(directory: string): Promise<any[]> {
+    const kept = this.settings.get(directory)
+    if (!this.url || (kept && Date.now() - kept.at < 30_000)) return kept?.sources ?? []
+    try {
+      const answer = await this.request("GET", "/api/config", undefined, 10_000, directory)
+      const sources: any[] = Array.isArray(answer) ? answer : Array.isArray(answer?.data) ? answer.data : [{ info: answer?.data ?? answer }]
+      this.settings.set(directory, { at: Date.now(), sources })
+      return sources
+    } catch {
+      return kept?.sources ?? []
+    }
+  }
 
   /**
    * Settings › Permissions' Blocks for tools and commands (the engine's `policies`, "shell:git push
-   * *"), as rules: what nothing allows. As last known when the engine doesn't answer.
+   * *"), as rules: what nothing allows.
    */
   async policies(directory: string): Promise<PermissionRule[]> {
-    const kept = this.blocks.get(directory)
-    if (!this.url || (kept && Date.now() - kept.at < 30_000)) return kept?.rules ?? []
-    try {
-      const answer = await this.request("GET", "/api/config", undefined, 10_000, directory)
-      // Its settings files (yours, the project's), each as written: the blocks of all of them.
-      const sources: any[] = Array.isArray(answer) ? answer : Array.isArray(answer?.data) ? answer.data : [{ info: answer?.data ?? answer }]
-      const policies = sources.flatMap((source) => (Array.isArray(source?.info?.policies) ? source.info.policies : []))
-      const rules: PermissionRule[] = []
-      for (const policy of policies as { action?: string; resource?: string; effect?: string }[]) {
-        if (policy?.action !== "tool.use" || typeof policy.resource !== "string") continue
-        if (policy.effect !== "deny" && policy.effect !== "allow") continue
-        const at = policy.resource.indexOf(":")
-        rules.push({ action: at < 0 ? policy.resource : policy.resource.slice(0, at), resource: at < 0 ? "*" : policy.resource.slice(at + 1) || "*", effect: policy.effect })
-      }
-      this.blocks.set(directory, { at: Date.now(), rules })
-      return rules
-    } catch {
-      return kept?.rules ?? []
+    const policies = (await this.settingsFiles(directory)).flatMap((source) => (Array.isArray(source?.info?.policies) ? source.info.policies : []))
+    const rules: PermissionRule[] = []
+    for (const policy of policies as { action?: string; resource?: string; effect?: string }[]) {
+      if (policy?.action !== "tool.use" || typeof policy.resource !== "string") continue
+      if (policy.effect !== "deny" && policy.effect !== "allow") continue
+      const at = policy.resource.indexOf(":")
+      rules.push({ action: at < 0 ? policy.resource : policy.resource.slice(0, at), resource: at < 0 ? "*" : policy.resource.slice(at + 1) || "*", effect: policy.effect })
     }
+    return rules
+  }
+
+  /** What an agent of yours (Settings › Agents) is told to be: its prompt, from the last file that has it. */
+  async agentPrompt(name: string, directory: string): Promise<string | undefined> {
+    let prompt: string | undefined
+    for (const source of await this.settingsFiles(directory)) {
+      // `agents.<name>.system` (as Kuvo Code writes it); `agent.<name>.prompt` in older settings.
+      const own = source?.info?.agents?.[name]?.system ?? source?.info?.agent?.[name]?.prompt
+      if (typeof own === "string" && own.trim()) prompt = own.trim()
+    }
+    return prompt
   }
 
   /** Whether a provider is ready to use now, and its models; nothing known when the engine isn't. */

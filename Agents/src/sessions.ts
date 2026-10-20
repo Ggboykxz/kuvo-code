@@ -54,6 +54,8 @@ interface Live {
   subagents: Map<string, Turn>
   /** Settings › Permissions' Blocks as the turn began: what nothing allows. */
   blocks: PermissionRule[]
+  /** The session's agent of yours (Settings › Agents), as the turn began: what it's told to be. */
+  agentPrompt?: string
 }
 
 /** What the bridge keeps of each agent's conversation in a session. */
@@ -103,6 +105,8 @@ export class Sessions {
     private readonly engine?: (providerID: string) => Agent | undefined,
     /** Settings › Permissions' Blocks for a folder, from the engine. */
     private readonly policies?: (directory: string) => Promise<PermissionRule[]>,
+    /** An agent of yours (Settings › Agents): its prompt, from the engine. */
+    private readonly agentPrompt?: (name: string, directory: string) => Promise<string | undefined>,
   ) {
     // Turns a quit or crash cut short: ended, as Stop ends one.
     for (const session of store.all()) this.repair(session.id)
@@ -205,7 +209,7 @@ export class Sessions {
     const session: Session = {
       id: newID("ses"),
       projectID: "prj_" + createHash("sha1").update(directory).digest("hex").slice(0, 16),
-      agent: body.agent === "plan" ? "plan" : "build",
+      agent: typeof body.agent === "string" && body.agent ? body.agent : "build",
       model: body.model,
       cost: 0,
       tokens: noTokens(),
@@ -358,7 +362,7 @@ export class Sessions {
   selectAgent(id: string, agent: string) {
     const record = this.record(id)
     const session = record.session
-    const mode = agent === "plan" ? "plan" : "build"
+    const mode = typeof agent === "string" && agent ? agent : "build"
     const previous = session.agent
     if (previous === mode) return
     session.agent = mode
@@ -482,8 +486,11 @@ export class Sessions {
     else record.messages.push({ type: "user", id: input.id, time: { created: Date.now() }, text: input.text, files: attachments.length ? attachments : undefined })
     session.time.updated = Date.now()
     this.store.save(id, true)
-    // Blocks as they are now (once the message is in: one sent again meanwhile is known).
+    // Blocks as they are now (once the message is in: one sent again meanwhile is known), and
+    // what an agent of yours is told to be.
     live.blocks = (await this.policies?.(directory).catch(() => undefined)) ?? live.blocks
+    const own = session.agent && session.agent !== "build" && session.agent !== "plan" ? session.agent : undefined
+    live.agentPrompt = own ? await this.agentPrompt?.(own, directory).catch(() => live.agentPrompt) : undefined
 
     let result: RunResult
     try {
@@ -728,7 +735,13 @@ export class Sessions {
       signal,
       state: slot.state,
       saveState: () => this.store.save(id, true),
-      instructions: () => Object.values((record.agent.kuvoInstructions as Record<string, string> | undefined) ?? {}).join("\n\n"),
+      instructions: () =>
+        [
+          ...Object.values((record.agent.kuvoInstructions as Record<string, string> | undefined) ?? {}),
+          live.agentPrompt ? `You work as the "${record.session.agent}" agent here. Its instructions:\n\n${live.agentPrompt}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
       // Nothing to ask, and nothing refused: an agent may run its tools on its own. With a
       // rule or a block that refuses something, or in plan mode, it asks here, and they answer.
       approvesAll: () =>
