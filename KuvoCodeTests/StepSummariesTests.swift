@@ -53,6 +53,14 @@ import Testing
         #expect(try words("kuvo-browser_browser_click", ["index": 4]) == "Clicked [4]")
     }
 
+    /// A wake-up the agent schedules (through kuvo-wake) reads as one, not as a command.
+    @Test func wakeUps() throws {
+        #expect(try words("shell", ["command": "kuvo-wake add +2h \"check whether CI passed\""]) == "Scheduled a wake-up in 2 hr: check whether CI passed")
+        #expect(try words("shell", ["command": "\"$KUVO_WAKE\" list"]) == "Ran `\"$KUVO_WAKE\" list`")
+        #expect(try words("shell", ["command": "kuvo-wake list"]) == "Checked its wake-ups")
+        #expect(try words("shell", ["command": "kuvo-wake add +30m 'retry the deploy'"], metadata: ["exit": 1]) == "Couldn’t schedule a wake-up: retry the deploy (exit 1)")
+    }
+
     /// A tool the app doesn't know, by its name in words.
     @Test func anUnknownTool() throws {
         #expect(try words("linear_create_issue", [:]) == "Linear Create Issue")
