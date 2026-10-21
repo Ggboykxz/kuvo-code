@@ -787,7 +787,10 @@ test("a commit can push afterwards, as the Mac's commit form does", async t => {
   fs.writeFileSync(path.join(project, "a.txt"), "one\n");
   git("add", "-A");
   git("commit", "-q", "-m", "first");
-  git("push", "-q", "-u", "origin", "HEAD:main");
+  // The branch goes under its own name: what the machine's git calls the first branch
+  // differs from machine to machine, and the push has to work either way.
+  const branch = git("rev-parse", "--abbrev-ref", "HEAD").trim();
+  git("push", "-q", "-u", "origin", `HEAD:${branch}`);
 
   fs.writeFileSync(path.join(project, "a.txt"), "two\n");
   const pushed = await (await fetch(`${url}api/changes/commit`, {
@@ -796,7 +799,7 @@ test("a commit can push afterwards, as the Mac's commit form does", async t => {
   })).json();
   assert.equal(pushed.ok, true);
   assert.equal(pushed.pushed, true, "the branch was pushed");
-  const log = git("log", "--oneline", "origin/main");
+  const log = git("log", "--oneline", `origin/${branch}`);
   assert.match(log, /Second/, "the commit is on the branch that was pushed");
 });
 
