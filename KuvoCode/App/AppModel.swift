@@ -182,8 +182,8 @@ final class AppModel {
         case .ready, .starting, .downloading: return
         case .preparing, .failed: break
         }
-        // What you keep here, up to date with this version (once, after an update), before
-        // anything reads it.
+        // What you keep here, up to date with this version (once, after an update), before the
+        // engine starts.
         await calibration.run(self)
         let launch = UUID()
         self.launch = launch

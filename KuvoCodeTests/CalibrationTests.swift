@@ -18,7 +18,7 @@ import Testing
     }
 
     private static func clean() {
-        for key in [Calibration.key, "calibrationTestMarker"] + Backups.settings {
+        for key in [Calibration.key, Calibration.backedUpKey, "calibrationTestMarker"] + Backups.settings {
             UserDefaults.standard.removeObject(forKey: key)
         }
         for name in Backups.files + ["Backups", "bots"] {
@@ -123,6 +123,41 @@ import Testing
         #expect(names.last?.hasPrefix("1970-01-05") == true)
     }
 
+    /// One left half made (the app quit while it copied) never counts, and goes with the next.
+    @Test func aBackupCutShortDoesntCount() throws {
+        defer { Self.clean() }
+        try Data("[]".utf8).write(to: botsFile)
+        let cut = Backups.folder.appending(path: ".partial-left-from-before")
+        try FileManager.default.createDirectory(at: cut, withIntermediateDirectories: true)
+        #expect(Backups.make() != nil)
+        let names = try FileManager.default.contentsOfDirectory(atPath: Backups.folder.path)
+        #expect(names.count == 1 && names.first?.hasPrefix(".") == false)
+    }
+
+    /// An update's steps tried again at a later launch (one failed, or the app quit) make no
+    /// second backup, which could push the one from before the update out; two starts of the
+    /// engine at once run the steps once, the second waiting for the first.
+    @Test func oneBackupForAnUpdateAndOneRunAtATime() async throws {
+        defer { Self.clean() }
+        let scout = try folder("bot_scout00001", memory: "# Scout's memory\n")
+        try savedBefore(macFolder: scout).write(to: botsFile)
+
+        let app = AppModel()
+        async let first: Void = app.calibration.run(app)
+        async let second: Void = app.calibration.run(app)
+        _ = await (first, second)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: Backups.folder.path).count == 1)
+        #expect(FileManager.default.fileExists(atPath: scout.appending(path: Bot.Descriptor.file).path))
+
+        // Its steps not marked done (as if one had failed): tried again, without a new backup.
+        UserDefaults.standard.removeObject(forKey: Calibration.key)
+        let again = AppModel()
+        #expect(again.calibration.isRunning)
+        await again.calibration.run(again)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: Backups.folder.path).count == 1)
+        #expect(UserDefaults.standard.integer(forKey: Calibration.key) == Calibration.current)
+    }
+
     /// Made, edited, given a job: its description follows. One whose folder has gone gets none,
     /// and no folder is made for it.
     @Test func editsReachTheDescription() async throws {
@@ -173,6 +208,9 @@ import Testing
         let aside = UserDefaults.standard.dictionaryRepresentation().filter { $0.key.hasPrefix(Machines.unreadableKey) }
         #expect(aside.count == 1)
         #expect(aside.first?.value as? Data == damaged)
+        // Once, however many launches find it there.
+        _ = Machines()
+        #expect(UserDefaults.standard.dictionaryRepresentation().filter { $0.key.hasPrefix(Machines.unreadableKey) }.count == 1)
         UserDefaults.standard.removeObject(forKey: "machines")
     }
 }
