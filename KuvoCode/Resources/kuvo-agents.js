@@ -2750,6 +2750,8 @@ function kuvoTool(call) {
   const raw = call.rawInput ?? {};
   const path = call.locations?.[0]?.path ?? raw.path ?? raw.file_path ?? raw.filePath;
   const command = Array.isArray(raw.command) ? raw.command.join(" ") : raw.command ?? raw.CommandLine ?? raw.command_line ?? raw.commandLine;
+  if (raw.variant === "SearchTool")
+    return { name: "tool_search", input: { query: raw.query } };
   switch (call.kind) {
     case "execute":
       return { name: "shell", input: { command: command ?? backticked(call.title) ?? call.title, description: raw.description } };
@@ -2768,18 +2770,20 @@ function kuvoTool(call) {
   }
   const server2 = raw.server ?? raw.server_name ?? raw.serverName;
   const tool = raw.tool ?? raw.tool_name ?? raw.toolName;
+  const wrapped = raw.arguments ?? raw.args ?? raw.input ?? raw.tool_input ?? raw.toolInput;
+  const args = typeof wrapped === "object" && wrapped && !Array.isArray(wrapped) ? wrapped : raw;
   if (server2 === toolServerName && typeof tool === "string" && /^[a-z0-9_]+$/i.test(tool) && isKuvoTool(tool) !== false) {
-    const args = raw.arguments ?? raw.args ?? raw.input;
-    return { name: `${toolServerName}_${tool}`, input: typeof args === "object" && args ? args : raw };
+    return { name: `${toolServerName}_${tool}`, input: args };
   }
-  const prefixed = new RegExp(`(?:^|[\\s:])(?:mcp__)?${toolServerName}(?:/|__|\\.|:|_)([a-z0-9_]+)\\s*$`, "i").exec(String(call.title ?? "").trim())?.[1];
+  const named = (text) => new RegExp(`(?:^|[\\s:])(?:mcp__)?${toolServerName}(?:/|__|\\.|:|_)([a-z0-9_]+)\\s*$`, "i").exec(String(text ?? "").trim())?.[1];
+  const prefixed = named(call.title) ?? named(tool);
   if (prefixed && isKuvoTool(prefixed.toLowerCase()) !== false)
-    return { name: `${toolServerName}_${prefixed.toLowerCase()}`, input: raw };
-  const named = /^(?:running\s+|tool:\s*|calling\s+)?([a-z0-9_.-]+)$/i.exec(String(call.title ?? "").trim())?.[1];
-  const own = named && typeof raw === "object" && raw ? kuvoToolName(named, raw) : undefined;
+    return { name: `${toolServerName}_${prefixed.toLowerCase()}`, input: args };
+  const titled = /^(?:running\s+|tool:\s*|calling\s+)?([a-z0-9_.-]+)$/i.exec(String(call.title ?? "").trim())?.[1];
+  const own = titled && typeof raw === "object" && raw ? kuvoToolName(titled, raw) : undefined;
   if (own)
     return { name: own, input: raw };
-  return { name: (named ?? call.title ?? "tool").toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_|_$/g, "") || "tool", input: raw };
+  return { name: (titled ?? call.title ?? "tool").toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_|_$/g, "") || "tool", input: raw };
 }
 var classified = new Set(["shell", "edit", "write", "patch", "webfetch", "websearch", "read", "grep", "glob", "list", "external_directory", "think"]);
 function permissionAction(kind, name) {
@@ -7229,6 +7233,7 @@ class CursorThread {
   agent;
   startedApproving;
   startedSkills;
+  startedTools;
   active;
   constructor(owner, session, state) {
     this.owner = owner;
@@ -7253,6 +7258,7 @@ class CursorThread {
     const mode = input.plan ? "plan" : "agent";
     const cwd = this.session.location.directory;
     const skills = skillsFolder(await skillsFor(cwd, this.owner.ownSkillFolders(cwd), turnedOff(hooks)));
+    const tools = kuvoTools(this.session.id);
     return {
       model: selection,
       name: `Kuvo Code: ${this.session.title ?? "session"}`,
@@ -7266,13 +7272,19 @@ class CursorThread {
         sandboxOptions: { enabled: !approvesAll },
         enableAgentRetries: true,
         store: this.owner.agentStore(sdk)
-      }
+      },
+      ...tools ? {
+        mcpServers: {
+          [tools.name]: tools.kind === "http" ? { type: "http", url: tools.url, headers: tools.headers } : { type: "stdio", command: tools.command, args: tools.args, env: tools.env }
+        }
+      } : {}
     };
   }
   async ensureAgent(sdk, options, hooks) {
     const approvesAll = hooks.approvesAll(false);
     const skills = options.local?.dirs?.[0];
-    if (this.agent && (this.startedApproving !== approvesAll || this.startedSkills !== skills)) {
+    const tools = kuvoTools(this.session.id)?.key;
+    if (this.agent && (this.startedApproving !== approvesAll || this.startedSkills !== skills || this.startedTools !== tools)) {
       try {
         this.agent.close?.();
       } catch {}
@@ -7282,6 +7294,7 @@ class CursorThread {
       return;
     this.startedApproving = approvesAll;
     this.startedSkills = skills;
+    this.startedTools = tools;
     const id = this.state.cursorAgent;
     this.agent = id ? await sdk.Agent.resume(id, options).catch(() => {
       return;
@@ -11181,3 +11194,4 @@ if (onMachine) {
 }
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
+// Built from Agents/src 2a60b1d8f70be7edce0775b84eaff402b890786189f763e3f8c6dd8a2b4b1bd8

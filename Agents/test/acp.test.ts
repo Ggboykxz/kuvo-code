@@ -135,10 +135,14 @@ describe("ACP agents, nothing dropped", () => {
                  rawInput: { variant: "UseTool", tool_name: "kuvo-browser__show_in_panel", tool_input: { path: "/tmp/a.txt" } } }],
         ["s1", { sessionUpdate: "tool_call", toolCallId: "k3", title: "Search tools: send_message kuvo session", kind: "other", status: "completed",
                  rawInput: { variant: "SearchTool", query: "send_message kuvo session", limit: 5 } }],
+        ["s1", { sessionUpdate: "tool_call", toolCallId: "k4", title: "Search tools: browser", kind: "search", status: "completed",
+                 rawInput: { variant: "SearchTool", query: "browser" } }],
       ]),
     )
-    const [sent, shown, search] = tools(id)
+    const [sent, shown, search, searchedAsSearch] = tools(id)
     expect(search).toMatchObject({ name: "tool_search", state: { input: { query: "send_message kuvo session" } } })
+    // Its kind given as a search: a search for a tool all the same, not for text in files.
+    expect(searchedAsSearch).toMatchObject({ name: "tool_search", state: { input: { query: "browser" } } })
     expect(sent).toMatchObject({ name: "kuvo-browser_send_message", state: { input: message } })
     expect(shown).toMatchObject({ name: "kuvo-browser_show_in_panel", state: { input: { path: "/tmp/a.txt" } } })
   })

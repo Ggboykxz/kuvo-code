@@ -928,6 +928,10 @@ function kuvoTool(call: any): { name: string; input: Record<string, unknown> } {
   const raw = call.rawInput ?? {}
   const path = call.locations?.[0]?.path ?? raw.path ?? raw.file_path ?? raw.filePath
   const command = Array.isArray(raw.command) ? raw.command.join(" ") : raw.command ?? raw.CommandLine ?? raw.command_line ?? raw.commandLine
+  // Grok looking through the tools it has for one that does something (its SearchTool): the
+  // app's tool search, by what it looked for, not a tool named after its words, nor a search of
+  // the files, whatever kind it gives it.
+  if (raw.variant === "SearchTool") return { name: "tool_search", input: { query: raw.query } }
   switch (call.kind) {
     case "execute":
       return { name: "shell", input: { command: command ?? backticked(call.title) ?? call.title, description: raw.description } }
@@ -944,9 +948,6 @@ function kuvoTool(call: any): { name: string; input: Record<string, unknown> } {
     case "think":
       return { name: "think", input: {} }
   }
-  // Grok looking through the tools it has for one that does something (its SearchTool): the
-  // app's tool search, by what it looked for, not a tool named after its words.
-  if (raw.variant === "SearchTool") return { name: "tool_search", input: { query: raw.query } }
   // One of Kuvo Code's, named with its server ("kuvo-browser/show_widget", "mcp__kuvo-browser__…",
   // "Tool: kuvo-browser.show_widget", or server and tool in its input): the app's name for it.
   // Its own arguments, where the agent wraps them in its call (Grok: {variant: "UseTool",

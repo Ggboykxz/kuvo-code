@@ -265,7 +265,8 @@ the app's usual views; `Workspace` sends a session to it when its metadata names
 The SDKs are installed from npm the first time each is needed (`runtime/<agent>`), at the
 versions in the agents' files, and aren't part of the app. After changing `Agents/src`, run
 `./scripts/build-agents.sh` and commit `KuvoCode/Resources/kuvo-agents.js`, the bundle the app
-ships. In a debug build, `KUVO_AGENTS_SCRIPT=<checkout>/Agents/src/main.ts` runs the source
+ships; CI fails when it isn't built from the sources as they are (`build-agents.sh --check`). In a
+debug build, `KUVO_AGENTS_SCRIPT=<checkout>/Agents/src/main.ts` runs the source
 instead.
 
 ### Dependencies

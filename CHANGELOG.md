@@ -20,6 +20,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Starting a bot from a shared one whose job and details are on the same line keeps the details in its first message; only the job's own sentence is left out, as it's said first.
 - A session archived with Kuvo Code 0.6.2 or earlier gets its wake-ups back when you bring it back; they stayed paused, as if you'd paused them.
 - Redo after typing between two undos keeps what you typed and nothing else: the message the first undo put in the composer, which Redo brings back to the conversation, no longer stays there to be sent twice.
+- Sessions and bots on Cursor have Kuvo Code's own tools (send_message, the panel's browser, show_in_panel), and Grok's messages to other sessions and its tool searches show what they did. 0.6.3 said so, but its copy of the coding agents' bridge was built before these fixes.
 
 ## 0.6.3
 
