@@ -332,6 +332,8 @@ extension AppModel {
         workspace.machines = Set(machines.list.map(\.id))
         workspace.fold(address, into: machine)
         bots.fold(address, into: machine)
+        // Not connected (its own address doesn't answer): now, at whichever does.
+        if let engine = machines.engine(machine), !engine.isReady { reconnectNow(engine) }
     }
 
     func removeMachine(_ id: String) {
