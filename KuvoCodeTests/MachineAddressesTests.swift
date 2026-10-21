@@ -136,6 +136,41 @@ import Testing
         #expect(workspace.settings[web]?.run == "npm run dev")
     }
 
+    /// The first time a computer is asked what it calls itself, by two connections at once (two
+    /// addresses of it connecting together as Kuvo Code opens): both hear the same name, so they're
+    /// known to be one computer. Run here with a shell, as on the machine.
+    @Test func askedTwiceAtOnceItGivesOneName() async throws {
+        let home = AppInfo.testRoot.appending(path: "IdentityHome-\(UUID().uuidString.prefix(6))")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        for _ in 0..<5 {
+            try? FileManager.default.removeItem(at: home.appending(path: RemoteEngineInstaller.root))
+            let names = await withTaskGroup(of: String.self) { group in
+                for _ in 0..<8 {
+                    group.addTask {
+                        let shell = Process()
+                        shell.executableURL = URL(filePath: "/bin/sh")
+                        shell.arguments = ["-c", Machine.identityScript]
+                        shell.environment = ["HOME": home.path(percentEncoded: false), "PATH": "/usr/bin:/bin"]
+                        let output = Pipe()
+                        shell.standardOutput = output
+                        try? shell.run()
+                        let data = output.fileHandleForReading.readDataToEndOfFile()
+                        shell.waitUntilExit()
+                        return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                }
+                var names = Set<String>()
+                for await name in group { names.insert(name) }
+                return names
+            }
+            #expect(names.count == 1, "one name, whoever asked first: \(names)")
+            #expect(names.first?.count == 32)
+            let left = try FileManager.default.contentsOfDirectory(atPath: home.appending(path: RemoteEngineInstaller.root).path(percentEncoded: false))
+            #expect(left == ["machine-id"], "nothing else left there")
+        }
+    }
+
     /// You say one is the other at another address (one of them can't be reached to tell): one
     /// machine. Two that have said they're different computers stay two.
     @Test func youSayTheyreTheSameComputer() {

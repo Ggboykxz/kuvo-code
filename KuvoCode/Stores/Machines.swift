@@ -25,18 +25,26 @@ nonisolated struct Machine: Codable, Hashable, Identifiable {
 
     /// The computer at `address` as it calls itself: a name made once, in Kuvo Code's folder there
     /// (an account's own, as that folder is), the same whichever address reaches it. Nil when it
-    /// can't be asked.
+    /// can't be asked. Two connections asking at once for the first time get the same one: each
+    /// writes its own, and only the first to link it in place counts.
     static func identity(at address: String) async -> String? {
-        let script = """
+        guard let output = try? await SSHConnection.direct(address).run(identityScript) else { return nil }
+        let identity = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return identity.count == 32 && identity.allSatisfy(\.isHexDigit) ? identity : nil
+    }
+
+    static var identityScript: String {
+        """
             F="$HOME/\(RemoteEngineInstaller.root)/machine-id"
             if [ ! -s "$F" ]; then
-              mkdir -p "${F%/*}" && (umask 077; od -An -N16 -tx1 /dev/urandom | tr -d ' \\n' >"$F.new") && mv -f "$F.new" "$F" || exit 1
+              mkdir -p "${F%/*}" || exit 1
+              T="$F.$$"
+              (umask 077; od -An -N16 -tx1 /dev/urandom | tr -d ' \\n' >"$T") || exit 1
+              ln "$T" "$F" 2>/dev/null || [ -s "$F" ] || mv -f "$T" "$F"
+              rm -f "$T"
             fi
             cat "$F"
             """
-        guard let output = try? await SSHConnection.direct(address).run(script) else { return nil }
-        let identity = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        return identity.count == 32 && identity.allSatisfy(\.isHexDigit) ? identity : nil
     }
 }
 
@@ -104,28 +112,47 @@ final class MachineEngine {
 
     /// Of its addresses, the one that answers as this computer, the one in use (or that answered
     /// last) first: its connections go there from now on. One that answers as another computer (a
-    /// local name handed to another one since) isn't used. With one address, nothing to choose.
+    /// local name handed to another one since) isn't used. None answering as it, but its name
+    /// answering: the computer there calls itself something new (its Kuvo Code folder was made
+    /// again), and is still this machine. With one address, nothing to choose.
     func reach() async {
         let addresses = machine.addresses
-        guard addresses.count > 1 else { return }
-        let routed = machine.connection.address
-        let first = routed != machine.destination ? routed : machine.reachedAt.flatMap { addresses.contains($0) ? $0 : nil } ?? routed
-        for address in [first] + addresses.filter({ $0 != first }) {
-            guard let identity = await Machine.identity(at: address) else { continue }
-            if let known = machine.identity, known != identity { continue }
-            SSHConnection.route(machine.id, to: address)
-            if machine.identity == nil { onIdentity(identity) }
-            if machine.reachedAt != address { onReached(address) }
+        guard addresses.count > 1 else {
+            // (Removed and added again at one address: not where it was reached before.)
+            SSHConnection.route(machine.id, to: nil)
             return
         }
+        let routed = machine.connection.address
+        let first = routed != machine.destination ? routed : machine.reachedAt.flatMap { addresses.contains($0) ? $0 : nil } ?? routed
+        var atName: String?
+        for address in [first] + addresses.filter({ $0 != first }) {
+            guard let identity = await Machine.identity(at: address) else { continue }
+            if let known = machine.identity, known != identity {
+                if address == machine.destination { atName = identity }
+                continue
+            }
+            settle(at: address, identity: identity)
+            return
+        }
+        // Nowhere it answers as itself: at its name, as a machine with one address would be.
+        SSHConnection.route(machine.id, to: nil)
+        if let atName { settle(at: machine.destination, identity: atName) }
     }
 
-    /// What it calls itself, read once it's connected, if it isn't known yet.
+    private func settle(at address: String, identity: String) {
+        SSHConnection.route(machine.id, to: address)
+        if machine.identity != identity { onIdentity(identity) }
+        if machine.reachedAt != address { onReached(address) }
+    }
+
+    /// What it calls itself, read once it's connected (with several addresses, `reach` read it):
+    /// new if its Kuvo Code folder there was made again, so its other addresses are still known
+    /// as its own.
     private func learnIdentity() {
-        guard machine.identity == nil else { return }
+        guard machine.identity == nil || machine.addresses.count == 1 else { return }
         let address = machine.connection.address
         Task { [weak self] in
-            guard let identity = await Machine.identity(at: address) else { return }
+            guard let identity = await Machine.identity(at: address), identity != self?.machine.identity else { return }
             self?.onIdentity(identity)
         }
     }
