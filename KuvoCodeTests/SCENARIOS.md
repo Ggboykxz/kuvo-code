@@ -62,7 +62,7 @@ end-to-end runs' alone, as are those that need a real machine over SSH (F9, L46,
 | I4 What machines share with this Mac, and what's their own | MachineSettingsTests, CustomAutoPlacesTests, SignInSyncTests | a connected machine's engine starting over with new settings (needs SSH) |
 | J1 The network goes away mid-reply | NetworkDropTests | |
 | J3 The engine stops; the app brings it back | EngineRestartTests | |
-| J4 A huge file, a binary file in the changes | ChangesDiscardTests, ChangesBinaryTests | very large command output (the engine keeps it) |
+| J4 A huge file, a binary file in the changes; a command that prints a lot | ChangesDiscardTests, ChangesBinaryTests, CommandOutputTests | how much output the engine keeps (its own) |
 | K1 Settings keep what you change; its tabs | EngineSettingsFileTests, SettingsTabsTests | |
 | L42 Web search works from the start (the engine has no search chosen; every search failed) | EngineSettingsFileTests | |
 | K3, L41 Notifications, and answering from one | NotificationMaskingTests, NotificationRepliesTests | macOS showing them (Notification Center) |
