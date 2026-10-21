@@ -7,6 +7,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 ## Unreleased
 
 - The context ring of a Cursor session counts the last request Cursor reports, rather than all of a reply's requests added up.
+
 ## 0.6.6
 
 - Undo in a Claude Code, Codex or other coding agent's session works right after its turn ends or after Kuvo Code opens again; for a moment it said "Stop the agent first" while nothing was working.
