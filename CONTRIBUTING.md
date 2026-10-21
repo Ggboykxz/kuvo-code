@@ -72,7 +72,8 @@ Discard in Changes on throwaway git repositories, say, checking what's on disk
 after. The app hosting them starts nothing (no window, engine or menu bar item),
 and the tests keep their repositories, data and Trash in the temporary folder.
 Run them with the script: it builds a copy of the app of their own
-(`run.kuvo.code.tests`), outside the checkout. The app itself refuses to host them,
+(`run.kuvo.code.tests`), outside the checkout, and removes what that copy keeps
+(its settings, caches and website data) before and after each run. The app itself refuses to host them,
 as they'd use your settings, and a copy built under Desktop or Documents waits on a
 privacy prompt while tests run.
 `ONLY=KuvoCodeTests/ChangesDiscardTests` runs one suite. Test what people see
