@@ -168,6 +168,24 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     `Workspace.swift:1347-1359`): the line's `onopen` re-reads the list, the conversation in
     view and the one beside it, so what was said while the line was down is known again
     from the engine's own messages.
+  - **2.66 (this change). The panes take the Mac's terrain, and give way in its order.**
+    The window's three cards shared no measure with the Mac: the split was a fixed 560, the
+    panel a fixed 420, and only the sessions had a handle. They share the Mac's `PaneLayout`
+    now (`MainView.swift:2112-2179`): the sessions may be drawn 220 to 440 pt wide, the
+    panel 300 to 900, the split 380 to 1200, and the conversation keeps at least 380
+    whatever else is on screen. Out of room the split goes first, then the panel, then the
+    sessions — a split the window cannot hold is put aside rather than drawn over the
+    conversation, and comes back by itself when the room does, and a pane that went early
+    is restored if a later one's going left room for it. If room is still short after the
+    give-way, the rest shrink as far as they must, the panel first and the split last. The
+    page measures the window and hands the layout what each pane asks for and what is
+    shown, and writes the three widths back into the page's own variables; the handles
+    between the cards move each width inside its own range, and no further than the room
+    the conversation leaves. The split's own handle is the Mac's shape — zero width in the
+    gap, its grab area reaching over both cards, the accent hairline while pointed at or
+    dragged (`PaneResizer`). The layout itself is a plain module
+    (`windows/harness/layout.mjs`), so the harness proves the Mac's order of giving way and
+    shrinking without a window.
   - **2.61 (this change). The provider's marks.** The Mac draws the maker's mark beside
     each model (`ProviderLogo.swift`), monochrome so it follows the ink, or in the maker's
     own colour where it has one. The marks themselves are not published as a package, but

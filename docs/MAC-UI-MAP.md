@@ -100,9 +100,13 @@ card, with the conversation's header, Swap and Close, and no strip of controls o
 a session is opened beside another with *Open Beside*, as on the Mac (`SidebarView.swift:609`,
 `MainView.swift:757-775`); and every open conversation follows the engine's events, while a
 reconnection re-reads the list and both conversations from the engine's own messages
-(`AppModel.swift:448-459` → `Workspace.resync`, `Workspace.swift:1347-1359`). The port's
-own list of what is left is now: the split's terrain and give-way (`PaneLayout`,
-`MainView.swift:2112-2179`); the session's and the tab's menus; the window's remembered
+(`AppModel.swift:448-459` → `Workspace.resync`, `Workspace.swift:1347-1359`). In 0.5.71
+the panes took the Mac's terrain (`PaneLayout`, `MainView.swift:2112-2179`): the sessions
+220–440 pt wide, the panel 300–900, the split 380–1200, the conversation never under 380,
+and out of room the split gives way first, then the panel, then the sessions — a split the
+window cannot hold is put aside and comes back when the room does, and the rest shrink as
+far as they must, the panel first and the split last. The port's
+own list of what is left is now: the session's and the tab's menus; the window's remembered
 state (the widths, the panels, the tabs and the selection); the choices the Mac keeps (the
 last model, the approval mode, the steps' detail, the favourites, push after commit, the
 typeface and the window material); and the last three motions — the 45 % of a disabled
