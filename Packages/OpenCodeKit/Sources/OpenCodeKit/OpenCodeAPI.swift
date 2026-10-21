@@ -324,6 +324,23 @@ public struct OpenCodeAPI: Sendable {
         return appSession(try await send("POST", "api/session/import", body: body, as: DataEnvelope<Session>.self).data)
     }
 
+    /// A conversation whole, as the engine keeps it (its session, with its metadata and
+    /// permissions, and every message), for another engine to carry on with
+    /// (`importSession(exported:directory:)`): a bot or chat moving to another computer. Kept as
+    /// the engine wrote it, so nothing is lost on the way.
+    public func exportSession(_ id: String) async throws -> JSONValue {
+        try await get("api/experimental/session/\(id.pathEscaped)/export", as: DataEnvelope<JSONValue>.self).data
+    }
+
+    /// A conversation another engine exported (`exportSession`), carried on here at `directory`
+    /// under the same ID. An engine that has one with that ID already refuses it (409).
+    public func importSession(exported: JSONValue, directory: String) async throws -> Session {
+        struct Body: Encodable { var info: JSONValue; var messages: JSONValue; var location: Location }
+        guard let info = exported["info"], let messages = exported["messages"] else { throw URLError(.cannotParseResponse) }
+        let body = Body(info: info, messages: messages, location: Location(directory: enginePath(directory)))
+        return appSession(try await send("POST", "api/experimental/session/import", body: body, as: DataEnvelope<Session>.self).data)
+    }
+
     public func renameSession(_ id: String, title: String) async throws {
         struct Body: Encodable { var title: String }
         try await send("PATCH", "api/session/\(id.pathEscaped)", body: Body(title: title))

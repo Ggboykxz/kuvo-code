@@ -105,6 +105,29 @@ public struct SSHConnection: Sendable, Hashable, Codable {
         return text
     }
 
+    /// Runs `script` on the machine with what it prints going to `output` as it is (an archive of
+    /// a folder there, say), not read as text. `input` is sent to it.
+    public func run(_ script: String, input: URL? = nil, output: URL) async throws {
+        let process = Process()
+        process.executableURL = URL(filePath: "/usr/bin/ssh")
+        process.arguments = arguments(running: script)
+        guard FileManager.default.createFile(atPath: output.path, contents: nil, attributes: [.posixPermissions: 0o600]) else { throw CocoaError(.fileWriteUnknown) }
+        let file = try FileHandle(forWritingTo: output)
+        defer { try? file.close() }
+        let stderr = Pipe()
+        process.standardOutput = file
+        process.standardError = stderr
+        if let input { process.standardInput = try FileHandle(forReadingFrom: input) }
+        let errors = Task.detached { stderr.fileHandleForReading.readDataToEndOfFile() }
+        let status: Int32 = try await withCheckedThrowingContinuation { continuation in
+            process.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
+            do { try process.run() } catch { continuation.resume(throwing: error) }
+        }
+        guard status == 0 else {
+            throw RemoteEngineError.ssh(status: status, message: String(decoding: await errors.value, as: UTF8.self))
+        }
+    }
+
     /// `text` as one word for `sh`.
     public static func quoted(_ text: String) -> String {
         "'" + text.replacingOccurrences(of: "'", with: "'\\''") + "'"
