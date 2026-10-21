@@ -31,7 +31,7 @@ end-to-end runs' alone, as are those that need a real machine over SSH (F9, L46,
 | B19 A subagent at work, in the background too | SubagentsAtWorkTests | |
 | B17 A folder that isn't a git repository | SessionEditsTests | |
 | B18 Rename, archive, restore, delete, search | SidebarListsTests, SessionsTests, SessionTitlesTests, SessionSearchTests, SessionLifecycleTests | |
-| B20 Commands and skills | SlashCommandsTests, SkillLibraryTests | |
+| B20 Commands, skills, and ! commands | SlashCommandsTests, SkillLibraryTests, ShellCommandsTests | |
 | C1–C3 Attach pictures, PDFs, files | AttachmentRoutesTests, AttachmentsTests, SentFilesTests | |
 | C4 Quote part of a reply and answer it | QuotingTests | |
 | C5, C6 Files in the panel; the agent shows one; agents' tabs tidied | FileLinksTests, PanelTabsTests, ProjectFilesTests, BrowserHistoryTests, AgentTabsTests | |
