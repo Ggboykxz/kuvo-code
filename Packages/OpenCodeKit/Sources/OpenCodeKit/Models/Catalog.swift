@@ -41,7 +41,16 @@ public struct Model: Codable, Sendable, Hashable, Identifiable {
 
     public struct Limit: Codable, Sendable, Hashable {
         public var context: Int
+        /// How much of the window a request may take, when the provider allows less than all of
+        /// it (OpenAI's and GitHub Copilot's models); 0 or nil when it doesn't say.
+        public var input: Int?
         public var output: Int
+
+        /// What the conversation can fill: the engine summarizes it before this, as it does.
+        public var usable: Int {
+            if let input, input > 0 { return input }
+            return context
+        }
     }
 
     public var ref: ModelRef { ModelRef(id: id, providerID: providerID) }

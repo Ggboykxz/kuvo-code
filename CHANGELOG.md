@@ -26,6 +26,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - In a session that asks before reading files outside its folder, the agent's browser no longer attaches such a file to a website's upload without asking first, on this Mac and on machines; it said so for opening one, but uploads went through.
 - The context ring of a Claude Code session counts against the window Claude Code gives the model on your plan, 1M tokens for Opus 5.5, rather than 200K for every model it didn't call 1M, which showed a long session full ("218K / 200K") with most of its room left.
 - The context ring of a Grok or Antigravity session counts against the window the agent says its model has, once it has answered, rather than 256K for every Grok model and 1M for every Antigravity one.
+- The context ring of a model whose provider takes less than its whole window in one request (OpenAI's GPT-5 models take 272K of 400K, and most of GitHub Copilot's take less too) counts against what it takes: the conversation was summarized while the ring still showed room left.
 
 ## 0.6.4
 

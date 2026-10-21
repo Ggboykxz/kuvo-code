@@ -46,6 +46,10 @@ struct DecodingTests {
         let models = try Fixture.decode("model.json", as: LocatedEnvelope<[Model]>.self).data
         #expect(models.contains { $0.id == "big-pickle" && $0.isFree })
         #expect(models.allSatisfy { $0.modelID == $0.id })
+        // What a conversation can fill, as the context ring counts it: the provider's input limit
+        // when it has one (the engine summarizes before it), else the whole window.
+        #expect(models.first { $0.id == "big-pickle" }?.limit.usable == 160_000)
+        #expect(models.first { $0.id == "exo-free" }?.limit.usable == 1_048_576)
         let agents = try Fixture.decode("agent.json", as: LocatedEnvelope<[Agent]>.self).data
         #expect(agents.filter(\.isPrimary).map(\.id) == ["build", "plan"])
     }
