@@ -910,20 +910,27 @@ final class Bots {
     /// Writes bots' descriptions (`Bot.Descriptor`) in their folders, as they are by then: on this
     /// Mac now, on a connected machine in one go; one on a machine that's away gets it as the
     /// machine connects again (`describeAll(on:)`). A bot whose folder has gone gets none: no
-    /// folder is made. One round at a time, so an older round's never lands after a newer one's.
+    /// folder is made. One round at a time where they live, so an older round's never lands after
+    /// a newer one's, and one place never waits on another (this Mac's bots on a slow machine's).
     /// `force` writes them even if this run wrote the same before.
     func describe(_ ids: [String], force: Bool = false) async {
-        let previous = describing
-        let round = Task { [weak self] in
-            await previous?.value
-            await self?.writeDescriptions(of: ids, force: force)
+        let places = Dictionary(grouping: ids) { bot($0)?.machine ?? "" }
+        await withTaskGroup(of: Void.self) { group in
+            for (place, ids) in places {
+                let previous = describing[place]
+                let round = Task { [weak self] in
+                    await previous?.value
+                    await self?.writeDescriptions(of: ids, force: force)
+                }
+                describing[place] = round
+                group.addTask { await round.value }
+            }
         }
-        describing = round
-        await round.value
     }
 
-    /// The round of descriptions being written, which the next one waits for.
-    @ObservationIgnored private var describing: Task<Void, Never>?
+    /// The round of descriptions being written in each place (a machine, or "" for this Mac),
+    /// which the next one there waits for.
+    @ObservationIgnored private var describing: [String: Task<Void, Never>] = [:]
 
     private func writeDescriptions(of ids: [String], force: Bool) async {
         let changed = ids.compactMap { id -> (bot: Bot, data: Data)? in
