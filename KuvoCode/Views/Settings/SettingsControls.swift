@@ -265,6 +265,11 @@ struct ConfigKeyValueList: View {
     @Environment(AppModel.self) private var app
     @State private var newKey = ""
     @State private var newValue = ""
+    /// The kind of what the list is in (an MCP server's "local" or "remote") as it appeared: one
+    /// switched since has put these aside, and what a row still holds isn't written into the other.
+    @State private var kind: JSONValue?
+
+    private var kindNow: JSONValue? { app.engineConfig.value(at: Array(path.dropLast()) + ["type"]) }
 
     /// The names' column, the same in every row so the values line up.
     static let keyWidth: CGFloat = 210
@@ -273,6 +278,7 @@ struct ConfigKeyValueList: View {
         let items = (app.engineConfig.value(at: path)?.object ?? [:]).compactMapValues(\.string).sorted { $0.key < $1.key }
         ForEach(items, id: \.key) { item in
             KeyValueRow(key: item.key, value: item.value, prompt: valuePrompt) { value in
+                guard kindNow == kind else { return }
                 app.engineConfig.set(.string(value), at: path + [item.key])
             } remove: {
                 app.engineConfig.set(nil, at: path + [item.key])
@@ -290,12 +296,13 @@ struct ConfigKeyValueList: View {
             Button("Add", action: add)
                 .disabled(newKey.trimmingCharacters(in: .whitespaces).isEmpty)
         }
+        .onAppear { kind = kindNow }
         .onDisappear(perform: add)
     }
 
     private func add() {
         let key = newKey.trimmingCharacters(in: .whitespaces)
-        guard !key.isEmpty else { return }
+        guard !key.isEmpty, kindNow == kind else { return }
         app.engineConfig.set(.string(newValue), at: path + [key])
         newKey = ""
         newValue = ""
