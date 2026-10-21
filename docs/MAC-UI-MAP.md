@@ -129,9 +129,13 @@ agent's steps (`Look.swift:42-63`; `AppearanceSettings.swift:9-77`) — and the 
 to see a session's name as soon as the engine has it, and the commit form remembers
 whether the commit pushes afterwards (`ChangesPanel.swift:304`, `331`, `344`). In 0.5.80
 the model picker took the Mac's star (`ModelPicker.swift:436-440`, `500`): the models the
-user keeps sit in a *Starred* group of their own. The port's
-own list of what is left is now: the choices the Mac keeps (the Auto rail of the model
-picker, and the pair style of the tab bar).
+user keeps sit in a *Starred* group of their own. In 0.5.81 the picker asked a model for
+the effort it wants it at (`ModelPicker.swift:5-14`, `567-614`), and the composer names
+the model the conversation would use (`Catalog.swift:219-226`). The port's
+own list of what is left is now: the two structures that are the Mac's alone — the Auto
+rail of the model picker (the coding agents' accounts, which a Windows client has no
+accounts for) and the pair style of the tab bar (a split pair shown as one tab, where the
+port's split is a card of its own).
 Everything else in §1–§9 is now the Mac's, and the checks hold it there.
 
 **The wording is finished with the screens it lives in.** The shell's strings are the Mac's,

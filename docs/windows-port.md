@@ -292,6 +292,15 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     Mac's other marks, not a text glyph — beside every model, and the models it keeps sit
     in a *Starred* group at the top of the list. They are kept whole: the provider, and
     the model's id with its slashes.
+  - **2.77 (this change). The effort a model is asked for, and the model the composer
+    names.** The Mac's picker asks a model for the effort it wants it at — the levels the
+    model has, in the Mac's own words ("xhigh" is *Extra*, "max" is *Max*,
+    `ModelPicker.swift:5-14`, `567-614`) — and the composer names the model the
+    conversation would use: the session's, else the one picked last, else the engine's own
+    default (`Catalog.swift:219-226`). The port's picker had neither: the levels were not
+    offered, and the composer said "The engine's choice" where the Mac names a model. The
+    levels are offered now, in a group of their own, the effort is written after the
+    model's name, and the composer names the model the conversation would use.
   - **2.61 (this change). The provider's marks.** The Mac draws the maker's mark beside
     each model (`ProviderLogo.swift`), monochrome so it follows the ink, or in the maker's
     own colour where it has one. The marks themselves are not published as a package, but
