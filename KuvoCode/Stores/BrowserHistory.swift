@@ -86,11 +86,14 @@ final class BrowserHistory {
     }
 
     private func loadIcon(for host: String, from url: URL?) {
-        guard let url, !fetching.contains(host) else { return }
-        fetching.insert(host)
+        // One at a time for each site, since the last Clear: one on its way from before it doesn't
+        // stop a new one.
+        let key = "\(cleared) \(host)"
+        guard let url, !fetching.contains(key) else { return }
+        fetching.insert(key)
         let asked = cleared
         Task {
-            defer { fetching.remove(host) }
+            defer { fetching.remove(key) }
             guard let (data, _) = try? await URLSession.shared.data(from: url),
                   let image = NSImage(data: data), image.isValid,
                   let png = image.pngData(side: 64), cleared == asked else { return }

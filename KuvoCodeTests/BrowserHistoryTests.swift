@@ -58,6 +58,30 @@ import Testing
         #expect(BrowserHistory(folder: folder).sites.isEmpty)
     }
 
+    /// Visited again right after Clear, its icon from before still on its way: it gets its icon
+    /// all the same, from the new visit.
+    @Test func visitedAgainRightAfterClearItGetsItsIcon() async throws {
+        defer { done() }
+        let gate = Gate()
+        defer { gate.open() }
+        let asked = Asked()
+        StubWeb.handle("https://example.com/favicon.ico") { _, _ in
+            asked.note()
+            gate.wait()
+            return StubWeb.Answer(status: 200, body: Self.png)
+        }
+        let history = BrowserHistory(folder: folder)
+        history.record(URL(string: "https://example.com/")!, title: "Example", iconURL: nil)
+        try await eventually { asked.count > 0 }
+        history.clear()
+        history.record(URL(string: "https://example.com/")!, title: "Example", iconURL: nil)
+        gate.open()
+        let site = try #require(history.sites.first { $0.host == "example.com" })
+        try await eventually { history.icon(for: site) != nil }
+        #expect(asked.count == 2, "asked again for the new visit")
+        #expect(history.icon(for: site) != nil)
+    }
+
     nonisolated final class Asked: @unchecked Sendable {
         private let lock = NSLock()
         private var times = 0
