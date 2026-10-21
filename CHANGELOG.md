@@ -17,6 +17,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - The number on the Dock counts a session once while its subagents ask you something, rather than once for each subagent.
 - While the coding agents start, the composer's chip shows the session's Claude Code, Codex or Custom Auto model as it is, rather than the engine's default as if that were the one in use.
 - A file's path typed in the panel browser's address field ("/Users/you/site/index.html", "~/report.html") opens the file; it went to a web address made of the path.
+- Setting up the coding agents no longer leaves a few hundred megabytes of downloads behind on your Mac (on first launch, a build of Claude's that isn't used); what an earlier version kept goes the next time Kuvo Code starts.
 
 ## 0.6.4
 

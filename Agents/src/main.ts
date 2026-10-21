@@ -79,6 +79,8 @@ process.on("uncaughtException", (error) => {
 })
 
 const deps = new Deps(join(home, "runtime"), join(home, "cache"))
+// What an earlier bridge left of its downloads (it kept them on this Mac): nothing installs yet.
+rmSync(join(home, "cache", "install"), { recursive: true, force: true })
 const context = { home, temporary, deps }
 const roster = new Roster(new Accounts(home), context)
 const store = new Store(join(home, "sessions"))

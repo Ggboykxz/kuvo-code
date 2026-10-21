@@ -509,7 +509,7 @@ class Deps {
       stderr: "pipe"
     });
     const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
-    if (process.env.KUVO_AGENTS_REMOTE === "1")
+    if (installing.size <= 1)
       rmSync3(join4(this.cache, "install"), { recursive: true, force: true });
     if (code !== 0)
       throw new Error(`Couldn't download what the agent needs (${packages.map((pkg) => pkg.name).join(", ")}): ${stderr.trim().slice(-400)}`);
@@ -11128,6 +11128,7 @@ process.on("uncaughtException", (error2) => {
   process.exit(1);
 });
 var deps = new Deps(join18(home2, "runtime"), join18(home2, "cache"));
+rmSync11(join18(home2, "cache", "install"), { recursive: true, force: true });
 var context = { home: home2, temporary, deps };
 var roster = new Roster(new Accounts(home2), context);
 var store = new Store(join18(home2, "sessions"));
@@ -11194,4 +11195,4 @@ if (onMachine) {
 }
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
-// Built from Agents/src 2a60b1d8f70be7edce0775b84eaff402b890786189f763e3f8c6dd8a2b4b1bd8
+// Built from Agents/src 9105d4c01bb6c3386374a1d26c2abe1cd0ac7a55f806395dfc7a5b91e1678c3e
