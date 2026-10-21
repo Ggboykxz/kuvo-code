@@ -177,9 +177,10 @@ final class Workspace {
     var askingInBrowser: Set<String> = []
 
     /// Sessions that finished while you were elsewhere, or wait for your answer: the
-    /// number on the Dock icon.
+    /// number on the Dock icon. A subagent's ask is its session's.
     var waitingCount: Int {
-        Set(sessions.filter { $0.isUnread && !Self.isArchived($0) }.map(\.id)).union(asking.values.filter { !seats.contains($0) }).union(askingInBrowser.subtracting(seats)).count
+        let askers = Set(asking.values.map(root(of:))).union(askingInBrowser.map(root(of:))).subtracting(seats)
+        return Set(sessions.filter { $0.isUnread && !Self.isArchived($0) }.map(\.id)).union(askers).count
     }
 
     struct Project: Identifiable, Hashable {

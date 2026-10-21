@@ -43,6 +43,21 @@ import Testing
         #expect(workspace.session(child) == nil && workspace.session(grandchild) == nil)
     }
 
+    /// Two of a session's subagents ask you something at once: one session waits for you, on the
+    /// Dock too.
+    @Test func itsSubagentsAsksAreItsOwn() async throws {
+        defer { engine.stop() }
+        let second = "ses_helper2"
+        engine.on("GET", "/api/session/\(second)", json: ["data": StubEngine.session(second, title: "Check the tests", directory: "/tmp/kuvo-tests-subagents", extra: ["parentID": parent])])
+        engine.list([StubEngine.session(parent, title: "Lead", directory: "/tmp/kuvo-tests-subagents")], running: [child, second])
+        await workspace.refresh()
+        try await eventually { workspace.helpersAtWork(in: parent) == 2 }
+        workspace.handle(try engine.event("permission.asked", ["id": "per_1", "sessionID": child, "action": "shell", "resources": ["curl api.example.com"]]))
+        workspace.handle(try engine.event("permission.asked", ["id": "per_2", "sessionID": second, "action": "shell", "resources": ["npm test"]]))
+        #expect(workspace.needsAttention(parent))
+        #expect(workspace.waitingCount == 1, "one session waits for you, not one for each of its subagents")
+    }
+
     /// Started while the app runs: working until the subagent's run ends.
     @Test func startedAndEnded() async throws {
         defer { engine.stop() }

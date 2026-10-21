@@ -14,6 +14,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - A session you switch to a coding agent's model keeps its side panel: its pages, terminals and files go with it to the new session, and its agent goes on in the page it was using, rather than staying behind the archived one.
 - With two sessions side by side, Add to Message and Add Screenshot to Message from the panel go to the session you're working in, the one beside once you've clicked into it, rather than the other; the panel stays that session's.
 - A group chat's panel browser doesn't offer Add Screenshot to Message, which did nothing there: a group chat's messages are words only.
+- The number on the Dock counts a session once while its subagents ask you something, rather than once for each subagent.
 
 ## 0.6.4
 
