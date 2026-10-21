@@ -10,7 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
-import { diffGutterWidth, diffNumber, diffSide, parsePatch } from "./app/src/diff.mjs";
+import { diffGutterWidth, diffNumber, diffSide, foldRows, parsePatch } from "./app/src/diff.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, "..");
@@ -82,6 +82,72 @@ test("the gutter is as wide as the widest number, and 22 more", () => {
   // (ChangesPanel.swift:968-971).
   assert.equal(diffGutterWidth(parsePatch(PATCH)), 2 * 7.5 + 22);
   assert.equal(diffGutterWidth([]), 7.5 + 22);
+});
+
+// ---- Folding ----
+
+/// A patch with a long run of unchanged lines between two changes.
+const LONG = [
+  "diff --git a/long.txt b/long.txt",
+  "--- a/long.txt",
+  "+++ b/long.txt",
+  "@@ -1,12 +1,12 @@",
+  ...Array.from({ length: 10 }, (_, index) => ` line ${index + 1}`),
+  "-old line",
+  "+new line",
+].join("\n");
+
+test("the long unchanged stretches are folded, with three lines kept on each side", () => {
+  const rows = foldRows(parsePatch(LONG), [], "long.txt");
+  // The change, three lines before it and three after it, and the fold between.
+  const folds = rows.filter(row => row.kind === "fold");
+  assert.equal(folds.length, 1, "one fold");
+  assert.equal(folds[0].count, 7, "the fold holds the seven lines before the change");
+  assert.equal(folds[0].id, "long.txt#fold0", "the fold belongs to its file");
+  // The three lines before the change are kept, and the change itself is shown.
+  const shown = rows.filter(row => row.kind === "line").map(row => row.index);
+  assert.deepEqual(shown, [7, 8, 9, 10, 11], "three lines are kept before the change");
+});
+
+test("a fold that is open shows its lines again", () => {
+  const rows = foldRows(parsePatch(LONG), ["long.txt#fold0"], "long.txt");
+  assert.equal(rows.filter(row => row.kind === "fold").length, 0, "no fold row");
+  assert.equal(rows.filter(row => row.kind === "line").length, 12, "every line is shown");
+});
+
+test("a short run of unchanged lines is not folded", () => {
+  const rows = foldRows(parsePatch(PATCH), [], "notes.txt");
+  assert.equal(rows.filter(row => row.kind === "fold").length, 0, "nothing to fold");
+  assert.equal(rows.filter(row => row.kind === "line").length, 5, "every line is shown");
+});
+
+test("the lines between two hunks are a gap", () => {
+  const two = [
+    "--- a/two.txt",
+    "+++ b/two.txt",
+    "@@ -1,2 +1,2 @@",
+    " one",
+    "-two",
+    "@@ -20,2 +20,2 @@",
+    " twenty",
+    "+twenty one",
+  ].join("\n");
+  const lines = parsePatch(two);
+  // The line after the second hunk says the ones before it are not in the patch
+  // (ProjectChanges.swift:503).
+  assert.equal(lines[2].gapBefore, true, "the gap is marked");
+  assert.equal(lines[0].gapBefore, undefined, "the first line has no gap before it");
+  // And the rows keep the gap as a row of its own (ChangesPanel.swift:903).
+  const rows = foldRows(lines, [], "two.txt");
+  assert.equal(rows.filter(row => row.kind === "gap").length, 1, "the gap is a row");
+});
+
+test("the Mac's own rule is the one we keep", () => {
+  const panel = mac("KuvoCode", "Views", "Session", "ChangesPanel.swift");
+  assert.match(panel, /static let context = 3/);
+  assert.match(panel, /if foldEnd - foldStart > 3, !expanded\.contains\(foldID\)/);
+  assert.ok(panel.includes('Text("\\(count) unmodified lines")'), "the fold row says how many lines");
+  assert.ok(panel.includes('help(count == nil ? "" : "Show these lines")'), "the fold row's help");
 });
 
 // ---- The rules, held to the Mac's own source ----

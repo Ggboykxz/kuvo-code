@@ -215,6 +215,21 @@ test("the page, in a browser, against the real engine", {
   assert.match(card, /Comment on line R4/, "the card names the line, as the Mac's does");
   assert.match(card, /You/, "the card is yours");
   assert.match(card, /Delete/, "the card can be taken away");
+  // The long unchanged stretches are folded, the Mac's way (ChangesPanel.swift:890-927).
+  await page.page.locator(".changes-file-toggle").nth(1).click();
+  const secondFile = page.page.locator(".changes-diff").nth(1);
+  await page.seen("the fold to show", () => document.querySelectorAll(".changes-diff .diff-fold").length > 0, null, 10_000);
+  const fold = (await secondFile.locator(".diff-fold").first().textContent()) ?? "";
+  assert.match(fold, /\d+ unmodified lines/, "the fold says how many lines it holds");
+  assert.equal(
+    await secondFile.locator(".diff-fold").first().getAttribute("title"),
+    "Show these lines",
+    "the fold's help is the Mac's",
+  );
+  // And it opens when it is pressed.
+  const folds = await page.page.locator(".changes-diff .diff-fold").count();
+  await secondFile.locator(".diff-fold").first().click();
+  await page.seen("the fold to open", ([before]) => document.querySelectorAll(".changes-diff .diff-fold").length < before, [folds], 10_000);
   await page.element("drawer-close").click();
   await page.seen("the panel to close", () => document.getElementById("drawer")?.hidden === true, null, 10_000);
 

@@ -332,6 +332,16 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     run in the primary folder; the agent can work in the others too" — and the session in
     view is given them: the rules that allow those folders, and the note that tells the
     agent that "in chugs-pinterest" means that folder (`SessionModel.swift:1379-1405`).
+  - **2.86 (this change). The diff folds the long unchanged stretches, as the Mac's does.**
+    The Mac asks git for the whole file as context, and shows each change with a few lines
+    around it — three on each side — folding the rest into a row that says how many
+    lines it holds, and opens when it is pressed
+    (`ProjectChanges.swift:5-6, 179`, `ChangesPanel.swift:890-952`). The port asked git for
+    three lines of context and showed them all: a long file came out as a wall of text,
+    with nothing folded. Git is asked for the whole file now, and the stretches are folded
+    as the Mac folds them — with the Mac's mark, its own words (*N unmodified lines*),
+    and its help (*Show these lines*). A file too big to read through is named, not shown,
+    as the Mac names it (`ProjectChanges.swift:507-511`).
   - **2.85 (this change). The conversation shows the comments back.** A message that carried
     comments is taken apart when it is shown: the words are the user's own, and each
     comment is a card of its own above them — the place it points to, with the Mac's mark

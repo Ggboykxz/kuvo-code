@@ -5,11 +5,11 @@
 import { useEffect, useState } from "react";
 import { Symbol } from "./components/symbols";
 import { api } from "./api";
-import { diffGutterWidth, diffNumber, diffSide, parsePatch, type DiffLine } from "./diff.mjs";
+import { diffGutterWidth, diffNumber, diffSide, foldRows, parsePatch, type DiffLine } from "./diff.mjs";
 import { commentMatches, type ReviewComment } from "./review-comments.mjs";
 import { complain, notify, render, state, useStore } from "./store";
 
-type ChangeFile = { file: string; patch?: string; additions?: number; deletions?: number; status?: string };
+type ChangeFile = { file: string; patch?: string; additions?: number; deletions?: number; status?: string; tooBig?: boolean };
 
 const SCOPES = [
   ["uncommitted", "Uncommitted"],
@@ -46,6 +46,8 @@ export function ChangesPanel() {
   // (ChangesPanel.swift:24-33).
   const [draft, setDraft] = useState<{ file: string; side: "new" | "old"; number: number; text: string } | null>(null);
   const [draftText, setDraftText] = useState("");
+  // The folds that are open, by their name (ChangesPanel.swift:18, 899).
+  const [expandedFolds, setExpandedFolds] = useState<string[]>([]);
   const [instructions, setInstructions] = useState("");
 
   // The changes, looked at again every few seconds while the panel is open, as the Mac's.
@@ -189,8 +191,39 @@ export function ChangesPanel() {
                 ) : null}
               </div>
               {isOpen ? (
+                // A file too big to read through is named, not shown (ProjectChanges.swift:507-511).
+                file.tooBig ? null : (
                 <div className="changes-diff" style={{ "--gutter": `${diffGutterWidth(lines)}px` } as React.CSSProperties}>
-                  {lines.map((line, index) => {
+                  {foldRows(lines, expandedFolds, file.file).map(row => {
+                    // A fold: the long unchanged stretches, folded until they are opened
+                    // (ChangesPanel.swift:890-927, 929-952).
+                    if (row.kind === "fold") {
+                      return (
+                        <button
+                          className="diff-fold"
+                          key={row.id}
+                          title="Show these lines"
+                          aria-label={`Show ${row.count} unmodified lines`}
+                          onClick={() => setExpandedFolds(current => [...current, row.id])}
+                        >
+                          <span className="diff-fold-mark" aria-hidden="true">
+                            <Symbol name="chevron.up.chevron.down" size={10} />
+                          </span>
+                          <span>{`${row.count} unmodified lines`}</span>
+                        </button>
+                      );
+                    }
+                    // A gap: the lines git left out, which cannot be opened.
+                    if (row.kind === "gap") {
+                      return (
+                        <div className="diff-fold gap" key={row.id}>
+                          <span className="diff-fold-mark" aria-hidden="true">
+                            <Symbol name="ellipsis" size={10} />
+                          </span>
+                        </div>
+                      );
+                    }
+                    const line = lines[row.index ?? 0];
                     // The number in the gutter is the line's own: the old one for a removed
                     // line, the new one otherwise (ChangesPanel.swift:882-885).
                     const number = diffNumber(line);
@@ -203,7 +236,7 @@ export function ChangesPanel() {
                       && draft.number === number && draft.text === line.text,
                     );
                     return (
-                      <div className="diff-row" key={index}>
+                      <div className="diff-row" key={row.id}>
                         <div className={`diff-line ${kind}`}>
                           <span className="diff-number">{number || ""}</span>
                           <button
@@ -271,6 +304,7 @@ export function ChangesPanel() {
                     );
                   })}
                 </div>
+                )
               ) : null}
             </div>
           );

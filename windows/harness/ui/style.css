@@ -1418,6 +1418,16 @@ li.unread .session { position: relative; padding-left: 16px; }
   border: 1px solid var(--accent); border-radius: var(--radius-xs);
   background: var(--panel); color: var(--ink); font-size: var(--text-xs);
 }
+/* A fold: the long unchanged stretches, folded until they are opened
+   (ChangesPanel.swift:929-952). */
+.diff-fold {
+  display: flex; align-items: center; gap: 10px; width: 100%; height: 26px;
+  padding: 0 var(--space-3); border: 0; border-radius: 0; background: transparent;
+  font-size: var(--text-sm); color: var(--ink-soft); text-align: left;
+}
+.diff-fold:hover { background: var(--hover); }
+.diff-fold.gap { cursor: default; }
+.diff-fold-mark { width: 30px; display: inline-flex; align-items: center; justify-content: center; }
 /* A comment on a line, and the editor it is written in: the Mac's own, in the accent
    glass, under the line it belongs to (ChangesPanel.swift:1088-1212). */
 .comment-card, .comment-editor {
@@ -1463,6 +1473,23 @@ li.unread .session { position: relative; padding-left: 16px; }
 /* The long message folds; the "show more" says so. */
 .long-more { margin-top: var(--space-1); color: var(--ink-soft); }
 .long-more:hover { color: var(--accent); border-color: var(--line); }
+
+/* A file, as the Mac shows it: the code, numbered in a ruler beside it
+   (CodeTextView.swift:4-6, 119-168). */
+.file-view {
+  display: flex; align-items: flex-start;
+  font-family: var(--font-mono); font-size: var(--text-sm); line-height: 14.4px;
+}
+.file-numbers {
+  flex: 0 0 auto; width: var(--ruler, 30px); padding-right: 8px;
+  text-align: right; font-size: 11px; color: var(--ink-faint);
+  user-select: none; -webkit-user-select: none;
+}
+.file-numbers span { display: block; }
+.file-code {
+  flex: 1; min-width: 0; margin: 0;
+  white-space: pre-wrap; word-break: break-word; color: var(--ink);
+}
 
 /* The file's own line in the Changes panel: its name folds, its action sits beside it. */
 .changes-file-head { display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-3); }

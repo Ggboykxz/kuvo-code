@@ -28,6 +28,8 @@ export type SymbolName =
   | "doc"
   | "doc.text"
   | "text.bubble"
+  | "ellipsis"
+  | "chevron.up.chevron.down"
   | "doc.badge.plus"
   | "doc.on.doc"
   | "pencil"
@@ -83,6 +85,10 @@ const PATHS: Record<SymbolName, string[]> = {
   // A speech bubble with two lines of text in it: the Mac's mark beside a comment's
   // place (ChangesPanel.swift:1130).
   "text.bubble": ["M4.6 2.8h6.8a2 2 0 0 1 2 2v3.4a2 2 0 0 1-2 2H7.4l-3 2.6v-2.6h-.8a2 2 0 0 1-2-2V4.8a2 2 0 0 1 2-2Z", "M5.4 5.6h5.2M5.4 7.8h3.4"],
+  // Three dots in a row, and a chevron above another: the Mac's marks for a gap in a
+  // diff and for the fold that opens it (ChangesPanel.swift:937).
+  "ellipsis": ["M3.6 7.2a.8.8 0 1 0 0 1.6a.8.8 0 0 0 0-1.6Z", "M8 7.2a.8.8 0 1 0 0 1.6a.8.8 0 0 0 0-1.6Z", "M12.4 7.2a.8.8 0 1 0 0 1.6a.8.8 0 0 0 0-1.6Z"],
+  "chevron.up.chevron.down": ["M5.2 6.6 8 3.8l2.8 2.8", "M5.2 9.4 8 12.2l2.8-2.8"],
   "doc.badge.plus": ["M4 2.6h4.2l2.8 2.8v7.6H4z", "M8.2 2.6v2.8h2.8", "M11.6 9.4v3.4M9.9 11.1h3.4"],
   "pencil": ["M3 13l.9-3 6.8-6.8a1.2 1.2 0 0 1 1.7 0l.4.4a1.2 1.2 0 0 1 0 1.7L6 12.1 3 13Z", "M9.8 4l2.2 2.2"],
   "terminal": ["M2.6 3.4h10.8v9.2H2.6z", "M5 6.4l2 1.8-2 1.8M8.6 10.4h2.6"],

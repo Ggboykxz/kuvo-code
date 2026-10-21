@@ -636,6 +636,29 @@ const checks = [
     assert.match(review, /Comments on lines of the current changes:/);
   }],
 
+  ["the diff folds the long unchanged stretches, the Mac's way", ({ changes, css, diff, server, symbols, rule }) => {
+    // Three lines are kept on each side of a change, and the rest is folded
+    // (ChangesPanel.swift:890-927).
+    assert.match(diff, /export const DIFF_CONTEXT = 3/);
+    assert.match(diff, /foldEnd - foldStart > 3/);
+    assert.match(changes, /foldRows\(lines, expandedFolds, file\.file\)/);
+    // The fold row: the Mac's mark, how many lines it holds, and the help that opens it
+    // (ChangesPanel.swift:929-952).
+    assert.match(changes, /unmodified lines/);
+    assert.match(changes, /title="Show these lines"/);
+    assert.match(changes, /<Symbol name="chevron\.up\.chevron\.down" size=\{10\} \/>/);
+    assert.match(changes, /<Symbol name="ellipsis" size=\{10\} \/>/);
+    assert.match(symbols, /"chevron\.up\.chevron\.down":/);
+    assert.match(symbols, /"ellipsis":/);
+    assert.match(rule(".diff-fold {"), /height: 26px/);
+    // And git is asked for the whole file, so there is something to fold
+    // (ProjectChanges.swift:5-6, 179).
+    assert.match(server, /"-U100000"/);
+    // A file too big to read through is named, not shown (ProjectChanges.swift:507-511).
+    assert.match(server, /tooBig/);
+    assert.match(changes, /file\.tooBig \? null/);
+  }],
+
   ["a comment in the conversation is the Mac's own card", ({ app, css, review, symbols, rule }) => {
     // The message is taken apart, and the comments shown above the words
     // (AgentReferences.swift:170-179, YourMessage.swift:22, 829-831).

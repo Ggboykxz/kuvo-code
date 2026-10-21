@@ -766,12 +766,20 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
     const gitChanges = async (directory, scope) => {
       if (!directory || !(await isGitProject(directory))) return [];
       const files = [];
+      // Git is asked for the whole file as context, so the unchanged stretches can be
+      // folded (ProjectChanges.swift:5-6, 179) — the Mac's own arguments.
+      const whole = ["--no-color", "--find-renames", "-U100000"];
+      // A file too big to read through (a huge or minified one): named, not shown
+      // (ProjectChanges.swift:507-511).
+      const maxLines = 20_000;
+      const maxLineLength = 20_000;
       const add = async (path, patch, status) => {
         if (!patch) return;
         const lines = patch.split("\n");
         const additions = lines.filter(line => line.startsWith("+") && !line.startsWith("+++")).length;
         const deletions = lines.filter(line => line.startsWith("-") && !line.startsWith("---")).length;
-        files.push({ file: path, patch, additions, deletions, status });
+        const tooBig = lines.length > maxLines || lines.some(line => line.length > maxLineLength);
+        files.push({ file: path, patch: tooBig ? "" : patch, additions, deletions, status, tooBig });
       };
       if (scope === "branch") {
         // Since the branch left its base: from where they part, to the files as they are now.
@@ -783,7 +791,7 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
         if (!fork) return files;
         const names = (await git(directory, ["diff", "--name-only", fork])).split("\n").filter(Boolean);
         for (const name of names) {
-          await add(name, await git(directory, ["diff", "--no-color", "--find-renames", "-U100000", fork, "--", name]), "modified");
+          await add(name, await git(directory, ["diff", ...whole, fork, "--", name]), "modified");
         }
         const others = (await git(directory, ["ls-files", "--others", "--exclude-standard"])).split("\n").filter(Boolean);
         for (const name of others) {
@@ -795,13 +803,13 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       }
       if (scope === "unstaged") {
         const names = (await git(directory, ["diff", "--name-only"])).split("\n").filter(Boolean);
-        for (const name of names) await add(name, await git(directory, ["diff", "--", name]), "modified");
+        for (const name of names) await add(name, await git(directory, ["diff", ...whole, "--", name]), "modified");
       } else if (scope === "staged") {
         const names = (await git(directory, ["diff", "--cached", "--name-only"])).split("\n").filter(Boolean);
-        for (const name of names) await add(name, await git(directory, ["diff", "--cached", "--", name]), "staged");
+        for (const name of names) await add(name, await git(directory, ["diff", "--cached", ...whole, "--", name]), "staged");
       } else {
         const names = (await git(directory, ["diff", "HEAD", "--name-only"])).split("\n").filter(Boolean);
-        for (const name of names) await add(name, await git(directory, ["diff", "HEAD", "--", name]), "modified");
+        for (const name of names) await add(name, await git(directory, ["diff", "HEAD", ...whole, "--", name]), "modified");
         // New files are not in the diff until they are added: their whole content is the change.
         const others = (await git(directory, ["ls-files", "--others", "--exclude-standard"])).split("\n").filter(Boolean);
         for (const name of others) {

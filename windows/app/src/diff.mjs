@@ -28,6 +28,7 @@ export function parsePatch(patch) {
   let oldNumber = 0;
   let newNumber = 0;
   let inHunk = false;
+  let pendingGap = false;
   for (const text of raw) {
     if (!inHunk) {
       const header = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(text);
@@ -37,21 +38,37 @@ export function parsePatch(patch) {
       inHunk = true;
       continue;
     }
+    // A second hunk: the lines between the two are not in the patch, and the row that
+    // follows it says so (ProjectChanges.swift:503).
+    if (/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/.test(text)) {
+      pendingGap = true;
+      continue;
+    }
     // "\ No newline at end of file": a note about the line before it, not a line.
     if (text.startsWith("\\")) continue;
     const sign = text[0];
+    const row = { kind: "context", oldNumber, newNumber, text: sign === " " ? text.slice(1) : text };
     if (sign === "+") {
-      rows.push({ kind: "added", newNumber, text: text.slice(1) });
+      row.kind = "added";
+      delete row.oldNumber;
+      row.newNumber = newNumber;
+      row.text = text.slice(1);
       newNumber += 1;
     } else if (sign === "-") {
-      rows.push({ kind: "removed", oldNumber, text: text.slice(1) });
+      row.kind = "removed";
+      delete row.newNumber;
+      row.oldNumber = oldNumber;
+      row.text = text.slice(1);
       oldNumber += 1;
     } else {
-      // A context line: git writes a space before it, and an empty line is one too.
-      rows.push({ kind: "context", oldNumber, newNumber, text: sign === " " ? text.slice(1) : text });
       oldNumber += 1;
       newNumber += 1;
     }
+    if (pendingGap) {
+      row.gapBefore = true;
+      pendingGap = false;
+    }
+    rows.push(row);
   }
   return rows;
 }
@@ -88,4 +105,47 @@ export function diffSide(line) {
 export function diffGutterWidth(lines) {
   const largest = lines.reduce((most, line) => Math.max(most, diffNumber(line)), 1);
   return String(largest).length * 7.5 + 22;
+}
+
+/** The lines the Mac keeps on each side of a change (ChangesPanel.swift:891). */
+export const DIFF_CONTEXT = 3;
+
+/**
+ * The rows of a diff, with the long unchanged stretches folded, the Mac's way
+ * (ChangesPanel.swift:890-927): three lines are kept on each side of a change, and a
+ * longer run of unchanged lines is folded into a row of its own — until it is opened.
+ *
+ * @param {{kind: string, gapBefore?: boolean}[]} lines
+ * @param {string[]} expanded The folds that are open, by their name.
+ * @param {string} file The file's name: a fold belongs to one file.
+ * @returns {{kind: string, id: string, index?: number, count?: number}[]}
+ */
+export function foldRows(lines, expanded = [], file = "") {
+  const rows = [];
+  let index = 0;
+  while (index < lines.length) {
+    if (lines[index].gapBefore) rows.push({ kind: "gap", id: `${file}#gap${index}` });
+    if (lines[index].kind !== "context") {
+      rows.push({ kind: "line", id: `${file}#${index}`, index });
+      index += 1;
+      continue;
+    }
+    // A run of unchanged lines, up to the next change (or a gap git left).
+    let end = index + 1;
+    while (end < lines.length && lines[end].kind === "context" && !lines[end].gapBefore) end += 1;
+    const keepStart = index === 0 || lines[index].gapBefore ? 0 : DIFF_CONTEXT;
+    const keepEnd = end === lines.length || lines[end].gapBefore ? 0 : DIFF_CONTEXT;
+    const foldStart = index + keepStart;
+    const foldEnd = end - keepEnd;
+    const foldID = `${file}#fold${foldStart}`;
+    if (foldEnd - foldStart > 3 && !expanded.includes(foldID)) {
+      for (let at = index; at < foldStart; at += 1) rows.push({ kind: "line", id: `${file}#${at}`, index: at });
+      rows.push({ kind: "fold", id: foldID, count: foldEnd - foldStart });
+      for (let at = foldEnd; at < end; at += 1) rows.push({ kind: "line", id: `${file}#${at}`, index: at });
+    } else {
+      for (let at = index; at < end; at += 1) rows.push({ kind: "line", id: `${file}#${at}`, index: at });
+    }
+    index = end;
+  }
+  return rows;
 }
