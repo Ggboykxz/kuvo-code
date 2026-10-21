@@ -1,3 +1,6 @@
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
 // A client for one running opencode engine, the calls a conversation view needs.
 // The routes and payloads mirror Packages/OpenCodeKit's OpenCodeAPI (the Mac app's
 // reference client): same auth, same `x-opencode-directory` scoping, same shapes.
@@ -139,7 +142,19 @@ export class EngineClient {
   /// Sends a message. Returns once the engine has it queued; the reply arrives as events.
   async prompt({ session, id = messageID(), text, files, delivery = "steer" }) {
     const body = { id, text, delivery };
-    if (files?.length) body.files = files;
+    // A file goes to the engine as a URI and a name (OpenCodeKit's PromptFile,
+    // OpenCodeAPI.swift:437-445), where the page holds the bytes and the type: the URI is
+    // the data the page read, in the shape a browser reads it back. A file already on
+    // disk keeps its own path, as the Mac's does (Attachments.swift:171-185).
+    const sent = (files ?? [])
+      .map(file => ({
+        uri: file.uri
+          ?? (file.path ? pathToFileURL(path.resolve(file.path)).href : null)
+          ?? (file.data ? `data:${file.mime ?? "application/octet-stream"};base64,${file.data}` : null),
+        ...(file.name ? { name: file.name } : {}),
+      }))
+      .filter(file => file.uri);
+    if (sent.length) body.files = sent;
     await this.request("POST", `api/session/${encodeURIComponent(session)}/prompt`, { body });
     return id;
   }

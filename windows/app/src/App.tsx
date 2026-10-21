@@ -63,8 +63,8 @@ import { FolderIcon, Symbol } from "./components/symbols";
 import { Spinner } from "./components/spinner";
 import { toolDiffStat, toolSummary, toolSymbol } from "./components/tool-call";
 import { ProviderLogo } from "./components/provider-logo";
-import { motion } from "motion/react";
-import { macSpringOrStill } from "./motion";
+import { AnimatePresence, motion } from "motion/react";
+import { macSpringOrStill, viewerClose, viewerFade } from "./motion";
 
 /// The app's own motion setting, and the system's: when either asks for less, the
 /// shimmer stops (the Mac's ShimmerText reads the system's, Theme.swift:46-60).
@@ -616,6 +616,8 @@ function EntryNodes({ transcript }: { transcript: Transcript }) {
       {transcript.pending.map(item => (
         <article key={item.id} className="entry user pending">
           <div className="text">{item.text}</div>
+          {/* The picture you just sent is shown at once, as the Mac shows it. */}
+          {(item.files ?? []).map((file, i) => <AttachmentNode key={i} file={file} />)}
           {item.delivery === "queue" ? <div className="entry-meta">queued</div> : null}
         </article>
       ))}
@@ -1949,18 +1951,39 @@ function ImageViewer() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [viewing]);
-  if (!viewing) return null;
+  // The window under the viewer dims with it, and cannot be reached while it is open
+  // (ImageViewer.swift:33-41).
+  useEffect(() => {
+    document.body.classList.toggle("viewing-image", Boolean(viewing));
+    return () => document.body.classList.remove("viewing-image");
+  }, [viewing]);
   return (
-    <div className="image-viewer" onClick={() => { state.viewing = null; render(); }}>
-      <img
-        className={zoomed ? "zoomed" : ""}
-        src={viewing.source}
-        alt={viewing.name}
-        onClick={event => { event.stopPropagation(); setZoomed(value => !value); }}
-        title={zoomed ? "Click to bring it back" : "Click to zoom in"}
-      />
-      <div className="image-viewer-foot">{viewing.name}</div>
-    </div>
+    <AnimatePresence>
+      {viewing ? (
+        <motion.div
+          className="image-viewer"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0, transition: viewerClose }}
+          transition={viewerFade}
+          onClick={() => { state.viewing = null; render(); }}
+        >
+          <motion.img
+            className={zoomed ? "zoomed" : ""}
+            src={viewing.source}
+            alt={viewing.name}
+            // The picture comes in from 0.94 of its size (ImageViewer.swift:88).
+            initial={{ scale: 0.94 }}
+            animate={{ scale: 1 }}
+            transition={viewerFade}
+            onClick={event => event.stopPropagation()}
+            onDoubleClick={event => { event.stopPropagation(); setZoomed(value => !value); }}
+            title={zoomed ? "Double-click to bring it back" : "Double-click to zoom in"}
+          />
+          <div className="image-viewer-foot">{viewing.name}</div>
+        </motion.div>
+      ) : null}
+    </AnimatePresence>
   );
 }
 

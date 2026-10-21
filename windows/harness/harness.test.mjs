@@ -768,6 +768,19 @@ test("a session can be pinned, and the mark goes out with the session's own meta
   assert.deepEqual(await unpinned.json(), { ok: true, pinned: false });
 });
 
+test("a picture sent with a message stays in the conversation", () => {
+  // The message is delivered: the picture that came with it is not lost on the way
+  // (the file travels with the message, as the Mac's does).
+  const transcript = emptyTranscript("ses_1");
+  transcript.pending = [{ id: "inbox_1", text: "", files: [{ name: "a.png", mime: "image/png", data: "AAAA" }] }];
+  apply(transcript, { type: "session.inbox.delivered", data: { sessionID: "ses_1", inboxID: "inbox_1" } });
+  assert.equal(transcript.pending.length, 0, "the message is no longer on its way");
+  const entry = transcript.entries.find(item => item.kind === "user");
+  assert.ok(entry, "the message is in the conversation");
+  assert.equal(entry.files?.length, 1, "the picture is with it");
+  assert.equal(entry.files[0].name, "a.png");
+});
+
 test("a conversation is written out as Markdown, the Mac's way", () => {
   // ConversationExport.swift:9-69: the title over it, "You" and "Agent" as the speakers,
   // the agent's steps listed together, the blocks a blank line apart.

@@ -861,6 +861,26 @@ const checks = [
     assert.match(app, /no-tab-bar/);
   }],
 
+  ["the picture the model can see, and the viewer that looks at it", ({ app, engine, motion, css }) => {
+    // The viewer's own timings (ImageViewer.swift:22, 28, 40): the picture fades in over
+    // 160 ms, goes out over 140, and the window under it dims over 150 — the system's own
+    // ease-out, every one of them.
+    assert.match(motion, /export const viewerFade = \{ duration: 0\.16, ease: "easeOut"/);
+    assert.match(motion, /export const viewerClose = \{ duration: 0\.14, ease: "easeOut"/);
+    assert.match(motion, /export const viewerDim = \{ duration: 0\.15, ease: "easeOut"/);
+    // The window under it dims to 30 % and is out of reach of a click, and the scrim is
+    // the Mac's own black at 62 %.
+    assert.match(css, /body\.viewing-image header/);
+    assert.match(css, /opacity: \.3;/);
+    assert.match(css, /background: rgba\(0, 0, 0, 0\.62\)/);
+    // A file goes to the engine as a URI and a name (OpenCodeKit's PromptFile,
+    // OpenCodeAPI.swift:437-445), where the page holds the bytes.
+    assert.match(engine, /pathToFileURL/);
+    assert.match(engine, /data:\$\{file\.mime/);
+    // And the picture you just sent stays in the conversation.
+    assert.match(app, /\(item\.files \?\? \[\]\)\.map/);
+  }],
+
   ["the tab's own menu is the Mac's, in its order", ({ app, titlebar }) => {
     // The Mac's menu for a tab (TitleBar.swift:214-231): beside the one in view, its
     // name, and the tabs to close — the other ones, and all of them.

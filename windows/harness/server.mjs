@@ -1167,11 +1167,12 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
     if (prompt && request.method === "POST") {
       const body = await readBody(request);
       const text = String(body.text ?? "").trim();
-      if (text === "") throw new HttpError(400, "An empty message has nothing to send.");
-      // Attachments travel as file URLs, the engine being on this machine.
-      const files = (Array.isArray(body.files) ? body.files : [])
-        .filter(file => file?.path)
-        .map(file => { const url = pathToFileURL(path.resolve(file.path)); return { uri: url.href, name: file.name ?? path.basename(file.path) }; });
+      const files = Array.isArray(body.files) ? body.files : [];
+      // A picture alone is a message, as it is on the Mac (Composer.swift:109-113: the
+      // words may be empty when a file goes with them).
+      if (text === "" && files.length === 0) throw new HttpError(400, "An empty message has nothing to send.");
+      // Attachments travel as the page holds them: the client gives them the shape the
+      // engine takes (OpenCodeKit's PromptFile — a URI and a name).
       const id = await client.prompt({ session: prompt[0], id: body.id, text, files, delivery: body.delivery === "queue" ? "queue" : "steer" });
       return json({ id });
     }

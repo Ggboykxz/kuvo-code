@@ -22,3 +22,10 @@ export const macSpring: Transition = {
 /// The spring, and nothing when the app (or the system) asks for less movement.
 export const macSpringOrStill = (reduced: boolean): Transition =>
   reduced ? { duration: 0 } : macSpring;
+
+/// The image viewer's own timings (ImageViewer.swift:22, 28, 40): the picture fades in over
+/// 160 ms and goes out over 140, and the window under it dims over 150 — the system's own
+/// ease-out, every one of them.
+export const viewerFade = { duration: 0.16, ease: "easeOut" as const };
+export const viewerClose = { duration: 0.14, ease: "easeOut" as const };
+export const viewerDim = { duration: 0.15, ease: "easeOut" as const };

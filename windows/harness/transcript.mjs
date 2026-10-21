@@ -155,7 +155,8 @@ export function apply(transcript, event) {
       const item = transcript.pending.find(entry => entry.id === payload.inboxID);
       transcript.pending = transcript.pending.filter(entry => entry.id !== payload.inboxID);
       if (item && !transcript.entries.some(entry => entry.id === item.id)) {
-        transcript.entries.push({ kind: "user", id: item.id, created: now, text: item.text });
+        // The files come with it: a picture sent with a message stays in the conversation.
+        transcript.entries.push({ kind: "user", id: item.id, created: now, text: item.text, files: item.files });
       }
       return transcript;
     }

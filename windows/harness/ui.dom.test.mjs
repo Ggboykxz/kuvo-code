@@ -509,6 +509,32 @@ test("the page, in a browser, against the real engine", {
     "the tab's menu is the Mac's, in its order",
   );
 
+  // The image viewer: the picture opens over the window, and the window under it dims with
+  // it (ImageViewer.swift:33-41). A page of its own: a model that will not look at a
+  // picture is the engine's mood, not this client's business.
+  const viewer = await open();
+  const picture = path.join(project, "a-picture.png");
+  fs.writeFileSync(picture, Buffer.from(
+    // A picture of eight by eight pixels: the engine decodes what comes with a message,
+    // and a broken one is refused whole.
+    "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR4nGO4Y2ODFTEMLQkAXrdVAdmuFfUAAAAASUVORK5CYII=",
+    "base64",
+  ));
+  // The page is open and the app is awake: the composer is there to be given a file.
+  await viewer.seen("the sessions to be listed", () => document.querySelectorAll("#sessions li").length > 0, null, 30_000);
+  await viewer.page.setInputFiles("#attach-input", picture);
+  await viewer.seen("the attachment to be picked", () => document.querySelectorAll("#attachments .attachment-chip").length > 0, null, 10_000);
+  await viewer.element("composer").evaluate(form => form.requestSubmit());
+  await viewer.seen("the picture to show in the conversation", () => document.querySelector("#entries .attachment-image") !== null, null, 30_000);
+  await viewer.page.locator("#entries .attachment-image").click();
+  await viewer.seen("the picture to open over the window", () => document.querySelector(".image-viewer") !== null, null, 10_000);
+  await viewer.seen("the window under it to dim", () => {
+    const header = document.querySelector("header.titlebar");
+    return document.body.classList.contains("viewing-image") && Number(getComputedStyle(header).opacity) < 0.5;
+  }, null, 10_000);
+  await viewer.page.keyboard.press("Escape");
+  await viewer.seen("the picture to go away", () => document.querySelector(".image-viewer") === null, null, 10_000);
+
   // Nothing in the page complained.
   assert.deepEqual([...page.errors, ...reloaded.errors, ...reread.errors], [], "the page had nothing to complain about");
 
