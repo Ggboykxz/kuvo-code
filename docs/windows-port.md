@@ -137,6 +137,20 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     where the Mac's is 1.21 pt — the icon's own proportions are the mark's now, and the
     mark draws itself in short dashes over a faint copy of itself, as the Mac's spinner
     does (`Spinner.swift:1-177`).
+  - **2.64 (this change). The conversation at rest, and a turn at its end.** A session with
+    nothing in it yet stood blank, where the Mac overlays its own view over the transcript
+    while the rows and the waiting are both empty (`TranscriptView.swift:69-75`): the two
+    chat bubbles drawn at 34 pt in the light weight over the Mac's question about the
+    folder — "What should we work on in `<name>`?" — at `.title3` (15 pt on macOS) in the
+    medium weight, a spacing of 10, lifted from the bottom by 120 (the `plain` form of
+    `EmptyConversationView`, `TranscriptView.swift:1757-1767`). And the measure of
+    "running" had a hole: a message the engine had stamped finished still read as under way
+    when it carried no parts and the engine's session flag still said active — the Stop
+    button stayed over a turn that was over. The message's own state ends the run on its
+    own now, whatever the flag still says and however few parts it carries, the Mac's
+    measure (`Message.isRunning`); only a run with no assistant message at all is the
+    engine's own answer alone. The live test, meeting a lingering run, re-reads the
+    engine's own words and reloads once before it calls the lingering its own.
   - **2.61 (this change). The provider's marks.** The Mac draws the maker's mark beside
     each model (`ProviderLogo.swift`), monochrome so it follows the ink, or in the maker's
     own colour where it has one. The marks themselves are not published as a package, but

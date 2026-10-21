@@ -90,7 +90,13 @@ does on the Mac, and in 0.5.62 the sidebar holds every project with its own sess
 the Recents — the last of the behaviour differences this port had. In 0.5.64 the engine's
 events reached the conversation (the words of a reply arrived only on a reload, and the Stop
 button stayed), and the working mark became the Mac's own, drawing itself in dashes at the
-Mac's weight. Everything else in §1–§9 is now the Mac's, and the checks hold it there.
+Mac's weight. Three finds closed after that: the tool rows now print the lines a call added
+and removed, from where the Mac reads them — the call's own metadata (0.5.68); a
+conversation with nothing in it asks the Mac's own question about the folder over its mark,
+instead of standing blank (0.5.69); and a turn the engine had already stamped finished no
+longer reads as under way while its session flag still says active — the message's own
+state ends the run, the Mac's measure (0.5.69). Everything else in §1–§9 is now the Mac's,
+and the checks hold it there.
 
 **The wording is finished with the screens it lives in.** The shell's strings are the Mac's,
 word for word, and a check holds them to the Mac's own source
@@ -333,7 +339,7 @@ below are grouped by area; the exhaustive list of all 74 files is in `MAC-UI-INV
 
 | Mac view | What it does | Windows | Phase |
 | --- | --- | --- | --- |
-| `TranscriptView` | The conversation, stick-to-bottom, rows, working line | ✅ / ◐ | 2, 6 |
+| `TranscriptView` | The conversation, stick-to-bottom, rows, working line, the empty view's question | ✅ / ◐ | 2, 6 |
 | `YourMessage` | Message bubble + hover time/Copy/New Session/Undo | ✅ / ◐ | 2, 7 |
 | `Composer` | Message field, modes, model, send/stop, attachments, quotes | ✅ / ◐ | 2, 6 |
 | `ComposerMenus` | Mode/model menus, searchable, grouped by provider | ✅ / ◐ | 6 |
@@ -342,7 +348,7 @@ below are grouped by area; the exhaustive list of all 74 files is in `MAC-UI-INV
 | `ContextGauge` | Ring + number; popover: window, cost, compact | ✅ / ◐ | 2, 6 |
 | `StepsRow` | Steps between replies, foldable summary | ✅ / ◐ | 6 |
 | `AttentionCards` | Permission and form requests, Try Again | ✅ / ◐ | 6 |
-| `ToolCallView` | One tool call, expandable details, sub-agent steps | ✅ / ◐ | 6 |
+| `ToolCallView` | One tool call, expandable details, sub-agent steps, the lines it changed | ✅ / ◐ | 6 |
 | `ShellRow` | A `!` command you ran, as a step | ✅ / ◐ | 6 |
 | `DiffView` | A short diff in a recessed well | ✅ / ◐ | 2, 6 |
 | `FindBar` | Find in one conversation, count, next/previous | ✅ / ◐ | 2, 6 |
@@ -589,8 +595,10 @@ Phase 0's extraction is only useful if every later phase is measured against it.
    captures here can prove structure, values and regressions, not the last 5 % of optical
    fidelity. When the user supplies screenshots of the real Mac app, they override any local
    judgement about a hairline.
-5. **Gates per batch.** Unit tests (`node --test`, 91), DOM test with `KUVO_HARNESS_LIVE=1`,
-   `npx tsc --noEmit`, UI build, CI on `windows-latest`, then one version number and one
+5. **Gates per batch.** Unit tests (`node --test` — the binding suite checks its sources as
+   checked out and again with Windows' line endings; each release note carries the suite's
+   own count), DOM test with `KUVO_HARNESS_LIVE=1`, `npx tsc --noEmit`, UI build, CI on
+   `windows-latest`, then one version number and one
    release. A batch that is not green does not get a version.
 
 ### 10.1 The capture matrix
