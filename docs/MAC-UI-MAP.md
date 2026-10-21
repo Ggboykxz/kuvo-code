@@ -108,8 +108,12 @@ window cannot hold is put aside and comes back when the room does, and the rest 
 far as they must, the panel first and the split last. In 0.5.72 the shell's own seams were
 fixed: the title bar's room for the window's controls and the terminal's port travel by the
 bridge instead of the page's address, the window ignores Back, and a model chosen in the
-composer goes to the engine as its Model.ref. The port's
-own list of what is left is now: the session's and the tab's menus; the window's remembered
+composer goes to the engine as its Model.ref. In 0.5.73 a session's row took the Mac's own
+menu (`SidebarView.swift:600-643`) — pinned or not, beside the one in view, its name, the
+folder it works in, the conversation as Markdown, put away or brought back, and the one
+that undoes — and a pinned session sits at the top of the sidebar, in a section of its own
+(`SidebarView.swift:115-121`). The port's
+own list of what is left is now: the tab's menu; the window's remembered
 state (the widths, the panels, the tabs and the selection); the choices the Mac keeps (the
 last model, the approval mode, the steps' detail, the favourites, push after commit, the
 typeface and the window material); and the last three motions — the 45 % of a disabled

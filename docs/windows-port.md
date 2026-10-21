@@ -204,6 +204,22 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     refuses, as the Mac's does (`SessionModel.swift:1333-1341`); the "engine's choice" row
     is gone, since the Mac's picker has no such row and the engine has no call to clear a
     model.
+  - **2.68 (this change). The session's own menu, and the sessions kept at the top.** A
+    session's row had a menu of three items; the Mac's has the whole of one
+    (`SidebarView.swift:600-643`): pinned or not, beside the one in view, its name, the
+    folder it works in, the conversation as Markdown, put away or brought back, and the one
+    that undoes — in that order, in the Mac's words, with the last one red and asking
+    first. The menu now says all of it, and does it: *Pin* keeps a session at the top of
+    the sidebar, in a section of its own, out of the recents (the mark is the Mac's own,
+    `kuvo.pinned`, written with the session's metadata so the other marks stay —
+    `Workspace.swift:342-364`); *Show in Folder* opens the folder where the user can see
+    it (the Mac's *Show in Finder* is the Explorer here); *Copy as Markdown* and *Export as
+    Markdown…* write the conversation out the Mac's way (`ConversationExport.swift:9-69`:
+    the title over it, "You" and "Agent" as the speakers, the agent's steps listed
+    together), for any session and not only the one in view; *Archive* and *Unarchive* put
+    a session away or bring it back; *Delete…* asks first, as the Mac's does. A menu
+    carries what a menu carries: a line between the groups, an item that cannot be
+    chosen, and the one that undoes.
   - **2.61 (this change). The provider's marks.** The Mac draws the maker's mark beside
     each model (`ProviderLogo.swift`), monochrome so it follows the ink, or in the maker's
     own colour where it has one. The marks themselves are not published as a package, but
