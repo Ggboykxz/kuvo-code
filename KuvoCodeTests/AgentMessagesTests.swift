@@ -80,6 +80,22 @@ import Testing
         #expect(throws: (any Error).self) { try BotRecipe.read(AppInfo.testRoot) }
     }
 
+    /// A shared bot's personality on this Mac: a preset by its ID; someone's own added to yours
+    /// once, and found again (not added twice) by its name and words.
+    @Test func aSharedBotsPersonality() throws {
+        let preset = try BotRecipe.read(file(#"{"kind":"kuvo-bot","version":1,"name":"Ci","job":"j","instructions":"i","look":\#(look),"personality":{"id":"preset.mentor","name":"Mentor","description":"x"}}"#))
+        #expect(preset.personalityHere()?.id == "preset.mentor")
+        #expect(preset.personalityHere()?.added == false)
+        let words = "Talks like a pirate. \(UUID().uuidString)"
+        let theirs = try BotRecipe.read(file(#"{"kind":"kuvo-bot","version":1,"name":"Ci","job":"j","instructions":"i","look":\#(look),"personality":{"id":"custom.abc","name":"Pirate","description":"\#(words)"}}"#))
+        let first = try #require(theirs.personalityHere())
+        #expect(first.added)
+        let again = try #require(theirs.personalityHere())
+        #expect(!again.added && again.id == first.id)
+        #expect(Personalities.shared.custom.filter { $0.description == words }.count == 1)
+        if let added = Personalities.shared.personality(first.id) { Personalities.shared.delete(added) }
+    }
+
     // MARK: Group work that waits
 
     private func task(_ id: String, _ bot: String, after: [String]? = nil) -> GroupTask {
