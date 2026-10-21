@@ -6,7 +6,9 @@ one working on every change, on CI, without a model or the network: the app's re
 git and real files, with the engine stubbed at its HTTP API. A bug an end-to-end run found and
 fixed (❌→✅ there) gets a test here when it can be tried this way.
 
-Each suite's comment says what it tries; this is where each scenario stands.
+Each suite's comment says what it tries; this is where each scenario stands. Scenarios that are
+about what a model answers or does (B1–B4, D1, D2, E1–E3, E5, E7, most of L1–L49) are the
+end-to-end runs' alone, as are those that need a real machine over SSH (F9, L46, L47).
 
 | Scenario | Suites | Not guarded yet |
 | --- | --- | --- |
