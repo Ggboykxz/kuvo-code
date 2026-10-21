@@ -17,8 +17,11 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | B6 Undo a turn, then change your mind | ComposerReturnsTests, AttachmentsTests, UndoRedoTests | |
 | B7 Commit with a message, push, make a branch | ChangesCommitTests, ChangesDiscardTests, ChangesStagingTests, ChangesFileNamesTests | |
 | B8 A session in a worktree, merged back | WorktreeSessionTests, GitBranchesTests | |
+| B9 Plan first, then Build It | AgentAsksTests | |
 | B10 Ask First: allow once, always, deny | ComposerReturnsTests, ProjectFoldersTests, PermissionCardsTests | Always Allowed lists every project's (Settings' view code) |
+| B11 The agent asks questions, answered in the card | AgentAsksTests | |
 | B12 Queue while it works, Stop, Resume | ComposerReturnsTests, QueueTests | |
+| B13 Two sessions at once, each with its own asks | AgentAsksTests | |
 | B14 Switch model mid-conversation, or elsewhere | SessionsTests | |
 | B16 Find in a long conversation | ConversationFindTests | |
 | B19 A subagent at work, in the background too | SubagentsAtWorkTests | |
