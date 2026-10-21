@@ -1054,7 +1054,7 @@ describe("undo, carefully", () => {
     const agents = new Map([a, b].map((agent) => [agent.providerID, agent]))
     sessions = new Sessions(new Store(join(root, "sessions")), { find: (provider: string | undefined) => (provider ? agents.get(provider) : undefined) } as unknown as Roster, auto, undefined, undefined, undefined, new Snapshots(join(root, "snapshots")))
     await until(() => !sessions.active().includes(id))
-    await Bun.sleep(300)
+    // At once: the undo waits while the cut-short turn's files are read.
     await sessions.stageRevert(id, first)
     expect(readFileSync(join(folder, "a.txt"), "utf8")).toBe("one\n")
   })

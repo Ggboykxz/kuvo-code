@@ -9090,6 +9090,15 @@ class Sessions {
     return Boolean(turn && !turn.isEnded) || this.busy.has(id);
   }
   busy = new Set;
+  async filesKept(id) {
+    const working = () => {
+      const turn = this.live.get(id)?.turn;
+      return Boolean(turn && !turn.isEnded);
+    };
+    const start = Date.now();
+    while (this.busy.has(id) && !working() && Date.now() - start < 30000)
+      await Bun.sleep(25);
+  }
   notes(record) {
     const kept2 = record.agent.snapshots ?? {};
     for (const [id, value] of Object.entries(kept2))
@@ -9371,6 +9380,8 @@ class Sessions {
   }
   async stageRevert(id, messageID2) {
     const record = this.record(id);
+    if (this.busy.has(id))
+      await this.filesKept(id);
     if (this.isRunning(id))
       throw new BadRequest("Stop the agent first.");
     const at = record.messages.findIndex((message) => message.id === messageID2 && message.type === "user");
@@ -9441,6 +9452,8 @@ class Sessions {
     const record = this.record(id);
     if (!record.session.revert)
       return;
+    if (this.busy.has(id))
+      await this.filesKept(id);
     if (this.isRunning(id))
       throw new BadRequest("Stop the agent first.");
     const directory = record.session.location.directory;
@@ -11247,4 +11260,4 @@ if (onMachine) {
 }
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
-// Built from Agents/src a6dd53e140eb252180e5dbf2bbf5bda6ebde40fc0cc318fc4dab7d4489b5df0b
+// Built from Agents/src 291f5f96228541d9ea6dc6b8c4f03c1ed1ade235f07143d58b3df88233b920ba
