@@ -330,9 +330,9 @@ import Testing
     /// had switched is finished (the original goes).
     @Test func aMoveCutShortIsTakenBackOrFinished() async throws {
         defer { Self.clean(); mac.stop() }
-        // Copying: the original paused for it, a half copy there.
+        // Copying: the original held for it, a half copy there.
         let first = try botFolder(Bots.root, id: "bot_scout00006", session: "ses_scout6")
-        try Data("paused".utf8).write(to: first.appending(path: "paused"))
+        try Data(Moves.hold.utf8).write(to: first.appending(path: "paused"))
         let half = boxRoot.appending(path: "bots/bot_scout00006")
         try FileManager.default.createDirectory(at: half, withIntermediateDirectories: true)
         // Switched: the copy is the bot now; the original still where it was.
@@ -358,6 +358,124 @@ import Testing
         #expect(!FileManager.default.fileExists(atPath: second.path))
         #expect(trashed("bot_scout00007", in: boxRoot.appending(path: "trash")) != nil)
         #expect(UserDefaults.standard.data(forKey: "movesUnderWay") == nil)
+    }
+
+    /// The app quit after the move switched, before the bot itself went over to its copy: at the
+    /// next launch it does (its wake-ups going on there), and the original goes.
+    @Test func aBotCutShortBeforeItWentOverGoesOverToItsCopy() async throws {
+        defer { Self.clean(); mac.stop() }
+        let id = "bot_scout00008", session = "ses_scout8"
+        let original = try botFolder(Bots.root, id: id, session: session)
+        try Data(Moves.hold.utf8).write(to: original.appending(path: "paused"))
+        let copy = try botFolder(boxRoot.appending(path: "bots"), id: id, session: session)
+        try Data(Moves.hold.utf8).write(to: copy.appending(path: "paused"))
+        try saveBots([bot(id, folder: original, session: session)])
+        let records: [[String: Any]] = [["kind": "bot", "id": id, "sessions": [session], "original": original.path, "to": "box", "copy": copy.path, "wasPaused": false, "stage": "switched"]]
+        UserDefaults.standard.set(try JSONSerialization.data(withJSONObject: records), forKey: "movesUnderWay")
+        let app = app()
+        box.on("GET", "/api/session/\(session)", json: ["data": StubEngine.session(session, title: "Scout", directory: copy.appending(path: "workspace").path)])
+        mac.on("GET", "/api/experimental/session/\(session)/export", json: Self.exported(session, directory: original.appending(path: "workspace").path, bot: id))
+
+        await app.moves.recover()
+
+        let moved = try #require(app.bots.bot(id))
+        #expect(moved.machine == "box" && moved.folder == copy.path)
+        #expect(!FileManager.default.fileExists(atPath: copy.appending(path: "paused").path), "its wake-ups go on there")
+        #expect(mac.requests("DELETE", "/api/session/\(session)").count == 1)
+        #expect(!FileManager.default.fileExists(atPath: original.path))
+        #expect(UserDefaults.standard.data(forKey: "movesUnderWay") == nil)
+    }
+
+    /// A move taken back whose copy couldn't be taken away (the machine didn't answer): the copy
+    /// isn't the chat meanwhile, and it's taken away when the machine answers again. A pause of
+    /// yours stays.
+    @Test func aCopyThatCouldntBeTakenAwayIsTriedAgain() async throws {
+        defer { Self.clean(); mac.stop() }
+        let id = "ses_chat3"
+        let wakes = WakeUps.root.appending(path: id)
+        try FileManager.default.createDirectory(at: wakes.appending(path: "wakes"), withIntermediateDirectories: true)
+        try Data("paused".utf8).write(to: wakes.appending(path: "paused"))
+        let app = app()
+        mac.list([StubEngine.session(id, title: "Trip plans", directory: Workspace.chatsFolder)])
+        await app.workspace.refresh()
+        mac.on("GET", "/api/session/\(id)/inbox", json: ["data": []])
+        // Read once; then its engine stops answering, before the move could switch.
+        let reads = Counter()
+        mac.on("GET", "/api/experimental/session/\(id)/export") { _ in
+            reads.next() == 1 ? StubWeb.json(Self.exported(id, directory: Workspace.chatsFolder, bot: nil)) : StubWeb.json(["message": "Gone away"], status: 500)
+        }
+        takesImports(box)
+        box.on("DELETE", "/api/session/\(id)", json: ["message": "Busy"], status: 500)
+
+        await #expect(throws: (any Error).self) { try await app.moves.move(chat: id, to: "box") }
+
+        #expect(UserDefaults.standard.data(forKey: "movesUnderWay") != nil, "still to be taken away")
+        #expect(app.workspace.movedAway[id] == .some("box"), "what the machine says of its copy isn't about the chat")
+        #expect(app.workspace.session(id)?.location.directory == Workspace.chatsFolder)
+        #expect(FileManager.default.fileExists(atPath: wakes.appending(path: "paused").path), "your pause stays")
+        box.on("DELETE", "/api/session/\(id)", json: [:])
+        await app.moves.recover()
+        #expect(box.requests("DELETE", "/api/session/\(id)").count == 2)
+        #expect(UserDefaults.standard.data(forKey: "movesUnderWay") == nil)
+        #expect(app.workspace.movedAway[id] == nil)
+        #expect(FileManager.default.fileExists(atPath: wakes.appending(path: "paused").path))
+    }
+
+    /// Two names for one computer, not yet found to be one: nothing moves, and nothing goes.
+    @Test func aMoveToTheSameComputerUnderAnotherNameIsRefused() async throws {
+        defer { Self.clean(); mac.stop() }
+        let id = "bot_scout00009", session = "ses_scout9"
+        let original = try botFolder(Bots.root, id: id, session: session)
+        try saveBots([bot(id, folder: original, session: session)])
+        let app = app()
+        app.moves.transport = OneComputer()
+        mac.list([StubEngine.session(session, title: "Scout", directory: original.appending(path: "workspace").path)])
+        await app.workspace.refresh()
+        mac.on("GET", "/api/session/\(session)/inbox", json: ["data": []])
+        mac.on("GET", "/api/experimental/session/\(session)/export", json: Self.exported(session, directory: original.appending(path: "workspace").path, bot: id))
+        takesImports(box)
+
+        do {
+            try await app.moves.move(bot: id, to: "box")
+            Issue.record("it moved")
+        } catch {
+            #expect(error.localizedDescription.contains("another address"), "\(error.localizedDescription)")
+        }
+
+        #expect(box.requests("POST", "/api/experimental/session/import").isEmpty)
+        #expect(mac.requests("DELETE", "/api/session/\(session)").isEmpty && box.requests("DELETE", "/api/session/\(session)").isEmpty)
+        #expect(FileManager.default.fileExists(atPath: original.appending(path: "workspace/notes.txt").path))
+        #expect(!FileManager.default.fileExists(atPath: original.appending(path: "paused").path))
+        #expect(app.bots.bot(id)?.machine == nil)
+        #expect(UserDefaults.standard.data(forKey: "movesUnderWay") == nil)
+    }
+
+    /// A chat come to this Mac from a machine waits for nothing there, its subagents' conversations
+    /// get no rows of their own, and what the machine says of its original isn't about it.
+    @Test func aChatFromAMachineLivesOnThisMacAlone() async throws {
+        defer { Self.clean(); mac.stop() }
+        let id = "ses_chat4", child = "ses_chat4_child"
+        let chats = boxRoot.appending(path: "chats").path
+        let app = app()
+        app.workspace.add(try JSONDecoder().decode(Session.self, from: JSONSerialization.data(withJSONObject:
+            StubEngine.session(id, title: "Trip plans", directory: RemoteFolder.folder(chats, on: "box")))))
+        #expect(app.workspace.waitingMachine(for: id) == "box")
+        box.list([StubEngine.session(id, title: "Trip plans", directory: chats),
+                  StubEngine.session(child, title: "Research", directory: chats, extra: ["parentID": id])])
+        box.on("GET", "/api/session/\(id)/inbox", json: ["data": []])
+        box.on("GET", "/api/experimental/session/\(id)/export", json: Self.exported(id, directory: chats, bot: nil))
+        box.on("GET", "/api/experimental/session/\(child)/export", json: Self.exported(child, directory: chats, bot: nil, parent: id))
+        takesImports(mac)
+
+        try await app.moves.move(chat: id, to: nil)
+
+        #expect(app.workspace.session(id)?.location.directory == Workspace.chatsFolder)
+        #expect(app.workspace.waitingMachine(for: id) == nil, "nothing waits for the machine")
+        #expect(!app.workspace.sessions.contains { $0.id == child }, "no row for its subagent")
+        #expect(box.requests("DELETE", "/api/session/\(child)").count == 1 && box.requests("DELETE", "/api/session/\(id)").count == 1)
+        app.workspace.handle(try box.event("session.deleted", session: id), machine: "box")
+        #expect(app.workspace.session(id)?.location.directory == Workspace.chatsFolder)
+        #expect(app.workspace.waitingMachine(for: id) == nil)
     }
 
     @Test func someBotsDontMove() async throws {
@@ -411,6 +529,7 @@ private struct FolderMachine: MoveTransport {
     func unpack(_ archive: URL, into parent: String, on machine: String?) async throws { try await here.unpack(archive, into: parent, on: nil) }
     func write(_ data: Data, to path: String, on machine: String?) async throws { try await here.write(data, to: path, on: nil) }
     func remove(_ path: String, on machine: String?) async throws { try await here.remove(path, on: nil) }
+    func unpause(_ folder: String, on machine: String?) async throws { try await here.unpause(folder, on: nil) }
 
     func trash(_ path: String, on machine: String?) async throws {
         guard machine != nil else { return try await here.trash(path, on: nil) }
@@ -419,4 +538,18 @@ private struct FolderMachine: MoveTransport {
         try FileManager.default.createDirectory(at: into, withIntermediateDirectories: true)
         try FileManager.default.moveItem(atPath: path, toPath: into.appending(path: (path as NSString).lastPathComponent).path)
     }
+}
+
+/// A machine that's this Mac at another name: its Kuvo Code folder is this Mac's.
+private struct OneComputer: MoveTransport {
+    let here = SSHMoveTransport()
+
+    func home(on machine: String?) async throws -> MoveHome { try await here.home(on: nil) }
+    func exists(_ path: String, on machine: String?) async throws -> Bool { try await here.exists(path, on: nil) }
+    func pack(_ path: String, on machine: String?, into archive: URL) async throws { try await here.pack(path, on: nil, into: archive) }
+    func unpack(_ archive: URL, into parent: String, on machine: String?) async throws { try await here.unpack(archive, into: parent, on: nil) }
+    func write(_ data: Data, to path: String, on machine: String?) async throws { try await here.write(data, to: path, on: nil) }
+    func remove(_ path: String, on machine: String?) async throws { try await here.remove(path, on: nil) }
+    func unpause(_ folder: String, on machine: String?) async throws { try await here.unpause(folder, on: nil) }
+    func trash(_ path: String, on machine: String?) async throws { try await here.trash(path, on: nil) }
 }

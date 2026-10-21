@@ -619,13 +619,17 @@ struct SidebarView: View {
         if let openBeside, session.id != selection {
             Button("Open Beside") { openBeside(session.id) }
         }
+        // Moving to another computer: what would change it waits until it's there.
+        let moving = app.moves.isMoving(session.id)
         if let place {
             Button("Rename…") {
                 renaming = RenameTarget(id: session.id, place: place)
             }
+            .disabled(moving)
         }
         if Workspace.isChat(session.location.directory) {
             MoveToProjectMenu(session: session)
+                .disabled(moving)
             MoveToComputerMenu(thing: .chat(session))
         } else if !RemoteFolder.isRemote(session.location.directory) {
             Button("Show in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: session.location.directory) }
@@ -650,8 +654,10 @@ struct SidebarView: View {
             Button("Archive") {
                 if hasOwnWorktree(session) { confirm(session) { archiving = $0 } } else { Task { await workspace.setArchived(session.id, true) } }
             }
+            .disabled(moving)
         }
         Button("Delete…", role: .destructive) { confirm(session) { deleting = $0 } }
+            .disabled(moving)
     }
 }
 

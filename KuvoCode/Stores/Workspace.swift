@@ -295,6 +295,8 @@ final class Workspace {
     func move(_ id: String, toProject directory: String) async throws {
         guard let session = session(id) else { return }
         if OutsideAgents.isAgentSession(session) { throw OutsideAgents.Failure.unavailable("Moving a chat into a project") }
+        // Moving to another computer: what changes it waits until it's there.
+        if Moves.isFrozen(id) { throw Moves.Failure.moving }
         guard let api = api(forFolder: directory) else { return }
         try await api.moveSession(id, to: directory)
         let extra = settings[directory]?.folders ?? []
@@ -376,6 +378,7 @@ final class Workspace {
     /// doesn't take it (it would come back so with the next read). Whether it did.
     @discardableResult
     private func setFlag(_ key: String, _ value: Bool, of id: String) async -> Bool {
+        guard !Moves.isFrozen(id) else { return false }
         guard let index = sessions.firstIndex(where: { $0.id == id }), let api = api(for: sessions[index]) else { return false }
         let before = sessions[index].metadata
         var metadata = before?.object ?? [:]
@@ -950,7 +953,7 @@ final class Workspace {
 
     /// Deleted on its engine; one on a machine that's away waits for it (it would come back).
     func delete(_ id: String) async {
-        guard let api = api(forSession: id) else { return }
+        guard !Moves.isFrozen(id), let api = api(forSession: id) else { return }
         onDeleted?(id)
         if let machine = session(id).flatMap({ RemoteFolder.machine(of: $0.location.directory) }) { keepList(of: machine) }
         sessions.removeAll { $0.id == id }
@@ -963,7 +966,7 @@ final class Workspace {
     }
 
     func rename(_ id: String, to title: String) async {
-        guard let index = sessions.firstIndex(where: { $0.id == id }), api(forSession: id) != nil else { return }
+        guard !Moves.isFrozen(id), let index = sessions.firstIndex(where: { $0.id == id }), api(forSession: id) != nil else { return }
         sessions[index].title = title
         if let machine = RemoteFolder.machine(of: sessions[index].location.directory) { keepList(of: machine) }
         try? await api(forSession: id)?.renameSession(id, title: title)
@@ -1557,6 +1560,9 @@ final class Workspace {
             handleShared(event, machine: machine)
             return
         }
+        // From where a conversation moved away from, or where it's being copied to (`Moves`): not
+        // where it lives, so nothing of it counts here.
+        if let id = event.sessionID, let away = movedAway[id], away == machine { return }
         if let machine, let id = event.sessionID { sessionMachines[id] = machine }
         noteShowInPanel(event, machine: machine)
         if event.type == "session.tool.input.started", let id = event.sessionID,
@@ -2134,16 +2140,23 @@ final class Workspace {
         upsert(session)
     }
 
-    /// Conversations that moved to another computer (`Moves`), by the computer they left (nil:
-    /// this Mac), until their original there is gone: what's listed from there leaves them out.
+    /// Conversations that moved, or are moving, to another computer (`Moves`), by the computer
+    /// whose copy isn't the one they live in (nil: this Mac): the one they left, or the one a copy
+    /// is being made on. What's listed and heard from there leaves them out.
     @ObservationIgnored var movedAway: [String: String?] = [:]
 
     /// Conversations carried on on another computer (`Moves`), under the same IDs, on `api`: their
     /// rows, and an open one's conversation, go there from now on, whatever's sent from it too.
     func moved(_ moved: [Session], api: OpenCodeAPI) {
         for session in moved {
-            upsert(session)
-            if let machine = RemoteFolder.machine(of: session.location.directory) { sessionMachines[session.id] = machine } else { sessionMachines[session.id] = nil }
+            let machine = RemoteFolder.machine(of: session.location.directory)
+            let before = sessionMachines[session.id] ?? remoteSessions[session.id]?.machine
+            // A subagent's has no row of its own, as `reload` has it.
+            if session.parentID == nil { upsert(session) }
+            sessionMachines[session.id] = machine
+            // Come to this Mac: it no longer waits for the machine it left.
+            if machine == nil, remoteSessions.removeValue(forKey: session.id) != nil { Self.saveRemoteSessions(remoteSessions) }
+            if let before, before != machine { keepList(of: before) }
             guard let model = models[session.id] else { continue }
             model.reconnect(api)
             model.session = session

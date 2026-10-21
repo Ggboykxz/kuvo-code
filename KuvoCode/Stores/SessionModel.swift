@@ -890,7 +890,13 @@ final class SessionModel {
         let previous = sending
         sending = Task {
             await previous?.value
-            do { try await api.runShell(session: id, command: command) } catch { notRun(written, because: error) }
+            do {
+                // Moving to another computer: back in the composer, to run once it's there.
+                if Moves.isFrozen(id) { throw Moves.Failure.moving }
+                try await api.runShell(session: id, command: command)
+            } catch {
+                notRun(written, because: error)
+            }
         }
     }
 
@@ -914,6 +920,7 @@ final class SessionModel {
             do {
                 let machine = RemoteFolder.machine(of: session.location.directory)
                 let prepared = await Task.detached { machine.map { Attachments.prepare(files, for: model, machine: $0) } ?? Attachments.prepare(files, for: model) }.value
+                if Moves.isFrozen(id) { throw Moves.Failure.moving }
                 try await api.runCommand(session: id, name: name, arguments: Attachments.text(arguments, for: prepared), files: prepared.files, delivery: delivery)
             } catch {
                 runningCommands.removeAll { $0.id == running.id }
@@ -1229,6 +1236,7 @@ final class SessionModel {
             var sentID: String?
             var user = message
             do {
+                if Moves.isFrozen(self.id) { throw Moves.Failure.moving }
                 user = await stored(message)
                 // Each as the engine kept it: by where it is, or (sent inline: a machine's, a photo
                 // from the phone) with what's in it.

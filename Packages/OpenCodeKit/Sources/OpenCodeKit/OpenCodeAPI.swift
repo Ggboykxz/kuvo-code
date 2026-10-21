@@ -276,6 +276,21 @@ public struct OpenCodeAPI: Sendable {
         return page.data.map(appSession)
     }
 
+    /// Every session a session's agent started, newest first, page after page.
+    public func allChildren(of session: String) async throws -> [Session] {
+        let size = 100
+        var page: Page<Session> = try await get("api/session", query: ["limit": String(size), "order": "desc", "parentID": session])
+        var all = page.data
+        var seen = Set(all.map(\.id))
+        while page.data.count == size, let next = page.cursor?.next {
+            page = try await get("api/session", query: ["limit": String(size), "cursor": next])
+            let new = page.data.filter { seen.insert($0.id).inserted }
+            guard !new.isEmpty else { break }
+            all += new
+        }
+        return all.map(appSession)
+    }
+
     /// Every session (the root ones, unless `roots` is false), newest first, page after page.
     public func allSessions(directory: String? = nil, roots: Bool = true) async throws -> [Session] {
         let size = 100
