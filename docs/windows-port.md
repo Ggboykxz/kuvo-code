@@ -315,6 +315,14 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     (`SidebarView.swift:379-396`). The port's projects were folders and nothing else: the
     name is there now — kept with the project, in the shell's own folder, and shown in the
     sidebar in its place.
+  - **2.80 (this change). A project runs its own command.** A project can say what runs
+    for it — a dev server, say — and the Mac runs it in the panel's terminal, in the
+    project's folder (`Workspace.ProjectSettings.run`, `Workspace.swift:198`;
+    `MainView.swift:562-566`, `601-610`, `1479-1491`). The port's projects had a name and
+    nothing else. They have the command now, written in the editor beside the name (the
+    Mac's own prompt, "npm run dev"), and the title bar carries the button that runs it —
+    the Mac's play mark, drawn — which opens the panel on the terminal and sends the
+    command there, in the project's folder.
   - **2.61 (this change). The provider's marks.** The Mac draws the maker's mark beside
     each model (`ProviderLogo.swift`), monochrome so it follows the ink, or in the maker's
     own colour where it has one. The marks themselves are not published as a package, but
