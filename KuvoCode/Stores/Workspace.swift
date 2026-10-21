@@ -929,6 +929,9 @@ final class Workspace {
         if let machine = session(id).flatMap({ RemoteFolder.machine(of: $0.location.directory) }) { keepList(of: machine) }
         sessions.removeAll { $0.id == id }
         models[id] = nil
+        if running.contains(id) { running.remove(id) }
+        shellJobs[id] = nil
+        Notifier.shared.clear(session: id)
         Drafts.shared.remove(id)
         try? await api.deleteSession(id)
     }
@@ -1542,6 +1545,10 @@ final class Workspace {
             SessionCopies.remove(id)
             models[id] = nil
             asking = asking.filter { $0.value != id }
+            // Deleted while it worked: it isn't working any more (nor keeping the Mac awake).
+            if running.contains(id) { running.remove(id) }
+            shellJobs[id] = nil
+            Notifier.shared.clear(session: id)
         case "session.execution.started":
             running.insert(id)
             // A session with no row may be a subagent's: whose it is, so the one that started it
@@ -1586,13 +1593,17 @@ final class Workspace {
                 sessions[index].cost = usage.cost
                 sessions[index].tokens = usage.tokens
             }
+        // Chosen elsewhere too (a bot's editor, the phone, another Mac): the open conversation's
+        // composer shows it, and picking the one before works again.
         case "session.model.selected":
-            if let selected = try? event.payload(as: EventPayload.ModelSelected.self), let index = sessions.firstIndex(where: { $0.id == id }) {
-                sessions[index].model = selected.model
+            if let selected = try? event.payload(as: EventPayload.ModelSelected.self) {
+                if let index = sessions.firstIndex(where: { $0.id == id }) { sessions[index].model = selected.model }
+                if let model = models[id], model.session.model != selected.model { model.session.model = selected.model }
             }
         case "session.agent.selected":
-            if let selected = try? event.payload(as: EventPayload.AgentSelected.self), let index = sessions.firstIndex(where: { $0.id == id }) {
-                sessions[index].agent = selected.agent
+            if let selected = try? event.payload(as: EventPayload.AgentSelected.self) {
+                if let index = sessions.firstIndex(where: { $0.id == id }) { sessions[index].agent = selected.agent }
+                if let model = models[id], model.session.agent != selected.agent { model.session.agent = selected.agent }
             }
         default:
             break

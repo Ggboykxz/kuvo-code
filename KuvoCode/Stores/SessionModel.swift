@@ -1207,8 +1207,12 @@ final class SessionModel {
             var user = message
             do {
                 user = await stored(message)
+                // Each as the engine kept it: by where it is, or (sent inline: a machine's, a photo
+                // from the phone) with what's in it.
                 let files = (user.files ?? []).compactMap { file -> OpenCodeAPI.PromptFile? in
-                    if case .uri(let uri) = file.source { .init(uri: uri, name: file.name) } else { nil }
+                    if case .uri(let uri) = file.source { return .init(uri: uri, name: file.name) }
+                    guard let data = file.data else { return nil }
+                    return .init(uri: "data:\(file.mime);base64,\(data)", name: file.name)
                 }
                 _ = try await api.stageRevert(session: id, messageID: user.id)
                 if let command = CommandMessages.shared[user.id], let (name, arguments) = SlashCommands.split(command) {

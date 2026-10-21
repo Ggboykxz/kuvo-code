@@ -11,9 +11,10 @@ nonisolated enum SessionCopies {
         var messages: [Message]
     }
 
-    /// `~/Library/Caches/<bundle id>/Conversations`, a file per session.
+    /// `~/Library/Caches/<bundle id>/Conversations`, a file per session (hosting tests, their own).
     static var folder: URL {
-        URL.cachesDirectory.appending(path: Bundle.main.bundleIdentifier ?? "run.kuvo.code").appending(path: "Conversations")
+        if AppInfo.isHostingTests { return AppInfo.testRoot.appending(path: "Caches/Conversations") }
+        return URL.cachesDirectory.appending(path: Bundle.main.bundleIdentifier ?? "run.kuvo.code").appending(path: "Conversations")
     }
 
     private static func file(_ id: String) -> URL {

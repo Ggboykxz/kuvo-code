@@ -6,6 +6,9 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A model or mode changed elsewhere (a bot's editor, your phone, another Mac) shows in a conversation you have open, and picking the one before works again.
+- Try Again sends a message's files again when they were sent inline (to a machine, or from your phone); they used to be dropped.
+- A session deleted while it worked no longer counts as working, which kept the Mac awake, and its notifications go with it.
 - A message for a coding agent on a machine that couldn't go as the machine connected (its agents still starting) goes within a minute, rather than at the machine's next connection.
 - Editing a bot while a personality it used was changed or removed no longer undoes your edit.
 - A bot's job keeps all of its section in its memory, its own sub-headings and code included; it used to stop at the first line starting with #. A job written in Edit Bot by an older version is no longer lost when the bot's memory has an empty Job heading.
