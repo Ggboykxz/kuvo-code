@@ -25,12 +25,13 @@ nonisolated final class StubEngine: @unchecked Sendable {
     private var running: Set<String> = []
     private var answers: [String: (Request) -> StubWeb.Answer] = [:]
 
-    /// An engine on `port` (a port of the test's own; nothing listens there).
-    @MainActor init(port: Int) {
+    /// An engine on `port` (a port of the test's own; nothing listens there). `alongside`: another
+    /// beside one made first (an agents bridge beside an engine), which keeps answering.
+    @MainActor init(port: Int, alongside: Bool = false) {
         TestEnvironment.prepare()
         url = "http://127.0.0.1:\(port)"
         api = OpenCodeAPI(endpoint: ServerEndpoint(url: URL(string: url)!, password: "test"))
-        StubWeb.start(hosts: ["127.0.0.1"])
+        if !alongside { StubWeb.start(hosts: ["127.0.0.1"]) }
         StubWeb.handle(url + "/api/") { [weak self] request, body in
             self?.answer(request, body) ?? StubWeb.Answer(status: 503)
         }

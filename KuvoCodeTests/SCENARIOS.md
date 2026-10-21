@@ -22,7 +22,7 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | B11 The agent asks questions, answered in the card | AgentAsksTests | |
 | B12 Queue while it works, Stop, Resume | ComposerReturnsTests, QueueTests | |
 | B13 Two sessions at once, each with its own asks | AgentAsksTests | |
-| B14 Switch model mid-conversation, or elsewhere | SessionsTests | |
+| B14 Switch model mid-conversation, or elsewhere, to a coding agent too | SessionsTests, MoveToAgentsTests | |
 | B16 Find in a long conversation | ConversationFindTests | |
 | B19 A subagent at work, in the background too | SubagentsAtWorkTests | |
 | B17 A folder that isn't a git repository | SessionEditsTests | |
@@ -43,10 +43,10 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | H1, H2 MCP servers | MCPCommandTests, ChromeDevToolsUpgradeTests, IntegrationsTests | |
 | H3 An MCP server asks mid-task | AgentAsksTests | |
 | H4 A skill from GitHub | SkillLibraryTests | |
-| J1 The network goes away mid-reply | NetworkDropTests | |
 | I1 Add a machine, at one or more addresses | AddMachineTests, MachineAddressesTests | choosing the address that answers (needs SSH) |
 | I2 A project on a machine | MachineFoldersTests, AttachmentRoutesTests, SignInSyncTests, MachineSignOutTests | |
 | I3 A machine that's away | MachineAwayTests | |
+| J1 The network goes away mid-reply | NetworkDropTests | |
 | I4 What machines share with this Mac, and what's their own | MachineSettingsTests, CustomAutoPlacesTests, SignInSyncTests | a connected machine's engine starting over with new settings (needs SSH) |
 | K1 Settings keep what you change | EngineSettingsFileTests | |
 | K3 Notifications | NotificationMaskingTests | |
