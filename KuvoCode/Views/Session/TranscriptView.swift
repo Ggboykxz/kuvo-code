@@ -418,9 +418,7 @@ struct TranscriptView: View {
         }
         // A step still going at the end is under way, whatever the running state says.
         flushSteps(live: model.transcript.isRunning || StepsRow.isUnfinished(steps.last))
-        // A run cut off with no end of its own (Kuvo Code quit, or its engine stopped, while it
-        // worked) says so, rather than ending on a failed step.
-        if !model.transcript.isRunning, cut == nil, let last, case .assistant(let step) = messages[last], step.error?.isInterruption == true {
+        if cut == nil, let step = Self.interruptedStep(in: messages, isRunning: model.transcript.isRunning) {
             rows.append(.notice(step.id + "#interrupted", "pause.circle", "Interrupted before it finished: send a message to carry on"))
         }
         if let cut {
@@ -1864,5 +1862,21 @@ private struct CutFade: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+extension TranscriptView {
+    /// A run cut off with no end of its own (Kuvo Code quit, or its engine stopped, while it
+    /// worked): the step it stopped in, which the conversation says was interrupted, rather than
+    /// ending on a failed step. None while it runs, or once its run has an end (Stop gives it one).
+    static func interruptedStep(in messages: [Message], isRunning: Bool) -> Message.Assistant? {
+        let last = messages.last { message in
+            switch message {
+            case .modelSwitched, .agentSwitched: false
+            default: true
+            }
+        }
+        guard !isRunning, case .assistant(let step)? = last, step.error?.isInterruption == true else { return nil }
+        return step
     }
 }

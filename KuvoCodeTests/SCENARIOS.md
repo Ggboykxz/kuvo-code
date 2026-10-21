@@ -44,7 +44,7 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | I3 A machine that's away | MachineAwayTests | |
 | K1 Settings keep what you change | EngineSettingsFileTests | |
 | K3 Notifications | NotificationMaskingTests | |
-| L50 Quit mid-job, open again | | the interrupted run says where it stopped |
+| L50 Quit mid-job, open again | InterruptedRunTests | |
 | The panel's terminal | TerminalColorsTests | |
 | Export a conversation | ConversationExportTests | |
 | Anonymous usage stays anonymous | AnalyticsPrivacyTests | |
