@@ -76,10 +76,15 @@ final class Workspace {
     /// The machine a session is on, while that machine isn't connected; nil once it is (or
     /// for this Mac's sessions).
     func waitingMachine(for id: String) -> String? {
-        guard let machine = session(id).flatMap({ RemoteFolder.machine(of: $0.location.directory) }) ?? remoteSessions[id]?.machine,
+        // A bot's knows its machine, also before its sessions there were ever listed here.
+        guard let machine = session(id).flatMap({ RemoteFolder.machine(of: $0.location.directory) }) ?? remoteSessions[id]?.machine ?? botMachine?(id),
               !connectedMachines.contains(machine) else { return nil }
         return machine
     }
+
+    /// The machine a bot's conversation lives on, by its session (nil for one on this Mac, or not
+    /// a bot's). The app sets it.
+    @ObservationIgnored var botMachine: ((String) -> String?)?
 
     /// A machine's sessions as last seen, in the lists until it connects.
     private func showLastSeen(_ machine: String) {
@@ -91,7 +96,7 @@ final class Workspace {
 
     /// A waiting session's title, as last seen.
     func remoteTitle(_ id: String) -> String? {
-        remoteSessions[id]?.title
+        remoteSessions[id]?.title ?? botName?(id)
     }
 
     /// The engine a folder's sessions run on: its machine's, or this Mac's.
