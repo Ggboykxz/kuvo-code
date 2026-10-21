@@ -220,6 +220,13 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     a session away or bring it back; *Delete…* asks first, as the Mac's does. A menu
     carries what a menu carries: a line between the groups, an item that cannot be
     chosen, and the one that undoes.
+  - **2.69 (this change). The tab's own menu.** A tab had only its close mark; the Mac's
+    tab carries a menu of its own (`TitleBar.swift:214-231`): *Open Beside* for the tabs
+    beside the one in view, *Rename…*, then the tabs to close — *Close Tab*, *Close Other
+    Tabs* (dimmed when one tab is open, as the Mac's is) and *Close All Tabs* — in the
+    Mac's order, with the Mac's words. The name is written in the tab itself, where the
+    title was (`TitleBar.swift:170-200`), as on the Mac, and the tab's rename is the
+    session's own name — the same one the sidebar's row writes.
   - **2.61 (this change). The provider's marks.** The Mac draws the maker's mark beside
     each model (`ProviderLogo.swift`), monochrome so it follows the ink, or in the maker's
     own colour where it has one. The marks themselves are not published as a package, but

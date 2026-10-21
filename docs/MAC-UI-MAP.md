@@ -112,8 +112,10 @@ composer goes to the engine as its Model.ref. In 0.5.73 a session's row took the
 menu (`SidebarView.swift:600-643`) — pinned or not, beside the one in view, its name, the
 folder it works in, the conversation as Markdown, put away or brought back, and the one
 that undoes — and a pinned session sits at the top of the sidebar, in a section of its own
-(`SidebarView.swift:115-121`). The port's
-own list of what is left is now: the tab's menu; the window's remembered
+(`SidebarView.swift:115-121`). In 0.5.74 a tab took the Mac's own menu
+(`TitleBar.swift:214-231`): *Open Beside*, *Rename…*, *Close Tab*, *Close Other Tabs* and
+*Close All Tabs*, and the name is written in the tab itself, where the title was. The port's
+own list of what is left is now: the window's remembered
 state (the widths, the panels, the tabs and the selection); the choices the Mac keeps (the
 last model, the approval mode, the steps' detail, the favourites, push after commit, the
 typeface and the window material); and the last three motions — the 45 % of a disabled
