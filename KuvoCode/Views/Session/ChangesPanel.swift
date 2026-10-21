@@ -80,8 +80,9 @@ struct ChangesPanel: View {
             // A worktree's work is all on its branch, committed or not.
             if old == new, worktree != nil, new != nil { changes.scope = .branch }
         }
-        // Git is quick to ask; look again every few seconds while the panel is open.
-        .task(id: "\(changes.directory)\n\(changes.scope)\n\(changes.base ?? "")") {
+        // Git is quick to ask; look again every few seconds while the panel is open. Started over
+        // for another session in the same folder: the loop reads the session it began with.
+        .task(id: "\(changes.directory)\n\(changes.scope)\n\(changes.base ?? "")\n\(model?.id ?? "")") {
             while !Task.isCancelled {
                 await changes.refresh(fallback: engineChanges, edits: editedFiles)
                 try? await Task.sleep(for: .seconds(3))
@@ -93,6 +94,8 @@ struct ChangesPanel: View {
                 highlighting[file.id] = await DiffHighlighting.make(for: file)
             }
         }
+        // A comment half written is the session's it was begun in: not saved to another's.
+        .onChange(of: model?.id) { draft = nil }
         .onChange(of: model?.isRunning) { Task { await changes.refresh(fallback: engineChanges, edits: editedFiles) } }
         .onChange(of: engineChanges) { Task { await changes.refresh(fallback: engineChanges, edits: editedFiles) } }
         .onChange(of: editedFiles) { Task { await changes.refresh(fallback: engineChanges, edits: editedFiles) } }
