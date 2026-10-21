@@ -174,6 +174,38 @@ nonisolated extension Git {
     }
 }
 
+/// Bringing a worktree session's work back: Merge in its Changes panel.
+nonisolated extension Workspace.Worktree {
+    enum MergeOutcome: Equatable, Sendable {
+        case merged(into: String)
+        /// Nothing changed: the merge stopped on these files.
+        case conflict([String], into: String)
+        case failed(String)
+    }
+
+    /// Merges what's committed on the worktree's branch (`directory` is the session's folder in
+    /// it) into the project's folder, on the branch it was made from.
+    func mergeBack(from directory: String, environment: [String: String]) -> MergeOutcome {
+        guard let target = Git.currentBranch(in: project) else { return .failed("The project’s folder isn’t on a branch.") }
+        if let base, target != base {
+            return .failed("The project’s folder is on \(target) now. Switch it back to \(base) to merge, or create a pull request.")
+        }
+        if let reason = unready(in: directory, against: target) { return .failed(reason) }
+        return switch Git.merge(branch, into: project, environment: environment) {
+        case .merged: .merged(into: target)
+        case .conflict(let files): .conflict(files, into: target)
+        case .failed(let message): .failed(message)
+        }
+    }
+
+    /// Why the work can't go anywhere yet, if it can't.
+    func unready(in directory: String, against target: String) -> String? {
+        if Git.hasUncommittedChanges(in: directory) { return "Commit the changes first. Only what’s committed goes." }
+        if Git.commitsAhead(of: target, in: directory) == 0 { return "\(branch) has nothing \(target) doesn’t have yet." }
+        return nil
+    }
+}
+
 /// What git said when it refused.
 struct GitFailure: LocalizedError {
     var message: String
