@@ -199,4 +199,28 @@ import Testing
         #expect(carriedOn.count > 6, "it carries on: \(carriedOn)")
         #expect(seats.speakers.last != nil)
     }
+
+    /// Undo From Here (G3): your message and what came after it go, its words come back to you,
+    /// and the bots that heard it are told it was taken back at their next turn, once.
+    @Test func undoFromYourMessage() async throws {
+        defer { done() }
+        let (app, group, seats) = try await start(lines: [
+            "Ada": ["Postgres, then.", "PASS", "SQLite, for a small app.", "PASS"],
+            "Ben": ["Fine by me.", "PASS", "Agreed.", "PASS"],
+        ])
+        app.groups.send("We need a big database server.", to: group.id)
+        try await talkedThrough(app, group)
+        let mine = try #require(app.groups.messages(in: group.id).first { $0.author == nil })
+        #expect(app.groups.undo(from: mine.id, in: group.id) == "We need a big database server.")
+        #expect(app.groups.messages(in: group.id).filter { $0.kind == .message }.isEmpty, "the message and what came after it go")
+
+        app.groups.send("It's a small notes app.", to: group.id)
+        try await talkedThrough(app, group)
+        let after = seats.turns.filter { !$0.heard.hasPrefix("For the app, not the chat") }.suffix(2)
+        // Told it was taken back, with what it said, and told so once.
+        let ada = try #require(after.first { $0.bot == "Ada" })
+        #expect(ada.heard.contains("We need a big database server."))
+        #expect(ada.heard.contains("It's a small notes app."))
+        #expect(app.groups.group(group.id)?.retracted == nil)
+    }
 }
