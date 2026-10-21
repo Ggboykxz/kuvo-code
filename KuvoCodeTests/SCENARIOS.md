@@ -1,0 +1,46 @@
+# Scenarios the app tests guard
+
+The app tests follow the scenarios in `Tests/E2E/SCENARIOS.md` (what people do with Kuvo Code),
+by the same IDs. The end-to-end runs try each one for real, with a model; the app tests keep each
+one working on every change, on CI, without a model or the network: the app's real stores, real
+git and real files, with the engine stubbed at its HTTP API. A bug an end-to-end run found and
+fixed (❌→✅ there) gets a test here when it can be tried this way.
+
+Each suite's comment says what it tries; this is where each scenario stands.
+
+| Scenario | Suites | Not guarded yet |
+| --- | --- | --- |
+| A1, J2 A model ready, or the one you picked when it can't run | StartingModelTests, ProviderCompatibilityTests | a model that's gone asks for another |
+| A4 Bring over an opencode setup | OpencodeImportTests | |
+| A6 Quit with work running, open again | DraftsTests, StoredFilesTests | the queue held under Paused, Resume sends it |
+| B5 Review the changes, comment on a line, send the comments | SessionEditsTests, SentMessageTests, DraftsTests | |
+| B6 Undo a turn, then change your mind | ComposerReturnsTests, AttachmentsTests | outside git, Undo says the files stay as they are |
+| B7 Commit with a message, push, make a branch | ChangesCommitTests, ChangesDiscardTests | |
+| B8 A session in a worktree, merged back | WorktreeSessionTests, GitBranchesTests | |
+| B10 Ask First: allow once, always, deny | ComposerReturnsTests, ProjectFoldersTests | a piped command asked as one; Always Allowed lists every project's |
+| B12 Queue while it works | ComposerReturnsTests | |
+| B14 Switch model mid-conversation, or elsewhere | SessionsTests | |
+| B16 Find in a long conversation | ConversationFindTests | |
+| B17 A folder that isn't a git repository | | the Changes tab lists what the session's edits changed |
+| B18 Rename, archive, restore, delete | SidebarListsTests, SessionsTests, SessionTitlesTests | search leaves deleted sessions out |
+| B20 Commands and skills | SlashCommandsTests, SkillLibraryTests | |
+| C1–C3 Attach pictures, PDFs, files | AttachmentRoutesTests, AttachmentsTests | a sent message keeps its files (C2) |
+| C4 Quote part of a reply and answer it | QuotingTests | |
+| C5, C6 Files in the panel; the agent shows one | FileLinksTests, PanelTabsTests | |
+| E, B15 The agent's browser | BrowserToolServerTests | |
+| E5, L33, L34, K6 Sign-ins, codes, passwords | BrowserAsksTests, MachineSignOutTests | |
+| F2, F6 A bot's job, told or edited | BotsTests | |
+| F3, F4, L15–L19 Wake-ups | WakeUpsTests, StepSummariesTests | Wake Up Now sends once (L26) |
+| F7 Export and import a bot | AgentMessagesTests | |
+| F10, L39, L40 Agents writing to each other | AgentMessagesTests, AgentReferencesTests | |
+| G1–G3 Group chats | BotsTests, AgentMessagesTests | |
+| H1, H2 MCP servers | MCPCommandTests, ChromeDevToolsUpgradeTests, IntegrationsTests | |
+| H4 A skill from GitHub | SkillLibraryTests | |
+| I1 Add a machine | AddMachineTests | |
+| I2 A project on a machine | MachineFoldersTests, AttachmentRoutesTests, SignInSyncTests, MachineSignOutTests | |
+| K1 Settings keep what you change | EngineSettingsFileTests | |
+| K3 Notifications | NotificationMaskingTests | |
+| L50 Quit mid-job, open again | | the interrupted run says where it stopped |
+| The panel's terminal | TerminalColorsTests | |
+| Export a conversation | ConversationExportTests | |
+| Anonymous usage stays anonymous | AnalyticsPrivacyTests | |
