@@ -9,7 +9,7 @@ struct PermissionsSettings: View {
     @State private var saved: [Saved] = []
 
     /// An approval saved with Always, and the engine that keeps it: this Mac's, or a machine's.
-    private struct Saved: Identifiable {
+    struct Saved: Identifiable {
         let permission: SavedPermission
         let engine: MachineEngine?
         var id: String { (engine?.machine.id ?? "") + "/" + permission.id }
@@ -133,10 +133,16 @@ struct PermissionsSettings: View {
         for engine in app.machines.engines.values.sorted(by: { $0.machine.name < $1.machine.name }) where engine.isReady {
             if let api = engine.api { engines.append((api, engine)) }
         }
+        saved = await Self.saved(from: engines, sessions: workspace.sessions) { saved = $0 }
+    }
+
+    /// Every engine's approvals, `shown` as each engine answers (a slow machine doesn't hold up
+    /// this Mac's). An engine lists one project's at a time: the folders outside any, then each
+    /// project its sessions are in.
+    static func saved(from engines: [(api: OpenCodeAPI, engine: MachineEngine?)], sessions: [Session], shown: ([Saved]) -> Void = { _ in }) async -> [Saved] {
         var all: [Saved] = []
         for (api, engine) in engines {
-            let sessions = workspace.sessions.filter { RemoteFolder.machine(of: $0.location.directory) == engine?.machine.id }
-            // An engine lists one project's at a time: the folders outside any, then each project's.
+            let sessions = sessions.filter { RemoteFolder.machine(of: $0.location.directory) == engine?.machine.id }
             var found = (try? await api.savedPermissions()) ?? []
             for project in Set(sessions.map(\.projectID)).sorted() {
                 for permission in (try? await api.savedPermissions(projectID: project)) ?? [] where !found.contains(where: { $0.id == permission.id }) {
@@ -144,10 +150,9 @@ struct PermissionsSettings: View {
                 }
             }
             all += found.map { Saved(permission: $0, engine: engine) }
-            // Shown as each engine answers: a slow machine doesn't hold up this Mac's.
-            saved = all
+            shown(all)
         }
-        saved = all
+        return all
     }
 
     private func projectName(_ id: String) -> String {

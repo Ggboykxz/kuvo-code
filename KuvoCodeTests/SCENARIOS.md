@@ -22,7 +22,7 @@ end-to-end runs' alone, as are those that need a real machine over SSH (F9, L46,
 | B7 Commit with a message, push, make a branch | ChangesCommitTests, ChangesDiscardTests, ChangesStagingTests, ChangesFileNamesTests | |
 | B8 A session in a worktree, merged back | WorktreeSessionTests, GitBranchesTests | |
 | B9 Plan first, then Build It | AgentAsksTests | |
-| B10 Ask First: allow once, always, deny | ComposerReturnsTests, ProjectFoldersTests, PermissionCardsTests | Always Allowed lists every project's (Settings' view code) |
+| B10 Ask First: allow once, always, deny | ComposerReturnsTests, ProjectFoldersTests, PermissionCardsTests, AlwaysAllowedTests | |
 | B11 The agent asks questions, answered in the card | AgentAsksTests | |
 | B12 Queue while it works, Stop, Resume | ComposerReturnsTests, QueueTests | |
 | B13 Two sessions at once, each with its own asks | AgentAsksTests | |
