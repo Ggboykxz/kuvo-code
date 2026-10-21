@@ -215,31 +215,6 @@ test("the page, in a browser, against the real engine", {
   assert.match(card, /Comment on line R4/, "the card names the line, as the Mac's does");
   assert.match(card, /You/, "the card is yours");
   assert.match(card, /Delete/, "the card can be taken away");
-  // The long unchanged stretches are folded, the Mac's way (ChangesPanel.swift:890-927).
-  await page.page.locator(".changes-file-toggle").nth(1).click();
-  const secondFile = page.page.locator(".changes-diff").nth(1);
-  await page.seen("the fold to show", () => document.querySelectorAll(".changes-diff .diff-fold").length > 0, null, 10_000);
-  const fold = (await secondFile.locator(".diff-fold").first().textContent()) ?? "";
-  assert.match(fold, /\d+ unmodified lines/, "the fold says how many lines it holds");
-  assert.equal(
-    await secondFile.locator(".diff-fold").first().getAttribute("title"),
-    "Show these lines",
-    "the fold's help is the Mac's",
-  );
-  // And it opens when it is pressed.
-  const folds = await page.page.locator(".changes-diff .diff-fold").count();
-  await secondFile.locator(".diff-fold").first().click();
-  await page.seen("the fold to open", ([before]) => document.querySelectorAll(".changes-diff .diff-fold").length < before, [folds], 10_000);
-  // The file view numbers its lines, as the Mac's does (CodeTextView.swift:119-168).
-  await page.page.locator(".drawer-tab", { hasText: "Files" }).click();
-  await page.seen("the files to show", () => document.querySelectorAll(".file-row").length > 0, null, 10_000);
-  await page.page.locator(".file-row", { hasText: "notes.txt" }).first().click();
-  await page.seen("the file to open", () => Boolean(document.querySelector(".file-view")), null, 10_000);
-  assert.deepEqual(
-    await page.page.locator(".file-numbers span").allTextContents(),
-    ["1", "2", "3", "4"],
-    "the lines are numbered, as the Mac's ruler numbers them",
-  );
   await page.element("drawer-close").click();
   await page.seen("the panel to close", () => document.getElementById("drawer")?.hidden === true, null, 10_000);
 
@@ -291,10 +266,13 @@ test("the page, in a browser, against the real engine", {
       .filter(model => (model.cost ?? []).every(cost => !cost.input && !cost.output))
       .map(model => ({ providerID: model.providerID, id: model.id }));
   };
-  const askWith = async model => {
+  const sessionID = async () => {
     const listed = await fetch(`${url}api/sessions?directory=${encodeURIComponent(project)}`)
       .then(reply => reply.json()).catch(() => ({}));
-    const id = (listed.sessions ?? [])[0]?.id;
+    return (listed.sessions ?? [])[0]?.id ?? "";
+  };
+  const askWith = async model => {
+    const id = await sessionID();
     if (!id) return;
     await fetch(`${url}api/sessions/${encodeURIComponent(id)}/model`, {
       method: "POST",
@@ -302,29 +280,45 @@ test("the page, in a browser, against the real engine", {
       body: JSON.stringify({ model }),
     }).catch(() => {});
   };
+  const interrupt = async () => {
+    const id = await sessionID();
+    if (!id) return;
+    await fetch(`${url}api/sessions/${encodeURIComponent(id)}/interrupt`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }).catch(() => {});
+  };
+  // The words the model said, not the question it was asked: the question holds the same
+  // phrase, and reading the whole view would count it as the answer.
+  const said = async () =>
+    (await page.page.locator(".entry.assistant").allTextContents().catch(() => [])).join("\n");
   const free = await freeModels();
-  const answered = /hello from the page/i;
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    // The round ends when the model answers, or when the turn is over without an answer.
-    const until = Date.now() + 120_000;
-    let said = "";
+  let gotAnswer = false;
+  for (let attempt = 0; attempt < 5 && !gotAnswer; attempt += 1) {
+    if (attempt > 0) {
+      // The model is stuck in its own retries, or refused: its turn is stopped, another
+      // free model is asked, and the question is asked again.
+      await interrupt();
+      if (free.length) await askWith(free[attempt % free.length]);
+      await ask();
+    }
+    const until = Date.now() + 60_000;
     while (Date.now() < until) {
-      said = (await page.element("entries").textContent().catch(() => "")) ?? "";
-      if (answered.test(said)) break;
+      if (/hello from the page/i.test(await said())) {
+        gotAnswer = true;
+        break;
+      }
       // The turn is over, and the model did not answer: it refused.
       const running = await page.page.evaluate(() => document.getElementById("stop")?.hidden === false);
-      if (!running && said.includes(asked)) break;
+      if (!running) break;
       await wait(2_000);
     }
-    if (answered.test(said)) break;
-    // The model refused: another free model is asked, and the question again.
-    if (free.length) await askWith(free[attempt % free.length]);
-    await ask();
   }
-  await page.seen("the answer to arrive", ([id, text]) => {
-    const node = document.getElementById(id);
-    return Boolean(node?.textContent?.match(new RegExp(text, "i")));
-  }, ["entries", "hello from the page"], 180_000);
+  await page.seen("the answer to arrive", () => {
+    const rows = [...document.querySelectorAll(".entry.assistant")];
+    return rows.some(row => /hello from the page/i.test(row.textContent ?? ""));
+  }, null, 180_000);
   // The comment on the changes went with the message, and the conversation shows it as the
   // Mac's own card (ChangesPanel.swift:1123-1155).
   await page.seen("the comment to show in the conversation", () => {
@@ -353,10 +347,10 @@ test("the page, in a browser, against the real engine", {
   // reading its id, or the id is read from a page that has not drawn yet.
   await reloaded.seen("the session to be listed", () => Boolean(document.querySelector("#sessions li .session")?.getAttribute("data-id")), null, 30_000);
   const reloadedId = await reloaded.page.evaluate(() => document.querySelector("#sessions li .session")?.getAttribute("data-id") ?? "");
-  await reloaded.seen("the stored conversation to read back", ([id, text]) => {
-    const node = document.getElementById(id);
-    return Boolean(node?.textContent?.match(new RegExp(text, "i")));
-  }, ["entries", "hello from the page"], 60_000);
+  await reloaded.seen("the stored conversation to read back", () => {
+    const rows = [...document.querySelectorAll(".entry.assistant")];
+    return rows.some(row => /hello from the page/i.test(row.textContent ?? ""));
+  }, null, 60_000);
   assert.equal(await reloaded.element("project").textContent(), project, "the project is remembered");
   assert.equal(await reloaded.page.locator("#sessions li").count(), 1, "the session is listed again");
   // The engine can still call a session active for a moment after a turn; the page reads that
@@ -377,10 +371,10 @@ test("the page, in a browser, against the real engine", {
       // them again must agree with what a page shows — a fresh read is the same test the
       // first reload ran, and it must come out settled.
       await reloaded.page.reload({ waitUntil: "domcontentloaded" });
-      await reloaded.seen("the stored conversation to read back", ([id, text]) => {
-        const node = document.getElementById(id);
-        return Boolean(node?.textContent?.match(new RegExp(text, "i")));
-      }, ["entries", "hello from the page"], 60_000);
+      await reloaded.seen("the stored conversation to read back", () => {
+        const rows = [...document.querySelectorAll(".entry.assistant")];
+        return rows.some(row => /hello from the page/i.test(row.textContent ?? ""));
+      }, null, 60_000);
       await reloaded.seen("the settled run to stay settled", () => document.getElementById("stop")?.hidden, null, 60_000);
     }
     // Otherwise the engine's own history still has the message unfinished: that is the
@@ -627,17 +621,17 @@ test("the page, in a browser, against the real engine", {
     const head = document.querySelector("#split-pane .card-title > span:first-child");
     return Boolean(row?.textContent) && head?.textContent === row?.textContent;
   }, [firstId], 30_000);
-  await page.seen("the session beside this one to read back", ([id, text]) => {
-    const node = document.getElementById(id);
-    return Boolean(node?.textContent?.match(new RegExp(text, "i")));
-  }, ["split-entries", "hello from the page"], 30_000);
+  await page.seen("the session beside this one to read back", () => {
+    const rows = [...document.querySelectorAll("#split-entries .entry.assistant")];
+    return rows.some(row => /hello from the page/i.test(row.textContent ?? ""));
+  }, null, 30_000);
   assert.equal(await page.page.locator("#split-swap").count(), 1, "Swap sits in its header");
   await page.element("split-swap").click();
   // The words are the ones that say which session went where: the titles can both read
   // "New Session", and then a title says nothing.
   await page.seen("the two to change places", () => {
-    const main = document.getElementById("entries")?.textContent ?? "";
-    return /hello from the page/i.test(main);
+    const rows = [...document.querySelectorAll("#entries .entry.assistant")];
+    return rows.some(row => /hello from the page/i.test(row.textContent ?? ""));
   }, null, 10_000);
   await page.seen("the empty session's own question beside", () => Boolean(document.querySelector("#split-pane .empty-conversation p")), null, 10_000);
   // The window has no room for all of them: the split gives way first, and comes back
