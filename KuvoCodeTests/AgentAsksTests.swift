@@ -86,4 +86,44 @@ import Testing
         #expect(asked == ["POST /api/session/ses_a/agent", "POST /api/session/ses_a/prompt"], "Build first, then the go-ahead")
         #expect((engine.requests("POST", "/api/session/ses_a/prompt").first?.body["text"] as? String)?.contains("build it, as planned") == true)
     }
+
+    /// An MCP server asking you something mid-task (H3): its form belongs to no session, only to
+    /// the folder; it shows in the conversation whose tool of that server is at work, not in
+    /// another of the same folder, and your answer goes back under that folder.
+    @Test func anMCPServersFormShowsWhereItsToolRuns() async throws {
+        defer { engine.stop() }
+        let working: [[String: Any]] = [
+            ["id": "msg_01", "type": "user", "time": ["created": 1], "text": "File an issue for the crash"],
+            ["id": "msg_02", "type": "assistant", "agent": "build", "time": ["created": 2], "model": ["id": "m", "providerID": "p"],
+             "content": [["type": "tool", "id": "call_1", "name": "github_create_issue", "executed": true,
+                          "state": ["status": "running", "input": ["title": "Crash on launch"]]]]],
+        ]
+        engine.list([StubEngine.session("ses_a", title: "Issue", directory: project, created: 2),
+                     StubEngine.session("ses_b", title: "Other", directory: project, created: 1)], running: ["ses_a"])
+        engine.conversation("ses_a", working)
+        engine.conversation("ses_b", [])
+        engine.on("POST", "/api/session/*", json: [:])
+        await workspace.refresh()
+        let a = try #require(workspace.model(for: "ses_a"))
+        let b = try #require(workspace.model(for: "ses_b"))
+        await a.load()
+        await b.load()
+
+        let form: [String: Any] = ["id": "frm_repo", "sessionID": FormRequest.anySession, "title": "github is requesting input",
+                                   "metadata": ["kind": "mcp-elicitation", "server": "github", "message": "Which repository?"],
+                                   "fields": [["key": "repo", "type": "string"]]]
+        let created = try ServerEvent(json: JSONSerialization.data(withJSONObject: [
+            "id": "evt_" + Identifier.message().dropFirst(4), "type": "form.created", "created": Date().timeIntervalSince1970 * 1000,
+            "location": ["directory": project], "data": ["form": form],
+        ]))
+        workspace.handle(created)
+        #expect(a.forms.map(\.id) == ["frm_repo"])
+        #expect(b.forms.isEmpty, "not the other conversation's")
+
+        a.answer(try #require(a.forms.first), with: ["repo": .string("acme/app")])
+        try await eventually { !engine.requests("POST", "/form/frm_repo/reply").isEmpty }
+        let reply = try #require(engine.requests("POST", "/api/session/global/form/frm_repo/reply").first)
+        #expect(reply.body["answer"] as? [String: String] == ["repo": "acme/app"])
+        #expect(reply.headers["x-opencode-directory"]?.removingPercentEncoding == project, "filed under its folder")
+    }
 }

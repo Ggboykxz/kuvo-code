@@ -14,6 +14,7 @@ nonisolated final class StubEngine: @unchecked Sendable {
         var method: String
         var path: String
         var query: [String: String]
+        var headers: [String: String]
         var body: [String: Any]
         var description: String { "\(method) \(path) \(body)" }
     }
@@ -93,7 +94,8 @@ nonisolated final class StubEngine: @unchecked Sendable {
         let method = request.httpMethod ?? "GET"
         let path = request.url!.path()
         let body = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
-        let recorded = Request(method: method, path: path, query: query, body: body)
+        let headers = Dictionary((request.allHTTPHeaderFields ?? [:]).map { ($0.key.lowercased(), $0.value) }) { first, _ in first }
+        let recorded = Request(method: method, path: path, query: query, headers: headers, body: body)
         let key = "\(method) \(path)"
         let answer = lock.withLock {
             log.append(recorded)

@@ -41,6 +41,7 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | F10, L39, L40 Agents writing to each other | AgentMessagesTests, AgentReferencesTests | |
 | G1–G3 Group chats | BotsTests, AgentMessagesTests, GroupChatTests | a meeting on a schedule (G4) |
 | H1, H2 MCP servers | MCPCommandTests, ChromeDevToolsUpgradeTests, IntegrationsTests | |
+| H3 An MCP server asks mid-task | AgentAsksTests | |
 | H4 A skill from GitHub | SkillLibraryTests | |
 | I1 Add a machine, at one or more addresses | AddMachineTests, MachineAddressesTests | choosing the address that answers (needs SSH) |
 | I2 A project on a machine | MachineFoldersTests, AttachmentRoutesTests, SignInSyncTests, MachineSignOutTests | |
