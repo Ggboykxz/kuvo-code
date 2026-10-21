@@ -13,6 +13,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Removing a connected machine signs its coding agents out there too, as it said it would; their sign-ins stayed when the machine was connected.
 - Connecting to a machine after an update of Kuvo Code no longer stops a session still working there to update its engine; the update waits until nothing runs.
 - A new password typed in a sign-in card for a saved account is saved in its place; agents allowed to sign in on their own kept using the old one. Allowing them with a password filled in from Passwords asks for Touch ID, as it should.
+- Turning notifications on in System Settings after saying no works without restarting Kuvo Code.
 ## 0.6.2
 
 - A worktree's branch named after a title in another language keeps its letters ("Giriş düzeltmesi" is giris-duzeltmesi, not giri-dzeltmesi).

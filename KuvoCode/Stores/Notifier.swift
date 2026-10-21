@@ -390,8 +390,11 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         NSApp.dockTile.badgeLabel = Self.showsBadge && count > 0 ? "\(count)" : nil
     }
 
+    /// Whether notifications may show. A yes is kept; a no is asked again each time (macOS shows
+    /// its prompt once, and answers at once after), so turning them on in System Settings works
+    /// without starting Kuvo Code again.
     private func authorize() async -> Bool {
-        if let isAuthorized { return isAuthorized }
+        if isAuthorized == true { return true }
         let granted = (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])) ?? false
         isAuthorized = granted
         return granted
