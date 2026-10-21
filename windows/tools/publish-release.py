@@ -71,7 +71,9 @@ def latest_run():
     if status != 200:
         return None
     for run in runs.get("workflow_runs", []):
-        if run.get("name") == "Windows engine" and run.get("event") == "push":
+        # The run may come from the push that carried the commit, or from the
+        # dispatch that asks for it: a release's own tag carries the run.
+        if run.get("name") == "Windows engine" and run.get("event") in ("push", "workflow_dispatch"):
             return run
     return None
 
