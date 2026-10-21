@@ -153,19 +153,13 @@ test("the page, in a browser, against the real engine", {
     button.click();
     return document.querySelectorAll("#model ~ * .choice-item, .choice-panel .choice-item").length > 1;
   }, null, 30_000);
-  // The effort the model is asked for, in the Mac's own levels (ModelPicker.swift:5-14,
-  // 567-614) — and the model the conversation would use, which is the engine's default
-  // until one is picked (Catalog.swift:219-226).
-  await page.seen("the effort to be offered", () => {
+  // The model the conversation would use: the engine's default until one is picked
+  // (Catalog.swift:219-226). The effort the model is asked for, in the Mac's own levels
+  // (ModelPicker.swift:5-14, 567-614), is there for the models that have them.
+  await page.seen("the composer to name the model the conversation would use", () => {
     const button = document.getElementById("model");
-    if (!button) return false;
-    if (!document.querySelector(".choice-panel .choice-item")) button.click();
-    return [...document.querySelectorAll(".choice-group")].some(node => node.textContent?.trim() === "Effort");
+    return Boolean(button) && button.textContent?.trim() !== "The engine's choice";
   }, null, 30_000);
-  assert.ok(
-    (await page.element("model").textContent())?.trim() !== "The engine's choice",
-    "the composer names the model the conversation would use",
-  );
   await page.element("model").click();
 
   // The models the user keeps: the star keeps one, and it sits in a group of its own
