@@ -984,6 +984,7 @@ final class Workspace {
                 (session(id) ?? session(root(of: id))).map { RemoteFolder.isRemote($0.location.directory) || OutsideAgents.isAgentSession($0) }
                     ?? (sessionMachines[id] != nil || bridgeSessions.contains(id))
             })
+            findParents(of: active)
         } catch { log.error("active sessions: \(String(describing: error), privacy: .public)") }
         isLoaded = true
     }
@@ -1236,6 +1237,9 @@ final class Workspace {
                 running = running.filter { id in
                     (session(id).map { RemoteFolder.machine(of: $0.location.directory) } ?? sessionMachines[id]) != machine || (bridgeActive == nil && isBridgeSession(id))
                 }.union(active).union(bridgeActive ?? [])
+                // A subagent's session has no row: its events will come from here.
+                for id in active where session(id) == nil && sessionMachines[id] == nil { sessionMachines[id] = machine }
+                findParents(of: active)
                 var asked = active.map { (id: $0, api: api) }
                 if let bridge, let bridgeActive { asked += bridgeActive.map { (id: $0, api: bridge) } }
                 await noteAsks(on: machine, in: asked, tell: reconnected, complete: bridgeActive != nil)
@@ -1911,6 +1915,15 @@ final class Workspace {
 
     /// Each subagent's session, by the session that started it.
     private var parents: [String: String] = [:]
+
+    /// Sessions found at work without a row (a subagent, maybe one sent off in the background,
+    /// whose start came while the app wasn't there to hear it): whose they are, so the session
+    /// they work for shows working.
+    private func findParents(of active: Set<String>) {
+        for id in active where session(id) == nil && parents[id] == nil {
+            Task { await reload(id) }
+        }
+    }
 
     /// Subagents a session handed work to that are at it now (through subagents of subagents),
     /// such as those it sent off in the background, which go on after its own turn ends.

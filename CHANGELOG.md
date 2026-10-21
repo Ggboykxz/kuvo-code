@@ -28,6 +28,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - The Now button on a session's wake-up sends it once: clicked again while it was on its way, the agent got it twice.
 - Wake-ups you paused stay paused when you archive the session and bring it back; bringing it back resumed them.
 - A bot imported from a .kuvobot file says its job once in its first message; the job's line was there twice.
+- A session whose subagent was still working when Kuvo Code opened (or a machine reconnected), one sent off in the background, shows as working in the sidebar, its tab and its bot; it showed as done.
 ## 0.6.2
 
 - A worktree's branch named after a title in another language keeps its letters ("Giriş düzeltmesi" is giris-duzeltmesi, not giri-dzeltmesi).
