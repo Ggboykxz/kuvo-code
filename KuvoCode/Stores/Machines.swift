@@ -865,8 +865,12 @@ final class Machines {
             return try JSONDecoder().decode([Machine].self, from: data)
         } catch {
             // One that won't read (a newer version's, or damaged) is set aside, as Kuvo Code's
-            // files are (`JSONFile`), before adding a machine writes over it.
-            UserDefaults.standard.set(data, forKey: "\(unreadableKey)-\(Int(Date.now.timeIntervalSince1970))")
+            // files are (`JSONFile`), before adding a machine writes over it; once, however many
+            // launches find it there.
+            let aside = UserDefaults.standard.dictionaryRepresentation().filter { $0.key.hasPrefix(unreadableKey) }
+            if !aside.values.contains(where: { $0 as? Data == data }) {
+                UserDefaults.standard.set(data, forKey: "\(unreadableKey)-\(Int(Date.now.timeIntervalSince1970))")
+            }
             Logger(subsystem: "run.kuvo.code", category: "machine").error("The machines couldn't be read and were set aside: \(error.localizedDescription, privacy: .public)")
             return []
         }
