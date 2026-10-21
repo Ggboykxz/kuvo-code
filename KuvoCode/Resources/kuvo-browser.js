@@ -478,6 +478,10 @@ async function host() {
   // The keeper's own session with each page and worker, which says what the browser is before
   // it loads anything; the ones clients open come after it.
   const own = new Map();
+  // And with each frame of another site in a page, which Chrome runs on its own, as a target of
+  // its own: held as it starts, as a page is.
+  const ownFrames = new Set();
+  const isOwn = (sessionId) => ownFrames.has(sessionId) || [...own.values()].includes(sessionId);
   // Downloads under way: their temporary names, and the names their sites gave them.
   const downloads = new Map();
   const browserIdentity = identity();
@@ -640,19 +644,25 @@ async function host() {
       owners.delete(message.params.sessionId);
       attachedTo.delete(message.params.sessionId);
     }
-    if (message.method === "Target.attachedToTarget" && !message.sessionId && !own.has(message.params.targetInfo.targetId)) {
+    // A page, or a frame of another site in one of the keeper's pages.
+    const frame = message.method === "Target.attachedToTarget" && message.sessionId && isOwn(message.sessionId);
+    if (message.method === "Target.attachedToTarget" && (frame || (!message.sessionId && !own.has(message.params.targetInfo.targetId)))) {
       const { sessionId, targetInfo, waitingForDebugger } = message.params;
-      own.set(targetInfo.targetId, sessionId);
+      if (frame) ownFrames.add(sessionId);
+      else own.set(targetInfo.targetId, sessionId);
       toChrome({ id: next++, method: "Network.setUserAgentOverride", params: browserIdentity, sessionId });
       // No passkeys here yet: a page asking for one hears so at once, instead of Chrome's passkey
       // dialog, which no one sees in the live view, holding the page still (Passkeys.swift). The
       // page domain first: without it Chrome takes the script and never runs it.
       toChrome({ id: next++, method: "Page.enable", params: {}, sessionId });
       toChrome({ id: next++, method: "Page.addScriptToEvaluateOnNewDocument", params: { source: NO_PASSKEYS, runImmediately: true }, sessionId });
+      // Its frames of other sites run on their own: the same for them (a sign-in button from
+      // another site, say).
+      toChrome({ id: next++, method: "Target.setAutoAttach", params: { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sessionId });
       if (waitingForDebugger) toChrome({ id: next++, method: "Runtime.runIfWaitingForDebugger", params: {}, sessionId });
       return;
     }
-    if (message.method === "Target.detachedFromTarget" && [...own.values()].includes(message.params.sessionId)) return;
+    if (message.method === "Target.detachedFromTarget" && (ownFrames.delete(message.params.sessionId) || [...own.values()].includes(message.params.sessionId))) return;
     if (message.method === "Browser.downloadWillBegin" && !downloads.has(message.params.guid)) {
       downloads.set(message.params.guid, message.params.suggestedFilename || "download");
       broadcast({ method: "Kuvo.downloading", params: { name: downloads.get(message.params.guid) } });
