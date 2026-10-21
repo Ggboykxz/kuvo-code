@@ -301,6 +301,13 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     offered, and the composer said "The engine's choice" where the Mac names a model. The
     levels are offered now, in a group of their own, the effort is written after the
     model's name, and the composer names the model the conversation would use.
+  - **2.78 (this change). The image viewer's own header, and the pictures beside it.** The
+    Mac's viewer opens on a picture with the others of the same message around it, and says
+    so: the picture's name, how many there are, the buttons that act on it, and the arrows
+    that step from one to the next (`ImageViewer.swift:128-131`, `164-221`). The port's
+    viewer showed one picture and its name, and nothing else. It holds the message's
+    pictures now, with the Mac's header and its arrows — and the Mac's keys: Escape and
+    space put it away, the arrows step, Ctrl+C copies the picture in view.
   - **2.61 (this change). The provider's marks.** The Mac draws the maker's mark beside
     each model (`ProviderLogo.swift`), monochrome so it follows the ink, or in the maker's
     own colour where it has one. The marks themselves are not published as a package, but
