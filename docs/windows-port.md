@@ -249,6 +249,17 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     the window under it dims to 30 % over 150 ms and is out of reach of a click, the scrim
     is the Mac's black at 62 %, and the picture comes in from 0.94 of its size. A
     double-click zooms it, as the Mac's does.
+  - **2.72 (this change). The choices the Mac keeps: the tool permissions, and the model
+    picked last.** The composer's mode menu held the modes and nothing else; the Mac's
+    holds the tool permissions too (`ComposerMenus.swift:120-135`: the modes, a line, then
+    *Tool Permissions* — *Approve All*, "Runs tools without asking", and *Ask First*,
+    "Asks before editing files or running commands"). The port's menu says all of that
+    now, and it acts: the choice becomes the session's own rules — the edits, the
+    commands, the pages and the searches either wait for an OK or do not
+    (`ComposerMenus.swift:45-53`; `PermissionsSettings.swift:22-31`) — and it is kept for
+    the next time (`toolApproval`). And the model picked last is kept whole, the id with
+    its slashes (`SessionView.swift:459-490`), so a new session starts with it, as the
+    Mac's does.
   - **2.61 (this change). The provider's marks.** The Mac draws the maker's mark beside
     each model (`ProviderLogo.swift`), monochrome so it follows the ink, or in the maker's
     own colour where it has one. The marks themselves are not published as a package, but

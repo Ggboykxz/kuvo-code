@@ -120,11 +120,13 @@ the window remembered its own state, as the Mac's does (`MainView.swift:38-40, 9
 which the General settings can put away. In 0.5.76 a picture attached to a message reached
 the engine for the first time — it goes as the Mac sends it, a URI and a name — and the
 viewer that looks at one moves as the Mac's does (`ImageViewer.swift:22, 28, 40`: 0.16 in,
-0.14 out, the window under it dimmed over 0.15). The port's
+0.14 out, the window under it dimmed over 0.15). In 0.5.77 the composer's mode menu took
+the Mac's tool permissions (`ComposerMenus.swift:120-135`) — *Approve All* and *Ask First*,
+which become the session's own rules — and the model picked last is kept, so a new session
+starts with it (`SessionView.swift:459-490`). The port's
 own list of what is left is now: the choices the Mac keeps (the
-last model, the approval mode, the steps' detail, the favourites, push after commit, the
-typeface and the window material). Everything else in §1–§9 is now the Mac's, and the
-checks hold it there.
+steps' detail, the favourites, push after commit, the typeface and the window material).
+Everything else in §1–§9 is now the Mac's, and the checks hold it there.
 
 **The wording is finished with the screens it lives in.** The shell's strings are the Mac's,
 word for word, and a check holds them to the Mac's own source
