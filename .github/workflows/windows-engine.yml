@@ -46,6 +46,9 @@ jobs:
   windows:
     name: engine on Windows, end to end
     runs-on: windows-latest
+    # A build that hangs is a build that fails: the job is stopped rather than left to
+    # wait for ever, so a release is never made from a run that did not finish.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

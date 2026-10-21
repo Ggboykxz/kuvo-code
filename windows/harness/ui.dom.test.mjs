@@ -37,7 +37,7 @@ test("the page, in a browser, against the real engine", {
   skip: !live
     ? "set KUVO_HARNESS_LIVE=1 to run the page against the engine"
     : chromium === null ? "playwright isn't installed: run `npm install` in windows/harness" : false,
-  timeout: 300_000,
+  timeout: 600_000,
 }, async t => {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-page-"));
   fs.writeFileSync(path.join(project, "notes.txt"), "Shopping list\n- coffee\n- oats\n");
@@ -242,13 +242,34 @@ test("the page, in a browser, against the real engine", {
     const node = document.getElementById(id);
     return Boolean(node?.textContent?.includes(text));
   }, ["entries", asked], 30_000);
-  // The public model can refuse for a while (a rate limit): the question is asked again,
-  // rather than the build failing on the provider's mood.
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  // The public free models can refuse for a while (a rate limit): the question is asked
+  // again, and another free model is asked, rather than the build failing on the
+  // provider's mood — the engine's own test asks again, the same way.
+  const freeModels = async () => {
+    const answer = await fetch(`${url}api/models`).then(reply => reply.json()).catch(() => ({}));
+    return (answer.models ?? [])
+      .filter(model => (model.cost ?? []).every(cost => !cost.input && !cost.output))
+      .map(model => ({ providerID: model.providerID, id: model.id }));
+  };
+  const askWith = async model => {
+    const listed = await fetch(`${url}api/sessions?directory=${encodeURIComponent(project)}`)
+      .then(reply => reply.json()).catch(() => ({}));
+    const id = (listed.sessions ?? [])[0]?.id;
+    if (!id) return;
+    await fetch(`${url}api/sessions/${encodeURIComponent(id)}/model`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model }),
+    }).catch(() => {});
+  };
+  const free = await freeModels();
+  for (let attempt = 0; attempt < 6; attempt += 1) {
     const said = (await page.element("entries").textContent().catch(() => "")) ?? "";
     if (/hello from the page/i.test(said)) break;
-    if (!/rate limit/i.test(said)) break;
-    await wait(20_000);
+    // The page says it is retrying when the model refuses; the refusal is the engine's.
+    if (!/rate limit|retrying/i.test(said)) break;
+    await wait(15_000);
+    if (free.length) await askWith(free[attempt % free.length]);
     await ask();
   }
   await page.seen("the answer to arrive", ([id, text]) => {

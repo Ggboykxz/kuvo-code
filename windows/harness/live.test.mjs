@@ -18,9 +18,8 @@ import { startHarness } from "./server.mjs";
 import { apply, emptyTranscript, fromHistory } from "./transcript.mjs";
 
 const live = process.env.KUVO_HARNESS_LIVE === "1";
-const minutes = 240_000;
 
-test("a real turn, end to end, on the pinned engine", { skip: live ? false : "set KUVO_HARNESS_LIVE=1 to install the engine and ask a public free model", timeout: minutes + 60_000 }, async t => {
+test("a real turn, end to end, on the pinned engine", { skip: live ? false : "set KUVO_HARNESS_LIVE=1 to install the engine and ask a public free model", timeout: 10 * 60_000 }, async t => {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-live-"));
   fs.writeFileSync(path.join(project, "hello.txt"), "hello from a file\n");
   t.after(() => fs.rmSync(project, { recursive: true, force: true }));
@@ -94,20 +93,25 @@ test("a real turn, end to end, on the pinned engine", { skip: live ? false : "se
   // The public free models can refuse for a while: a rate limit, or a day's share used up.
   // The question is asked again, and another free model is asked, rather than the build
   // failing on the provider's mood — the page's own test asks again, the same way.
+  // A few models are asked, and each is given a little while: a model that can answer says
+  // so in seconds, and one that cannot says so just as fast.
   const models = (await get("api/models")).models ?? [];
   const free = models
     .filter(model => (model.cost ?? []).every(cost => !cost.input && !cost.output))
-    .map(model => ({ providerID: model.providerID, id: model.id }));
+    .map(model => ({ providerID: model.providerID, id: model.id }))
+    .slice(0, 5);
   const refused = model => /rate limit|quota|429|free usage/i.test(JSON.stringify(model?.data?.error ?? ""));
   let turn = null;
   let id = null;
   for (const model of free) {
+    // A turn still under way is stopped, so the next model starts clean.
+    await post(`api/sessions/${encodeURIComponent(session.id)}/interrupt`, {}).catch(() => {});
     await post(`api/sessions/${encodeURIComponent(session.id)}/model`, { model });
     const before = turns.length;
     const asked = await post(`api/sessions/${encodeURIComponent(session.id)}/prompt`, { text });
     id = asked.id;
     assert.match(id, /^msg_/, "the prompt's id is one of ours");
-    const deadline = Date.now() + minutes;
+    const deadline = Date.now() + 60_000;
     while (turns.length === before && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 250));
     }
