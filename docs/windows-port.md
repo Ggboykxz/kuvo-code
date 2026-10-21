@@ -279,6 +279,12 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     view was thrown away by the draft that came with the session: the files in the box
     belong to the session they were picked for, and the draft of another one does not take
     them away.
+  - **2.75 (this change). The commit form's own choice.** The Mac's commit form remembers
+    whether the commit pushes afterwards (`ChangesPanel.swift:304, 331, 344`) — and the
+    button says what it will do: *Commit*, or *Commit and Push*. The port's form had the
+    mark but forgot it when the panel was closed, and the button always said *Commit*; it
+    is kept now, the button says what it does, and the commit pushes the branch when the
+    mark is on.
   - **2.61 (this change). The provider's marks.** The Mac draws the maker's mark beside
     each model (`ProviderLogo.swift`), monochrome so it follows the ink, or in the maker's
     own colour where it has one. The marks themselves are not published as a package, but
