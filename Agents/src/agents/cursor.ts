@@ -116,6 +116,9 @@ export class CursorAgent implements Agent {
     return account
   }
 
+  /** Cursor's page finishes by itself, wherever it's opened (its SDK waits on Cursor, not on this computer). */
+  readonly signsInRemotely = true
+
   async signIn(): Promise<SignInAttempt> {
     if (!this.instance.home && process.env.CURSOR_API_KEY) throw new Error("CURSOR_API_KEY is set in your environment: Kuvo Code uses that key.")
     const sdk = await this.sdk()

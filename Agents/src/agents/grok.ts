@@ -5,7 +5,7 @@ import { homedir } from "node:os"
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { providerID, type AgentAccount } from "../accounts"
-import type { Agent, AgentContext, Account, SignInAttempt, Thread } from "../agent"
+import type { Agent, AgentContext, Account, SignInAttempt, SignInOptions, Thread } from "../agent"
 import { accountName, ContextWindows, model } from "../agent"
 import { emit } from "../events"
 import { AcpThread, questionFields } from "../acp"
@@ -145,22 +145,30 @@ export class GrokAgent implements Agent {
     return { installed: true, signedIn: true, label: process.env.XAI_API_KEY ? "xAI API key" : "grok.com" }
   }
 
-  async signIn(): Promise<SignInAttempt> {
+  /** Its device code works wherever its page is opened. */
+  readonly signsInRemotely = true
+
+  async signIn(_methodID = "grok", options: SignInOptions = {}): Promise<SignInAttempt> {
     // On a machine without it yet: installed first, said at once.
     if (onMachine && !this.executable()) return afterInstall("Installing Grok's CLI on this machine…", "Finish signing in to Grok in your browser.", false, async () => {
       if (!(await this.installedProgram())) throw new Error("Grok's CLI couldn't be installed on this machine. Try again.")
-      return this.signIn()
+      return this.signIn(_methodID, options)
     })
     const executable = await this.installedProgram()
     if (!executable) throw new Error("Install Grok's CLI first: npm install -g @xai-official/grok")
+    // On another device: a device code, as `grok login --device-auth` has it.
     return commandSignIn({
       command: executable,
-      args: ["login"],
+      args: options.remote ? ["login", "--device-auth"] : ["login"],
       env: this.env(),
       home: this.context.home,
       temporary: this.context.temporary,
-      instructions: "Finish signing in to Grok in your browser. Grok's CLI keeps the sign-in, as when you run grok login.",
+      instructions: options.remote
+        ? "Open Grok's page, sign in, and enter the code it shows here. Grok's CLI keeps the sign-in, as when you run grok login."
+        : "Finish signing in to Grok in your browser. Grok's CLI keeps the sign-in, as when you run grok login.",
       signedIn: async () => (await this.read(true)).signedIn,
+      printedPage: options.remote,
+      userCode: options.remote ? /\b([A-Z0-9]{4,}(?:-[A-Z0-9]{4,})+)\b/ : undefined,
     })
   }
 

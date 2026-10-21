@@ -26,6 +26,11 @@ export interface CommandSignInOptions {
   codePrompt?: RegExp
   /** Signed in: what that changes (an ended sign-in is behind it). */
   onComplete?: () => void
+  /** For a page opened on another device: the one it prints, at once (what it hands its browser
+   * comes back to this computer, which another device can't reach). */
+  printedPage?: boolean
+  /** Where a device code is in what it prints, for showing beside the page. */
+  userCode?: RegExp
 }
 
 /** The catcher, in the temporary folder: a path without spaces (Python splits BROWSER on them). */
@@ -93,15 +98,27 @@ export async function commandSignIn(options: CommandSignInOptions): Promise<Sign
   let url = ""
   let printedAt: number | undefined
   for (let waited = 0; waited < 15_000 && !url; waited += 200) {
-    if (existsSync(urlFile)) url = readFileSync(urlFile, "utf8").split("\n")[0].trim()
     const printed = firstURL(output)
-    if (printed) printedAt ??= waited
-    if (!url && printed && waited - printedAt! >= 3_000) url = printed
+    if (options.printedPage) {
+      if (printed) url = printed
+    } else {
+      if (existsSync(urlFile)) url = readFileSync(urlFile, "utf8").split("\n")[0].trim()
+      if (printed) printedAt ??= waited
+      if (!url && printed && waited - printedAt! >= 3_000) url = printed
+    }
     if (!url) await Bun.sleep(200)
     if (status.status !== "pending") break
   }
+  // A device code printed with the page: a moment more for it, if it comes after.
+  let userCode: string | undefined
+  for (let waited = 0; options.userCode && waited < 2_000; waited += 200) {
+    userCode = options.userCode.exec(output)?.[1]
+    if (userCode || status.status !== "pending") break
+    await Bun.sleep(200)
+  }
   return {
     url,
+    userCode,
     instructions: options.instructions,
     mode: "auto",
     acceptsCode: Boolean(options.codePrompt),

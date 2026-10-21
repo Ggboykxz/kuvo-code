@@ -213,6 +213,18 @@ itself. A host serves:
     any; `PATCH …/accounts/<provider> {label}`; `DELETE …/accounts/<provider>`.
     `metadata.signInEnded` true: its maker ended the sign-in; mark the account (the Mac says
     "Sign-in ended") and offer to sign in again.
+  - Signing in to an agent: `POST kuvo/agents/api/integration/<provider>/connect/oauth {methodID,
+    remote}` → `{data: {attemptID, url, instructions, mode, acceptsCode?, userCode?, time}}`; `GET
+    …/connect/oauth/<attempt>` → its status (`pending`, with `url` and `message` as they come;
+    `complete`; `failed` with `message`; `expired`); `POST …/connect/oauth/<attempt>/complete
+    {code}` for one with `acceptsCode`; `DELETE …/connect/oauth/<attempt>` to give up. A key:
+    `POST …/connect/key {key}`. With `remote: true` the page is for another device (the phone),
+    so it doesn't come back to the computer's `localhost`: Claude Code's ends on a code to paste
+    back (`acceptsCode`), Codex's and Grok's are device codes (`userCode`, shown beside the page,
+    to copy), Cursor's finishes by itself. An agent whose sign-in can do that has
+    `metadata.remoteSignIn` true in `…/integration`; for the others (Antigravity, whose Google page
+    comes back to `localhost`) `remote: true` answers 400: sign in on the computer it runs on.
+    Signed in, an account's Custom Auto limit goes, as when you sign in there.
   - Custom Auto: a session's model `{providerID: "auto", id: <list ID>}` runs down that list,
     going on with the next model at a usage limit or an error. `kuvo/agents/api/kuvo/auto`: `GET`
     and `PUT {lists}` → `{data: {entries, lists: [{id, name, entries: [{providerID, modelID,

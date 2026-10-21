@@ -171,7 +171,7 @@ exit 1
     return script
   }
 
-  async function attempt(folder: string, options: { signedInBefore?: boolean; onComplete?: () => void } = {}) {
+  async function attempt(folder: string, options: { signedInBefore?: boolean; onComplete?: () => void; remote?: boolean } = {}) {
     return commandSignIn({
       command: fakeLogin(folder),
       args: [],
@@ -182,8 +182,46 @@ exit 1
       signedIn: async () => options.signedInBefore || existsSync(join(folder, "account")),
       codePrompt: /Paste code here if prompted >\s*/g,
       onComplete: options.onComplete,
+      printedPage: options.remote,
     })
   }
+
+  test("on another device, the printed page, which ends on a code to paste here", async () => {
+    const folder = mkdtempSync(join(process.env.KUVO_TEST_ROOT ?? tmpdir(), "kuvo-signin-"))
+    try {
+      const sign = await attempt(folder, { remote: true })
+      expect(sign.url).toBe("https://example.com/printed?redirect=code")
+      expect(sign.acceptsCode).toBe(true)
+      await sign.complete!("good")
+      expect((await settled(sign)).status).toBe("complete")
+    } finally {
+      rmSync(folder, { recursive: true, force: true })
+    }
+  })
+
+  test("a device code printed with its page is given with it", async () => {
+    const folder = mkdtempSync(join(process.env.KUVO_TEST_ROOT ?? tmpdir(), "kuvo-signin-"))
+    try {
+      const script = join(folder, "device")
+      writeFileSync(script, `#!/bin/sh\necho "Open https://accounts.x.ai/device and enter the code:"\nsleep 0.3\necho "  WDJB-MJHT"\nsleep 0.5\necho signed > "${join(folder, "account")}"\n`)
+      chmodSync(script, 0o755)
+      const sign = await commandSignIn({
+        command: script,
+        args: [],
+        home: folder,
+        temporary: folder,
+        instructions: "",
+        signedIn: async () => existsSync(join(folder, "account")),
+        printedPage: true,
+        userCode: /\b([A-Z0-9]{4,}(?:-[A-Z0-9]{4,})+)\b/,
+      })
+      expect(sign.url).toBe("https://accounts.x.ai/device")
+      expect(sign.userCode).toBe("WDJB-MJHT")
+      expect((await settled(sign)).status).toBe("complete")
+    } finally {
+      rmSync(folder, { recursive: true, force: true })
+    }
+  })
 
   async function settled(sign: Awaited<ReturnType<typeof attempt>>) {
     for (let waited = 0; waited < 10_000 && sign.status().status === "pending"; waited += 100) await Bun.sleep(100)

@@ -8,7 +8,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 import { providerID, type AgentAccount } from "../accounts"
-import type { Agent, AgentContext, Account, OwnTurn, RunInput, RunResult, SignInAttempt, SubagentRun, Thread, TurnHooks, PromptFile } from "../agent"
+import type { Agent, AgentContext, Account, OwnTurn, RunInput, RunResult, SignInAttempt, SignInOptions, SubagentRun, Thread, TurnHooks, PromptFile } from "../agent"
 import type { Limit } from "../auto"
 import { accountName, ContextWindows, failure, model } from "../agent"
 import { fileDiff, fromPatch } from "../diff"
@@ -164,12 +164,15 @@ export class ClaudeAgent implements Agent {
     }
   }
 
-  async signIn(methodID: string): Promise<SignInAttempt> {
+  /** Its page can end on a code to paste back, wherever it's opened. */
+  readonly signsInRemotely = true
+
+  async signIn(methodID: string, options: SignInOptions = {}): Promise<SignInAttempt> {
     // On a machine without it yet: installed first, said at once.
     if (onMachine && !this.executable()) {
       return afterInstall("Installing Claude Code on this machine…", "Finish signing in on Claude's page.", true, async () => {
         if (!(await this.installedProgram())) throw new Error("Claude Code couldn't be installed on this machine. Try again.")
-        return this.signIn(methodID)
+        return this.signIn(methodID, options)
       })
     }
     const executable = await this.installedProgram()
@@ -187,6 +190,8 @@ export class ClaudeAgent implements Agent {
       signedIn: async () => Boolean((await this.readStatus(true)).loggedIn),
       codePrompt: /Paste code here if prompted >\s*/g,
       onComplete: () => (this.authFailedAt = undefined),
+      // On another device: the page it prints, which ends on a code to paste here.
+      printedPage: options.remote,
     })
   }
 

@@ -37,6 +37,14 @@ export interface SignInAttempt {
   /** For `code`, or `auto` with `acceptsCode`: the code the sign-in page gave you. */
   complete?(code: string): Promise<void>
   cancel(): void
+  /** A device code's: the code to enter on its page (shown beside it, to copy). */
+  userCode?: string
+}
+
+/** How a sign-in is asked for. `remote`: its page is opened on another device (a phone), so it
+ * can't come back to this computer's `localhost`: it ends on a code to paste, or a device code. */
+export interface SignInOptions {
+  remote?: boolean
 }
 
 export interface PromptFile {
@@ -205,7 +213,9 @@ export interface Agent {
   install?: string
   methods(): IntegrationMethod[]
   account(fresh?: boolean): Promise<Account>
-  signIn?(methodID: string): Promise<SignInAttempt>
+  signIn?(methodID: string, options?: SignInOptions): Promise<SignInAttempt>
+  /** Whether its sign-in can finish on another device (`SignInOptions.remote`). */
+  signsInRemotely?: boolean
   signInWithKey?(key: string): Promise<void>
   signOut?(): Promise<void>
   models(): Promise<Model[]>

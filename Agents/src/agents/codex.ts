@@ -6,7 +6,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSy
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { providerID, type AgentAccount } from "../accounts"
-import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, SubagentRun, Thread, TurnHooks, PromptFile } from "../agent"
+import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, SignInOptions, SubagentRun, Thread, TurnHooks, PromptFile } from "../agent"
 import type { Limit } from "../auto"
 import { accountName, ContextWindows, failure, model } from "../agent"
 import { fromPatch } from "../diff"
@@ -294,13 +294,33 @@ export class CodexAgent implements Agent {
     return account
   }
 
-  async signIn(): Promise<SignInAttempt> {
+  /** ChatGPT's device code works wherever its page is opened. */
+  readonly signsInRemotely = true
+
+  async signIn(_methodID = "chatgpt", options: SignInOptions = {}): Promise<SignInAttempt> {
     // On a machine without it yet: installed first, said at once.
     if (onMachine && !codexProgram(this.context.deps)) return afterInstall("Installing Codex on this machine…", "Finish signing in with ChatGPT in your browser.", false, async () => {
       await installCodex(this.context.deps)
-      return this.signIn()
+      return this.signIn(_methodID, options)
     })
     const rpc = await this.rpc()
+    // On another device: a code to enter on ChatGPT's page, as `codex login --device-auth` has it.
+    if (options.remote) {
+      const device: any = await rpc.request("account/login/start", { type: "chatgptDeviceCode" }, 30_000)
+      let status: OAuthStatus = { status: "pending" }
+      this.logins.set(device.loginId, (done) => (status = done))
+      return {
+        url: device.verificationUrl,
+        userCode: device.userCode,
+        instructions: `Open ChatGPT's page, sign in, and enter the code ${device.userCode}. Codex keeps the sign-in, as when you run codex login.`,
+        mode: "auto",
+        status: () => status,
+        cancel: () => {
+          this.logins.delete(device.loginId)
+          void rpc.request("account/login/cancel", { loginId: device.loginId }).catch(() => {})
+        },
+      }
+    }
     const result: any = await rpc.request("account/login/start", { type: "chatgpt" }, 30_000)
     let status: OAuthStatus = { status: "pending" }
     this.logins.set(result.loginId, (done) => (status = done))

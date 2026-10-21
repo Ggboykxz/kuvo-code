@@ -113,6 +113,8 @@ export async function integration(agent: Agent, fresh = false, auto?: Auto): Pro
       outdated: maintained ? isOutdated(maintained) : false,
       updateCommand: maintained?.shown,
       updates: Boolean(agent.update && maintained?.command),
+      // Whether its sign-in can finish on another device (`remote: true`).
+      remoteSignIn: Boolean(agent.signIn && agent.signsInRemotely),
     },
     methods: agent.methods(),
     connections: account.signedIn
@@ -183,15 +185,17 @@ export function handler(context: Context) {
         if (!b) return located(await integration(agent, true, auto))
         if (b === "connect" && c === "oauth") {
           if (!d && method === "POST") {
-            const { methodID } = await body()
+            const { methodID, remote } = await body()
             if (!agent.signIn) return error(400, `${agent.name} signs in another way.`)
-            const attempt = await agent.signIn(methodID)
+            // Its page opened on another device (a phone): only where that can finish.
+            if (remote === true && !agent.signsInRemotely) return error(400, `Sign in to ${agent.name} on the computer it runs on: its page comes back there.`)
+            const attempt = await agent.signIn(methodID, { remote: remote === true })
             const id = newID("att")
             const created = Date.now()
             // Long enough for a download first (Antigravity's agent) on a slow connection.
             const expires = created + 30 * 60_000
             attempts.set(id, { agent, attempt, created, expires })
-            return located({ attemptID: id, url: attempt.url, instructions: attempt.instructions, mode: attempt.mode, acceptsCode: attempt.acceptsCode || undefined, time: { created, expires } })
+            return located({ attemptID: id, url: attempt.url, instructions: attempt.instructions, mode: attempt.mode, acceptsCode: attempt.acceptsCode || undefined, userCode: attempt.userCode, time: { created, expires } })
           }
           const pending = d ? attempts.get(d) : undefined
           if (!pending) return error(404, "That sign-in is over. Start it again.")

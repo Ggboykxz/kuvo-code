@@ -2999,21 +2999,34 @@ async function commandSignIn(options) {
   let url = "";
   let printedAt;
   for (let waited = 0;waited < 15000 && !url; waited += 200) {
-    if (existsSync5(urlFile))
-      url = readFileSync8(urlFile, "utf8").split(`
-`)[0].trim();
     const printed = firstURL(output);
-    if (printed)
-      printedAt ??= waited;
-    if (!url && printed && waited - printedAt >= 3000)
-      url = printed;
+    if (options.printedPage) {
+      if (printed)
+        url = printed;
+    } else {
+      if (existsSync5(urlFile))
+        url = readFileSync8(urlFile, "utf8").split(`
+`)[0].trim();
+      if (printed)
+        printedAt ??= waited;
+      if (!url && printed && waited - printedAt >= 3000)
+        url = printed;
+    }
     if (!url)
       await Bun.sleep(200);
     if (status.status !== "pending")
       break;
   }
+  let userCode;
+  for (let waited = 0;options.userCode && waited < 2000; waited += 200) {
+    userCode = options.userCode.exec(output)?.[1];
+    if (userCode || status.status !== "pending")
+      break;
+    await Bun.sleep(200);
+  }
   return {
     url,
+    userCode,
     instructions: options.instructions,
     mode: "auto",
     acceptsCode: Boolean(options.codePrompt),
@@ -4289,12 +4302,13 @@ class ClaudeAgent {
       return 0;
     }
   }
-  async signIn(methodID) {
+  signsInRemotely = true;
+  async signIn(methodID, options = {}) {
     if (onMachine && !this.executable()) {
       return afterInstall("Installing Claude Code on this machine\u2026", "Finish signing in on Claude's page.", true, async () => {
         if (!await this.installedProgram())
           throw new Error("Claude Code couldn't be installed on this machine. Try again.");
-        return this.signIn(methodID);
+        return this.signIn(methodID, options);
       });
     }
     const executable = await this.installedProgram();
@@ -4309,7 +4323,8 @@ class ClaudeAgent {
       instructions: "Finish signing in on Claude's page. Claude Code keeps the sign-in, as when you run claude auth login.",
       signedIn: async () => Boolean((await this.readStatus(true)).loggedIn),
       codePrompt: /Paste code here if prompted >\s*/g,
-      onComplete: () => this.authFailedAt = undefined
+      onComplete: () => this.authFailedAt = undefined,
+      printedPage: options.remote
     });
   }
   async sdk() {
@@ -5850,13 +5865,30 @@ class CodexAgent {
     this.accountCache = { at: Date.now(), account };
     return account;
   }
-  async signIn() {
+  signsInRemotely = true;
+  async signIn(_methodID = "chatgpt", options = {}) {
     if (onMachine && !codexProgram(this.context.deps))
       return afterInstall("Installing Codex on this machine\u2026", "Finish signing in with ChatGPT in your browser.", false, async () => {
         await installCodex(this.context.deps);
-        return this.signIn();
+        return this.signIn(_methodID, options);
       });
     const rpc = await this.rpc();
+    if (options.remote) {
+      const device = await rpc.request("account/login/start", { type: "chatgptDeviceCode" }, 30000);
+      let status2 = { status: "pending" };
+      this.logins.set(device.loginId, (done) => status2 = done);
+      return {
+        url: device.verificationUrl,
+        userCode: device.userCode,
+        instructions: `Open ChatGPT's page, sign in, and enter the code ${device.userCode}. Codex keeps the sign-in, as when you run codex login.`,
+        mode: "auto",
+        status: () => status2,
+        cancel: () => {
+          this.logins.delete(device.loginId);
+          rpc.request("account/login/cancel", { loginId: device.loginId }).catch(() => {});
+        }
+      };
+    }
     const result = await rpc.request("account/login/start", { type: "chatgpt" }, 30000);
     let status = { status: "pending" };
     this.logins.set(result.loginId, (done) => status = done);
@@ -7178,6 +7210,7 @@ class CursorAgent {
     this.accountCache = { at: Date.now(), account };
     return account;
   }
+  signsInRemotely = true;
   async signIn() {
     if (!this.instance.home && process.env.CURSOR_API_KEY)
       throw new Error("CURSOR_API_KEY is set in your environment: Kuvo Code uses that key.");
@@ -7865,24 +7898,27 @@ class GrokAgent {
       return { installed: true, signedIn: false, message: "Sign in to Grok with your SuperGrok plan." };
     return { installed: true, signedIn: true, label: process.env.XAI_API_KEY ? "xAI API key" : "grok.com" };
   }
-  async signIn() {
+  signsInRemotely = true;
+  async signIn(_methodID = "grok", options = {}) {
     if (onMachine && !this.executable())
       return afterInstall("Installing Grok's CLI on this machine\u2026", "Finish signing in to Grok in your browser.", false, async () => {
         if (!await this.installedProgram())
           throw new Error("Grok's CLI couldn't be installed on this machine. Try again.");
-        return this.signIn();
+        return this.signIn(_methodID, options);
       });
     const executable = await this.installedProgram();
     if (!executable)
       throw new Error("Install Grok's CLI first: npm install -g @xai-official/grok");
     return commandSignIn({
       command: executable,
-      args: ["login"],
+      args: options.remote ? ["login", "--device-auth"] : ["login"],
       env: this.env(),
       home: this.context.home,
       temporary: this.context.temporary,
-      instructions: "Finish signing in to Grok in your browser. Grok's CLI keeps the sign-in, as when you run grok login.",
-      signedIn: async () => (await this.read(true)).signedIn
+      instructions: options.remote ? "Open Grok's page, sign in, and enter the code it shows here. Grok's CLI keeps the sign-in, as when you run grok login." : "Finish signing in to Grok in your browser. Grok's CLI keeps the sign-in, as when you run grok login.",
+      signedIn: async () => (await this.read(true)).signedIn,
+      printedPage: options.remote,
+      userCode: options.remote ? /\b([A-Z0-9]{4,}(?:-[A-Z0-9]{4,})+)\b/ : undefined
     });
   }
   async models() {
@@ -11409,7 +11445,8 @@ async function integration(agent, fresh = false, auto) {
       latestVersion: maintained?.latest,
       outdated: maintained ? isOutdated(maintained) : false,
       updateCommand: maintained?.shown,
-      updates: Boolean(agent.update && maintained?.command)
+      updates: Boolean(agent.update && maintained?.command),
+      remoteSignIn: Boolean(agent.signIn && agent.signsInRemotely)
     },
     methods: agent.methods(),
     connections: account.signedIn ? [{ type: "agent", label: account.label, method: "oauth", status: { status: "connected", message: account.label ? `Signed in as ${account.label}` : "Signed in" } }] : []
@@ -11474,15 +11511,17 @@ function handler(context) {
           return located(await integration(agent, true, auto));
         if (b === "connect" && c === "oauth") {
           if (!d && method === "POST") {
-            const { methodID } = await body();
+            const { methodID, remote } = await body();
             if (!agent.signIn)
               return error2(400, `${agent.name} signs in another way.`);
-            const attempt = await agent.signIn(methodID);
+            if (remote === true && !agent.signsInRemotely)
+              return error2(400, `Sign in to ${agent.name} on the computer it runs on: its page comes back there.`);
+            const attempt = await agent.signIn(methodID, { remote: remote === true });
             const id = newID("att");
             const created = Date.now();
             const expires = created + 30 * 60000;
             attempts.set(id, { agent, attempt, created, expires });
-            return located({ attemptID: id, url: attempt.url, instructions: attempt.instructions, mode: attempt.mode, acceptsCode: attempt.acceptsCode || undefined, time: { created, expires } });
+            return located({ attemptID: id, url: attempt.url, instructions: attempt.instructions, mode: attempt.mode, acceptsCode: attempt.acceptsCode || undefined, userCode: attempt.userCode, time: { created, expires } });
           }
           const pending = d ? attempts.get(d) : undefined;
           if (!pending)
@@ -13395,4 +13434,4 @@ if (onMachine) {
 }
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
-// Built from Agents/src 2a45fbff3dc01dfb364822dc688bb0fdb249cb72694fed597d1178e4a08e3d29
+// Built from Agents/src e08be8721ae349638b32c6befdad7e9098500c81219205f9dd2092f376cb2f5b
