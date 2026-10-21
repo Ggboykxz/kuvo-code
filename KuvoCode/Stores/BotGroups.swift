@@ -655,7 +655,12 @@ final class BotGroups {
     /// otherwise the next in line after whoever spoke last. Nobody twice in a row, and nobody
     /// who passed since the last thing said. Nil once there's nobody left with something to add.
     private func nextSpeaker(in group: BotGroup, members: [String], quiet: Set<String>) -> String? {
-        let all = messages(in: group.id)
+        let names = Dictionary(group.members.compactMap { id in app?.bots.bot(id).map { (id, $0.name) } }) { first, _ in first }
+        return Self.nextSpeaker(in: group, messages: messages(in: group.id), members: members, quiet: quiet, names: names)
+    }
+
+    /// The rule `nextSpeaker` follows, by each bot's name (what a chat on a machine follows too).
+    static func nextSpeaker(in group: BotGroup, messages all: [GroupMessage], members: [String], quiet: Set<String>, names: [String: String]) -> String? {
         let last = all.last { $0.kind != .note }
         // Who spoke last waits a turn, unless something of yours came that it hasn't heard: one
         // you wrote as its turn was ending (or before its run began) didn't reach it then.
@@ -666,7 +671,7 @@ final class BotGroups {
         let candidates = members.filter { ($0 != last?.author || missedYou($0)) && !quiet.contains($0) }
         guard !candidates.isEmpty else { return nil }
         // Its own words: a quote it replies to names whoever that message did.
-        if let last, let named = mentions(in: Quoting.words(of: last.text), among: candidates).first {
+        if let last, let named = mentions(in: Quoting.words(of: last.text), among: candidates.compactMap { id in names[id].map { (id, $0) } }).first {
             return named
         }
         guard let author = last?.author, let index = group.members.firstIndex(of: author) else {
@@ -676,10 +681,9 @@ final class BotGroups {
         return order.first { candidates.contains($0) }
     }
 
-    /// The bots a message names with @, in the order it names them.
-    func mentions(in text: String, among ids: [String]) -> [String] {
-        let bots = ids.compactMap { app?.bots.bot($0) }
-        return bots.compactMap { bot -> (String, String.Index)? in
+    /// The bots a message names with @, in the order it names them: each by its ID and name.
+    static func mentions(in text: String, among bots: [(id: String, name: String)]) -> [String] {
+        bots.compactMap { bot -> (String, String.Index)? in
             // The whole name: "@Sam" isn't Samantha.
             var from = text.startIndex
             while let found = text.range(of: "@" + bot.name, options: [.caseInsensitive, .diacriticInsensitive], range: from..<text.endIndex) {
@@ -809,7 +813,7 @@ final class BotGroups {
     }
 
     /// What `messages` say, as `reply` reads them.
-    private static func said(in messages: [Message]) -> (text: String, error: String?, steps: [Message.ToolCall]) {
+    static func said(in messages: [Message]) -> (text: String, error: String?, steps: [Message.ToolCall]) {
         var parts: [String] = []
         var part = ""
         var error: String?
@@ -869,8 +873,17 @@ final class BotGroups {
 
     /// What a bot is told at its turn: what was said since it last spoke.
     private func turnText(for bot: Bot, in group: BotGroup, unheard: [GroupMessage], wrapUp: Bool) -> String {
+        // Who the user named with "&", as a session's message says.
+        let yours = unheard.suffix(40).filter { $0.author == nil }.map(\.text)
+        let named = AgentReferences.note(naming: AgentReferences.named(in: yours), here: bot.machine)
+        return Self.turnText(bot: bot.id, name: bot.name, in: group, unheard: unheard, wrapUp: wrapUp, named: named) { self.name(of: $0) }
+    }
+
+    /// What `turnText` says, by the bot's name and everyone else's (`name`), with the block naming
+    /// the agents your messages named with "&", if any.
+    static func turnText(bot: String, name botName: String, in group: BotGroup, unheard: [GroupMessage], wrapUp: Bool, named: String?, name: (String?) -> String) -> String {
         var text = ""
-        if let taken = group.retracted?[bot.id] {
+        if let taken = group.retracted?[bot] {
             text += "The user took back their message starting \"\(taken)\" and everything said after it. Set all of that aside: it no longer stands.\n\n"
         }
         if unheard.isEmpty {
@@ -882,16 +895,14 @@ final class BotGroups {
             // another speaker (a bot writing "User: go ahead").
             for message in unheard.suffix(40) {
                 let words = message.text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map { "    " + $0 }.joined(separator: "\n")
-                text += "\n\(label(of: message)):\n\(words)\n"
+                text += "\n\(label(of: message, name: name)):\n\(words)\n"
             }
-            // Who the user named with "&", as a session's message says.
-            let yours = unheard.suffix(40).filter { $0.author == nil }.map(\.text)
-            if let note = AgentReferences.note(naming: AgentReferences.named(in: yours), here: bot.machine) { text += "\n" + note + "\n" }
+            if let named { text += "\n" + named + "\n" }
         }
         if wrapUp {
             text += "\nWrap up this discussion now, the one since the user last wrote: in a few short lines, what was decided, what's still open, and who does what next. Write to the user as \"you\". Don't reply PASS."
         } else {
-            text += "\nYour turn, \(bot.name). Reply to the group, or just PASS if you have nothing new to add."
+            text += "\nYour turn, \(botName). Reply to the group, or just PASS if you have nothing new to add."
         }
         return text
     }
@@ -902,11 +913,15 @@ final class BotGroups {
 
     /// Who said it, as the bots read it: a bot's wrap-up says so, and a meeting is the user's.
     private func label(of message: GroupMessage) -> String {
-        if message.report != nil { return name(of: message.author) + " (reporting back on its part of the work)" }
+        Self.label(of: message) { self.name(of: $0) }
+    }
+
+    static func label(of message: GroupMessage, name: (String?) -> String) -> String {
+        if message.report != nil { return name(message.author) + " (reporting back on its part of the work)" }
         return switch message.kind {
-        case .wrapUp: name(of: message.author) + " (wrap-up)"
+        case .wrapUp: name(message.author) + " (wrap-up)"
         case .meeting: "Meeting the user scheduled, now"
-        case .message, .note: name(of: message.author)
+        case .message, .note: name(message.author)
         }
     }
 
@@ -1264,25 +1279,35 @@ final class BotGroups {
     /// bot's own conversation once you say go, handed out after the wrap-up.
     private static func seatRules(for bot: Bot) -> [PermissionRule] {
         let approval = UserDefaults.standard.string(forKey: ToolApproval.key).flatMap(ToolApproval.init) ?? .approveAll
+        return seatRules(for: bot, askFirst: approval == .askFirst, denies: (EngineConfig.current?.permissionRules ?? []).filter { $0.effect == .deny })
+    }
+
+    /// What `seatRules` gives a seat, with Ask First on or not and what Settings › Permissions denies.
+    static func seatRules(for bot: Bot, askFirst: Bool, denies: [PermissionRule]) -> [PermissionRule] {
         // Nor a session of its own, a PDF written anywhere or your files sent to a site.
         var rules = ["edit", "write", "patch", "question", "external_directory", "shell", "subagent", "kuvo-browser_send_message",
                      "kuvo-browser_start_session", "kuvo-browser_browser_save_pdf", "kuvo-browser_browser_upload",
                      "kuvo-browser_schedule_wake_up", "kuvo-browser_watch_for_change"].map { PermissionRule(action: $0, effect: .deny) }
-        if approval == .askFirst {
+        if askFirst {
             rules.append(PermissionRule(action: "webfetch", effect: .deny))
         }
         rules.append(PermissionRule(action: "external_directory", resource: (bot.folder as NSString).appendingPathComponent("*"), effect: .allow))
         // What Settings › Permissions doesn't allow, nothing here does either.
-        return rules + (EngineConfig.current?.permissionRules ?? []).filter { $0.effect == .deny }
+        return rules + denies
     }
 
     private func seatInstructions(for bot: Bot, in group: BotGroup) -> String {
         let others = group.members.filter { $0 != bot.id }.compactMap { app?.bots.bot($0) }
-        let who = others.map { other in other.name + (other.job.isEmpty ? "" : " (\(other.job))") }.joined(separator: ", ")
         let lead = group.lead.flatMap { app?.bots.bot($0) }
+        return Self.seatInstructions(for: bot, in: group, others: others, lead: lead, personality: Personalities.shared.personality(bot.personality)?.instruction)
+    }
+
+    /// What `seatInstructions` says, by the bots themselves and what the bot's personality tells it.
+    static func seatInstructions(for bot: Bot, in group: BotGroup, others: [Bot], lead: Bot?, personality: String?) -> String {
+        let who = others.map { other in other.name + (other.job.isEmpty ? "" : " (\(other.job))") }.joined(separator: ", ")
         let job = bot.instructions.trimmingCharacters(in: .whitespacesAndNewlines)
         var text = """
-        You are \(bot.name), one of the user's bots in Kuvo Code\(bot.job.isEmpty ? "" : ": \(bot.job)").\(Personalities.shared.personality(bot.personality).map { " \($0.instruction)" } ?? "")\(job.isEmpty ? "" : "\nYour job:\n\(job)\n")
+        You are \(bot.name), one of the user's bots in Kuvo Code\(bot.job.isEmpty ? "" : ": \(bot.job)").\(personality.map { " \($0)" } ?? "")\(job.isEmpty ? "" : "\nYour job:\n\(job)\n")
         Your memory file is "\(bot.memoryFile)": read it for context on your work.
 
         This conversation is your seat in "\(group.name)", a group chat between the user and these bots: \(who.isEmpty ? "just you" : who), and you. \
