@@ -119,4 +119,18 @@ import Testing
         model.send("Then run the tests, and the linter", for: nil)
         #expect(model.transcript.messages.map(\.id) == ["msg_01", "msg_02", "msg_04", "msg_05"], "the reply before the undone message should stay")
     }
+
+    /// What Undo says it does before you confirm (B6): in a git repository (a folder inside one
+    /// too), the files the agent changed go back with the conversation; anywhere else they stay,
+    /// as the engine can't put them back, and it says so.
+    @Test func undoSaysWhetherTheFilesGoBack() throws {
+        let repo = try TestRepository()
+        try repo.write("src/app.swift", "a\n")
+        let plain = AppInfo.testRoot.appending(path: "Folders/plain-\(UUID().uuidString.prefix(6))")
+        try FileManager.default.createDirectory(at: plain, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: plain) }
+        #expect(YourMessage.undoNote(in: repo.path).contains("so do the files"))
+        #expect(YourMessage.undoNote(in: repo.url.appending(path: "src").path(percentEncoded: false)).contains("so do the files"))
+        #expect(YourMessage.undoNote(in: plain.path(percentEncoded: false)).contains("stay as they are"))
+    }
 }
