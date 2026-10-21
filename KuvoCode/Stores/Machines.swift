@@ -185,7 +185,24 @@ final class MachineEngine {
             var engine = try await RemoteServer.running(on: connection)
             try check()
             let isNewer = engine.map { $0.version.compare(OpenCodeEngine.version, options: .numeric) == .orderedDescending } ?? false
-            if engine?.version != OpenCodeEngine.version, !(isNewer && engine.map(isAnotherMacs) == true) {
+            var updates = engine?.version != OpenCodeEngine.version && !(isNewer && engine.map(isAnotherMacs) == true)
+            // An engine of another version still at work (a session left running when the app
+            // quit or updated): kept, with its work, until a connection finds it with none.
+            var busy: RemoteServer?
+            // (One that can't be reached to ask is updated, as before.)
+            if updates, let old = engine, let probe = try? await attach(old, launch) {
+                attached = probe
+                try check()
+                let api = OpenCodeAPI(endpoint: probe.endpoint, folderPrefix: RemoteFolder.prefix(for: machine.id))
+                if (try? await api.activeSessions())?.isEmpty == false {
+                    busy = probe
+                    updates = false
+                } else {
+                    probe.disconnect()
+                    attached = nil
+                }
+            }
+            if updates {
                 state = .downloading(progress: 0)
                 try await RemoteEngineInstaller(connection: connection, cache: cache).install { progress in
                     Task { @MainActor in
@@ -204,7 +221,8 @@ final class MachineEngine {
             let running: RemoteServer.Engine
             if let engine { running = engine } else { running = try await launchEngine(launch) }
             try check()
-            var server = try await attach(running, launch)
+            var server: RemoteServer
+            if let busy { server = busy } else { server = try await attach(running, launch) }
             attached = server
             try check()
             let api = OpenCodeAPI(endpoint: server.endpoint, folderPrefix: RemoteFolder.prefix(for: machine.id))
@@ -310,8 +328,8 @@ final class MachineEngine {
         try? await RemoteServer.stop(on: machine.connection)
     }
 
-    /// Signs out of every account the machine's engine has (copied from this Mac), and deletes
-    /// what integrations' servers kept there (a sign-in's tokens).
+    /// Signs out of every account the machine's engine has (copied from this Mac) and of its coding
+    /// agents, and deletes what integrations' servers kept there (a sign-in's tokens).
     /// In its turn after a copying of sign-ins under way (which could store one after these went),
     /// and with no more after it. Whether they all went.
     @discardableResult
@@ -325,9 +343,10 @@ final class MachineEngine {
             guard let credentials = try? await api.credentials() else { return false }
             var removed = true
             for credential in credentials where (try? await api.removeCredential(credential.id)) == nil { removed = false }
-            let kept = "\"$HOME/\(RemoteEngineInstaller.root)/integrations\""
+            // What integrations kept there, and the coding agents' sign-ins.
+            let script = "K=\"$HOME/\(RemoteEngineInstaller.root)\"\nrm -rf \"$K/integrations\"\n" + Machines.agentsSignOut
             let machine = machine.id
-            let cleared = await Task.detached { RemoteShell.run("rm -rf \(kept)", on: machine) }.value != nil
+            let cleared = await Task.detached { RemoteShell.run(script, on: machine) }.value != nil
             return removed && cleared
         }
         signInTurn = Task { _ = await turn.value }
@@ -567,11 +586,16 @@ final class Machines {
           KUVO_DB="$K/data/opencode/opencode.db" BUN_BE_BUN=1 "$E" -e 'const { Database } = require("bun:sqlite"); const db = new Database(process.env.KUVO_DB); db.run("DELETE FROM credential"); db.close()' || exit 1
         fi
         rm -rf "$K/integrations" "$K/keys"
-        # The coding agents' sign-ins there (their conversations stay, as the engine's sessions do).
+        \(agentsSignOut)
+        """
+    }
+
+    /// Signs the coding agents there out: their sign-ins' files, under `$K` (their conversations
+    /// stay, as the engine's sessions do).
+    static let agentsSignOut = """
         [ -d "$K/agents" ] && find "$K/agents" -path "$K/agents/runtime" -prune -o \\( -name .credentials.json -o -name auth.json -o -name 'auth.json.*' -o -name acp_token.json -o -name 'acp_token.json.*' -o -name 'oauth-token.json*' \\) -type f -exec rm -f {} + 2>/dev/null
         true
         """
-    }
 
     func engine(_ id: String?) -> MachineEngine? {
         id.flatMap { engines[$0] }
