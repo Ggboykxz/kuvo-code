@@ -86,7 +86,12 @@ test("the page, in a browser, against the real engine", {
           await page.waitForFunction(check, argument, { timeout });
         } catch {
           const shown = await page.locator("#entries").textContent().catch(() => "");
-          assert.fail(`timed out waiting for ${what}; the view shows:\n${(shown ?? "").slice(0, 500)}\nthe page said:\n${errors.join("\n")}`);
+          const beside = await page.locator("#split-entries").textContent().catch(() => "");
+          assert.fail(
+            `timed out waiting for ${what}; the view shows:\n${(shown ?? "").slice(0, 500)}`
+            + (beside ? `\nthe split shows:\n${beside.slice(0, 500)}` : "")
+            + `\nthe page said:\n${errors.join("\n")}`,
+          );
         }
       },
     };
@@ -423,8 +428,10 @@ test("the page, in a browser, against the real engine", {
   await page.seen("the second session to be listed", () => document.querySelectorAll("#sessions li").length === 2, null, 30_000);
   // The new session is the one in view before the split is asked for: Open Beside opens
   // the session beside the one in view, and "beside" is only known once it is (and a
-  // Windows runner does not race the panel's own timing).
-  await page.seen("the new session to be in view", () => document.querySelector("#conversation .card-title > span:first-child")?.textContent === "New Session", null, 30_000);
+  // Windows runner does not race the panel's own timing). The title cannot say so: the
+  // engine names both sessions "New Session" until it writes a name, so the empty
+  // conversation — the session with no words in it — is what tells them apart.
+  await page.seen("the new session to be in view", () => Boolean(document.querySelector("#conversation .empty-conversation")), null, 30_000);
   await page.element("split").click();
   await page.seen("the split card to open", () => {
     const pane = document.getElementById("split-pane");
@@ -442,9 +449,11 @@ test("the page, in a browser, against the real engine", {
   }, ["split-entries", "hello from the page"], 30_000);
   assert.equal(await page.page.locator("#split-swap").count(), 1, "Swap sits in its header");
   await page.element("split-swap").click();
+  // The words are the ones that say which session went where: the titles can both read
+  // "New Session", and then a title says nothing.
   await page.seen("the two to change places", () => {
-    const title = document.querySelector("#split-pane .card-title");
-    return Boolean(title?.textContent?.includes("New Session"));
+    const main = document.getElementById("entries")?.textContent ?? "";
+    return /hello from the page/i.test(main);
   }, null, 10_000);
   await page.seen("the empty session's own question beside", () => Boolean(document.querySelector("#split-pane .empty-conversation p")), null, 10_000);
   // The window has no room for all of them: the split gives way first, and comes back
