@@ -479,13 +479,16 @@ public struct Transcript: Sendable, Equatable {
             struct Ended: Decodable { var text: String? }
             let ended = try event.payload(as: Ended.self)
             let failed = event.type.hasSuffix("failed")
-            // The summary under way. A failure whose start was missed isn't an earlier summary's
-            // (that one stays as it was); an end may be (a read since has it whole already).
-            if let index = messages.lastIndex(where: { if case .compaction(let summary) = $0 { !failed || summary.status == "running" } else { false } }),
+            // The summary under way. One whose start was missed isn't an earlier summary's (that
+            // stays as it was): the engine's copy has it, a failed one too, and a read brings it;
+            // unless a read since has it whole already.
+            if let index = messages.lastIndex(where: { if case .compaction(let summary) = $0 { summary.status == "running" } else { false } }),
                case .compaction(var message) = messages[index] {
-                message.status = event.type.hasSuffix("ended") ? "completed" : "failed"
+                message.status = failed ? "failed" : "completed"
                 message.summary = ended.text
                 messages[index] = .compaction(message)
+            } else if failed || !messages.contains(where: { if case .compaction(let summary) = $0 { summary.summary == ended.text } else { false } }) {
+                isStale = true
             }
 
         // History edits
