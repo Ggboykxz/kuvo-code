@@ -200,8 +200,10 @@ private struct CommandEditor: View {
     /// be called when that isn't quite what you typed.
     private var naming: some View {
         Section {
-            TextField("Name", text: $newName, prompt: Text("test"))
-                .onSubmit(create)
+            SettingsTextRow(title: "Name") {
+                TextField("Name", text: $newName, prompt: Text("test"))
+                    .onSubmit(create)
+            }
         } footer: {
             if let problem {
                 Text(problem).foregroundStyle(.red)

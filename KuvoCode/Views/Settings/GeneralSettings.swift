@@ -5,7 +5,7 @@ import UsageKit
 
 /// General: the window, where files open, and updates.
 struct GeneralSettings: View {
-    @AppStorage(TabBar.showsKey) private var showsTabBar = true
+    @AppStorage(TabBar.showsKey) private var showsTabBar = TabBar.showsByDefault
     @AppStorage(PairStyle.key) private var pairStyle = PairStyle.halves
     @AppStorage(OpenWith.editorKey) private var editor = ""
     @AppStorage(Awake.key) private var keepsAwake = true
@@ -22,23 +22,25 @@ struct GeneralSettings: View {
             Section("Window") {
                 Toggle(isOn: $showsTabBar) {
                     Text("Show the tab bar")
-                    Text("The row at the top, with the project, its branch and your sessions as tabs. Without it, switch sessions in the sidebar or with ⌘K.")
+                    Text("Open sessions as tabs at the top of the window.")
                 }
+                .help("The row at the top, with the project, its branch and your sessions as tabs. Without it, switch sessions in the sidebar or with ⌘K.")
                 Picker(selection: $pairStyle) {
                     Text("One tab in two halves").tag(PairStyle.halves)
                     Text("One tab with both names").tag(PairStyle.compact)
                     Text("Two tabs joined").tag(PairStyle.joined)
                 } label: {
-                    Text("Two sessions side by side")
-                    Text("How they show in the tab bar.")
+                    Text("Sessions side by side")
+                    Text(showsTabBar ? "How a split shows in the tab bar." : "Needs the tab bar.")
                 }
                 .disabled(!showsTabBar)
             }
             Section("While Agents Work") {
                 Toggle(isOn: $keepsAwake) {
                     Text("Keep this Mac awake")
-                    Text("It doesn’t go to sleep on its own while an agent or a bot works on it; the display still can. Sessions on your machines run there either way.")
+                    Text("While an agent or a bot works. The display can still sleep.")
                 }
+                .help("This Mac doesn’t go to sleep on its own while an agent or a bot works on it; the display still can. Sessions on your machines run there either way.")
                 .onChange(of: keepsAwake) { Awake.shared.update() }
             }
             Section("Files") {
@@ -50,8 +52,9 @@ struct GeneralSettings: View {
                     }
                 } label: {
                     Text("Open code and text in")
-                    Text("For Open in the panel’s files and Open in Editor in Changes. Pictures and other files open in their own apps.")
+                    Text("From the panel’s files and from Changes.")
                 }
+                .help("For Open in the panel’s files and Open in Editor in Changes. Pictures and other files open in their own apps.")
             }
             if OpencodeImport.isAvailable {
                 Section("opencode") {
@@ -60,8 +63,9 @@ struct GeneralSettings: View {
                             .disabled(reading || app.api == nil)
                     } label: {
                         Text("Bring over your opencode setup")
-                        Text(importNote ?? "Its API keys, model, MCP servers, agents, commands, plugins and skills. opencode keeps its own; nothing here is replaced.")
+                        Text(importNote ?? "Keys, models, servers, agents and skills. Nothing here is replaced.")
                     }
+                    .help("Its API keys, model, MCP servers, agents, commands, plugins and skills. opencode keeps its own; nothing here is replaced.")
                 }
             }
             Section("Updates") {
@@ -76,7 +80,7 @@ struct GeneralSettings: View {
                     }
                 } label: {
                     Text("Version \(AppInfo.version)")
-                    Text(updates.isAvailable ? "Updates are signed and come from Kuvo Code’s releases." : "This build doesn’t update itself.")
+                    Text(updates.isAvailable ? "Signed updates from Kuvo Code’s releases." : "This build doesn’t update itself.")
                 }
             }
         }
@@ -174,8 +178,9 @@ struct NotificationSettings: View {
             Section {
                 Toggle(isOn: $notifies) {
                     Text("Sessions")
-                    Text("When a session finishes or needs your answer while you’re in another app. A permission request can be answered from its notification.")
+                    Text("When one finishes or needs your answer.")
                 }
+                .help("When a session finishes or needs your answer while you’re in another app. A permission request can be answered from its notification.")
                 Toggle(isOn: $playsSound) {
                     Text("Play a sound")
                     Text("With each notification.")
@@ -183,17 +188,15 @@ struct NotificationSettings: View {
                 .disabled(!notifies)
                 Toggle(isOn: $showsBadge) {
                     Text("Count on the Dock icon")
-                    Text("The sessions that finished while you were away, or wait for you.")
+                    Text("Sessions that finished or wait for you.")
                 }
-            } footer: {
-                Text("macOS asks the first time there’s something to tell. To change how they look, or to allow them again, use System Settings › Notifications.")
-                    .foregroundStyle(.secondary)
-            }
-            Section {
-                LabeledContent("System notification settings") {
+                LabeledContent {
                     Button("Open…") {
                         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=\(Bundle.main.bundleIdentifier ?? "")")!)
                     }
+                } label: {
+                    Text("System notification settings")
+                    Text("How they look, or to allow them again.")
                 }
             }
         }
@@ -210,8 +213,9 @@ struct PrivacySettings: View {
                 @Bindable var analytics = Analytics.shared
                 Toggle(isOn: $analytics.isEnabled) {
                     Text("Share anonymous usage")
-                    Text("Which features you use and how often, and what kind of trouble you run into, with the app and macOS versions. Never your code, prompts, files or accounts.")
+                    Text("Features used and errors. Never your code, prompts or files.")
                 }
+                .help("Which features you use and how often, and what kind of trouble you run into, with the app and macOS versions. Never your code, prompts, files or accounts.")
                 LabeledContent("What’s sent") {
                     Link("Privacy and Data", destination: URL(string: "https://www.kuvo.run/code/docs/privacy/")!)
                 }
@@ -221,13 +225,13 @@ struct PrivacySettings: View {
                     Button("Storage…") { app.settingsTabs.show(.storage) }
                 } label: {
                     Text("Sessions and accounts")
-                    Text("Kept on this Mac, in Kuvo Code’s own folder. Messages go only to the model providers you choose.")
+                    Text("Kept on this Mac. Messages go only to your providers.")
                 }
                 LabeledContent {
                     Button("Browser…") { app.settingsTabs.show(.browser) }
                 } label: {
                     Text("The panel’s browser")
-                    Text("Its sign-ins, cookies and history stay apart from your other browsers.")
+                    Text("Kept apart from your other browsers.")
                 }
                 LabeledContent {
                     Button("Passwords…") { app.settingsTabs.show(.passwords) }
@@ -251,7 +255,7 @@ struct UsageSettings: View {
                     Button("Open…") { UsageMenuBar.shared.open(.settings) }
                 } label: {
                     Text("Usage settings")
-                    Text("Plan limits, pace and spend for the accounts you connect, like GitHub Copilot, ChatGPT and OpenRouter, live in the menu bar. They count what you use anywhere, not only here.")
+                    Text("Plan limits, pace and spend, in the menu bar.")
                 }
                 LabeledContent {
                     Button("Choose…") { UsageMenuBar.shared.open(.customize) }

@@ -55,7 +55,7 @@ struct ConfigTextField: View {
                     .lineLimit(1...10)
             }
         } else {
-            text
+            SettingsTextRow(title: title) { text }
         }
     }
 
@@ -93,8 +93,11 @@ struct ConfigNumberField: View {
 
     var body: some View {
         let stored = config.value(at: path)?.int.map(String.init) ?? ""
+        SettingsTextRow(title: title) { numberField(stored) }
+    }
+
+    private func numberField(_ stored: String) -> some View {
         TextField(title, text: $field.text, prompt: Text(prompt))
-            .multilineTextAlignment(.trailing)
             .focused($isFocused)
             .onSubmit(commit)
             .onChange(of: isFocused) { if !isFocused { commit() } }
@@ -386,25 +389,174 @@ struct ConfigProblem: View {
     }
 }
 
-/// A page of settings: a grouped form on the page's card, lined up with its title, that
-/// opens at its top. (Shown, a form can land elsewhere, under the toolbar or at its end, so it's
-/// taken to its top edge once it's laid out.)
+/// A page of settings: its sections as groups on the page's card, lined up with its title, that
+/// opens at its top.
 struct ScrollingSettingsForm<Content: View>: View {
     @ViewBuilder var content: Content
     @State private var position = ScrollPosition(edge: .top)
+    @Environment(\.settingsInset) private var inset
 
     var body: some View {
-        Form { content }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
-            .contentMargins(.horizontal, 0, for: .scrollContent)
-            .scrollPosition($position)
-            .onAppear {
-                Task {
-                    await Task.yield()
-                    position.scrollTo(edge: .top)
+        ScrollView {
+            SettingsGroups { content }
+                .padding(.horizontal, inset)
+                .padding(.top, 18)
+                .padding(.bottom, 28)
+        }
+        .scrollPosition($position)
+        .scrollBounceBehavior(.basedOnSize)
+    }
+}
+
+/// Sections as Settings draws them: each a heading over one quiet group of rows, the rows split by
+/// hairlines, and its footer under it, with the same room between every section. Toggles and
+/// labeled rows put their title on the left (and a line under it, in secondary text) and their
+/// control on the right; text fields with a title get it the same way (see `SettingsTextRow`).
+struct SettingsGroups<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: SettingsMetrics.sectionSpacing) {
+            ForEach(sections: content) { section in
+                if !section.content.isEmpty || !section.header.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        if !section.header.isEmpty {
+                            section.header
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.primary)
+                                .textCase(nil)
+                                .padding(.horizontal, SettingsMetrics.rowPadding)
+                        }
+                        if !section.content.isEmpty {
+                            SettingsGroupBox { section.content }
+                        }
+                        if !section.footer.isEmpty {
+                            section.footer
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.horizontal, SettingsMetrics.rowPadding)
+                                .padding(.top, -2)
+                        }
+                    }
                 }
             }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .toggleStyle(SettingsToggleStyle())
+        .labeledContentStyle(SettingsLabeledStyle())
+        .textFieldStyle(.plain)
+        .pickerStyle(.menu)
+    }
+}
+
+/// One group of rows: a quiet fill a step off the card, hairlines between its rows.
+private struct SettingsGroupBox<Content: View>: View {
+    @ViewBuilder var content: Content
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        Group(subviews: content) { rows in
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(rows) { row in
+                    row
+                        .frame(maxWidth: .infinity, minHeight: SettingsMetrics.rowHeight - 2 * SettingsMetrics.rowVerticalPadding, alignment: .leading)
+                        .padding(.horizontal, SettingsMetrics.rowPadding)
+                        .padding(.vertical, SettingsMetrics.rowVerticalPadding)
+                        .overlay(alignment: .top) {
+                            if row.id != rows.first?.id {
+                                Rectangle()
+                                    .fill(Surface.hairline(scheme))
+                                    .frame(height: 1)
+                                    .padding(.horizontal, SettingsMetrics.rowPadding)
+                            }
+                        }
+                }
+            }
+        }
+        .background(SettingsMetrics.groupFill(scheme), in: .rect(cornerRadius: SettingsMetrics.groupRadius))
+    }
+}
+
+/// A setting's title, and the line under it in secondary text: what a toggle's or a labeled row's
+/// label holds, as its first text and the rest. A disabled one stays readable.
+struct SettingsRowLabel<Label: View>: View {
+    let label: Label
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Group(subviews: label) { parts in
+            VStack(alignment: .leading, spacing: 3) {
+                if let title = parts.first {
+                    title
+                        .font(.system(size: 13))
+                        .foregroundStyle(.primary)
+                }
+                ForEach(parts.dropFirst()) { line in
+                    line
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .opacity(isEnabled ? 1 : 0.55)
+    }
+}
+
+/// A toggle as a settings row: its title on the left, a switch on the right.
+struct SettingsToggleStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(alignment: .center, spacing: 16) {
+            SettingsRowLabel(label: configuration.label)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Toggle("", isOn: configuration.$isOn)
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .controlSize(.small)
+        }
+        .contentShape(.rect)
+    }
+}
+
+/// A labeled row: its title on the left, what it holds (a button, a menu, a value) on the right.
+struct SettingsLabeledStyle: LabeledContentStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(alignment: .center, spacing: 16) {
+            SettingsRowLabel(label: configuration.label)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            configuration.content
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+/// A text setting with its title, as a row: the title (and a line under it) on the left, the
+/// field on the right in a well of its own, so it reads as a place to type.
+struct SettingsTextRow<Field: View, Label: View>: View {
+    @ViewBuilder var field: Field
+    @ViewBuilder var label: Label
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        LabeledContent {
+            field
+                .labelsHidden()
+                .textFieldStyle(.plain)
+                .focusEffectDisabled()
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .frame(minWidth: 160, maxWidth: 300)
+                .background(Surface.well(scheme), in: .rect(cornerRadius: 6))
+        } label: {
+            label
+        }
+    }
+}
+
+extension SettingsTextRow where Label == Text {
+    init(title: String, @ViewBuilder field: () -> Field) {
+        self.init(field: field) { Text(title) }
     }
 }
 

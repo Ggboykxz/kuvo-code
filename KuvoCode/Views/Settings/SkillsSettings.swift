@@ -263,7 +263,7 @@ private struct SkillEditor: View {
         SettingsDetailPage {
             if name == nil {
                 Section {
-                    TextField("Name", text: $newName, prompt: Text("release-notes"))
+                    SettingsTextRow(title: "Name") { TextField("Name", text: $newName, prompt: Text("release-notes")) }
                 } footer: {
                     Text(nameNote.text)
                         .foregroundStyle(nameNote.isProblem ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))

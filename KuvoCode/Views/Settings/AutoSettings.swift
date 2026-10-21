@@ -83,7 +83,7 @@ private struct AutoLists: View {
                             Spacer()
                         }
                     } footer: {
-                        Text("When one reaches a limit on your whole account (a plan's 5-hour window), Custom Auto skips all of that account's models, in every list; when one model reaches its own limit, only that model. Each comes back once its limit resets.")
+                        Text("A model at its limit is skipped until the limit resets; an account at its limit skips all its models.")
                     }
                 }
                 if !agents.auto.limits.isEmpty {

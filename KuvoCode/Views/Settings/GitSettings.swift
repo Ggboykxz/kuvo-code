@@ -11,14 +11,11 @@ struct GitSettings: View {
     var body: some View {
         ScrollingSettingsForm {
             Section {
-                LabeledContent {
+                SettingsTextRow {
                     TextField("Branch prefix", text: $branchPrefix, prompt: Text(verbatim: GitPreferences.defaultBranchPrefix))
-                        .labelsHidden()
-                        .frame(width: 180)
-                        .multilineTextAlignment(.trailing)
                 } label: {
                     Text("Branch prefix")
-                    Text("What a session’s own branch starts with, in a worktree. It’s named after the session once it has a title.")
+                    Text("How a session’s own branch in a worktree starts.")
                 }
             } header: {
                 Text("Branches")

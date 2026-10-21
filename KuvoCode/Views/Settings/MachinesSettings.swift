@@ -27,7 +27,7 @@ struct MachinesSettings: View {
                     if let folded = app.machines.folded {
                         Text("\(folded.address) is \(folded.machine), reached another way, so it’s one of its addresses rather than another machine. Kuvo Code uses whichever answers.")
                     }
-                    Text("Linux servers you reach with SSH, like a home server or a VPS. Their projects open next to this Mac’s, and their sessions run there. Kuvo Code installs its engine in ~/.kuvo-code on each, and stops it when you quit. A machine you reach at more than one address, like its name on your network and over Tailscale, is one machine: add either, and the other becomes one of its addresses.")
+                    Text("Kuvo Code installs its engine in ~/.kuvo-code on each, and stops it when you quit. A machine with several addresses is added once.")
                 }
                 .foregroundStyle(.secondary)
             }

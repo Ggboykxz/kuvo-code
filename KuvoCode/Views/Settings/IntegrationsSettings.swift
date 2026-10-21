@@ -472,7 +472,9 @@ private struct KeyEntry: View {
         SettingsDetailPage {
             Section {
                 ForEach(keys, id: \.name) { key in
-                    SecureField(key.label, text: Binding(get: { values[key.name] ?? "" }, set: { values[key.name] = $0 }), prompt: Text(key.prompt))
+                    SettingsTextRow(title: key.label) {
+                        SecureField(key.label, text: Binding(get: { values[key.name] ?? "" }, set: { values[key.name] = $0 }), prompt: Text(key.prompt))
+                    }
                 }
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {

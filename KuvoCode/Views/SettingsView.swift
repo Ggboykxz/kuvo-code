@@ -134,11 +134,12 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     /// The open page, in UserDefaults; its values are the pages' raw values.
     static let storageKey = "settings.tab"
 
-    case general, appearance, notifications, phone, shortcuts, privacy, storage
+    case general, appearance, notifications, shortcuts, phone
     case accounts, auto, usage
     case agents, permissions, commands, skills, integrations, mcp, engine
-    case git, worktrees, archived, machines
+    case git, worktrees, machines
     case panel, browser, passwords
+    case privacy, storage, archived
 
     var id: String { rawValue }
 
@@ -148,20 +149,22 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     }
 
     enum Group: String, CaseIterable {
-        case app = "Kuvo Code"
-        case models = "Models"
-        case agent = "Agent"
+        case app = "Application"
+        case models = "Models & Providers"
+        case agent = "Agents & Tools"
         case projects = "Projects"
         case panel = "Side Panel"
+        case data = "Privacy & Data"
     }
 
     var group: Group {
         switch self {
-        case .general, .appearance, .notifications, .phone, .shortcuts, .privacy, .storage: .app
+        case .general, .appearance, .notifications, .shortcuts, .phone: .app
         case .accounts, .auto, .usage: .models
         case .agents, .permissions, .commands, .skills, .integrations, .mcp, .engine: .agent
-        case .git, .worktrees, .archived, .machines: .projects
+        case .git, .worktrees, .machines: .projects
         case .panel, .browser, .passwords: .panel
+        case .privacy, .storage, .archived: .data
         }
     }
 
@@ -232,15 +235,15 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .phone: "Your sessions on your iPhone, from anywhere."
         case .shortcuts: "Every keyboard shortcut in Kuvo Code."
         case .privacy: "What Kuvo Code shares, and what stays on this Mac."
-        case .storage: "What Kuvo Code keeps on this Mac, and room you can get back."
-        case .accounts: "Sign in with a subscription you already have, or add an API key. Credentials stay on this Mac and the machines you add."
-        case .auto: "Your own lists of models to go through, in order, when one reaches a usage limit: one for bugfixes, one for features. Pick one in the model picker."
+        case .storage: "What Kuvo Code keeps on this Mac."
+        case .accounts: "Model providers you use, with a subscription or an API key."
+        case .auto: "Models to switch through when one reaches a usage limit."
         case .usage: nil
-        case .agents: "The agents you pick in the composer, and the subagents they hand work to."
-        case .permissions: "What the agent may do without asking you first."
-        case .commands: "Prompts you use often, run by typing / and their name."
+        case .agents: "The agents you pick in the composer, and their subagents."
+        case .permissions: "What the agent may do without asking first."
+        case .commands: "Prompts you run by typing / and their name."
         case .skills: "Instructions and scripts the agent loads when a task calls for them."
-        case .integrations: "Your mail, calendar, chats, socials and code tools, for the agent and your bots."
+        case .integrations: "Your mail, calendar, chats and tools, for agents and bots."
         case .mcp: "Programs and services that give the agent more tools."
         case .engine: nil
         case .git: "Branches, commits and pull requests made from Kuvo Code."
@@ -248,8 +251,8 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .archived: "Sessions you put away: still searchable, out of the sidebar."
         case .machines: "Linux servers whose sessions run there, over SSH."
         case .panel: "What the side panel starts with, and its new tab page."
-        case .browser: "The panel's browser: search, history and the sites that keep data."
-        case .passwords: "Sign-ins the panel's browser saved, kept in your Keychain."
+        case .browser: "The panel's browser: search, history and website data."
+        case .passwords: "Sign-ins the panel's browser saved, in your Keychain."
         }
     }
 
@@ -328,6 +331,7 @@ private struct SettingsSidebar: View {
     let openInNewTab: (SettingsPage) -> Void
     /// What searching finds first, in the tab searching keeps for it.
     let preview: (SettingsPage) -> Void
+    @AppStorage(TabBar.showsKey) private var showsTabBar = TabBar.showsByDefault
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
@@ -377,7 +381,10 @@ private struct SettingsSidebar: View {
                                 .buttonStyle(.plain)
                                 .clickablePointer()
                                 .contextMenu {
-                                    Button("Open in New Tab") { openInNewTab(page) }
+                                    // Without the tab bar, one page at a time.
+                                    if showsTabBar {
+                                        Button("Open in New Tab") { openInNewTab(page) }
+                                    }
                                 }
                             }
                         }
@@ -426,7 +433,7 @@ private struct SettingsPageHeader: View {
                     .font(.system(size: 26, weight: .bold))
                 if let subtitle = page.subtitle {
                     Text(subtitle)
-                        .font(.system(size: 14))
+                        .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -440,18 +447,29 @@ private struct SettingsPageHeader: View {
 }
 
 enum SettingsMetrics {
-    /// Where a page's title lines up with its groups' edges (a grouped form's own margin), on a
-    /// page at its full width.
-    static let inset: CGFloat = 49
-    /// A page's width at most: as wide as a grouped form's groups grow (about 700 points) and its
-    /// margins, so they start under the title. Wider, the form centers its groups and leaves the
-    /// title behind.
-    static let columnWidth: CGFloat = 700 + 2 * inset
+    /// Where a page's title and groups start from the card's column edge.
+    static let inset: CGFloat = 32
+    /// The widest a page's groups grow; wider windows center the column in the card.
+    static let groupsWidth: CGFloat = 860
+    /// A page's width at most: its groups and the margins either side.
+    static let columnWidth: CGFloat = groupsWidth + 2 * inset
 
-    /// Where a grouped form's groups start on a page this wide: they grow to about 700 points,
-    /// centered, and keep a margin of 20 points when the page is narrower than that.
+    /// Room between one section and the next.
+    static let sectionSpacing: CGFloat = 26
+    /// Inside a group: rows' room at the sides, above and below, and their height at least.
+    static let rowPadding: CGFloat = 14
+    static let rowVerticalPadding: CGFloat = 10
+    static let rowHeight: CGFloat = 44
+    static let groupRadius: CGFloat = 8
+
+    /// A group's fill: a quiet step off the card, not a card of its own.
+    static func groupFill(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? .white.opacity(0.04) : Surface.slate.opacity(0.035)
+    }
+
+    /// The margin at a page's width: a little less in a narrow window.
     static func inset(forWidth width: CGFloat) -> CGFloat {
-        min(inset, max(20, (width - 700) / 2))
+        width < 560 ? 20 : inset
     }
 }
 

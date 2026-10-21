@@ -51,7 +51,7 @@ struct MCPSettings: View {
             } header: {
                 Text("Servers")
             } footer: {
-                Text("MCP servers give the agent more tools, like a database, an issue tracker or your design files. A server on this Mac runs a command; one on the web is a URL.")
+                Text("A server on this Mac runs a command; one on the web is a URL.")
                     .foregroundStyle(.secondary)
             }
 
@@ -310,8 +310,10 @@ private struct ServerEditor: View {
     /// be called when that isn't quite what you typed.
     private var naming: some View {
         Section {
-            TextField("Name", text: $newName, prompt: Text("github"))
-                .onSubmit(add)
+            SettingsTextRow(title: "Name") {
+                TextField("Name", text: $newName, prompt: Text("github"))
+                    .onSubmit(add)
+            }
         } footer: {
             if let problem {
                 Text(problem).foregroundStyle(.red)
@@ -349,13 +351,15 @@ private struct ServerEditor: View {
                     .disabled(customSignIn)
                 } else {
                     // A command is often long: it wraps, in a typeface that keeps its flags apart.
-                    TextField(text: $command, prompt: Text(verbatim: "npx -y @modelcontextprotocol/server-github"), axis: .vertical) {
-                        Text("Command").font(.body)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Command")
+                        TextField("Command", text: $command, prompt: Text(verbatim: "npx -y @modelcontextprotocol/server-github"), axis: .vertical)
+                            .labelsHidden()
+                            .font(.body.monospaced())
+                            .lineLimit(1...8)
+                            .onSubmit { saveCommand(path) }
+                            .onDisappear { saveCommand(path) }
                     }
-                    .font(.body.monospaced())
-                    .lineLimit(1...8)
-                    .onSubmit { saveCommand(path) }
-                    .onDisappear { saveCommand(path) }
                     ConfigTextField(title: "Working folder", path: path + ["cwd"], prompt: "The project's folder")
                 }
                 Toggle(isOn: config.bool(path + ["codemode"], default: true)) {

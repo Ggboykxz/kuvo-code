@@ -22,7 +22,7 @@ struct PermissionsSettings: View {
     static let actions: [(id: String, title: String, detail: String)] = [
         ("edit", "Edit files", "Changing, creating or deleting files."),
         ("shell", "Run commands", "In the terminal."),
-        ("read", "Read files", "Files ending in .env ask first unless you allow this. Codex, Cursor, Grok and Antigravity can read files without asking, so only Kuvo Code's agent and Claude Code are sure to keep to it."),
+        ("read", "Read files", "Files ending in .env ask first unless you allow this."),
         ("external_directory", "Work outside the project", "In folders that aren't the project's. Asks by default."),
         ("webfetch", "Open web pages", ""),
         ("websearch", "Search the web", ""),
@@ -37,7 +37,7 @@ struct PermissionsSettings: View {
             } header: {
                 Text("When the Agent Wants To")
             } footer: {
-                Text("For every session and mode, so Allow here also lets Plan mode do it. A session set to Approve All does what's set to Ask First here without asking, and one set to Ask First still asks; Don't Allow holds for all of them.")
+                Text("For every session and mode. Don't Allow holds even in Approve All. Codex, Cursor, Grok and Antigravity may read files without asking.")
                     .foregroundStyle(.secondary)
             }
 

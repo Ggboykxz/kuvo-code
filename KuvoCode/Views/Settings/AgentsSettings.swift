@@ -261,7 +261,7 @@ private struct AgentEditor: View {
     /// what you typed.
     private var naming: some View {
         Section {
-            TextField("Name", text: $newName, prompt: Text("Bug Hunter"))
+            SettingsTextRow(title: "Name") { TextField("Name", text: $newName, prompt: Text("Bug Hunter")) }
         } footer: {
             if let problem {
                 Text(problem).foregroundStyle(.red)

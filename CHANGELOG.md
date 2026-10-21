@@ -7,6 +7,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 ## Unreleased
 
 - The tab bar is off when you start: the window's cards reach the top, and you switch sessions in the sidebar or with ⌘K. Turn it on in View › Show Tab Bar or Settings › General. Without it, Settings shows one page at a time.
+- Settings has a cleaner look: a wider column, even spacing between sections, quieter groups with separators, text fields you can see, and shorter descriptions (the details are in tooltips). Its sidebar is grouped as Application, Models & Providers, Agents & Tools, Projects, Side Panel, and Privacy & Data.
 - Settings › Storage counts the coding agents Kuvo Code installed, under a kind of their own, and your bots' and chats' folders: its total left them out, often the biggest part.
 - A session on a machine keeps its Claude Code, Codex or Custom Auto model while the machine's coding agents start, after it connects or reconnects, rather than a new one starting on another model or an open one saying to choose one. Settings › Custom Auto no longer says an agent's models aren't signed in while the agents start.
 - Set Up Custom Auto in a machine's session opens that machine's lists, not this Mac's.

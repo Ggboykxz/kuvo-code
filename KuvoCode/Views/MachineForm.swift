@@ -41,10 +41,12 @@ struct MachineForm: View {
     private var settingsForm: some View {
         SettingsDetailPage {
             Section {
-                TextField("SSH host", text: $destination, prompt: Text(verbatim: "my-server or user@host"))
-                    .autocorrectionDisabled()
-                    .focused($isFocused)
-                    .onSubmit(add)
+                SettingsTextRow(title: "SSH host") {
+                    TextField("SSH host", text: $destination, prompt: Text(verbatim: "my-server or user@host"))
+                        .autocorrectionDisabled()
+                        .focused($isFocused)
+                        .onSubmit(add)
+                }
                 ForEach(suggestions, id: \.self) { host in
                     Button { destination = host } label: {
                         Label(host, systemImage: "arrow.turn.down.right")

@@ -63,8 +63,10 @@ struct PhoneSettings: View {
             }
 
             Section {
-                TextField("Relay", text: $relay, prompt: Text(PhoneLink.defaultRelay.absoluteString))
-                    .onSubmit(saveRelay)
+                SettingsTextRow(title: "Relay") {
+                    TextField("Relay", text: $relay, prompt: Text(PhoneLink.defaultRelay.absoluteString))
+                        .onSubmit(saveRelay)
+                }
             } header: {
                 Text("Relay")
             } footer: {

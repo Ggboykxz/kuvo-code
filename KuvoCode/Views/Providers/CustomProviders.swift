@@ -107,8 +107,10 @@ struct CustomProviderEditor: View {
                 editor(id)
             } else {
                 Section {
-                    TextField("Name", text: $name, prompt: Text("My Company, or Local Server"))
-                        .onSubmit(create)
+                    SettingsTextRow(title: "Name") {
+                        TextField("Name", text: $name, prompt: Text("My Company, or Local Server"))
+                            .onSubmit(create)
+                    }
                 } footer: {
                     if let problem {
                         Text(problem).foregroundStyle(.red)
