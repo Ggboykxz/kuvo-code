@@ -73,7 +73,7 @@ enum AppLocation {
     /// Into Applications, in place of a copy that's there already (to the Trash, quit first if
     /// it's open), and opened from there without macOS asking again whether to open a download.
     /// The new copy is made beside it first: if that fails (a full disk), the one there stays.
-    private static func move(_ source: URL, to destination: URL) throws {
+    static func move(_ source: URL, to destination: URL) throws {
         let files = FileManager.default
         let replaces = files.fileExists(atPath: destination.path)
         if replaces, Bundle(url: destination)?.bundleIdentifier != Bundle.main.bundleIdentifier {
@@ -90,7 +90,7 @@ enum AppLocation {
         do {
             if replaces {
                 try quitCopy(at: destination)
-                try files.trashItem(at: destination, resultingItemURL: nil)
+                try files.moveToTrash(destination)
             }
             try files.moveItem(at: staged, to: destination)
         } catch {
