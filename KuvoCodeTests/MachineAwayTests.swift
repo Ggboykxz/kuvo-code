@@ -6,7 +6,7 @@ import Testing
 /// A conversation on a machine that isn't connected waits for it, as the machine's (its tab and
 /// card say so, with Connect Now), never as a conversation that isn't there: a bot's too, before
 /// any of its machine's sessions were ever listed here. One on this Mac, or on a machine that's
-/// connected, doesn't wait.
+/// connected, or one you removed, doesn't wait.
 @MainActor
 @Suite struct MachineAwayTests {
     let workspace = Workspace()
@@ -23,6 +23,15 @@ import Testing
     @Test func aBotOnAMachineThatIsAwayWaitsForIt() {
         #expect(workspace.waitingMachine(for: "ses_beril") == "lokum")
         #expect(workspace.remoteTitle("ses_beril") == "Beril", "its card and tab are named after the bot")
+    }
+
+    /// Its machine removed, nothing waits for it: its tab closes.
+    @Test func aBotOnARemovedMachineDoesntWait() {
+        workspace.forget("lokum", forGood: true)
+        #expect(workspace.waitingMachine(for: "ses_beril") == nil)
+        // Added again: it waits for it again.
+        workspace.machines = ["lokum"]
+        #expect(workspace.waitingMachine(for: "ses_beril") == "lokum")
     }
 
     @Test func aBotOnThisMacDoesntWait() {

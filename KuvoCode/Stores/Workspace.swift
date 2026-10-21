@@ -63,6 +63,7 @@ final class Workspace {
     /// settings, for when it's added again.
     var machines: Set<String> = [] {
         didSet {
+            removedMachines.subtract(machines)
             projectsChanged()
             for machine in machines.subtracting(oldValue) { showLastSeen(machine) }
         }
@@ -74,11 +75,11 @@ final class Workspace {
     }
 
     /// The machine a session is on, while that machine isn't connected; nil once it is (or
-    /// for this Mac's sessions).
+    /// for this Mac's sessions, or a machine you removed, which nothing waits for).
     func waitingMachine(for id: String) -> String? {
         // A bot's knows its machine, also before its sessions there were ever listed here.
         guard let machine = session(id).flatMap({ RemoteFolder.machine(of: $0.location.directory) }) ?? remoteSessions[id]?.machine ?? botMachine?(id),
-              !connectedMachines.contains(machine) else { return nil }
+              !removedMachines.contains(machine), !connectedMachines.contains(machine) else { return nil }
         return machine
     }
 
@@ -1370,6 +1371,10 @@ final class Workspace {
         UserDefaults.standard.set(removedWorktrees, forKey: "removedWorktrees")
     }
 
+    /// Machines you removed (`forget(_:forGood:)`), which nothing waits for; a bot there among
+    /// them.
+    private var removedMachines: Set<String> = []
+
     func forget(_ machine: String, forGood: Bool = false) {
         let gone = Set(sessions.filter { RemoteFolder.machine(of: $0.location.directory) == machine }.map(\.id))
         if !forGood, connectedMachines.contains(machine) { saveList(of: machine) }
@@ -1385,6 +1390,7 @@ final class Workspace {
         running = running.filter { sessionMachines[$0] != machine || session($0) != nil }
         connectedMachines.remove(machine)
         if forGood {
+            removedMachines.insert(machine)
             listSaves[machine]?.cancel()
             listSaves[machine] = nil
             sessions.removeAll { gone.contains($0.id) }
