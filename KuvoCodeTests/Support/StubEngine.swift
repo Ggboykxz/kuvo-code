@@ -116,10 +116,23 @@ nonisolated final class StubEngine: @unchecked Sendable {
 
 /// Holds an answer back until the test opens it: a request on its way while something else
 /// happens, as a slow network has it.
+/// Once open, it lets every answer through, those waiting and any after.
 nonisolated final class Gate: @unchecked Sendable {
-    private let semaphore = DispatchSemaphore(value: 0)
-    func wait() { semaphore.wait() }
-    func open() { semaphore.signal() }
+    private let condition = NSCondition()
+    private var isOpen = false
+
+    func wait() {
+        condition.lock()
+        while !isOpen { condition.wait() }
+        condition.unlock()
+    }
+
+    func open() {
+        condition.lock()
+        isOpen = true
+        condition.broadcast()
+        condition.unlock()
+    }
 }
 
 /// Until `condition` holds (the app's work goes on off the main thread and in tasks), five

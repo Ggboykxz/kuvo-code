@@ -26,6 +26,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Switching to another session in the same folder with the Changes tab open shows that session's changes under This Session (and outside git); within a few seconds it went back to showing the first session's. A comment half written on a line stays with the session it was written in.
 - Undoing a message that waited in the queue, then sending, no longer takes away the agent's reply from before it (until the conversation was read again); only the message and what came after it go.
 - The Now button on a session's wake-up sends it once: clicked again while it was on its way, the agent got it twice.
+- Wake-ups you paused stay paused when you archive the session and bring it back; bringing it back resumed them.
 ## 0.6.2
 
 - A worktree's branch named after a title in another language keeps its letters ("Giriş düzeltmesi" is giris-duzeltmesi, not giri-dzeltmesi).

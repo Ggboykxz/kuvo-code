@@ -261,7 +261,7 @@ final class WakeUps {
         if let machine = owner.machine {
             let folder = Self.shell(owner.folder)
             let via = owner.agents ? " && printf bridge >\(folder)/via" : ""
-            let held = archived ? " && : >\(Self.shell(Self.pauseFile(of: owner)))" : ""
+            let held = archived ? " && printf \(Self.archivedHold) >\(Self.shell(Self.pauseFile(of: owner)))" : ""
             let script = "[ -f \(folder)/session ] || { (umask 077; mkdir -p \(folder)) && printf '%s' \(SSHConnection.quoted(owner.session)) >\(folder)/session && printf '%s' \(SSHConnection.quoted(directory)) >\(folder)/directory\(via)\(held); }"
             guard await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value != nil else { throw Failure.notConnected(machine) }
             return
@@ -272,7 +272,7 @@ final class WakeUps {
         try Data(owner.session.utf8).write(to: URL(filePath: Self.path(owner, "session")))
         try Data(directory.utf8).write(to: URL(filePath: Self.path(owner, "directory")))
         if owner.agents { try Data("bridge".utf8).write(to: URL(filePath: Self.path(owner, "via"))) }
-        if archived { try await setPaused(true, owner) }
+        if archived { try await setPaused(true, owner, byArchiving: true) }
     }
 
     /// A wake-up you add: at `due`, `note` arrives in the conversation, and again at each repeat.
@@ -474,24 +474,41 @@ final class WakeUps {
         path(owner, "paused")
     }
 
+    /// What the pause file says when archiving held the wake-ups, not you: bringing the session
+    /// back takes only that hold away.
+    private static let archivedHold = "archived"
+
     /// Holds a conversation's wake-ups until you resume them; then those that came due meanwhile
     /// go. On a machine that can't be reached, nothing changes, and this says so. A session's
-    /// with none has nothing to hold.
-    func setPaused(_ pause: Bool, _ owner: Owner) async throws {
+    /// with none has nothing to hold. `byArchiving`: held while the session is archived, which
+    /// leaves a hold of yours as it is, and lets go of only its own.
+    func setPaused(_ pause: Bool, _ owner: Owner, byArchiving: Bool = false) async throws {
         let file = Self.pauseFile(of: owner)
+        var isPaused = pause
         if let machine = owner.machine {
             // A machine's kuvo-wake from before pausing would send them anyway.
             if pause, let engine = app?.machines.engine(machine) { try? await Wakes.install(on: engine.machine.connection) }
-            let folder = Self.shell(owner.folder)
-            let script = pause ? "[ ! -d \(folder) ] || : > \(Self.shell(file))" : "rm -f \(Self.shell(file))"
-            guard await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value != nil else { throw Failure.notConnected(machine) }
+            let folder = Self.shell(owner.folder), paused = Self.shell(file)
+            let script = switch (pause, byArchiving) {
+            case (true, false): "[ ! -d \(folder) ] || : > \(paused)"
+            case (true, true): "[ ! -d \(folder) ] || [ -e \(paused) ] || printf \(Self.archivedHold) > \(paused)"
+            case (false, false): "rm -f \(paused)"
+            case (false, true): "[ \"$(cat \(paused) 2>/dev/null)\" != \(Self.archivedHold) ] || rm -f \(paused); [ -e \(paused) ] && echo held || true"
+            }
+            guard let output = await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value else { throw Failure.notConnected(machine) }
+            if !pause, byArchiving { isPaused = String(decoding: output, as: UTF8.self).hasPrefix("held") }
         } else if pause {
             guard owner.isBot || FileManager.default.fileExists(atPath: owner.folder) else { return }
-            FileManager.default.createFile(atPath: file, contents: nil)
+            if !(byArchiving && FileManager.default.fileExists(atPath: file)) {
+                FileManager.default.createFile(atPath: file, contents: byArchiving ? Data(Self.archivedHold.utf8) : nil)
+            }
+        } else if byArchiving, let held = FileManager.default.contents(atPath: file), String(decoding: held, as: UTF8.self) != Self.archivedHold {
+            // Yours: it stays.
+            isPaused = true
         } else {
             try? FileManager.default.removeItem(atPath: file)
         }
-        notePaused(owner.key, pause)
+        notePaused(owner.key, isPaused)
     }
 
     private func notePaused(_ key: String, _ isPaused: Bool) {
@@ -536,7 +553,7 @@ final class WakeUps {
     func archived(_ session: Session, _ isArchived: Bool) async {
         let owner = Self.owner(of: session)
         if owner.machine == nil, !FileManager.default.fileExists(atPath: owner.folder) { return }
-        try? await setPaused(isArchived, owner)
+        try? await setPaused(isArchived, owner, byArchiving: true)
     }
 
     /// A conversation that carries on in another session (moved to the coding agents): its

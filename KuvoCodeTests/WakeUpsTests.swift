@@ -143,4 +143,27 @@ import Testing
         let left = (try? FileManager.default.contentsOfDirectory(atPath: folder(id, "wakes"))) ?? []
         #expect(left.count == (repeating ? 1 : 0))
     }
+
+    /// Wake-ups you paused stay paused when the session is archived and brought back; ones paused
+    /// only by archiving come back with it.
+    @Test func aPauseYouSetOutlastsArchiving() async throws {
+        await start()
+        defer { done() }
+        let session = try #require(app.workspace.session(id))
+        let owner = WakeUps.owner(of: session)
+        try await app.wakeUps.add(to: owner, at: .now.addingTimeInterval(86_400), every: nil, note: "Check the nightly build")
+        try await app.wakeUps.setPaused(true, owner)
+
+        await app.wakeUps.archived(session, true)
+        await app.wakeUps.archived(session, false)
+        #expect(app.wakeUps.paused.contains(id), "your pause should hold after the session comes back")
+        #expect(FileManager.default.fileExists(atPath: folder(id, "paused")))
+
+        try await app.wakeUps.setPaused(false, owner)
+        await app.wakeUps.archived(session, true)
+        #expect(app.wakeUps.paused.contains(id), "archived, its wake-ups wait")
+        await app.wakeUps.archived(session, false)
+        #expect(!app.wakeUps.paused.contains(id))
+        #expect(!FileManager.default.fileExists(atPath: folder(id, "paused")))
+    }
 }
