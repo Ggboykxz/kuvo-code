@@ -332,6 +332,16 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     run in the primary folder; the agent can work in the others too" — and the session in
     view is given them: the rules that allow those folders, and the note that tells the
     agent that "in chugs-pinterest" means that folder (`SessionModel.swift:1379-1405`).
+  - **2.84 (this change). A comment on a line is the Mac's own.** The Mac writes a comment
+    in the editor under the line — *Add a comment…*, Escape cancels, ⌘Return saves, and the
+    button says *Comment* — and keeps it as a card under that line: the user, the line it
+    is on (*Comment on line R12*), and a way to take it away (*Delete*)
+    (`ChangesPanel.swift:1088-1212`). A comment stays with the line it was written on, by
+    its number and by its text, so it does not slide onto another line when the file
+    changes (`ChangesPanel.swift:873-880`). The port had a pencil, a one-line field and a
+    note; it has the Mac's now — with the line's own side and text, so the comment can say
+    which line it is on. The comments go to the agent in the Mac's own block, with the
+    words the user wrote in front of it (`ReviewComments.swift:21-39`).
   - **2.83 (this change). The changes' rows are the Mac's own.** The Mac reads a project's
     changes into lines of their own — a kind, the number the line has on each side, and the
     text (`ProjectChanges.swift:40-48`) — and shows them in a gutter, with the text and no

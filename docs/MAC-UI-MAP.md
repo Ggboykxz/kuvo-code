@@ -137,8 +137,10 @@ of its own (`ProjectEditor.swift`), in 0.5.84 a project runs its own command, in
 other folders are the agent's too (`SessionModel.swift:1379-1405`), and in 0.5.86 the
 palette took the Mac's order and the Run its own key (`MainView.swift:1418-1487`). In 0.5.87
 the changes' rows took the Mac's own shape (`ChangesPanel.swift:959-1042`): a number in a
-gutter, the text without the patch's signs, and a coloured edge on a line that changed. The
-port's
+gutter, the text without the patch's signs, and a coloured edge on a line that changed. In
+0.5.88 a comment on a line became the Mac's own card (`ChangesPanel.swift:1088-1212`) — the
+editor under the line, the comment kept beneath it, and the block the agent reads
+(`ReviewComments.swift:21-39`). The port's
 own list of what is left is now: the two structures that are the Mac's alone — the Auto
 rail of the model picker (the coding agents' accounts, which a Windows client has no
 accounts for) and the pair style of the tab bar (a split pair shown as one tab, where the
