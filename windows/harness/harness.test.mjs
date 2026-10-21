@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { EngineClient, EngineError, messageID } from "./engine.mjs";
+import { paneLayout } from "./layout.mjs";
 import { apply, applyAll, emptyTranscript, fromHistory } from "./transcript.mjs";
 import { startHarness } from "./server.mjs";
 
@@ -925,4 +926,77 @@ test("a call carries its own metadata, in the history and in the events both", a
     data: { assistantMessageID: "msg_1", id: "tool_1", name: "edit", content: [], metadata: { files: [{ filePath: "a.ts", additions: 7, deletions: 2 }] } },
   });
   assert.equal(live.entries[0].parts[0].metadata.files[0].additions, 7, "the event's metadata reaches the call");
+});
+
+// ---- The pane layout: the Mac's PaneLayout, measured (MainView.swift:2112-2179) ----
+
+test("the panes take their ranges, and the conversation keeps its floor", () => {
+  // A window with room for everything: the sessions at their default 280, the panel at
+  // 420, the split at 560, the conversation the rest — 1700 − 8 − (280 + 8) − (420 + 8) −
+  // (560 + 8) = 408, over its floor.
+  const roomy = paneLayout({ available: 1700, sessions: 280, changes: 420, split: 560 });
+  assert.deepEqual([roomy.sessions, roomy.changes, roomy.split], [280, 420, 560]);
+  assert.equal(1700 - 8 - 288 - 428 - 568, 408, "the conversation keeps 408");
+  // The Mac's ranges are the ones applied: nothing below 380 or over 1200 can be asked.
+  assert.equal(paneLayout({ available: 3000, split: 200 }).split, 380);
+  assert.equal(paneLayout({ available: 3000, split: 4000 }).split, 1200);
+  assert.equal(paneLayout({ available: 3000, sessions: 100 }).sessions, 220);
+  assert.equal(paneLayout({ available: 3000, changes: 5000 }).changes, 900);
+});
+
+test("out of room, the split goes first, then the panel, then the sessions", () => {
+  // The Mac's measure decides the going by the smallest each pane can be, before anything
+  // shrinks (MainView.swift:2134-2148): at 1200 the split still fits at its floor, so it
+  // stays and the sessions give the rest — 280 + 8 + 560 + 8 + 380 = 1236.
+  const tight = paneLayout({ available: 1200, sessions: 280, split: 560 });
+  assert.equal(tight.split, 560, "the split still fits at its floor");
+  assert.equal(tight.sessions, 244, "the sessions give what is over");
+  // 700 cannot hold the split at 380 beside the conversation's floor: it goes, and the
+  // sessions keep their smallest.
+  const noSplit = paneLayout({ available: 700, sessions: 280, split: 560 });
+  assert.equal(noSplit.split, null, "the split gives way first");
+  assert.equal(noSplit.sessions, 280, "and the sessions keep their width, the room being there");
+  // With the panel too, 900 leaves room for the sessions only: 220 + 8 + 300 + 8 + 380
+  // is over, and the panel goes next.
+  const tighter = paneLayout({ available: 900, sessions: 280, changes: 420 });
+  assert.equal(tighter.changes, null, "the panel goes next");
+  assert.equal(tighter.sessions, 280);
+  // 600 cannot hold even the sessions beside the conversation's floor.
+  const smallest = paneLayout({ available: 600, sessions: 280 });
+  assert.equal(smallest.sessions, null);
+  // A pane that went early comes back when a later one's going left room for it: at 1000
+  // the split has gone, and the panel fits beside the sessions — shrunk to the room left.
+  const back = paneLayout({ available: 1000, sessions: 280, changes: 420, split: 560 });
+  assert.deepEqual([back.sessions, back.changes, back.split], [280, 324, null]);
+});
+
+test("the rest shrink as far as they must, the panel first and the split last", () => {
+  // 1650: 14 over the room the conversation needs. The panel gives the 14, not the
+  // conversation and not the split.
+  const shrunk = paneLayout({ available: 1650, sessions: 280, changes: 420, split: 560 });
+  assert.deepEqual([shrunk.sessions, shrunk.changes, shrunk.split], [280, 406, 560]);
+  // 1200: the sessions shrink, and the split keeps its floor: 244 + 8 + 560 + 8 + 380.
+  const sessions = paneLayout({ available: 1200, sessions: 280, split: 560 });
+  assert.equal(sessions.sessions, 244);
+  // 1150: the sessions are at their floor, so the split gives the rest — 534, not 560.
+  const split = paneLayout({ available: 1150, sessions: 280, split: 560 });
+  assert.equal(split.sessions, 220);
+  assert.equal(split.split, 534, "the split shrinks last");
+  // 1300: the panel could shrink 4, but the smallest passage is still over — the split
+  // goes instead, and the panel keeps its width.
+  const dropped = paneLayout({ available: 1300, sessions: 280, changes: 420, split: 380 });
+  assert.deepEqual([dropped.sessions, dropped.changes, dropped.split], [280, 420, null]);
+});
+
+test("each pane knows how wide it may be dragged right now", () => {
+  const layout = paneLayout({ available: 1700, sessions: 280, changes: 420, split: 560 });
+  // room 1320; the others take what they take, gap by gap.
+  assert.equal(layout.sessionsMax, 316);
+  assert.equal(layout.changesMax, 456);
+  assert.equal(layout.splitMax, 596);
+  // A pane that is not on screen has no room to grow into either.
+  const hidden = paneLayout({ available: 1700, sessions: 280, split: 560 });
+  assert.equal(hidden.changesMax, 456, "an opened panel still leaves the others their room");
+  const roomy = paneLayout({ available: 3000, sessions: 280, split: 560 });
+  assert.equal(roomy.changesMax, 900, "at a roomy window the panel opens at its full width");
 });

@@ -33,6 +33,7 @@ const sources = {
   logo: read("app", "src", "components", "provider-logo.tsx"),
   spinner: read("app", "src", "components", "spinner.tsx"),
   transcript: read("harness", "transcript.mjs"),
+  layout: read("harness", "layout.mjs"),
   toolCall: read("app", "src", "components", "tool-call.tsx"),
   mac: read("..", "Packages", "OpenCodeKit", "Sources", "OpenCodeKit", "Events", "Transcript.swift"),
   tailwind: read("app", "app", "globals.css"),
@@ -231,9 +232,35 @@ const checks = [
     assert.match(app, /aria-label=\{sidebarOpen \? "Hide Sessions" : "Show Sessions"\}/);
   }],
 
+  ["the panes take the Mac's terrain, and give way in its order", ({ app, css, layout, rule }) => {
+    // PaneLayout (MainView.swift:2112-2179): sessions 220…440, changes 300…900, split
+    // 380…1200, and the conversation keeps at least 380. Out of room the split goes first,
+    // then the panel, then the sessions; a pane that went early comes back if a later
+    // one's going left room for it; the rest shrink, the panel first and the split last.
+    assert.match(layout, /sessions: \{ lower: 220, upper: 440 \}/);
+    assert.match(layout, /changes: \{ lower: 300, upper: 900 \}/);
+    assert.match(layout, /split: \{ lower: 380, upper: 1200 \}/);
+    assert.ok(layout.includes("export const conversationMinimum = 380;"));
+    assert.ok(layout.includes('givesWay = ["split", "changes", "sessions"]'), "the Mac's order of giving way");
+    assert.ok(layout.includes('for (const pane of ["changes", "sessions", "split"])'), "and the Mac's order of shrinking");
+    // The page measures the window and passes what each pane asks for: the sessions and
+    // the panel only while shown, the split only while a session is beside the one in view.
+    assert.match(app, /function paneLayoutNow\(\)[\s\S]*?main\.clientWidth[\s\S]*?paneLayout\(\{[\s\S]*?sessions: state\.sidebarOpen === false \? null : state\.sessionsWidth[\s\S]*?changes: state\.drawerOpen \? state\.changesWidth : null[\s\S]*?split: state\.split \? state\.splitWidth : null/);
+    assert.ok(app.includes("hidden={!state.split || layout.split === null}"), "a split the window has no room for is put aside");
+    assert.ok(app.includes('<PaneResizer pane="split" />'), "and the split has its own handle, as the Mac's has");
+    // The pane widths come from the layout, with the Mac's defaults when there is room.
+    const pane = rule(".split-pane {");
+    assert.match(pane, /flex: 0 0 var\(--split-width\)/);
+    assert.match(css, /--split-width: 560px/);
+    assert.ok(css.includes("width: var(--changes-width, 420px)"));
+  }],
+
   ["the panel is a card beside the conversation, with a 44 pt tab strip", ({ css, app, rule }) => {
     const pane = rule(".drawer.utility-pane {\n  position: relative;");
-    assert.match(pane, /width: 420px/);
+    // The panel takes its width from the layout, as the Mac's changesWidth does
+    // (MainView.swift:39) — 420 by default, and less when the window has no room.
+    assert.match(pane, /width: var\(--changes-width, 420px\)/);
+    assert.match(css, /--changes-width: 420px/);
     assert.match(pane, /border-radius: var\(--radius-card\)/);
     assert.match(pane, /background: var\(--panel\)/);
     assert.match(rule(".drawer-head {"), /height: 44px/);

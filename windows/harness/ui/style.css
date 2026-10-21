@@ -796,7 +796,8 @@ html[data-theme="dark"] .markdown pre code { color: var(--ink-soft); }
 main { display: flex; }
 #conversation { flex: 1; min-width: 0; }
 .split-pane {
-  flex: 1; min-width: 0;
+  flex: 0 0 var(--split-width);
+  min-width: 0;
   display: flex; flex-direction: column;
   border-left: 1px solid var(--line);
   background: var(--panel);
@@ -1621,6 +1622,8 @@ li.unread .session { position: relative; padding-left: 16px; }
   /* The window's metrics: 8 pt pane gap, 280 pt sessions, 38 pt card header (Theme.swift:11-18). */
   --pane-gap: 8px;
   --sessions-width: 280px;
+  --changes-width: 420px;
+  --split-width: 560px;
   --card-header: 38px;
 }
 
@@ -1808,7 +1811,9 @@ main {
   min-height: 0;
   position: relative;
 }
-main.sidebar-hidden { gap: 0; }
+/* The sessions hidden, the gaps stay: the aside keeps its zero width and gives back the
+   gap it would have taken, so the cards that remain are still 8 pt apart. */
+main.sidebar-hidden aside { margin-right: calc(-1 * var(--pane-gap)); }
 
 /* The sessions have no card of their own: the sidebar's rows sit on the glass. */
 aside {
@@ -2470,10 +2475,10 @@ input:focus, textarea:focus, select:focus {
 .drawer.utility-pane {
   position: relative;
   inset: auto;
-  width: 420px;
+  width: var(--changes-width, 420px);
   max-width: none;
   height: auto;
-  flex: 0 0 420px;
+  flex: 0 0 var(--changes-width, 420px);
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -2490,7 +2495,7 @@ input:focus, textarea:focus, select:focus {
 }
 .drawer.utility-pane.shown { animation: none; }
 .drawer.utility-pane[hidden] { display: none; }
-main.sidebar-hidden .drawer.utility-pane { margin-left: var(--pane-gap); }
+main.changes-hidden .drawer.utility-pane { display: none; }
 .drawer-head {
   display: flex;
   align-items: center;
@@ -3167,19 +3172,28 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
    the gap is the handle, a 3 pt capsule shows at half strength while it is held, and the
    cursor says what it does. */
 /* The window's row holds the handle (WindowGlass.swift:43-81). */
+/* The handle is the gap itself: a zero-width item between the cards, its hit area reaching
+   into the gap on either side, its capsule centred while it is held (WindowGlass.swift:43-81). */
 .pane-resizer {
+  position: relative;
+  width: 0;
+  flex: 0 0 0;
+  margin: 0 calc(var(--pane-gap) / -2);
+  z-index: 5;
+  cursor: col-resize;
+}
+.pane-resizer::before {
+  content: "";
   position: absolute;
   top: 0;
   bottom: 0;
-  left: calc(var(--sessions-width) - 4px);
-  width: 8px;
-  z-index: 5;
-  cursor: col-resize;
+  left: -5px;
+  right: -5px;
 }
 .pane-resizer::after {
   content: "";
   position: absolute;
-  left: 2.5px;
+  left: -1.5px;
   top: 40px;
   bottom: 40px;
   width: 3px;

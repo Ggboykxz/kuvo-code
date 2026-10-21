@@ -60,6 +60,9 @@ export const state: AppState = {
   quote: undefined,
   viewing: null,
   sidebarOpen: true,
+  sessionsWidth: 280,
+  changesWidth: 420,
+  splitWidth: 560,
 };
 
 // ---- The redraw ----

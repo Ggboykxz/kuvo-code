@@ -447,6 +447,12 @@ test("the page, in a browser, against the real engine", {
     return Boolean(title?.textContent?.includes("New Session"));
   }, null, 10_000);
   await page.seen("the empty session's own question beside", () => Boolean(document.querySelector("#split-pane .empty-conversation p")), null, 10_000);
+  // The window has no room for all of them: the split gives way first, and comes back
+  // when the room does (PaneLayout, MainView.swift:2112-2179).
+  await page.page.setViewportSize({ width: 900, height: 720 });
+  await page.seen("the split to give way when the window has no room", () => document.getElementById("split-pane")?.hidden === true, null, 10_000);
+  await page.page.setViewportSize({ width: 1280, height: 720 });
+  await page.seen("the split to come back when the room does", () => document.getElementById("split-pane")?.hidden === false, null, 10_000);
   await page.element("split-close").click();
   await page.seen("the split card to close", () => document.getElementById("split-pane")?.hidden === true, null, 10_000);
 

@@ -6,6 +6,7 @@ import { api } from "./api";
 import type { Attachment, FormRequest, PermissionRequest, SessionSummary, Transcript, TranscriptEntry } from "./api";
 import { brief, compactTokens, errorText, renderMarkdown } from "./lib";
 import { isRecording, keysOf, matchesEvent, shortcutFor } from "./shortcuts";
+import { paneLayout, paneRanges } from "../../harness/layout.mjs";
 import { draftKey, readDraft, saveDraft } from "./drafts.mjs";
 import {
   answerPermission,
@@ -1376,21 +1377,52 @@ function Sidebar() {
 /// The handle in the gap between the sessions and the conversation, the Mac's
 /// (WindowGlass.swift:43-81): the gap is the handle, a faint capsule shows while it is
 /// held, and the cursor says what it does.
-function PaneResizer() {
+/// The window's own measure, as the Mac takes it (MainView.swift:983-985): the width the
+/// cards share, and what each asks for — the sessions and the panel only while they are
+/// shown, the split only while a session is beside the one in view.
+function paneLayoutNow() {
+  const main = document.querySelector("main");
+  const available = (main ? main.clientWidth : window.innerWidth) - 2 * 8;
+  return paneLayout({
+    available,
+    sessions: state.sidebarOpen === false ? null : state.sessionsWidth,
+    changes: state.drawerOpen ? state.changesWidth : null,
+    split: state.split ? state.splitWidth : null,
+    gap: 8,
+  });
+}
+
+/// The handle in the gap between two cards (WindowGlass.swift:43-81): the gap is the
+/// handle, a faint capsule shows while it is held, and the cursor says what it does. It
+/// drags one of the Mac's three panes (MainView.swift:228, 256, 280), within that pane's
+/// range and the room the window leaves it (`PaneLayout`, MainView.swift:2112-2179).
+function PaneResizer({ pane }: { pane: "sessions" | "split" | "changes" }) {
   const [dragging, setDragging] = useState(false);
   const start = useRef({ x: 0, width: 0 });
+  const range = paneRanges[pane];
+  const asked = () => (pane === "sessions" ? state.sessionsWidth : pane === "split" ? state.splitWidth : state.changesWidth);
   return (
     <div
-      className={`pane-resizer ${dragging ? "dragging" : ""}`}
+      className={`pane-resizer ${pane} ${dragging ? "dragging" : ""}`}
       title="Drag to resize"
       onPointerDown={event => {
         event.preventDefault();
         setDragging(true);
-        const width = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--sessions-width")) || 280;
-        start.current = { x: event.clientX, width };
+        // The sessions sit at the window's left, so pulling right widens them; the split
+        // and the panel sit at its right, and widen as the handle is pulled left.
+        const sideways = pane === "sessions" ? 1 : -1;
+        start.current = { x: event.clientX, width: asked() };
         const move = (moveEvent: PointerEvent) => {
-          const next = Math.min(Math.max(start.current.width + (moveEvent.clientX - start.current.x), 220), 440);
-          document.documentElement.style.setProperty("--sessions-width", `${next}px`);
+          const layout = paneLayoutNow();
+          const room = pane === "sessions" ? layout.sessionsMax : pane === "split" ? layout.splitMax : layout.changesMax;
+          const next = Math.min(
+            Math.max(start.current.width + sideways * (moveEvent.clientX - start.current.x), range.lower),
+            Math.min(range.upper, Math.max(range.lower, room)),
+          );
+          if (pane === "sessions") state.sessionsWidth = next;
+          else if (pane === "split") state.splitWidth = next;
+          else state.changesWidth = next;
+          render();
         };
         const up = () => {
           setDragging(false);
@@ -2046,7 +2078,13 @@ export function App() {
       }
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // A window resized has another measure to give the panes (MainView.swift:983-985).
+    const onResize = () => render();
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", onResize);
+    };
   }, []);
 
   const hasSession = state.session !== null;
@@ -2065,12 +2103,25 @@ export function App() {
     void loadForms();
   }, [state.session?.id, state.project]);
 
+  // The layout the window can hold, measured the Mac's way (MainView.swift:983-1010): a
+  // pane the window has no room for is put aside, and comes back when it has.
+  const layout = paneLayoutNow();
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty("--sessions-width", `${layout.sessions ?? state.sessionsWidth}px`);
+    root.style.setProperty("--split-width", `${layout.split ?? state.splitWidth}px`);
+    root.style.setProperty("--changes-width", `${layout.changes ?? state.changesWidth}px`);
+  });
+
   return (
     <>
       <Header />
-      <main className={state.sidebarOpen === false ? "sidebar-hidden" : ""}>
+      <main className={[
+        state.sidebarOpen === false || layout.sessions === null ? "sidebar-hidden" : "",
+        state.drawerOpen && layout.changes === null ? "changes-hidden" : "",
+      ].filter(Boolean).join(" ")}>
         <Sidebar />
-        <PaneResizer />
+        {state.sidebarOpen !== false && layout.sessions !== null ? <PaneResizer pane="sessions" /> : null}
         <section id="conversation" className="card conversation-card">
           <div className="card-fade" aria-hidden="true" />
           <CardHeader
@@ -2151,13 +2202,15 @@ export function App() {
           </div>
           <Composer />
         </section>
-        <section id="split-pane" className="card split-pane" hidden={!state.split}>
+        {state.split && layout.split !== null ? <PaneResizer pane="split" /> : null}
+        <section id="split-pane" className="card split-pane" hidden={!state.split || layout.split === null}>
           <div className="card-fade" aria-hidden="true" />
           <SplitHeader />
           <div id="split-entries" className="entries">
             <SplitEntries />
           </div>
         </section>
+        {state.drawerOpen && layout.changes !== null ? <PaneResizer pane="changes" /> : null}
         <Drawer />
       </main>
       <Palette />
