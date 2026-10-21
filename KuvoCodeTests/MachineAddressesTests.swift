@@ -101,6 +101,41 @@ import Testing
         #expect(workspace.settings[web] == nil)
     }
 
+    /// Both listed the same sessions (one engine, reached twice, kept apart by name): once one is
+    /// the other's address they're listed once, under the other's name, and one at work stays at
+    /// work. A project added under both names keeps the other's settings.
+    @Test func itsSessionsStayListedOnceAtWork() async throws {
+        defer {
+            Self.clean()
+            SessionCopies.removeSessions(of: "lokum-local")
+            SessionCopies.removeSessions(of: "lokum-tailscale")
+        }
+        func session(on machine: String) throws -> Session {
+            let json = StubEngine.session("ses_build", title: "Build", directory: RemoteFolder.folder("/srv/web", on: machine))
+            return try JSONDecoder().decode(Session.self, from: JSONSerialization.data(withJSONObject: json))
+        }
+        SessionCopies.saveSessions([try session(on: "lokum-local")], of: "lokum-local")
+        SessionCopies.saveSessions([try session(on: "lokum-tailscale")], of: "lokum-tailscale")
+        try await eventually { !SessionCopies.sessions(of: "lokum-local").isEmpty && !SessionCopies.sessions(of: "lokum-tailscale").isEmpty }
+        let workspace = Workspace()
+        workspace.machines = ["lokum-local", "lokum-tailscale"]
+        #expect(workspace.sessions.filter { $0.id == "ses_build" }.count == 2)
+        let started = try ServerEvent(json: JSONSerialization.data(withJSONObject: [
+            "id": "evt_1", "type": "session.execution.started", "created": 1, "data": ["sessionID": "ses_build"],
+        ]))
+        workspace.handle(started)
+        #expect(workspace.running.contains("ses_build"))
+        let web = RemoteFolder.folder("/srv/web", on: "lokum-tailscale")
+        workspace.saveProject(RemoteFolder.folder("/srv/web", on: "lokum-local"), settings: Workspace.ProjectSettings(name: "Old name", run: "make"))
+        workspace.saveProject(web, settings: Workspace.ProjectSettings(name: "Website", run: "npm run dev"))
+
+        workspace.fold("lokum-local", into: "lokum-tailscale")
+        #expect(workspace.sessions.filter { $0.id == "ses_build" }.map(\.location.directory) == [web], "listed once, under the other's name")
+        #expect(workspace.running.contains("ses_build"), "still at work")
+        #expect(workspace.settings[web]?.name == "Website")
+        #expect(workspace.settings[web]?.run == "npm run dev")
+    }
+
     /// You say one is the other at another address (one of them can't be reached to tell): one
     /// machine. Two that have said they're different computers stay two.
     @Test func youSayTheyreTheSameComputer() {

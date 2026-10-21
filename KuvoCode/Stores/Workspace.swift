@@ -1333,10 +1333,12 @@ final class Workspace {
             guard let parsed = RemoteFolder.parse(folder), parsed.machine == machine else { return folder }
             return RemoteFolder.folder(parsed.path, on: other)
         }
+        // Its rows go; the same sessions listed under the other's name (its engine's) stay, at
+        // work as they were.
         let gone = Set(sessions.filter { RemoteFolder.machine(of: $0.location.directory) == machine }.map(\.id))
-        sessions.removeAll { gone.contains($0.id) }
+        sessions.removeAll { RemoteFolder.machine(of: $0.location.directory) == machine }
         models = models.filter { RemoteFolder.machine(of: $0.value.session.location.directory) != machine }
-        running.subtract(gone)
+        running.subtract(gone.subtracting(sessions.map(\.id)))
         connectedMachines.remove(machine)
         listSaves[machine]?.cancel()
         listSaves[machine] = nil
@@ -1348,20 +1350,23 @@ final class Workspace {
         for folder in folders.map(moved) where !kept.contains(folder) { kept.append(folder) }
         folders = kept
         UserDefaults.standard.set(folders, forKey: "projectFolders")
+        // A project added under both names keeps the other's settings, its worktrees theirs.
+        func isOthers(_ folder: String) -> Bool { RemoteFolder.machine(of: folder) != machine }
         settings = Dictionary(settings.map { folder, project in
             var project = project
             project.folders = project.folders.map(moved)
-            return (moved(folder), project)
-        }, uniquingKeysWith: { first, _ in first })
+            return (moved(folder), (project, isOthers(folder)))
+        }, uniquingKeysWith: { one, two in two.1 ? two : one }).mapValues(\.0)
         saveSettings()
         worktrees = Dictionary(worktrees.map { folder, tree in
             var tree = tree
             tree.project = moved(tree.project)
             tree.root = moved(tree.root)
-            return (moved(folder), tree)
-        }, uniquingKeysWith: { first, _ in first })
+            return (moved(folder), (tree, isOthers(folder)))
+        }, uniquingKeysWith: { one, two in two.1 ? two : one }).mapValues(\.0)
         saveWorktrees()
-        removedWorktrees = Dictionary(removedWorktrees.map { (moved($0.key), moved($0.value)) }, uniquingKeysWith: { first, _ in first })
+        removedWorktrees = Dictionary(removedWorktrees.map { (moved($0.key), (moved($0.value), isOthers($0.key))) },
+                                      uniquingKeysWith: { one, two in two.1 ? two : one }).mapValues(\.0)
         UserDefaults.standard.set(removedWorktrees, forKey: "removedWorktrees")
     }
 

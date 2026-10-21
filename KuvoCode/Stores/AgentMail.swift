@@ -71,6 +71,14 @@ final class AgentMail {
         }
     }
 
+    /// A machine found to be another one here, at another address (`Machines.fold`): what
+    /// waited for it waits for the other, and goes when that's connected.
+    func fold(_ machine: String, into other: String) {
+        guard waiting.contains(where: { $0.machine == machine }) else { return }
+        for index in waiting.indices where waiting[index].machine == machine { waiting[index].machine = other }
+        save()
+    }
+
     private func save() {
         if waiting.isEmpty {
             try? FileManager.default.removeItem(at: Self.waitingFile)
