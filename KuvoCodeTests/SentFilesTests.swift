@@ -42,7 +42,7 @@ import Testing
         // A zip's first bytes: binary, as an archive is.
         let archive = try file("logs.zip", Data([0x50, 0x4B, 0x03, 0x04, 0x14, 0x00, 0x00, 0x00, 0x08, 0x00, 0x9C, 0xFE, 0x00, 0x00, 0xE3, 0x02]))
         engine.list([StubEngine.session(id, title: "Files", directory: folder.path)])
-        engine.on("GET", "/api/session/\(id)/message", json: ["data": []])
+        engine.conversation(id, [])
         engine.on("POST", "/api/session/\(id)/prompt", json: [:])
         await workspace.refresh()
         let model = try #require(workspace.model(for: id))

@@ -20,7 +20,7 @@ import Testing
 
     private func open() async throws -> SessionModel {
         engine.list([StubEngine.session(id, title: "Undo", directory: "/tmp/kuvo-tests-undo")])
-        engine.on("GET", "/api/session/\(id)/message", json: ["data": [older, newer]])
+        engine.conversation(id, [older, newer])
         engine.on("POST", "/api/session/\(id)/revert/stage") { request in
             StubWeb.json(["data": ["messageID": request.body["messageID"] as? String ?? ""]])
         }
@@ -84,5 +84,39 @@ import Testing
         try await eventually { model.session.revert == nil }
         #expect(model.draftText.contains("half a thought about colors"), "typed text was lost: \(model.draftText)")
         #expect(!model.draftText.contains("Add a settings page"), "the message Redo brought back shouldn't stay in the composer to be sent again")
+    }
+
+    /// A message that waited in the queue is older than the steps the agent took before it got to
+    /// it. Undoing it, then sending: the conversation goes back to where that message was, and
+    /// the reply before it stays.
+    @Test func undoingAQueuedMessageKeepsTheReplyBeforeIt() async throws {
+        defer { done() }
+        // Positions as the engine has them; the queued message's id is from when it was queued.
+        let conversation: [[String: Any]] = [
+            ["id": "msg_01", "type": "user", "time": ["created": 1], "text": "Fix the build"],
+            ["id": "msg_02", "type": "assistant", "agent": "build", "time": ["created": 2, "completed": 3], "model": ["id": "m", "providerID": "p"],
+             "content": [["type": "text", "text": "Looking at the build."]]],
+            ["id": "msg_04", "type": "assistant", "agent": "build", "time": ["created": 4, "completed": 5], "model": ["id": "m", "providerID": "p"],
+             "content": [["type": "text", "text": "The build passes now."]]],
+            ["id": "msg_05", "type": "idle", "time": ["created": 6], "outcome": "succeeded"],
+            ["id": "msg_03", "type": "user", "time": ["created": 3], "text": "Then run the tests"],
+            ["id": "msg_06", "type": "assistant", "agent": "build", "time": ["created": 7, "completed": 8], "model": ["id": "m", "providerID": "p"],
+             "content": [["type": "text", "text": "Tests pass."]]],
+        ]
+        engine.list([StubEngine.session(id, title: "Undo", directory: "/tmp/kuvo-tests-undo")])
+        engine.conversation(id, conversation)
+        engine.on("POST", "/api/session/\(id)/revert/stage") { request in
+            StubWeb.json(["data": ["messageID": request.body["messageID"] as? String ?? ""]])
+        }
+        engine.on("POST", "/api/session/\(id)/prompt", json: [:])
+        await workspace.refresh()
+        let model = try #require(workspace.model(for: id))
+        await model.load()
+        #expect(model.transcript.messages.map(\.id) == ["msg_01", "msg_02", "msg_04", "msg_05", "msg_03", "msg_06"])
+
+        model.undo(from: try user(conversation[4]))
+        try await eventually { model.draftText == "Then run the tests" }
+        model.send("Then run the tests, and the linter", for: nil)
+        #expect(model.transcript.messages.map(\.id) == ["msg_01", "msg_02", "msg_04", "msg_05"], "the reply before the undone message should stay")
     }
 }

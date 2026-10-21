@@ -24,6 +24,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - When merging a worktree back would conflict, the files are named as they are; a name with accented letters or quotes showed as escaped codes ("caf\303\251.txt").
 - Searching the sidebar for words like "you" or "agent" no longer lists every session under In Conversations; it finds only conversations where they were said.
 - Switching to another session in the same folder with the Changes tab open shows that session's changes under This Session (and outside git); within a few seconds it went back to showing the first session's. A comment half written on a line stays with the session it was written in.
+- Undoing a message that waited in the queue, then sending, no longer takes away the agent's reply from before it (until the conversation was read again); only the message and what came after it go.
 ## 0.6.2
 
 - A worktree's branch named after a title in another language keeps its letters ("Giriş düzeltmesi" is giris-duzeltmesi, not giri-dzeltmesi).

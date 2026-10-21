@@ -54,6 +54,11 @@ nonisolated final class StubEngine: @unchecked Sendable {
         }
     }
 
+    /// A session's conversation, oldest first: answered as the engine pages it, newest first.
+    func conversation(_ session: String, _ messages: [[String: Any]]) {
+        on("GET", "/api/session/\(session)/message", json: ["data": Array(messages.reversed())])
+    }
+
     /// What `method` `path` (without its query) answers: the same each time. A path ending in `*`
     /// stands for every path starting with what's before it.
     func on(_ method: String, _ path: String, json: Any, status: Int = 200) {

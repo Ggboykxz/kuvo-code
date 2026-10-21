@@ -32,9 +32,9 @@ import Testing
             StubEngine.session("ses_logs", title: "Old one", directory: "/tmp/kuvo-tests-search", created: 10,
                                extra: ["metadata": ["kuvo.archived": true]]),
         ])
-        engine.on("GET", "/api/session/ses_login/message", json: ["data": conversation("login", you: "The sign-in form forgets the email", agent: "Fixed: the form keeps the email now.")])
-        engine.on("GET", "/api/session/ses_dark/message", json: ["data": conversation("dark", you: "Add a dark theme", agent: "Done: the theme follows the system.")])
-        engine.on("GET", "/api/session/ses_logs/message", json: ["data": conversation("logs", you: "Why is the email log so big?", agent: "It keeps every request.")])
+        engine.conversation("ses_login", conversation("login", you: "The sign-in form forgets the email", agent: "Fixed: the form keeps the email now."))
+        engine.conversation("ses_dark", conversation("dark", you: "Add a dark theme", agent: "Done: the theme follows the system."))
+        engine.conversation("ses_logs", conversation("logs", you: "Why is the email log so big?", agent: "It keeps every request."))
         await workspace.refresh()
     }
 

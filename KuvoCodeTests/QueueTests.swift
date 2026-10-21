@@ -23,7 +23,7 @@ import Testing
     private func open(running: Bool, inbox: [[String: Any]]) async throws -> SessionModel {
         engine.list([StubEngine.session(id, title: "Queue", directory: "/tmp/kuvo-tests-queue")], running: running ? [id] : [])
         engine.on("GET", "/api/session/\(id)/inbox", json: ["data": inbox])
-        engine.on("GET", "/api/session/\(id)/message", json: ["data": [first]])
+        engine.conversation(id, [first])
         engine.on("PATCH", "/api/session/\(id)/inbox/*", json: [:])
         engine.on("POST", "/api/session/\(id)/prompt", json: [:])
         engine.on("POST", "/api/session/\(id)/interrupt", json: ["interrupted": true])
