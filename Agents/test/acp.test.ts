@@ -125,6 +125,21 @@ describe("ACP agents, nothing dropped", () => {
     expect(notes).toMatchObject({ id: "r2", name: "read", state: { status: "completed", content: [{ type: "text", text: "first\nsecond" }] } })
   })
 
+  test("one of Kuvo Code's tools that the agent wraps in its own call (Grok's UseTool) shows with its own arguments", async () => {
+    const message = { to: "ses_other", text: "Got ping #3." }
+    const id = await run(
+      agentSaying([
+        ["s1", { sessionUpdate: "tool_call", toolCallId: "k1", title: "kuvo-browser__send_message", kind: "other", status: "completed",
+                 rawInput: { variant: "UseTool", tool_name: "kuvo-browser__send_message", tool_input: message } }],
+        ["s1", { sessionUpdate: "tool_call", toolCallId: "k2", title: "Use tool", kind: "other", status: "completed",
+                 rawInput: { variant: "UseTool", tool_name: "kuvo-browser__show_in_panel", tool_input: { path: "/tmp/a.txt" } } }],
+      ]),
+    )
+    const [sent, shown] = tools(id)
+    expect(sent).toMatchObject({ name: "kuvo-browser_send_message", state: { input: message } })
+    expect(shown).toMatchObject({ name: "kuvo-browser_show_in_panel", state: { input: { path: "/tmp/a.txt" } } })
+  })
+
   test("a tool whose name is known only later is told with its new name", async () => {
     const started: string[] = []
     const unsubscribe = subscribe((event: any) => {

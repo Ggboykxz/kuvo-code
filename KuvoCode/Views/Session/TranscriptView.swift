@@ -1486,10 +1486,13 @@ private struct AgentSentRow: View {
     @Environment(AppModel.self) private var app
 
     private var input: JSONValue? {
-        switch call.state {
+        let input: JSONValue? = switch call.state {
         case .running(let input, _), .completed(let input, _, _), .failed(let input, _, _, _): input
         case .streaming: nil
         }
+        // Grok's, sent before the bridge read its arguments out of its own wrapping.
+        if let wrapped = input?["tool_input"], wrapped["text"] != nil || wrapped["to"] != nil { return wrapped }
+        return input
     }
 
     /// What the tool said back: the answer it waited for, or that it's sent.

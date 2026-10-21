@@ -14,6 +14,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Connecting to a machine after an update of Kuvo Code no longer stops a session still working there to update its engine; the update waits until nothing runs.
 - A new password typed in a sign-in card for a saved account is saved in its place; agents allowed to sign in on their own kept using the old one. Allowing them with a password filled in from Passwords asks for Touch ID, as it should.
 - Turning notifications on in System Settings after saying no works without restarting Kuvo Code.
+- A message Grok sends another session shows what it said and to whom, and opens; it showed only "To another agent" and couldn't be opened. Grok's use of Kuvo Code's other tools (the panel, its browser) shows what it asked for too.
 - A summary of the conversation that failed says so ("Couldn't summarize the conversation"); it read "Summarized the conversation to save space", and could turn an earlier summary into a failed one.
 - A project folder that a git repository around it ignores (such as one under a dotfiles repository at your home folder) lists its files in the panel and for @ mentions; the list was empty.
 - Opening a bot whose machine isn't connected shows that it's waiting for the machine, with Connect Now, under the bot's name. A bot on a machine whose sessions hadn't been listed on this Mac yet showed the welcome screen.

@@ -946,20 +946,24 @@ function kuvoTool(call: any): { name: string; input: Record<string, unknown> } {
   }
   // One of Kuvo Code's, named with its server ("kuvo-browser/show_widget", "mcp__kuvo-browser__…",
   // "Tool: kuvo-browser.show_widget", or server and tool in its input): the app's name for it.
+  // Its own arguments, where the agent wraps them in its call (Grok: {variant: "UseTool",
+  // tool_name, tool_input}), or the input as it is.
   const server = raw.server ?? raw.server_name ?? raw.serverName
   const tool = raw.tool ?? raw.tool_name ?? raw.toolName
+  const wrapped = raw.arguments ?? raw.args ?? raw.input ?? raw.tool_input ?? raw.toolInput
+  const args = typeof wrapped === "object" && wrapped && !Array.isArray(wrapped) ? wrapped : raw
   if (server === toolServerName && typeof tool === "string" && /^[a-z0-9_]+$/i.test(tool) && isKuvoTool(tool) !== false) {
-    const args = raw.arguments ?? raw.args ?? raw.input
-    return { name: `${toolServerName}_${tool}`, input: typeof args === "object" && args ? args : raw }
+    return { name: `${toolServerName}_${tool}`, input: args }
   }
-  const prefixed = new RegExp(`(?:^|[\\s:])(?:mcp__)?${toolServerName}(?:/|__|\\.|:|_)([a-z0-9_]+)\\s*$`, "i").exec(String(call.title ?? "").trim())?.[1]
-  if (prefixed && isKuvoTool(prefixed.toLowerCase()) !== false) return { name: `${toolServerName}_${prefixed.toLowerCase()}`, input: raw }
+  const named = (text: unknown) => new RegExp(`(?:^|[\\s:])(?:mcp__)?${toolServerName}(?:/|__|\\.|:|_)([a-z0-9_]+)\\s*$`, "i").exec(String(text ?? "").trim())?.[1]
+  const prefixed = named(call.title) ?? named(tool)
+  if (prefixed && isKuvoTool(prefixed.toLowerCase()) !== false) return { name: `${toolServerName}_${prefixed.toLowerCase()}`, input: args }
   // Antigravity names a tool only in its title ("Running show_widget"): one of Kuvo Code's goes by
   // the app's name for it, so it shows as it does for the engine's models (a widget, drawn).
-  const named = /^(?:running\s+|tool:\s*|calling\s+)?([a-z0-9_.-]+)$/i.exec(String(call.title ?? "").trim())?.[1]
-  const own = named && typeof raw === "object" && raw ? kuvoToolName(named, raw) : undefined
+  const titled = /^(?:running\s+|tool:\s*|calling\s+)?([a-z0-9_.-]+)$/i.exec(String(call.title ?? "").trim())?.[1]
+  const own = titled && typeof raw === "object" && raw ? kuvoToolName(titled, raw) : undefined
   if (own) return { name: own, input: raw }
-  return { name: (named ?? call.title ?? "tool").toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_|_$/g, "") || "tool", input: raw }
+  return { name: (titled ?? call.title ?? "tool").toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_|_$/g, "") || "tool", input: raw }
 }
 
 /** The kinds of access Kuvo Code knows an agent's ask by (and Kuvo Code's own tools, by name). */
