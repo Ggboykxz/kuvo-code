@@ -323,6 +323,15 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     Mac's own prompt, "npm run dev"), and the title bar carries the button that runs it —
     the Mac's play mark, drawn — which opens the panel on the terminal and sends the
     command there, in the project's folder.
+  - **2.81 (this change). A project's other folders, where the agent may work too.** A
+    project can span several folders: the agent works in the first, and in the others as
+    if they were its own (`Workspace.ProjectSettings.folders`, `Workspace.swift:196`; the
+    rules, `ProjectFolders.swift:20-27`; the note that names them,
+    `ProjectFolders.swift:36-46`). The port's projects had one folder and nothing else.
+    The others are written in the editor beside the name — with the Mac's own note, "Sessions
+    run in the primary folder; the agent can work in the others too" — and the session in
+    view is given them: the rules that allow those folders, and the note that tells the
+    agent that "in chugs-pinterest" means that folder (`SessionModel.swift:1379-1405`).
   - **2.61 (this change). The provider's marks.** The Mac draws the maker's mark beside
     each model (`ProviderLogo.swift`), monochrome so it follows the ink, or in the maker's
     own colour where it has one. The marks themselves are not published as a package, but
