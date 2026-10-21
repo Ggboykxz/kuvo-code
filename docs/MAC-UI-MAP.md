@@ -273,20 +273,20 @@ most behaviours but not for the values; Phase 1–4 port the values.
 | `HoverHighlight.swift` | Flat control: no fill, 6 % hover, 8 % selected, 0.12 s | `HoverHighlight.swift:14-26` | ✅ (0.5.40) | 3 |
 | `IconOnlyToolbar.swift` | AppKit toolbar without Icon/Text menu | `IconOnlyToolbar.swift:4-38` | — (no AppKit) | — |
 | `InlineTitleField.swift` | Rename where it shows: all selected, Return commits, Escape cancels, click-away keeps | `InlineTitleField.swift:4-55` | ✅ (0.5.48: the rename happens in the row, the way the Mac's does) | 7 |
-| `Look.swift` | Appearance: accent, window, text size, typeface | §3.2, §3.3 | ✅ (0.5.45) | 1 |
+| `Look.swift` | Appearance: accent, window, text size, typeface | §3.2, §3.3 | ✅ (0.5.45; 0.5.78: the window's material, the typeface of the messages and the detail of the steps) | 1 |
 | `NativeMenu.swift` | Real AppKit menus with values on the right and subtitles | `NativeMenu.swift:5-165` | ✅ (0.5.61: a real menu bar, the Mac's items and keys) | 6 |
 | `PillPicker.swift` | Glass track, raised pill slides to the choice | `.ui` spring, matched geometry | ✅ (0.5.40) | 3, 6 |
 | `PlainDatePicker.swift` | Date/time without a box, for a well row | `PlainDatePicker.swift:6-30` | ⛔ (only the bot editor asks for a date, and the bots are an upstream decision) | 6 |
 | `Pressable.swift` | Every small control's hover/pressed language | hover 8 %, pressed 13 %, hover 0.12 s; list selected 16 %, pressed 24 %; disabled 45 %; accent badge hover 1.12 / −0.07, press −0.15 | ✅ (0.5.64: the press is a fill, and the scale the old direction had is gone) | 3 |
 | `ProviderLogo.swift` | models.dev mark, monochrome or maker colour | 20 pt default; fallback initial 55 % size, semibold rounded | ✅ (0.5.63: the mark is fetched from models.opencode.ai and drawn in the ink; the initial stands in until it arrives) | 4 |
 | `QuoteViews.swift` | "Replying to" card over the composer | 3 pt tint capsule; caption medium; 3 lines; remove button, `.help("Drop the quote")` | ◐ (behaviour ✅) | ✅ (0.5.54) |
-| `RightClickMenu.swift` | One window-level right-click watcher, works in the title bar | `RightClickMenu.swift:4-65` | ✅ (HTML contextmenu) | 7 |
+| `RightClickMenu.swift` | One window-level right-click watcher, works in the title bar | `RightClickMenu.swift:4-65` | ✅ (0.5.73, 0.5.74: the session's own menu and the tab's, in the Mac's order and words) | 7 |
 | `ScreenRoom.swift` | Room above/below for popovers that must stay on one side | `ScreenRoom.swift:4-33` | ✅ (0.5.50) | 7 |
 | `ScrollFrameMonitor.swift` | Debug instrumentation for late frames and scroll cost | `ScrollFrameMonitor.swift` | — (diagnostic) | — |
 | `Spinner.swift` | The prompt mark drawing itself in dashes | size 11, 1.6 s; dash `[line, 1.8 line]`, line `max(1, size × 0.11)`; chevron 0→0.4, cursor 0.32→0.6, hold, fade 0.78→1 | ✅ (0.5.64: the mark draws itself in dashes over a faint copy, at the Mac's weight) | 3, 4 |
-| `Surfaces.swift` | All materials in one place | §3.2 | ◐ | 1 |
+| `Surfaces.swift` | All materials in one place | §3.2 | ✅ (0.5.78: the glass, or a solid ground) | 1 |
 | `Theme.swift` | Metrics, spring, shimmer, readable column, diff stat | §3.4; shimmer 1.6 s | ✅ (0.5.40) | 1, 3 |
-| `WindowGlass.swift` | Window material or solid + ambient; pane resizer | §2 | ✅ (0.5.38, 0.5.48) | 2 |
+| `WindowGlass.swift` | Window material or solid + ambient; pane resizer | §2 | ✅ (0.5.38, 0.5.48; 0.5.78: the material is the user's own choice) | 2 |
 
 ---
 
@@ -327,7 +327,7 @@ CSS equivalent of SwiftUI's velocity-preserving springs.
 | List selection | tint 16 %, pressed 24 % | `Pressable.swift:158-162` | accent wash 16 % | 3 ✅ |
 | Disabled | opacity 45 % | `Pressable.swift:61` | mixed | 3, 6 |
 | Palette / picks | `.ui` spring, matched geometry | `PillPicker.swift:22`, `CommandPalette` | the palette on the spring; the tab's pill slides with it | 3, 6 |
-| Image viewer | open 0.16, close 0.14, `isOpen` 0.15 easeOut | `ImageViewer.swift` | 320 ms spring zoom (`style.css:1489`) | 6 |
+| Image viewer | open 0.16, close 0.14, `isOpen` 0.15 easeOut | `ImageViewer.swift` | ✅ (0.5.76, 0.5.82: the Mac's own timings, the header and the arrows) | 6 |
 | Count / copy icon | content transition, symbol effect replace | `CodeBlockStyle`, copy buttons | None | 4 |
 | Reduced motion | Spinner still, shimmer off, bots still, transitions reduced | `Spinner.swift:19-24`, `Theme.swift:53`, `BotAvatar.swift:80` | the shimmer stops, the spinner stands still, transitions reduced | 3 ✅ |
 
@@ -383,7 +383,7 @@ below are grouped by area; the exhaustive list of all 74 files is in `MAC-UI-INV
 | `YourMessage` | Message bubble + hover time/Copy/New Session/Undo | ✅ / ◐ | 2, 7 |
 | `Composer` | Message field, modes, model, send/stop, attachments, quotes | ✅ / ◐ | 2, 6 |
 | `ComposerMenus` | Mode/model menus, searchable, grouped by provider | ✅ / ◐ | 6 |
-| `ModelPicker` | Effort levels ("xhigh" = Extra) | ✅ / ◐ | 6 |
+| `ModelPicker` | Effort levels ("xhigh" = Extra); the models the user keeps | ✅ / ◐ | 6 |
 | `QueueDock` | Waiting messages tucked behind the composer | ✅ / ◐ | 2, 6 |
 | `ContextGauge` | Ring + number; popover: window, cost, compact | ✅ / ◐ | 2, 6 |
 | `StepsRow` | Steps between replies, foldable summary | ✅ / ◐ | 6 |
