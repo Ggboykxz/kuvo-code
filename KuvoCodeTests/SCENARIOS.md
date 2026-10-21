@@ -26,7 +26,7 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | B20 Commands and skills | SlashCommandsTests, SkillLibraryTests | |
 | C1–C3 Attach pictures, PDFs, files | AttachmentRoutesTests, AttachmentsTests, SentFilesTests | |
 | C4 Quote part of a reply and answer it | QuotingTests | |
-| C5, C6 Files in the panel; the agent shows one | FileLinksTests, PanelTabsTests | |
+| C5, C6 Files in the panel; the agent shows one | FileLinksTests, PanelTabsTests, ProjectFilesTests | |
 | E, B15 The agent's browser | BrowserToolServerTests | |
 | E5, L33, L34, K6 Sign-ins, codes, passwords | BrowserAsksTests, MachineSignOutTests | |
 | F2, F6 A bot's job, told or edited | BotsTests | |
