@@ -63,27 +63,24 @@ export function fromHistory(sessionID, messages, permissions = [], running = fal
     const entry = messageEntry(message);
     if (entry) transcript.entries.push(entry);
   }
-  // A run is running while its last words are unfinished — the Mac app's own measure
-  // (Message.isRunning reads the message's status), not the engine's session flag, which
-  // can still say "running" for a moment after the turn is over.
-  // The Mac's own measure (Message.isRunning): the *last* words of the conversation, and
-  // whether they are finished. The parts can lag behind the message in the engine's
-  // history, and an earlier message that never finished is not a run under way.
+  // The Mac's own measure of "running" (Message.isRunning, SessionModel.swift:573-587),
+  // both halves of it: the conversation's last words are unfinished, and the engine still
+  // has the session among the active ones. The *last* words are what count — an earlier
+  // message that never finished is not a run under way — and either half can end the run:
+  // the engine's flag can still say "running" for a moment after the turn is over, and its
+  // stored words can lag the other way, so a page that loaded just then would keep showing
+  // that the agent is at work long after it stopped. A message the engine has stamped
+  // finished ends the turn on its own, whatever its flag still says and however few parts
+  // it carries: a reply with nothing in it is still a reply that ended, and only a run
+  // with no assistant message at all is the engine's own answer alone.
   const last = [...transcript.entries].reverse().find(entry => entry.kind === "assistant");
   const unfinished = Boolean(last) && !last.completed && (last.parts ?? []).some(part => {
     if (part.type === "text" || part.type === "reasoning") return part.done === false;
     return part.status === "running" || part.status === "pending";
   });
-  // The Mac's own measure, both halves of it: the conversation's last words are
-  // unfinished (Message.isRunning reads the message's status), and the engine still has
-  // the session among the active ones (SessionModel.swift:573-587 reads the engine's own
-  // answer when it loads a session). Either can end a run — the engine's flag can still
-  // say "running" for a moment after the turn is over, and its stored words can lag the
-  // other way, so a page that loaded just then would keep showing that the agent is at
-  // work long after it stopped. A run that has begun but has not written a word yet is
-  // the engine's own answer alone.
   const written = Boolean(last) && (last.parts ?? []).length > 0;
-  transcript.running = Boolean(running) && (unfinished || !written);
+  const done = Boolean(last?.completed);
+  transcript.running = !done && Boolean(running) && (unfinished || !written);
   return transcript;
 }
 

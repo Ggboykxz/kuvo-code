@@ -52,7 +52,8 @@ export type SymbolName =
   | "checkmark.shield"
   | "cpu"
   | "puzzlepiece.extension"
-  | "server.rack";
+  | "server.rack"
+  | "bubble.left.and.text.bubble.right";
 
 /// The paths, on the 16 pt grid, in the Mac's own order.
 const PATHS: Record<SymbolName, string[]> = {
@@ -96,12 +97,24 @@ const PATHS: Record<SymbolName, string[]> = {
   "puzzlepiece.extension": ["M3 6.5h3.2V5a1.8 1.8 0 1 1 3.6 0v1.5H13v3.2h-1.5a1.8 1.8 0 1 0 0 3.6H13v.2H3V11.5h1.5a1.8 1.8 0 1 0 0-3.6H3z"],
   "server.rack": ["M3.6 2.6h8.8a1.2 1.2 0 0 1 1.2 1.2v1.8a1.2 1.2 0 0 1 -1.2 1.2h-8.8a1.2 1.2 0 0 1 -1.2 -1.2v-1.8a1.2 1.2 0 0 1 1.2 -1.2z", "M3.6 9.2h8.8a1.2 1.2 0 0 1 1.2 1.2v1.8a1.2 1.2 0 0 1 -1.2 1.2h-8.8a1.2 1.2 0 0 1 -1.2 -1.2v-1.8a1.2 1.2 0 0 1 1.2 -1.2z", "M4.8 4.7h.01M4.8 11.3h.01"],
   "square.and.pencil": ["M9.2 3.2h3.6v3.6", "M9.4 6.4L4.2 11.6l-2 .6.6-2 .4.6.6-2-1.4.4 4.2-4.2z"],
+  // Two chat bubbles over an empty conversation, the front one with text in it: the back
+  // bubble's outline stops where the front one's begins, the way doc.on.doc overlaps.
+  "bubble.left.and.text.bubble.right": [
+    "M3.8 2.4h3.6a2.2 2.2 0 0 1 2.2 2.2V6.2",
+    "M1.6 4.6V7.2a2.2 2.2 0 0 0 2.2 2.2l-1.2 3.2 2.8-3.2h1.6",
+    "M9 6.2h3.6a2 2 0 0 1 2 2v1.4a2 2 0 0 1-2 2h-1l1.2 3.2-2.8-3.2h-1a2 2 0 0 1-2-2V8.2a2 2 0 0 1 2-2z",
+    "M9.4 8.2h3.2",
+    "M9.4 9.8h2",
+  ],
 };
 
 export interface SymbolProps {
   name: SymbolName;
   /** The size in points; the Mac's marks are 16 pt unless the row says otherwise. */
   size?: number;
+  /** The stroke in points, when the Mac draws the mark at another weight: its `.light`
+      at 34 pt is thinner than the grid's own 1.5/16 would make it. */
+  stroke?: number;
   className?: string;
   /** The Mac's `.help` text, when the mark stands alone in a button. */
   title?: string;
@@ -109,8 +122,8 @@ export interface SymbolProps {
 }
 
 /// A symbol, drawn.
-export function Symbol({ name, size = 16, className, title, style }: SymbolProps) {
-  const stroke = (1.5 * size) / 16;
+export function Symbol({ name, size = 16, stroke, className, title, style }: SymbolProps) {
+  const strokeWidth = stroke ?? (1.5 * size) / 16;
   return (
     <svg
       className={className}
@@ -120,7 +133,7 @@ export function Symbol({ name, size = 16, className, title, style }: SymbolProps
       height={size}
       fill="none"
       stroke="currentColor"
-      strokeWidth={stroke}
+      strokeWidth={strokeWidth}
       strokeLinecap="round"
       strokeLinejoin="round"
       role={title ? "img" : undefined}

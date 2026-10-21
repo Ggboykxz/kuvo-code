@@ -492,6 +492,22 @@ function AttachmentNode({ file }: { file: Attachment }) {
   return <a className="attachment-chip" href={source} target="_blank" rel="noreferrer">{`${file.name ?? "file"} (${file.mime})`}</a>;
 }
 
+/// A conversation with nothing in it yet: the Mac's own mark over its own question about
+/// the folder (TranscriptView.swift:69-75 overlays it while the rows are empty;
+/// EmptyConversationView's `plain` form is drawn at TranscriptView.swift:1757-1767).
+function EmptyConversation({ directory }: { directory: string }) {
+  // The folder goes by its last path component, the Mac's way — however the engine names it.
+  const folder = directory.split(/[\\/]/).filter(Boolean).at(-1) ?? "";
+  // Without a folder there is no question to ask; the Mac always has one.
+  if (!folder) return null;
+  return (
+    <div className="empty-conversation">
+      <Symbol name="bubble.left.and.text.bubble.right" size={34} stroke={2.4} />
+      <p>{`What should we work on in ${folder}?`}</p>
+    </div>
+  );
+}
+
 function EntryNodes({ transcript }: { transcript: Transcript }) {
   // The message that started the turn: what "Try Again" sends again.
   const lastMessage = [...transcript.entries].reverse().find(entry => entry.kind === "user")?.text ?? "";
@@ -2034,6 +2050,11 @@ export function App() {
               void openProjectFile(link.dataset.path ?? "");
             }}
           >
+            {/* The conversation at rest: the Mac overlays its question while there are no
+                rows and nothing waiting (TranscriptView.swift:69-75). */}
+            {state.transcript && state.transcript.entries.length === 0 && state.transcript.pending.length === 0
+              ? <EmptyConversation directory={state.session?.location?.directory ?? ""} />
+              : null}
             {state.transcript ? <EntryNodes transcript={state.transcript} /> : null}
             {state.transcript?.running ? <WorkingLine transcript={state.transcript} /> : null}
           </div>

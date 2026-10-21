@@ -888,6 +888,15 @@ test("a session is running while its last words are unfinished, not while a flag
     { id: "msg_1", type: "assistant", time: { created: 1 }, content: [] },
   ], [], true);
   assert.equal(beginning.running, true, "the engine says the session is active, and no word has ended it");
+
+  // But a message the engine has stamped finished ends the turn on its own: the engine
+  // writes a reply's words and its finished state in its own order, and its flag can still
+  // call the session active for a moment. Whatever the reply carries — even nothing at
+  // all — the Mac's measure reads the message, and the message says the turn ended.
+  const emptied = fromHistory("ses_1", [
+    { id: "msg_1", type: "assistant", time: { created: 1, completed: 2 }, content: [] },
+  ], [], true);
+  assert.equal(emptied.running, false, "the engine's own words say the turn ended, whatever its flag still says");
 });
 
 test("a call carries its own metadata, in the history and in the events both", async () => {

@@ -402,6 +402,31 @@ const checks = [
     assert.ok(css.includes(".diff-stat .removed { color: var(--danger); }"), "the system's red");
   }],
 
+  ["a conversation with nothing in it asks the Mac's own question", ({ app, css, symbols }) => {
+    // TranscriptView.swift:69-75 overlays the empty view while there are no rows and
+    // nothing waiting; its `plain` form (1757-1767) is the Mac's mark at 34 pt light in
+    // the tertiary ink over the question at title3 medium in the secondary ink, a
+    // spacing of 10, lifted from the bottom by 120.
+    assert.ok(symbols.includes('"bubble.left.and.text.bubble.right"'), "the Mac's mark is drawn");
+    assert.match(app, /<Symbol name="bubble\.left\.and\.text\.bubble\.right" size=\{34\} stroke=\{2\.4\} \/>/);
+    assert.ok(app.includes("What should we work on in "), "the Mac's own question, about the folder");
+    assert.match(app, /state\.transcript\.entries\.length === 0 && state\.transcript\.pending\.length === 0/, "the overlay shows while the rows and the waiting are both empty");
+    assert.ok(css.includes("--text-title3: 15px"), "the Mac's title3, 15 pt on macOS");
+    assert.ok(css.includes(".empty-conversation p { margin: 0; font-size: var(--text-title3); font-weight: 500; color: var(--ink-soft); }"), "the question at title3 medium, in the secondary ink");
+    assert.ok(css.includes("padding-bottom: 120px"), "the 120 pt lift from the bottom");
+    assert.ok(css.includes("gap: 10px"), "the spacing of the stack");
+    assert.ok(css.includes(".empty-conversation > svg { color: var(--ink-faint); }"), "the mark in the tertiary ink");
+  }],
+
+  ["a message the engine has stamped finished is a turn that ended", ({ transcript }) => {
+    // The Mac's own measure reads the message itself (Message.isRunning): a reply the
+    // engine has finished ends the turn — whatever its flag still says, and however few
+    // parts it carries. The stale flag alone had kept the Stop button up over a turn that
+    // was over (the live test kept meeting it).
+    assert.ok(transcript.includes("const done = Boolean(last?.completed)"), "the message's own state is read");
+    assert.match(transcript, /transcript\.running = !done && Boolean\(running\) && \(unfinished \|\| !written\)/, "either half can end the run, and a finished message ends it first");
+  }],
+
   ["the page listens for the engine's own event names, and the transcript knows them", ({ app, transcript, mac }) => {
     // The page was listening for names the engine never sends (`message.part.updated`), so
     // the words of a reply arrived only on a reload, and the Stop button stayed. The names
@@ -446,10 +471,12 @@ const checks = [
       const found = source.match(marks);
       assert.equal(found, null, `${name} has no glyph standing in for a mark (${found?.join(" ") ?? ""})`);
     }
-    // The drawings themselves: the Mac's house style — a 1.5 pt stroke at 16 pt, round
-    // caps and joins, in the ink of the text they sit in.
-    assert.match(symbols, /strokeWidth=\{stroke\}/);
-    assert.match(symbols, /const stroke = \(1\.5 \* size\) \/ 16;/);
+    // The drawings themselves: the Mac's house style — a 1.5 pt stroke at 16 pt as the
+    // default, round caps and joins, in the ink of the text they sit in. A mark the Mac
+    // draws at another weight (its `.light`) asks for its own stroke beside its use, and
+    // nowhere else.
+    assert.match(symbols, /strokeWidth=\{strokeWidth\}/);
+    assert.match(symbols, /const strokeWidth = stroke \?\? \(1\.5 \* size\) \/ 16;/);
     assert.match(symbols, /stroke="currentColor"/);
     assert.match(symbols, /strokeLinecap="round"/);
     assert.match(symbols, /strokeLinejoin="round"/);

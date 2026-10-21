@@ -71,6 +71,8 @@
   --text-sm: 12px;
   --text-base: 13px;
   --text-md: 14px;
+  /* The Mac's own names, where the ramp has no number of theirs: macOS `.title3` is 15 pt. */
+  --text-title3: 15px;
   --text-lg: 16px;
   --text-xl: 20px;
   --text-2xl: 24px;
@@ -420,7 +422,26 @@ aside {
 .empty p { margin-top: 0; font-size: var(--text-md); line-height: var(--leading-body); }
 
 /* ---- Entries ---- */
-.entries { flex: 1; overflow-y: auto; padding: var(--space-5) var(--gutter) var(--space-2); display: flex; flex-direction: column; gap: var(--space-3); }
+.entries { position: relative; flex: 1; overflow-y: auto; padding: var(--space-5) var(--gutter) var(--space-2); display: flex; flex-direction: column; gap: var(--space-3); }
+/* The conversation at rest: the Mac's own question over an empty one, drawn in the
+   transcript itself (TranscriptView.swift:69-75 overlays it while there are no rows;
+   EmptyConversationView's `plain` form at 1757-1767: the mark at 34 pt light in the
+   tertiary ink over the question at title3 medium in the secondary ink, a spacing of 10,
+   lifted from the bottom by 120). */
+.empty-conversation {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding-bottom: 120px;
+  pointer-events: none;
+  text-align: center;
+}
+.empty-conversation > svg { color: var(--ink-faint); }
+.empty-conversation p { margin: 0; font-size: var(--text-title3); font-weight: 500; color: var(--ink-soft); }
 .entry { max-width: var(--readable-width); width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-2); }
 .entry .text { white-space: pre-wrap; word-break: break-word; line-height: var(--leading-body); }
 /* Your words in accent glass, apart from the agent's on the card — the Mac app's way

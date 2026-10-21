@@ -111,6 +111,14 @@ test("the page, in a browser, against the real engine", {
   await page.element("start").click();
   await page.seen("the session to appear", () => document.querySelectorAll("#sessions li").length === 1, null, 30_000);
 
+  // The conversation at rest, before a word is said in it: the Mac's own question about
+  // the folder the session works in, with its mark over it (TranscriptView.swift:69-75).
+  await page.seen("the empty conversation to ask", ([folder]) => {
+    const node = document.querySelector(".empty-conversation p");
+    const mark = document.querySelector(".empty-conversation svg");
+    return Boolean(mark) && Boolean(node?.textContent?.includes(folder));
+  }, [path.basename(project)], 30_000);
+
   // The title bar: the Mac's tab strip, with the open session in it, and the project's
   // name over the sessions' width.
   await page.seen("the tab strip to show the session", () => {
@@ -167,6 +175,8 @@ test("the page, in a browser, against the real engine", {
     return Boolean(node?.textContent?.match(new RegExp(text, "i")));
   }, ["entries", "hello from the page"], 180_000);
   await page.seen("the turn to end", () => document.getElementById("stop")?.hidden, null, 60_000);
+  // With words in it, the conversation's question has stepped aside.
+  await page.seen("the question to step aside", () => document.querySelector(".empty-conversation") === null, null, 10_000);
 
   // The folder picker: it opens on the project, walks, and closes without changing it.
   await page.element("project").click();
@@ -201,9 +211,20 @@ test("the page, in a browser, against the real engine", {
     const detail = await (await fetch(`${url}api/sessions/${encodeURIComponent(reloadedId)}`)).json();
     const messages = detail.messages ?? [];
     const last = messages.filter(message => message.type === "assistant").at(-1);
-    // The engine's own history still has the message unfinished: that is the engine's lag,
-    // not the app's. If the engine says the turn ended, the app must not still be working.
-    assert.ok(!last?.time?.completed, "the engine's own history says the turn ended, so the app must not still be working");
+    if (last?.time?.completed) {
+      // The engine says the turn ended: this page read its words a moment before the
+      // engine had written them, and no event will come now to say otherwise. Reading
+      // them again must agree with what a page shows — a fresh read is the same test the
+      // first reload ran, and it must come out settled.
+      await reloaded.page.reload({ waitUntil: "domcontentloaded" });
+      await reloaded.seen("the stored conversation to read back", ([id, text]) => {
+        const node = document.getElementById(id);
+        return Boolean(node?.textContent?.match(new RegExp(text, "i")));
+      }, ["entries", "hello from the page"], 60_000);
+      await reloaded.seen("the settled run to stay settled", () => document.getElementById("stop")?.hidden, null, 60_000);
+    }
+    // Otherwise the engine's own history still has the message unfinished: that is the
+    // engine's lag, not the app's, and the Mac waits the same way.
   }
 
   // The reloaded page is in front now; the first one is taken back, so its buttons are
