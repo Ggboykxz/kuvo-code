@@ -1349,6 +1349,9 @@ async function run() {
     const link = readLink();
     if (!engine || !alive(engine.pid) || !needed(link) || owner !== process.pid) return cleanUp();
     current?.keepOnly(new Set((link.phones ?? []).map(phone => phone.key)));
+    // A paired phone counts as the app: the engine stays up for it, rather than stopping after a
+    // day without the Mac, so the machine's sessions and bots are there whenever it asks.
+    touchAttached();
   }, 30_000);
 
   // Your phones' notifications, on whichever relay connection is up.

@@ -317,4 +317,6 @@ and takes a phone off when you unpair; phones paired with the machine itself (`"
 stay. `address` is the phone's on the relay, where its notifications go: the Mac passes on
 what it knows, and the bridge notes it each time the phone comes in. The machine's keys stay when no phones are left, so pairing again gives the same
 address. The bridge reads the file every 30 seconds: a phone taken off loses its sessions,
-and with no phones and no pairing waiting the bridge stops.
+and with no phones and no pairing waiting the bridge stops. While it runs (from 0.6.0), it
+counts as the app for the engine's watchdog, which otherwise stops the engine after a day
+without the Mac: with a phone paired, the machine's sessions and bots stay reachable.
