@@ -62,6 +62,24 @@ import Testing
         #expect(catalog.isUnavailable(sonnet))
     }
 
+    /// Gone from its account (retired, or turned off in the engine's settings), though the account
+    /// is signed in: unavailable, so it asks for another, and a new session starts on the default.
+    @Test(arguments: [false, true])
+    func aModelThatsGoneAsksForAnother(turnedOff: Bool) async throws {
+        defer { StubWeb.stop() }
+        var models = [Self.model("anthropic", "sonnet-next"), Self.model("openai", "luna")]
+        if turnedOff {
+            var sonnet = Self.model("anthropic", "sonnet")
+            sonnet["enabled"] = false
+            models.append(sonnet)
+        }
+        try await engine(accounts: [Self.account("anthropic", signedIn: true), Self.account("openai", signedIn: true)],
+                         models: models, defaultModel: Self.model("openai", "luna"))
+        #expect(catalog.isUnavailable(sonnet))
+        #expect(catalog.startingModel(sonnet) == luna)
+        #expect(!catalog.isUnavailable(ModelRef(id: "sonnet-next", providerID: "anthropic")))
+    }
+
     /// Neither it nor the default can run: the first model you can use, of the newest first.
     @Test func neitherThenTheFirstYouCanUse() async throws {
         defer { StubWeb.stop() }

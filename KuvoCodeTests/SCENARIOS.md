@@ -10,7 +10,7 @@ Each suite's comment says what it tries; this is where each scenario stands.
 
 | Scenario | Suites | Not guarded yet |
 | --- | --- | --- |
-| A1, J2 A model ready, or the one you picked when it can't run | StartingModelTests, ProviderCompatibilityTests | a model that's gone asks for another |
+| A1, J2 A model ready, or the one you picked when it can't run | StartingModelTests, ProviderCompatibilityTests | |
 | A4 Bring over an opencode setup | OpencodeImportTests | |
 | A6 Quit with work running, open again | DraftsTests, StoredFilesTests, QueueTests | |
 | B5 Review the changes, comment on a line, send the comments | SessionEditsTests, SentMessageTests, DraftsTests | |
