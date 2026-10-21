@@ -9,6 +9,9 @@ export interface SessionSummary {
   time?: { created?: number; updated?: number; idle?: number; viewed?: number; archived?: number };
   metadata?: Record<string, unknown> | null;
   tokens?: { input?: number; output?: number; reasoning?: number; total?: number };
+  /** The session's own rules: what the agent may do without asking
+   *  (OpenCodeKit's PermissionRule, Models/Session.swift:54-68). */
+  permissions?: { action?: string; resource?: string; effect?: string }[];
   /** The session's model: the provider, the id, and the effort it is asked for
    *  (OpenCodeKit's ModelRef, Models/Common.swift:70-83). */
   model?: { providerID?: string; id?: string; variant?: string } | null;
@@ -186,6 +189,8 @@ export interface AppState {
   projectNames: Record<string, string>;
   /** The projects' run commands, by their folder (the Mac's Workspace.ProjectSettings.run). */
   projectRuns: Record<string, string>;
+  /** The projects' other folders, by their folder (the Mac's Workspace.ProjectSettings.folders). */
+  projectFolderList: Record<string, string[]>;
   /** The project being named, in the editor over the window. */
   editingProject: string | null;
   /** The sessions of every project, by its folder (SidebarView.swift:194). */

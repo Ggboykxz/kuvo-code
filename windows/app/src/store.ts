@@ -100,6 +100,7 @@ export const state: AppState = {
   projects: [],
   projectNames: {} as Record<string, string>,
   projectRuns: {} as Record<string, string>,
+  projectFolderList: {} as Record<string, string[]>,
   editingProject: null as string | null,
   sessionsByProject: {} as Record<string, SessionSummary[]>,
   collapsed: {} as Record<string, boolean>,
@@ -301,6 +302,8 @@ export async function openSession(id: string) {
     state.revert = detail.revert ?? null;
     if (!state.openSessions.includes(id)) state.openSessions.push(id);
     render();
+    // The project's folders are the session's, as they are on the Mac (SessionModel.swift:1379).
+    void syncFolders(detail.session);
     await Promise.all([loadInbox(), loadVcs(), loadSessionDiff(), loadForms()]);
   } catch (error) {
     complain(error);
@@ -600,11 +603,12 @@ export async function loadCommands() {
 
 export async function loadProjects() {
   try {
-    const { projects, names, runs } = await api<{ projects: string[]; names?: Record<string, string>; runs?: Record<string, string> }>("/api/projects");
+    const { projects, names, runs, folders } = await api<{ projects: string[]; names?: Record<string, string>; runs?: Record<string, string>; folders?: Record<string, string[]> }>("/api/projects");
     // The project that is open is one of them, as it is on the Mac (Workspace.projects).
     state.projects = Array.from(new Set([...(Array.isArray(projects) ? projects : []), ...(state.project ? [state.project] : [])]));
     state.projectNames = names && typeof names === "object" ? names : {};
     state.projectRuns = runs && typeof runs === "object" ? runs : {};
+    state.projectFolderList = folders && typeof folders === "object" ? folders : {};
   } catch {
     state.projects = state.project ? [state.project] : [];
   }
@@ -622,7 +626,7 @@ export function projectName(folder: string): string {
 
 /// A project's own name and its run command, set or taken away (the Mac's ProjectEditor,
 /// ProjectEditor.swift:24).
-export async function setProjectSettings(folder: string, settings: { name?: string; run?: string }) {
+export async function setProjectSettings(folder: string, settings: { name?: string; run?: string; folders?: string[] }) {
   try {
     await api("/api/projects/settings", { method: "POST", body: { path: folder, ...settings } });
     await loadProjects();
@@ -635,6 +639,51 @@ export async function setProjectSettings(folder: string, settings: { name?: stri
 /// Workspace.swift:198).
 export function projectRun(folder: string): string {
   return state.projectRuns[folder] ?? "";
+}
+
+/// A project's other folders — the ones the agent may work in besides the first (the
+/// Mac's Workspace.ProjectSettings.folders, Workspace.swift:196).
+export function projectFolders(folder: string): string[] {
+  return state.projectFolderList[folder] ?? [];
+}
+
+/// The rules that let the agent work in those folders (the Mac's ProjectFolders.rules,
+/// ProjectFolders.swift:20-27): a rule per folder, so working there is not leaving the
+/// project.
+export function folderRules(folders: string[]): { action: string; resource: string; effect: string }[] {
+  return folders.map(folder => ({
+    action: "external_directory",
+    resource: `${folder.replace(/[/\\]+$/, "")}/*`,
+    effect: "allow",
+  }));
+}
+
+/// What the agent is told about the project spanning several folders (the Mac's
+/// ProjectFolders.instructions, ProjectFolders.swift:36-46).
+export function folderInstruction(primary: string, folders: string[]): string {
+  const name = (path: string) => path.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? path;
+  const list = folders.map(folder => `- ${name(folder)}: ${folder}`).join("\n");
+  return `This project spans several folders. You work in its primary folder, ${name(primary)} (${primary}). These folders belong to the project too, and you can read, search and change files in them the same way:\n${list}\nWhen the user mentions one of these folders by name, they mean that folder.`;
+}
+
+/// Gives a session the project's folders: the rules that allow them, and the note that
+/// names them (the Mac's SessionModel.syncFolders, SessionModel.swift:1379-1405).
+export async function syncFolders(session: SessionSummary) {
+  const primary = session.location?.directory ?? "";
+  if (!primary) return;
+  const folders = projectFolders(primary);
+  try {
+    const current = (session.permissions ?? []) as { action?: string; resource?: string; effect?: string }[];
+    // The folder rules are the project's own: the rest of the session's rules stay.
+    const kept = current.filter(rule => !(rule.action === "external_directory" && rule.effect === "allow" && String(rule.resource ?? "").endsWith("/*")));
+    const permissions = [...kept, ...folderRules(folders)];
+    await api(`/api/sessions/${encodeURIComponent(session.id)}/permissions`, { method: "POST", body: { permissions } });
+    if (folders.length) {
+      await api(`/api/sessions/${encodeURIComponent(session.id)}/instruction`, { method: "POST", body: { key: "kuvo.project-folders", value: folderInstruction(primary, folders) } });
+    }
+  } catch (error) {
+    complain(error);
+  }
 }
 
 /// The sessions of every project, by its folder (SidebarView.swift:194-196): the sidebar
@@ -1061,6 +1110,9 @@ export async function boot() {
   connectEvents();
   if (state.project) {
     await loadSessions();
+    // The projects, with their own names and folders: the session in view is given them
+    // (the Mac's Workspace.syncFolders, SessionModel.swift:1379-1405).
+    await loadProjects();
     await loadProjectFiles();
     const newest = state.sessions[0];
     if (newest) await openSession(newest.id);
@@ -1069,7 +1121,6 @@ export async function boot() {
   void loadDefaultModel();
   void loadAgents();
   void loadCommands();
-  void loadProjects();
   // The app's own settings, the engine's too: the settings page reads them, and the
   // provider's compatibility is written in them.
   void bootConfig().then(() => applyProviderCompatibility());
