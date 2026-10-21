@@ -4,10 +4,11 @@ import OpenCodeKit
 /// A conversation as Markdown, to paste into an issue or a chat, or for another agent to read
 /// (read_conversation): your messages, those other agents sent it and its wake-ups, the agent's
 /// replies, and a line for each step it took, as the transcript words them. `you` and `agent` are
-/// who's speaking, as whoever reads it knows them.
+/// who's speaking, as whoever reads it knows them. Without `labels`, only what was said: no title
+/// and no names of who's speaking (for searching what's in it).
 enum ConversationExport {
-    static func markdown(title: String, messages: [Message], directory: String, you: String = "You", agent: String = "Agent") -> String {
-        var blocks = ["# " + title]
+    static func markdown(title: String, messages: [Message], directory: String, you: String = "You", agent: String = "Agent", labels: Bool = true) -> String {
+        var blocks = labels ? ["# " + title] : []
         var speaker: String?
         // The agent's steps, listed together until it says something.
         var steps: [String] = []
@@ -17,7 +18,7 @@ enum ConversationExport {
                 steps = []
                 say(agent, list)
             }
-            if speaker != who { blocks.append("**\(who)**") }
+            if speaker != who, labels { blocks.append("**\(who)**") }
             speaker = who
             blocks.append(text)
         }

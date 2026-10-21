@@ -434,7 +434,8 @@ final class Workspace {
             for _ in 0..<4 { next() }
             for await result in group {
                 if let (session, messages) = result {
-                    let text = ConversationExport.markdown(title: session.title ?? "New Session", messages: messages, directory: session.location.directory)
+                    // What was said, without the export's labels: "You" or "Agent" would find every one.
+                    let text = ConversationExport.markdown(title: session.title ?? "New Session", messages: messages, directory: session.location.directory, labels: false)
                     conversationTexts[session.id] = (session.time.updated, text)
                 }
                 if Task.isCancelled { group.cancelAll() } else { next() }

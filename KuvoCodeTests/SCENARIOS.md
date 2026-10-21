@@ -22,7 +22,7 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | B14 Switch model mid-conversation, or elsewhere | SessionsTests | |
 | B16 Find in a long conversation | ConversationFindTests | |
 | B17 A folder that isn't a git repository | SessionEditsTests | |
-| B18 Rename, archive, restore, delete | SidebarListsTests, SessionsTests, SessionTitlesTests | search leaves deleted sessions out |
+| B18 Rename, archive, restore, delete, search | SidebarListsTests, SessionsTests, SessionTitlesTests, SessionSearchTests | |
 | B20 Commands and skills | SlashCommandsTests, SkillLibraryTests | |
 | C1–C3 Attach pictures, PDFs, files | AttachmentRoutesTests, AttachmentsTests, SentFilesTests | |
 | C4 Quote part of a reply and answer it | QuotingTests | |

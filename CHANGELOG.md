@@ -22,6 +22,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Unstage works in a repository with no commits yet; it said git couldn't restore the file.
 - In the Changes tab of a folder that isn't a git repository, or of a project on a machine, a file the agent edited more than once no longer shows lines like "--- a/notes.md" among its changes, and its counts match what it shows.
 - When merging a worktree back would conflict, the files are named as they are; a name with accented letters or quotes showed as escaped codes ("caf\303\251.txt").
+- Searching the sidebar for words like "you" or "agent" no longer lists every session under In Conversations; it finds only conversations where they were said.
 ## 0.6.2
 
 - A worktree's branch named after a title in another language keeps its letters ("Giriş düzeltmesi" is giris-duzeltmesi, not giri-dzeltmesi).
