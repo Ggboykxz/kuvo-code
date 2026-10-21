@@ -29,6 +29,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Wake-ups you paused stay paused when you archive the session and bring it back; bringing it back resumed them.
 - A bot imported from a .kuvobot file says its job once in its first message; the job's line was there twice.
 - A session whose subagent was still working when Kuvo Code opened (or a machine reconnected), one sent off in the background, shows as working in the sidebar, its tab and its bot; it showed as done.
+- A bot on a machine that runs with a coding agent (or Custom Auto) gets its wake-ups and watches while your Mac is off; they were sent to the engine, which doesn't have its conversation, and never arrived.
 ## 0.6.2
 
 - A worktree's branch named after a title in another language keeps its letters ("Giriş düzeltmesi" is giris-duzeltmesi, not giri-dzeltmesi).

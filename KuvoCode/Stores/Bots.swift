@@ -464,9 +464,12 @@ final class Bots {
     }
 
     /// Writes the bot's session in its folder, and the folder it works in, where `kuvo-wake fire`
-    /// reads them on a machine (it waits for the folder's tools before it wakes the bot).
+    /// reads them on a machine (it waits for the folder's tools before it wakes the bot); and, for
+    /// one that runs with the coding agents, that its wake-ups go to their bridge (`via`), which
+    /// has its session, not the engine.
     private func writeSession(of bot: Bot) async throws {
         let file = (bot.folder as NSString).appendingPathComponent("session")
+        let via = (bot.folder as NSString).appendingPathComponent("via")
         if let machine = bot.machine {
             let directory = (bot.folder as NSString).appendingPathComponent("directory")
             let timezone = (bot.folder as NSString).appendingPathComponent("timezone")
@@ -474,6 +477,7 @@ final class Bots {
             // Your time zone, which its wake-ups' times are in, and its rules from this Mac, for a
             // machine without zone files of its own.
             var script = "printf '%s' \(SSHConnection.quoted(bot.sessionID)) >\(SSHConnection.quoted(file)) && printf '%s' \(SSHConnection.quoted(path)) >\(SSHConnection.quoted(directory)) && printf '%s' \(SSHConnection.quoted(TimeZone.current.identifier)) >\(SSHConnection.quoted(timezone))"
+            script += bot.agents == true ? " && printf bridge >\(SSHConnection.quoted(via))" : " && rm -f \(SSHConnection.quoted(via))"
             if let rules = WakeUps.zoneRules(TimeZone.current.identifier) {
                 let zoneFile = (bot.folder as NSString).appendingPathComponent("zoneinfo")
                 script += " && { printf '%s' \(SSHConnection.quoted(rules.base64EncodedString())) | base64 -d >\(SSHConnection.quoted(zoneFile)) 2>/dev/null || rm -f \(SSHConnection.quoted(zoneFile)); }"
@@ -483,6 +487,7 @@ final class Bots {
             try Data(bot.sessionID.utf8).write(to: URL(filePath: file))
             // Where its watches' checks run.
             try Data(bot.directory.utf8).write(to: URL(filePath: (bot.folder as NSString).appendingPathComponent("directory")))
+            if bot.agents == true { try Data("bridge".utf8).write(to: URL(filePath: via)) } else { try? FileManager.default.removeItem(atPath: via) }
         }
     }
 
