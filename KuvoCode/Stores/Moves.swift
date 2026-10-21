@@ -48,6 +48,13 @@ final class Moves {
         case busy(String)
         case unfinished(String)
         case sameComputer
+        /// A bot in a group chat that lives with its bots on its machine.
+        case inMachineGroup(name: String, chat: String, machine: String)
+        /// A group chat whose bots don't all live where it would go, or whose work is under way.
+        case botsElsewhere(chat: String)
+        case workUnderWay(chat: String)
+        /// A machine whose engine started before it could run group chats.
+        case notYet(machine: String)
         /// Something sent to one that's moving.
         case moving
         var errorDescription: String? {
@@ -60,6 +67,10 @@ final class Moves {
             case .busy(let name): "\(name) kept getting messages while it moved, so it stayed where it is. Try again in a moment."
             case .unfinished(let name): "\(name)’s last move isn’t finished yet. It finishes once both computers are connected; try again then."
             case .sameComputer: "That’s the computer it’s on now, at another address."
+            case .botsElsewhere(let chat): "\(chat)’s bots live on different computers, so it stays on this Mac."
+            case .workUnderWay(let chat): "\(chat) has work under way. Move it once its parts are done."
+            case .notYet(let machine): "\(machine) can take group chats once its engine starts over, when nothing runs there. Try again then."
+            case .inMachineGroup(let name, let chat, let machine): "\(name) is in “\(chat)”, which lives on \(machine) with its bots. Move the chat to this Mac first, or take \(name) out of it."
             case .moving: "It’s moving to another computer. Try again once it’s there."
             }
         }
@@ -67,12 +78,12 @@ final class Moves {
 
     /// A move as it goes, kept in the app's settings until it's done.
     struct Record: Codable, Equatable {
-        enum Kind: String, Codable { case bot, chat }
+        enum Kind: String, Codable { case bot, chat, group }
         /// Copying, with the original as it was: taken back if cut short. Switched: the app goes
         /// by the copy; the original is to go.
         enum Stage: String, Codable { case copying, switched }
         var kind: Kind
-        /// The bot's ID, or the chat's session.
+        /// The bot's ID, the chat's session, or the group chat's ID.
         var id: String
         /// Its conversation, and its subagents', root first, once they're read.
         var sessions: [String]
@@ -154,7 +165,11 @@ final class Moves {
         try await finishEarlier(id, name: asked.name)
         // As it is now: an earlier move just finished may have taken it there already.
         guard let bot = app.bots.bot(id), bot.machine != machine, underWay[id] == nil else { return }
-        if app.workspace.isWorking(bot.sessionID) || app.groups.speaking.values.contains(bot.id) { throw Failure.working(bot.name) }
+        if app.workspace.isWorking(bot.sessionID) || app.chats.speaking.values.contains(bot.id) { throw Failure.working(bot.name) }
+        // One in a group chat that lives with its bots on a machine stays with it.
+        if let chat = app.machineGroups.chats.first(where: { $0.group.members.contains(bot.id) }) {
+            throw Failure.inMachineGroup(name: bot.name, chat: chat.group.name, machine: app.machines.engine(chat.machine)?.machine.name ?? chat.machine)
+        }
         guard let source = app.workspace.api(forFolder: bot.directory) else { throw Failure.notConnected(bot.machine ?? AppInfo.name) }
         guard let target = api(on: machine) else { throw Failure.notConnected(machine ?? AppInfo.name) }
         var record = Record(kind: .bot, id: id, sessions: [], from: bot.machine, to: machine, original: bot.folder, copy: nil, wasPaused: true, stage: .copying)
@@ -271,6 +286,89 @@ final class Moves {
         app.wakeUps.forget(key: id)
         if let now = app.workspace.session(id) { await app.wakeUps.read(WakeUps.owner(of: now)) }
         Analytics.shared.track("chat_moved_computer", ["to": machine == nil ? "mac" : "machine"])
+    }
+
+    // MARK: Group chats
+
+    /// Moves a group chat to the machine its bots all live on, where it carries on while this Mac
+    /// is off; or from a machine to this Mac (its bots stay where they are). Its messages, seats,
+    /// meeting and what each bot heard go along. It's held where it goes until the copy where it
+    /// was is let go, so nothing said while it moves is lost.
+    func move(group id: String, to machine: String?) async throws {
+        guard let app, underWay[id] == nil, let asked = app.chats.group(id) else { return }
+        let name = "“\(asked.name)”"
+        try await finishEarlier(id, name: name)
+        let from = app.machineGroups.machine(of: id)
+        guard from != machine, let group = app.chats.group(id) else { return }
+        if app.chats.discussing.contains(id) { throw Failure.working(name) }
+        if app.chats.messages(in: id).contains(where: { $0.tasks?.contains { $0.state == .working || $0.state == .waiting } == true }) {
+            throw Failure.workUnderWay(chat: name)
+        }
+        if let machine {
+            // Its bots all live there, and stay there while it moves.
+            guard group.members.allSatisfy({ app.bots.bot($0)?.machine == machine }) else { throw Failure.botsElsewhere(chat: name) }
+            if let moving = group.members.first(where: { underWay[$0] != nil }), let bot = app.bots.bot(moving) { throw Failure.working(bot.name) }
+            guard app.machineGroups.reachable(machine) else { throw Failure.notConnected(machine) }
+            guard app.machineGroups.running.contains(machine) else { throw Failure.notYet(machine: machine) }
+        } else if let from, !app.machineGroups.reachable(from) {
+            throw Failure.notConnected(from)
+        }
+        var record = Record(kind: .group, id: id, sessions: [], from: from, to: machine, original: nil, copy: nil, wasPaused: true, stage: .copying)
+        underWay[id] = .some(machine)
+        Self.frozen.insert(id)
+        defer {
+            underWay[id] = nil
+            Self.frozen.remove(id)
+        }
+        save(record)
+        do {
+            if let machine {
+                app.groups.stop(id)
+                try await app.machineGroups.bring(app.groups.group(id) ?? group, messages: app.groups.messages(in: id), to: machine)
+            } else {
+                let held = try await app.machineGroups.hold(id)
+                app.groups.adopt(held.group, messages: held.messages)
+            }
+        } catch {
+            _ = await takeBackGroup(record)
+            log.error("A group chat didn't move: \(error.localizedDescription, privacy: .public)")
+            throw error
+        }
+        switched(&record)
+        _ = await completeGroup(record)
+        Analytics.shared.track("group_moved", ["to": machine == nil ? "mac" : "machine"])
+    }
+
+    /// A group chat's move that didn't get as far as switching: the copy where it was going goes,
+    /// and it carries on where it was. Whether that's done (its machine was there).
+    private func takeBackGroup(_ record: Record) async -> Bool {
+        guard let app else { return false }
+        if let to = record.to {
+            guard app.machineGroups.reachable(to) else { return false }
+            await app.machineGroups.takeBack(record.id, on: to)
+        } else if let from = record.from {
+            guard app.machineGroups.reachable(from) else { return false }
+            await app.groups.release(record.id, toTrash: false)
+            do { try await app.machineGroups.activate(record.id) } catch { return false }
+        }
+        forget(record)
+        return true
+    }
+
+    /// After it switched: where it went, it starts; where it was, it's let go (to this Mac's
+    /// Trash, or the machine's trash folder, with its seats left, as its bots live there).
+    private func completeGroup(_ record: Record) async -> Bool {
+        guard let app else { return false }
+        if let to = record.to {
+            await app.groups.release(record.id, toTrash: true)
+            guard app.machineGroups.reachable(to) else { return false }
+            do { try await app.machineGroups.activate(record.id) } catch { return false }
+        } else if let from = record.from {
+            guard app.machineGroups.reachable(from) else { return false }
+            do { try await app.machineGroups.release(record.id) } catch { return false }
+        }
+        forget(record)
+        return true
     }
 
     // MARK: The conversation
@@ -462,8 +560,12 @@ final class Moves {
         repeat {
             recoverAgain = false
             for id in records.map(\.id) {
-                guard underWay[id] == nil, let record = records.first(where: { $0.id == id }),
-                      let source = api(on: record.from), let target = api(on: record.to) else { continue }
+                guard underWay[id] == nil, let record = records.first(where: { $0.id == id }) else { continue }
+                if record.kind == .group {
+                    _ = record.stage == .copying ? await takeBackGroup(record) : await completeGroup(record)
+                    continue
+                }
+                guard let source = api(on: record.from), let target = api(on: record.to) else { continue }
                 switch record.stage {
                 case .copying: await takeBack(record, target: target)
                 case .switched: await complete(record, source: source, target: target)

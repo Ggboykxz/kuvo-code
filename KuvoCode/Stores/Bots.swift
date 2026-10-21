@@ -437,6 +437,7 @@ final class Bots {
             }
         }
         await app?.groups.remove(bot)
+        await app?.machineGroups.remove(bot)
         list.removeAll { $0.id == bot.id }
         described[bot.id] = nil
         save()

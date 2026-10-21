@@ -24,7 +24,7 @@ struct SidebarView: View {
     /// Shows a session beside the one in view (split view).
     var openBeside: ((String) -> Void)?
     @Environment(Bots.self) private var bots
-    @Environment(BotGroups.self) private var groups
+    @Environment(GroupChats.self) private var groups
     /// The group chat waiting for the user to confirm its deletion.
     @State private var deletingGroup: BotGroup?
 
@@ -174,8 +174,11 @@ struct SidebarView: View {
                         }
                         .contextMenu {
                             Button("Edit Group Chat…") { editGroup(group) }
+                                .disabled(app.moves.isMoving(group.id))
+                            MoveToComputerMenu(thing: .group(group))
                             Divider()
                             Button("Delete Group Chat…", role: .destructive) { deletingGroup = group }
+                                .disabled(app.moves.isMoving(group.id))
                         }
                     }
                     }
@@ -918,17 +921,21 @@ private struct GroupRow: View {
     let isSelected: Bool
     let action: () -> Void
     @Environment(Bots.self) private var bots
-    @Environment(BotGroups.self) private var groups
+    @Environment(GroupChats.self) private var groups
+    @Environment(AppModel.self) private var app
 
     var body: some View {
         let speaker = groups.speaking[group.id].flatMap { bots.bot($0) }
         let isUnread = groups.isUnread(group) && !isSelected
+        let machine = groups.machine(of: group.id)
         FaceRow(title: group.name, isUnread: isUnread, isSelected: isSelected, action: action) {
             GroupAvatar(faces: group.members.compactMap { id in
                 bots.bot(id).map { GroupAvatar.Face(look: $0.look, mood: $0.id == speaker?.id ? .working : .idle) }
             }, size: 28)
         } subtitle: {
-            if let speaker {
+            if let destination = app.moves.underWay[group.id] {
+                ShimmerText(text: "Moving to \(destination.flatMap { place in app.machines.engine(place)?.machine.name ?? place } ?? "this Mac")…")
+            } else if let speaker {
                 ShimmerText(text: "\(speaker.name) is typing…")
             } else if groups.discussing.contains(group.id) {
                 ShimmerText(text: "Talking it over…")
@@ -936,9 +943,18 @@ private struct GroupRow: View {
                 Text(lastLine)
             }
         } trailing: {
-            if isUnread {
-                Circle().fill(.tint).frame(width: 7, height: 7)
-                    .help("New messages")
+            HStack(spacing: 6) {
+                // One that lives on a machine, which talks there while this Mac is off.
+                if let machine {
+                    Image(systemName: "server.rack")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .help("Lives on \(app.machines.engine(machine)?.machine.name ?? machine)")
+                }
+                if isUnread {
+                    Circle().fill(.tint).frame(width: 7, height: 7)
+                        .help("New messages")
+                }
             }
         }
     }
@@ -1173,6 +1189,7 @@ private struct MoveToComputerMenu: View {
     enum Thing {
         case bot(Bot)
         case chat(Session)
+        case group(BotGroup)
     }
 
     let thing: Thing
@@ -1182,6 +1199,7 @@ private struct MoveToComputerMenu: View {
         switch thing {
         case .bot(let bot): bot.id
         case .chat(let session): session.id
+        case .group(let group): group.id
         }
     }
 
@@ -1189,7 +1207,17 @@ private struct MoveToComputerMenu: View {
         switch thing {
         case .bot(let bot): bot.machine
         case .chat(let session): RemoteFolder.machine(of: session.location.directory)
+        case .group(let group): app.machineGroups.machine(of: group.id)
         }
+    }
+
+    /// Where a group chat can go: from a machine, this Mac; from this Mac, the machine its bots
+    /// all live on, if they do.
+    private func groupPlaces(_ group: BotGroup) -> [String?] {
+        if here != nil { return [nil] }
+        let homes = Set(group.members.compactMap { app.bots.bot($0) }.map(\.machine))
+        guard homes.count == 1, let machine = homes.first ?? nil else { return [] }
+        return [machine]
     }
 
     var body: some View {
@@ -1198,6 +1226,18 @@ private struct MoveToComputerMenu: View {
                 Text("It works in one of your projects, which stays where it is")
             } else if case .bot(let bot) = thing, bot.agents == true {
                 Text("It talks with a coding agent, which can’t move yet")
+            } else if case .group(let group) = thing, groupPlaces(group).isEmpty {
+                // A chat whose bots live on different computers, or all here, is this Mac's.
+                Text(Set(group.members.compactMap { app.bots.bot($0)?.machine }).isEmpty
+                     ? "Its bots live on this Mac" : "Its bots live on different computers, so it stays on this Mac")
+            } else if case .group(let group) = thing {
+                ForEach(groupPlaces(group), id: \.self) { place in
+                    if let place, app.machines.engine(place)?.isReady != true {
+                        Text("\(place), not connected")
+                    } else {
+                        Button(place ?? "This Mac") { move(to: place) }
+                    }
+                }
             } else {
                 ForEach(app.moves.destinations(from: here), id: \.self) { place in
                     if let place, app.machines.engine(place)?.isReady != true {
@@ -1221,13 +1261,24 @@ private struct MoveToComputerMenu: View {
         case .chat(let session):
             name = (session.title ?? "").isEmpty ? "this chat" : "“\(session.title ?? "")”"
             what = "Its conversation and wake-ups go there, and it carries on there."
+        case .group(let group):
+            name = "“\(group.name)”"
+            what = place == nil
+                ? "Its messages and meeting come here, and it carries on here while this Mac is on; its bots stay where they are."
+                : "Its messages and meeting go there, and it carries on there, also while this Mac is off."
         }
         let trash = here.map { "Kuvo Code’s trash folder on \($0)" } ?? "the Trash"
+        let leaves: String
+        if case .group = thing {
+            leaves = "Nothing goes to it while it moves. What it leaves here goes to \(trash)."
+        } else {
+            leaves = "Nothing goes to it while it moves. Its folder here goes to \(trash), with a copy of its conversation in it."
+        }
         Task {
             let confirmed = await Modal.run {
                 let alert = NSAlert()
                 alert.messageText = "Move \(name) to \(place ?? "this Mac")?"
-                alert.informativeText = "\(what) Nothing goes to it while it moves. Its folder here goes to \(trash), with a copy of its conversation in it."
+                alert.informativeText = "\(what) \(leaves)"
                 alert.addButton(withTitle: "Move")
                 alert.addButton(withTitle: "Cancel")
                 return alert.runModal() == .alertFirstButtonReturn
@@ -1237,6 +1288,7 @@ private struct MoveToComputerMenu: View {
                 switch thing {
                 case .bot(let bot): try await app.moves.move(bot: bot.id, to: place)
                 case .chat(let session): try await app.moves.move(chat: session.id, to: place)
+                case .group(let group): try await app.moves.move(group: group.id, to: place)
                 }
             } catch {
                 Modal.show(error)

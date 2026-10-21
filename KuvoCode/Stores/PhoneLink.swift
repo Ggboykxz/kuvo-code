@@ -54,7 +54,7 @@ final class PhoneLink {
     @ObservationIgnored weak var browserAsks: BrowserAsks?
     /// Your group chats, for `kuvo/groups`: a phone reads and writes in them as the window does;
     /// set by AppModel.
-    @ObservationIgnored weak var groups: BotGroups?
+    @ObservationIgnored weak var groups: GroupChats?
     /// Your sessions, for stopping a command an agent left running (`kuvo/shell/<id>/stop`); set
     /// by AppModel.
     @ObservationIgnored weak var workspace: Workspace?
@@ -308,6 +308,17 @@ final class PhoneLink {
             if request.path == "kuvo/groups/events" { return Self.following { self?.groupsJSON() } }
             if let id = Self.groupID(in: request.path, then: "events") { return Self.following { self?.groupJSON(id) } }
             if request.path == "kuvo/usage/events" { return Self.following { self?.usageJSON() } }
+            // What a phone does in a group chat: one on a machine answers once the machine has.
+            if request.path.hasPrefix("kuvo/groups/"), request.method.uppercased() == "POST" {
+                return AsyncThrowingStream { continuation in
+                    Task { @MainActor in
+                        let (status, body) = await self?.answerGroup(String(request.path.dropFirst("kuvo/groups/".count)), with: request.body) ?? (503, Data())
+                        continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
+                        continuation.yield(.body(body))
+                        continuation.finish()
+                    }
+                }
+            }
             // A session's wake-ups and watches: read, or one canceled.
             if request.path.hasPrefix("kuvo/wakes/") {
                 return AsyncThrowingStream { continuation in
@@ -513,8 +524,6 @@ final class PhoneLink {
             if Self.usageSample { return (200, Data("{}".utf8)) }
             #endif
             return UsageMenuBar.shared.refreshAll() ? (200, Data("{}".utf8)) : (404, Data())
-        case let path where path.hasPrefix("kuvo/groups/") && request.method == "POST":
-            return answerGroup(String(path.dropFirst("kuvo/groups/".count)), with: request.body)
         case let path where path.hasPrefix("kuvo/asks/") && request.method == "POST":
             return answerAsk(String(path.dropFirst("kuvo/asks/".count)), with: request.body)
         default:
@@ -721,7 +730,7 @@ final class PhoneLink {
     /// keep going, looks at it, takes a message of yours back (`{"message"}`, answering with
     /// what was taken, for the phone's composer), or starts the work a wrap-up split up
     /// (`{"message"}`, the wrap-up).
-    private func answerGroup(_ path: String, with body: Data) -> (Int, Data) {
+    private func answerGroup(_ path: String, with body: Data) async -> (Int, Data) {
         let parts = path.split(separator: "/").map(String.init)
         guard let groups, let id = parts.first, groups.group(id) != nil else { return (404, Data()) }
         struct Given: Decodable { var text: String?; var message: String? }
@@ -737,7 +746,7 @@ final class PhoneLink {
         case "viewed":
             groups.markViewed(id)
         case "undo":
-            guard let message = given?.message, let taken = groups.undo(from: message, in: id) else { return (404, Data()) }
+            guard let message = given?.message, let taken = await groups.undo(from: message, in: id) else { return (404, Data()) }
             return (200, (try? JSONEncoder().encode(["text": taken])) ?? Data())
         case "start":
             guard let message = given?.message, groups.messages(in: id).contains(where: { $0.id == message && $0.tasks != nil }) else { return (404, Data()) }

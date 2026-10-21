@@ -37,6 +37,10 @@ final class AppModel {
     /// Bots' and sessions' wake-ups and watches.
     let wakeUps = WakeUps()
     let groups = BotGroups()
+    /// Group chats that live on your machines, which their machines run.
+    let machineGroups = MachineGroups()
+    /// Every group chat, this Mac's and your machines', as the window and the phone show them.
+    @ObservationIgnored private(set) lazy var chats = GroupChats(mac: groups, machines: machineGroups)
     /// What this Mac keeps, brought up to date with this version once, as it launches.
     let calibration = Calibration()
     /// Bots and chats moving to another computer.
@@ -299,6 +303,7 @@ final class AppModel {
             bots.app = self
             wakeUps.app = self
             groups.app = self
+            machineGroups.app = self
             moves.app = self
             // A move cut short (the app quit) is finished or taken back.
             Task { await moves.recover() }
@@ -307,8 +312,8 @@ final class AppModel {
             workspace.botSessions = bots.sessionIDs
             // Bots' keys of their own, in their folders' settings as integrations are now.
             Task { await BotKeys.applyAll(on: nil, app: self) }
-            workspace.runsOnAgents(groups.agentSeatIDs)
-            workspace.seats = groups.seatIDs
+            workspace.runsOnAgents(groups.agentSeatIDs.union(machineGroups.agentSeatIDs))
+            workspace.seats = groups.seatIDs.union(machineGroups.seatIDs)
             usage.api = api
             engine = .ready
             #if DEBUG
@@ -317,7 +322,7 @@ final class AppModel {
             phoneLink.readyMachines = { [weak self] in self?.machines.engines.values.filter(\.isReady) ?? [] }
             phoneLink.bots = bots
             phoneLink.browserAsks = browserAsks
-            phoneLink.groups = groups
+            phoneLink.groups = chats
             phoneLink.workspace = workspace
             phoneLink.machineName = { [weak self] id in self?.machines.list.first { $0.id == id }?.name }
             phoneLink.agents = agents

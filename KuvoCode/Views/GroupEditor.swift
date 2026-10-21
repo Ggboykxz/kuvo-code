@@ -15,7 +15,7 @@ struct GroupEditor: View {
     var created: (BotGroup) -> Void = { _ in }
 
     @Environment(Bots.self) private var bots
-    @Environment(BotGroups.self) private var groups
+    @Environment(GroupChats.self) private var groups
     @State private var name: String
     @State private var purpose: String
     /// Its bots, in order: the first leads.
@@ -75,6 +75,11 @@ struct GroupEditor: View {
     private var isNew: Bool { group == nil }
     private var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var picked: [Bot] { members.compactMap { bots.bot($0) } }
+    /// The bots it can have: one that lives on a machine has those that live there too.
+    private var choices: [Bot] {
+        guard let machine = group.flatMap({ groups.machine(of: $0.id) }) else { return bots.list }
+        return bots.list.filter { $0.machine == machine }
+    }
     private var canSave: Bool { !trimmedName.isEmpty && picked.count >= 2 && (meeting.map { $0.next > .now } ?? true) }
 
     var body: some View {
@@ -159,9 +164,10 @@ struct GroupEditor: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
 
-            section("Bots", note: "Pick two or more. They answer one at a time, and each remembers the chat in its own conversation.") {
+            section("Bots", note: group.flatMap({ groups.machine(of: $0.id) }).map { "Pick two or more of the bots on \($0), where this chat lives. They answer one at a time, and each remembers the chat in its own conversation." }
+                    ?? "Pick two or more. They answer one at a time, and each remembers the chat in its own conversation.") {
                 WellGroup {
-                    ForEach(Array(bots.list.enumerated()), id: \.element.id) { index, bot in
+                    ForEach(Array(choices.enumerated()), id: \.element.id) { index, bot in
                         if index > 0 { WellDivider() }
                         MemberRow(bot: bot, isOn: members.contains(bot.id)) {
                             withAnimation(.ui) {

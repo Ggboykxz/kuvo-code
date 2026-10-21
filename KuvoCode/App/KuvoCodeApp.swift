@@ -39,7 +39,7 @@ struct KuvoCodeApp: App {
                 .environment(delegate.model.catalog)
                 .environment(delegate.model.workspace)
                 .environment(delegate.model.bots)
-                .environment(delegate.model.groups)
+                .environment(delegate.model.chats)
                 .environment(delegate.updates)
                 .task { await delegate.model.start() }
         }
@@ -67,7 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Notifier.shared.answer = { [model] session, request, answer in model.workspace.answer(request, in: session, with: answer) }
         Notifier.shared.reply = { [model] session, text in
             // A group chat's (its meeting's): to the chat.
-            if let group = BotGroups.groupID(fromTab: session) { model.groups.send(text, to: group) } else { Task { await model.workspace.send(text, to: session) } }
+            if let group = BotGroups.groupID(fromTab: session) { model.chats.send(text, to: group) } else { Task { await model.workspace.send(text, to: session) } }
         }
         Notifier.shared.answerQuestion = { [model] session, form, field, answer in model.workspace.answerQuestion(form, in: session, field: field, with: answer) }
         Notifier.shared.toPhones = { [model] notice, machine in model.phoneLink.push(notice, from: machine) }

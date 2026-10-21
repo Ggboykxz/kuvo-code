@@ -7,8 +7,9 @@ struct GroupChatView: View {
     let group: BotGroup
     /// Goes up to open the find bar (⌘F).
     var findRequest = 0
-    @Environment(BotGroups.self) private var groups
+    @Environment(GroupChats.self) private var groups
     @Environment(Bots.self) private var bots
+    @Environment(AppModel.self) private var app
     @State private var scroller = ConversationScroller()
     /// Goes up to have the composer take the keyboard.
     @State private var composerFocus = 0
@@ -55,6 +56,12 @@ struct GroupChatView: View {
         }
         .safeAreaBar(edge: .bottom, spacing: 0) {
             VStack(spacing: 10) {
+                // One on a machine that's away: as last seen, and what you write waits.
+                if let machine = groups.unreachable(group.id), let engine = app.machines.engine(machine) {
+                    MachineOfflineBar(engine: engine)
+                        .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
+                        .transition(.opacity.combined(with: .offset(y: 6)))
+                }
                 // Once the wrap-up after the limit is done: Keep Going does nothing before.
                 if groups.paused.contains(group.id) && !groups.discussing.contains(group.id) {
                     PausedBar { groups.keepGoing(group.id) }
@@ -114,12 +121,14 @@ struct GroupChatView: View {
     /// Takes the chat back to before your message, which comes back to the composer, ahead of
     /// anything already there.
     private func undo(from message: GroupMessage) {
-        guard let taken = groups.undo(from: message.id, in: group.id) else { return }
-        let (quotes, text) = Quoting.draft(of: taken)
-        let draft = Drafts.shared[draftKey].text
-        Drafts.shared[draftKey].text = [text, draft].filter { !$0.isEmpty }.joined(separator: "\n\n")
-        Drafts.shared[draftKey].quotes = quotes + Drafts.shared[draftKey].quotes
-        composerFocus += 1
+        Task {
+            guard let taken = await groups.undo(from: message.id, in: group.id) else { return }
+            let (quotes, text) = Quoting.draft(of: taken)
+            let draft = Drafts.shared[draftKey].text
+            Drafts.shared[draftKey].text = [text, draft].filter { !$0.isEmpty }.joined(separator: "\n\n")
+            Drafts.shared[draftKey].quotes = quotes + Drafts.shared[draftKey].quotes
+            composerFocus += 1
+        }
     }
 
     private func send() {
@@ -127,6 +136,8 @@ struct GroupChatView: View {
         let message = Quoting.message(quotes: draft.quotes, text: draft.text)
         // A quote you didn't answer goes only with words of yours.
         guard !Quoting.words(of: message).isEmpty else { return }
+        // Its machine away: it waits in the composer.
+        guard groups.unreachable(group.id) == nil else { return NSSound.beep() }
         groups.send(message, to: group.id)
         Drafts.shared[draftKey].text = ""
         Drafts.shared[draftKey].quotes = []

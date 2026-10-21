@@ -88,7 +88,7 @@ extension AppModel {
         }
         browserAsks.tab = { [weak self] ask in
             guard let session = ask.session else { return nil }
-            return self?.groups.group(seat: session).map { BotGroups.tabKey($0.id) } ?? session
+            return self?.chats.group(seat: session).map { BotGroups.tabKey($0.id) } ?? session
         }
         // A sign-in that couldn't be renewed: marked in Accounts and the sidebar, where it was.
         workspace.onSignInEnded = { [weak self] provider, machine, ended in
@@ -107,7 +107,7 @@ extension AppModel {
         // A subagent shows in the session that started it, a group chat's seat in its chat.
         utilities.shownIn = { [weak self] session in
             guard let self else { return session }
-            if let group = groups.group(seat: session) { return BotGroups.tabKey(group.id) }
+            if let group = chats.group(seat: session) { return BotGroups.tabKey(group.id) }
             return workspace.root(of: session)
         }
         // Each conversation has its own panel: a bot's session's is the bot's, and a seat's or a
@@ -211,6 +211,8 @@ extension AppModel {
         // Its coding agents, beside its engine: their sessions as its engine's, their accounts,
         // models and Custom Auto lists (its own) in its catalog.
         engine.agents.onEvent = { [weak self, weak engine] event in
+            // Its group chats, as it runs them.
+            if event.type.hasPrefix("kuvo.group.") { self?.machineGroups.handle(event, machine: machine); return }
             engine?.catalog.handle(event)
             self?.workspace.handleAgents(event, machine: machine)
         }
@@ -219,10 +221,12 @@ extension AppModel {
             Task {
                 await engine.catalog.refreshAgents()
                 _ = await self.workspace.refresh(engine)
+                await self.machineGroups.connected(machine)
             }
         }
         engine.onExit = { [weak self] in
             self?.workspace.forget(machine)
+            self?.machineGroups.disconnected(machine)
             // One way back at a time: a connection lost while one is tried is that one's to retry.
             guard !engine.isRetrying else { return }
             engine.isRetrying = true
@@ -407,7 +411,8 @@ extension AppModel {
             while !Task.isCancelled {
                 guard let self, let engine, engine.isReady else { return }
                 guard engine.isBehind(await self.machineLaunch(engine)) else { return }
-                if !self.workspace.isRunning(on: engine.machine.id), (try? await engine.api?.activeSessions())?.isEmpty == true {
+                if !self.workspace.isRunning(on: engine.machine.id), !self.machineGroups.isTalking(on: engine.machine.id),
+                   (try? await engine.api?.activeSessions())?.isEmpty == true {
                     // Said in the log, so one that keeps starting over is seen there.
                     Logger(subsystem: "run.kuvo.code", category: "machine").info("\(engine.machine.id, privacy: .public)'s engine starts over with this Mac's newer settings")
                     await engine.stopEngine()
@@ -431,6 +436,8 @@ extension AppModel {
             try? await Task.sleep(for: .seconds(3))
             guard let self, !Task.isCancelled else { return }
             for engine in machines.engines.values where engine.isReady { keepSettingsCurrent(engine) }
+            // What their group chats go by (Ask First, what's denied).
+            machineGroups.settingsChanged()
         }
     }
 

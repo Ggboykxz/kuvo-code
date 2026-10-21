@@ -418,13 +418,44 @@ final class BotGroups {
         }
     }
 
+    // MARK: Moving
+
+    /// A chat moving to one of your machines (`Moves`): it stops here and goes as it is, its seats
+    /// left where they are (its bots live there). `toTrash`: its file goes to the Trash (it moved);
+    /// else it's let go (a copy that didn't get to start). Its bots remember the chats left here.
+    @discardableResult
+    func release(_ id: String, toTrash: Bool) async -> Bool {
+        guard let group = group(id) else { return false }
+        stop(id)
+        list.removeAll { $0.id == id }
+        logs[id] = nil
+        save()
+        let file = Self.folder.appending(path: "\(id).json")
+        if toTrash, FileManager.default.fileExists(atPath: file.path) { try? FileManager.default.moveToTrash(file) } else { try? FileManager.default.removeItem(at: file) }
+        for bot in group.members { await remember(bot) }
+        return true
+    }
+
+    /// A chat come from one of your machines (`Moves`), with its messages: it talks here from now on.
+    func adopt(_ group: BotGroup, messages: [GroupMessage]) {
+        list.removeAll { $0.id == group.id }
+        list.append(group)
+        logs[group.id] = messages
+        save()
+        saveLog(group.id)
+        app?.workspace.seats.formUnion(group.seats.values)
+        if let agentSeats = group.agentSeats { app?.workspace.runsOnAgents(agentSeats) }
+        rememberSoon(group.id)
+    }
+
     // MARK: Talking
 
     /// Your message to the chat. It starts a discussion, or joins the one under way: the bot
     /// talking gets it straight away, the rest at their turns.
     func send(_ text: String, to id: String) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, group(id) != nil else { return }
+        // Moving to one of your machines (`Moves`): nothing more happens here.
+        guard !text.isEmpty, group(id) != nil, !Moves.isFrozen(id) else { return }
         let message = append(GroupMessage(id: Self.newID(), author: nil, text: text, time: .now), to: id)
         asked[id, default: 0] += 1
         paused.remove(id)
@@ -455,7 +486,7 @@ final class BotGroups {
     /// Holds the meetings that have come due: once each, then the next time of one that repeats,
     /// or none for a one-off.
     func meetDue() {
-        for group in list {
+        for group in list where !Moves.isFrozen(group.id) {
             guard var meeting = group.meeting, meeting.next <= .now, let index = list.firstIndex(where: { $0.id == group.id }) else { continue }
             // Its bots on machines still connecting (after launch, or a wake): it waits for them,
             // two minutes at most, rather than meeting without them.
@@ -561,7 +592,7 @@ final class BotGroups {
 
     /// After the limit of turns: more of the same.
     func keepGoing(_ id: String) {
-        guard discussions[id] == nil else { return }
+        guard discussions[id] == nil, !Moves.isFrozen(id) else { return }
         paused.remove(id)
         asked[id, default: 0] += 1
         start(id)
@@ -1004,7 +1035,7 @@ final class BotGroups {
     /// Hands each part of a wrap-up's work not yet started to its bot: in its own conversation,
     /// with what was decided, to do with all its tools. Each reports back to the chat when it's done.
     func startWork(_ wrapUpID: String, in id: String) {
-        guard let tasks = messages(in: id).first(where: { $0.id == wrapUpID })?.tasks else { return }
+        guard !Moves.isFrozen(id), let tasks = messages(in: id).first(where: { $0.id == wrapUpID })?.tasks else { return }
         let proposed = tasks.filter { $0.state == .proposed }
         for task in proposed {
             changeTask(task.id, of: wrapUpID, in: id) { $0.state = ($0.after ?? []).isEmpty ? .working : .waiting; $0.started = .now }

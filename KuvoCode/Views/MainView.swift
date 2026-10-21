@@ -9,7 +9,7 @@ struct MainView: View {
     @Environment(Catalog.self) private var catalog
     @Environment(Workspace.self) private var workspace
     @Environment(Bots.self) private var bots
-    @Environment(BotGroups.self) private var groups
+    @Environment(GroupChats.self) private var groups
 
     /// Open tabs, in order: session IDs, or `draft:<folder>` for a new session
     /// that doesn't exist on the server until its first message.
@@ -1935,7 +1935,7 @@ struct MainView: View {
         if let wait = environment["KUVO_DEMO_GROUP_UNDO"].flatMap(Double.init) {
             try? await Task.sleep(for: .seconds(wait))
             if let last = groups.messages(in: group.id).last(where: { $0.author == nil && $0.kind != .note }),
-               let text = groups.undo(from: last.id, in: group.id) {
+               let text = await groups.undo(from: last.id, in: group.id) {
                 Drafts.shared[BotGroups.tabKey(group.id)].text = text
             }
         }
