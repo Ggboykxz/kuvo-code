@@ -471,7 +471,11 @@ public struct Transcript: Sendable, Equatable {
         case "session.compaction.ended", "session.compaction.failed":
             struct Ended: Decodable { var text: String? }
             let ended = try event.payload(as: Ended.self)
-            if let index = messages.lastIndex(where: { if case .compaction = $0 { true } else { false } }), case .compaction(var message) = messages[index] {
+            let failed = event.type.hasSuffix("failed")
+            // The summary under way. A failure whose start was missed isn't an earlier summary's
+            // (that one stays as it was); an end may be (a read since has it whole already).
+            if let index = messages.lastIndex(where: { if case .compaction(let summary) = $0 { !failed || summary.status == "running" } else { false } }),
+               case .compaction(var message) = messages[index] {
                 message.status = event.type.hasSuffix("ended") ? "completed" : "failed"
                 message.summary = ended.text
                 messages[index] = .compaction(message)

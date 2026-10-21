@@ -230,3 +230,23 @@ import Testing
     transcript.load(messages: [try step(#"{"status":"completed","input":{},"content":[]}"#)], inbox: [], permissions: [], forms: open, isRunning: false)
     #expect(transcript.forms.isEmpty)
 }
+
+/// Summarizing the conversation: one that fails says so, as its own; a failure whose start was
+/// missed leaves an earlier summary as it was, rather than turning it into a failed one.
+@Test func aFailedSummaryIsItsOwn() throws {
+    func event(_ json: String) throws -> ServerEvent { try ServerEvent(json: Data(json.utf8)) }
+    var transcript = Transcript(sessionID: "ses_1")
+    transcript.load(messages: [], inbox: [], permissions: [], forms: [], isRunning: false)
+    transcript.apply(try event(#"{"id":"evt_1","created":1,"type":"session.compaction.started","data":{"sessionID":"ses_1","reason":"auto"}}"#))
+    transcript.apply(try event(#"{"id":"evt_2","created":2,"type":"session.compaction.ended","data":{"sessionID":"ses_1","text":"What happened so far."}}"#))
+    transcript.apply(try event(#"{"id":"evt_3","created":3,"type":"session.compaction.failed","data":{"sessionID":"ses_1"}}"#))
+    let summaries = transcript.messages.compactMap { if case .compaction(let summary) = $0 { summary } else { nil } }
+    #expect(summaries.first?.status == "completed")
+    #expect(summaries.first?.summary == "What happened so far.")
+
+    transcript.apply(try event(#"{"id":"evt_4","created":4,"type":"session.compaction.started","data":{"sessionID":"ses_1","reason":"manual"}}"#))
+    transcript.apply(try event(#"{"id":"evt_5","created":5,"type":"session.compaction.failed","data":{"sessionID":"ses_1"}}"#))
+    let after = transcript.messages.compactMap { if case .compaction(let summary) = $0 { summary } else { nil } }
+    #expect(after.map(\.status) == ["completed", "failed"])
+    #expect(after.first?.summary == "What happened so far.")
+}

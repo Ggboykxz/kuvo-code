@@ -375,7 +375,12 @@ struct TranscriptView: View {
             case .agentSwitched(let change):
                 rows.append(.notice(change.id, change.agent == "plan" ? "list.bullet.clipboard" : "hammer", "\(change.agent.capitalized) mode"))
             case .compaction(let compaction):
-                rows.append(.notice(compaction.id, "rectangle.compress.vertical", compaction.status == "running" ? "Summarizing the conversation…" : "Summarized the conversation to save space"))
+                let words = switch compaction.status {
+                case "running": "Summarizing the conversation…"
+                case "failed": "Couldn’t summarize the conversation"
+                default: "Summarized the conversation to save space"
+                }
+                rows.append(.notice(compaction.id, "rectangle.compress.vertical", words))
             case .shell(let shell):
                 rows.append(.shell(shell))
             case .synthetic(let notice), .system(let notice):
