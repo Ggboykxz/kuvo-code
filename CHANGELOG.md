@@ -13,6 +13,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Signing in on a machine's browser (to connect an integration, or when an agent asks) no longer freezes when a site asks for a passkey: the site, or a frame of another site in its page like a sign-in button, hears there's none here and offers its other ways, such as "Try another way". Chrome's passkey prompt, which the live view couldn't show, held the page still. The panel's browser on your Mac refuses passkeys the same way, however a site asks.
 - Modes, permission rules and other settings you change reach your connected machines too, not only the next time they connect: a machine's engine starts over with them once nothing is running there. A mode you added showed up only on this Mac.
 - Custom Auto's lists are each place's own: this Mac and each machine have their own, made from the models each has, picked at the top of Settings › Custom Auto. A machine's lists were a copy of this Mac's, with models it might not have, and changing them there changed this Mac's.
+- Undoing a message that waited in the queue, then sending, keeps the agent's reply from before it for good; in 0.6.3 it still went a moment later, as the engine confirmed the undo.
 
 ## 0.6.3
 
