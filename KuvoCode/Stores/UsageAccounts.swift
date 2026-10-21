@@ -72,11 +72,15 @@ final class UsageAccounts {
         publish()
     }
 
+    /// The panel's providers it follows: the engine's accounts' and the coding agents'.
+    private(set) var followed: Set<String> = []
+
     /// Tells the panel which providers it follows, once the engine's accounts are in: before, it
     /// would drop theirs and turn them back on after.
     private func publish() {
         guard let engineProviders else { return }
-        HostAccounts.setConnectedProviders(engineProviders.union(agentProviders))
+        followed = engineProviders.union(agentProviders)
+        HostAccounts.setConnectedProviders(followed)
     }
 
     /// The usage panel's provider for a coding agent's account (any of yours with it).
