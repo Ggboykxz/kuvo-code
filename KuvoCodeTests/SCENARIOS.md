@@ -15,7 +15,7 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | A6 Quit with work running, open again | DraftsTests, StoredFilesTests, QueueTests | |
 | B5 Review the changes, comment on a line, send the comments | SessionEditsTests, SentMessageTests, DraftsTests | |
 | B6 Undo a turn, then change your mind | ComposerReturnsTests, AttachmentsTests, UndoRedoTests | outside git, Undo says the files stay as they are |
-| B7 Commit with a message, push, make a branch | ChangesCommitTests, ChangesDiscardTests | |
+| B7 Commit with a message, push, make a branch | ChangesCommitTests, ChangesDiscardTests, ChangesStagingTests, ChangesFileNamesTests | |
 | B8 A session in a worktree, merged back | WorktreeSessionTests, GitBranchesTests | |
 | B10 Ask First: allow once, always, deny | ComposerReturnsTests, ProjectFoldersTests | a piped command asked as one; Always Allowed lists every project's |
 | B12 Queue while it works, Stop, Resume | ComposerReturnsTests, QueueTests | |
