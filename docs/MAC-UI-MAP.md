@@ -123,9 +123,12 @@ viewer that looks at one moves as the Mac's does (`ImageViewer.swift:22, 28, 40`
 0.14 out, the window under it dimmed over 0.15). In 0.5.77 the composer's mode menu took
 the Mac's tool permissions (`ComposerMenus.swift:120-135`) — *Approve All* and *Ask First*,
 which become the session's own rules — and the model picked last is kept, so a new session
-starts with it (`SessionView.swift:459-490`). The port's
+starts with it (`SessionView.swift:459-490`). In 0.5.78 the appearance took the Mac's own
+choices — the window's material, the typeface of the messages, and the detail of the
+agent's steps (`Look.swift:42-63`; `AppearanceSettings.swift:9-77`) — and the app learned
+to see a session's name as soon as the engine has it. The port's
 own list of what is left is now: the choices the Mac keeps (the
-steps' detail, the favourites, push after commit, the typeface and the window material).
+favourites and push after commit).
 Everything else in §1–§9 is now the Mac's, and the checks hold it there.
 
 **The wording is finished with the screens it lives in.** The shell's strings are the Mac's,

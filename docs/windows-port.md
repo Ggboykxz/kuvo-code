@@ -260,6 +260,25 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     the next time (`toolApproval`). And the model picked last is kept whole, the id with
     its slashes (`SessionView.swift:459-490`), so a new session starts with it, as the
     Mac's does.
+  - **2.73 (this change). The appearance's own choices.** The Mac's appearance holds the
+    window's material, the typeface of the messages and the detail of the agent's steps
+    (`Look.swift:42-63`; `AppearanceSettings.swift:9-77`); the port's held the accent, the
+    text size and the motion. It holds them all now, in the Mac's words: *Window* —
+    *Glass*, "Frosted glass that lets your desktop’s colors through", or *Solid*, "A
+    solid background, with nothing showing through"; *Typeface* — System, Rounded, Serif or
+    Monospaced, "Code always stays monospaced"; and *Agent’s steps* — *Each Step*,
+    *Summarized* or *Minimal*, each with the Mac's own note. The window's material is the
+    glass the port already drew, or a solid ground; the typeface is the messages' (the
+    chrome keeps its own); and the steps show as they were chosen: a line that opens to
+    each, or only how many there were. Windows has no SF Pro Rounded: the closest it has
+    is Candara, whose terminals are round.
+  - **2.74 (this change). Two things the app was slow to see.** A session's name comes from
+    the engine a moment after its first words — the conversation's card said "New Session"
+    for a session the engine had already named, until the list was read again; the session
+    in view takes its name from the list now. And a file picked before the session was in
+    view was thrown away by the draft that came with the session: the files in the box
+    belong to the session they were picked for, and the draft of another one does not take
+    them away.
   - **2.61 (this change). The provider's marks.** The Mac draws the maker's mark beside
     each model (`ProviderLogo.swift`), monochrome so it follows the ink, or in the maker's
     own colour where it has one. The marks themselves are not published as a package, but
