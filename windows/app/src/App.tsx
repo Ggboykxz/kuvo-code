@@ -67,7 +67,7 @@ import {
   useStore,
 } from "./store";
 import { Settings, settingsPageTitle } from "./Settings";
-import { DiffModal, Drawer, Palette, Picker, ProjectEditor, runInTerminal, Toast } from "./Overlays";
+import { DiffModal, Drawer, Palette, Picker, ProjectEditor, runInTerminal, runTheProject, Toast } from "./Overlays";
 import { Shimmer } from "./components/ai-elements/shimmer";
 import { FolderIcon, Symbol } from "./components/symbols";
 import { Spinner } from "./components/spinner";
@@ -2296,6 +2296,9 @@ function runShortcut(id: string) {
       return;
     case "save":
       void exportConversation();
+      return;
+    case "run":
+      runTheProject();
       return;
     case "find":
       // The Mac's find is invoked, not always there (App menu › Find in Conversation…).

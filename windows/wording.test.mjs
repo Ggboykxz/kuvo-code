@@ -92,6 +92,8 @@ const SHELL = [
   "Code always stays monospaced.",
   "Every step the agent takes, as it takes it.",
   "Only how many steps it took, to open if you want.",
+  // The project's own command, run from the palette (MainView.swift:1423).
+  "Run",
   // The mode menu's tool permissions (ComposerMenus.swift:6-26, 120-135).
   "Tool Permissions",
   "Approve All",

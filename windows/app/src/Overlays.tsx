@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import { errorText } from "./lib";
 import { ChangesPanel } from "./Changes";
-import { complain, loadProjectFiles, loadSessions, notify, openProjectFile, openSession, render, setProjectSettings, state, useStore, newSession, exportConversation, stopRun } from "./store";
+import { complain, loadProjectFiles, loadSessions, notify, openProjectFile, openSession, projectName, projectRun, render, setProjectSettings, state, useStore, newSession, exportConversation, stopRun } from "./store";
 import { keysOf } from "./shortcuts";
 import { Symbol } from "./components/symbols";
 
@@ -93,23 +93,28 @@ export function Palette() {
   }, [state.paletteOpen, needle, state.project]);
 
   const folder = state.project ? state.project.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "" : "";
+  // The Mac's palette actions, in its order (MainView.swift:1418-1462): the usual ones
+  // first, and the ones this client has no business of.
   const coreActions: PaletteRow[] = [
     { id: "action:new-session", kind: "action", title: "New Session", shortcut: keysOf("new-session"), run: async () => { await newSession(); } },
-    { id: "action:stop", kind: "action", title: "Stop", shortcut: keysOf("stop"), run: async () => { await stopRun(); } },
-    { id: "action:find", kind: "action", title: "Find in Conversation…", shortcut: keysOf("find"), run: () => { (document.getElementById("find") as HTMLInputElement | null)?.focus(); } },
-    { id: "action:save", kind: "action", title: "Save the conversation as Markdown", shortcut: keysOf("save"), run: async () => { await exportConversation(); } },
-    { id: "action:files", kind: "action", title: "Show Files", shortcut: keysOf("files"), run: () => { state.drawerOpen = true; state.drawerTab = "files"; render(); } },
-    { id: "action:changes", kind: "action", title: "Show Changes", shortcut: keysOf("changes"), run: () => { state.drawerOpen = true; state.drawerTab = "changes"; render(); } },
+    ...(folder ? [{ id: "action:run", kind: "action" as const, title: "Run", detail: projectRun(folder) || undefined, shortcut: keysOf("run"), run: () => { runTheProject(); } }] : []),
     { id: "action:terminal", kind: "action", title: "New Terminal", shortcut: keysOf("terminal"), run: () => { state.drawerOpen = true; state.drawerTab = "terminal"; render(); } },
+    { id: "action:changes", kind: "action", title: "Show Changes", shortcut: keysOf("changes"), run: () => { state.drawerOpen = true; state.drawerTab = "changes"; render(); } },
+    { id: "action:files", kind: "action", title: "Show Files", shortcut: keysOf("files"), run: () => { state.drawerOpen = true; state.drawerTab = "files"; render(); } },
     { id: "action:panel", kind: "action", title: state.drawerOpen ? "Hide Panel" : "Show Panel", shortcut: keysOf("panel"), run: () => { state.drawerOpen = !state.drawerOpen; render(); } },
     { id: "action:sidebar", kind: "action", title: state.sidebarOpen === false ? "Show Sessions" : "Hide Sessions", shortcut: keysOf("sidebar"), run: () => { state.sidebarOpen = state.sidebarOpen === false; render(); } },
-    { id: "action:settings", kind: "action", title: "Settings", shortcut: keysOf("settings"), run: () => { state.settingsOpen = true; state.settingsSection = "appearance"; render(); } },
+    ...(folder ? [{ id: "action:edit-project", kind: "action" as const, title: "Edit Project…", detail: projectName(folder), run: () => { state.editingProject = folder; render(); } }] : []),
+    { id: "action:find", kind: "action", title: "Find in Conversation…", shortcut: keysOf("find"), run: () => { (document.getElementById("find") as HTMLInputElement | null)?.focus(); } },
     { id: "action:rename", kind: "action", title: "Rename this session", run: async () => {
       const title = prompt("Name this session", state.session?.title ?? "");
       if (!title) return;
       await api(`/api/sessions/${encodeURIComponent(state.session!.id)}/rename`, { method: "POST", body: { title } });
       await loadSessions();
     } },
+    { id: "action:settings", kind: "action", title: "Settings", shortcut: keysOf("settings"), run: () => { state.settingsOpen = true; state.settingsSection = "appearance"; render(); } },
+    // And the ones that are this client's own.
+    { id: "action:stop", kind: "action", title: "Stop", shortcut: keysOf("stop"), run: async () => { await stopRun(); } },
+    { id: "action:save", kind: "action", title: "Save the conversation as Markdown", shortcut: keysOf("save"), run: async () => { await exportConversation(); } },
     { id: "action:refresh", kind: "action", title: "Refresh sessions", run: async () => { await loadSessions(); notify("Kuvo Code", "Sessions refreshed."); } },
   ];
   const commandActions: PaletteRow[] = state.commands.map(command => ({
@@ -316,6 +321,19 @@ export function Picker() {
       </div>
     </div>
   );
+}
+
+/// The project's own command, run in the panel's terminal — the Mac's Run (MainView.swift:1479-1491).
+/// Without a command yet, the project's editor opens on the run field.
+export function runTheProject() {
+  const folder = state.project ?? "";
+  const command = folder ? projectRun(folder) : "";
+  if (!command) {
+    state.editingProject = folder || null;
+    render();
+    return;
+  }
+  runInTerminal(command, folder);
 }
 
 /// A project's own name, changed where the Mac changes it: over the window, in a small

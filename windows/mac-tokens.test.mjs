@@ -22,6 +22,7 @@ const sources = {
   store: read("app", "src", "store.ts"),
   api: read("app", "src", "api.ts"),
   over: read("app", "src", "Overlays.tsx"),
+  keys: read("app", "src", "keys.mjs"),
   settings: read("app", "src", "Settings.tsx"),
   overlays: read("app", "src", "Overlays.tsx"),
   app: read("app", "src", "App.tsx"),
@@ -920,6 +921,16 @@ const checks = [
     assert.ok(store.includes("kuvo-favoriteModels"), "the models the user keeps are kept");
     // The mark is drawn, not a text glyph (the house rule, MAC-UI-MAP.md §7).
     assert.match(symbols, /"star": \["M8 2\.2l1\.76/);
+  }],
+
+  ["the project's command is run from the palette and from the key, as the Mac's", ({ app, keys, over }) => {
+    // The Mac's palette entry (MainView.swift:1423: "Run", the play mark, ⌘R) and the key
+    // itself; without a command yet, the editor opens on the run field
+    // (MainView.swift:1479-1487).
+    assert.ok(over.includes('title: "Run"'), "the palette offers Run");
+    assert.ok(keys.includes('id: "run"') && keys.includes('title: "Run the project'), "and the key that runs it");
+    assert.ok(over.includes("runTheProject"), "the run is the Mac's own");
+    assert.ok(app.includes('case "run":'), "and the key acts on it");
   }],
 
   ["a project's other folders are the agent's too, as the Mac's makes them", ({ app, store, over }) => {

@@ -445,6 +445,8 @@ test("the page, in a browser, against the real engine", {
   const newSessionRow = paletteTexts.find(text => text.startsWith("New Session") && /Ctrl\+N/.test(text));
   assert.ok(newSessionRow, "the palette offers a new session, with the keys that do it");
   assert.match(newSessionRow, /Ctrl\+N/, "the palette shows the keys that do it");
+  const runRow = paletteTexts.find(text => text.startsWith("Run") && /Ctrl\+R/.test(text));
+  assert.ok(runRow, "the palette offers the project's command, with the keys that run it");
   // The Mac's sections: the recent sessions, and the actions.
   const paletteSections = (await page.page.locator("#palette-list .palette-title").allTextContents()).map(text => text.trim());
   assert.ok(paletteSections.includes("Recent Sessions"), "the palette opens with the recent sessions");

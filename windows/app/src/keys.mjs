@@ -21,6 +21,7 @@ export const SHORTCUT_GROUPS = [
     { id: "new-session", title: "New session", keys: "Ctrl+N" },
     { id: "save", title: "Save the conversation as Markdown", keys: "Ctrl+S" },
     { id: "settings", title: "Settings", keys: "Ctrl+," },
+    { id: "run", title: "Run the project's command", keys: "Ctrl+R" },
   ]],
   ["Sessions", [
     { id: "stop", title: "Stop the agent (or Esc in the composer)", keys: "Ctrl+." },
