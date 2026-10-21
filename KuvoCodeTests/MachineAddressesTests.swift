@@ -100,4 +100,19 @@ import Testing
         #expect(workspace.settings[moved]?.folders == [RemoteFolder.folder("/srv/shared", on: "lokum-tailscale")])
         #expect(workspace.settings[web] == nil)
     }
+
+    /// You say one is the other at another address (one of them can't be reached to tell): one
+    /// machine. Two that have said they're different computers stay two.
+    @Test func youSayTheyreTheSameComputer() {
+        defer { Self.clean() }
+        let machines = machines("lokum-tailscale", "lokum-local", "vps")
+        machines.note("0123456789abcdef0123456789abcdef", of: "lokum-local")
+        #expect(machines.sameComputer("lokum-local", as: "lokum-tailscale"))
+        #expect(machines.list.map(\.id) == ["lokum-tailscale", "vps"])
+        #expect(machines.list.first?.addresses == ["lokum-tailscale", "lokum-local"])
+        #expect(machines.list.first?.identity == "0123456789abcdef0123456789abcdef")
+        machines.note("fedcba9876543210fedcba9876543210", of: "vps")
+        #expect(!machines.sameComputer("vps", as: "lokum-tailscale"))
+        #expect(machines.list.map(\.id) == ["lokum-tailscale", "vps"])
+    }
 }

@@ -731,6 +731,16 @@ final class Machines {
         save()
     }
 
+    /// You say `machine` is the same computer as `other` (one of them can't be reached to ask):
+    /// it becomes one of `other`'s addresses. Not when they've said they're two computers.
+    @discardableResult
+    func sameComputer(_ machine: String, as other: String) -> Bool {
+        guard let one = list.first(where: { $0.id == machine }), let two = list.first(where: { $0.id == other }), one.id != two.id else { return false }
+        if let a = one.identity, let b = two.identity, a != b { return false }
+        fold(machine, into: other)
+        return true
+    }
+
     /// Says in Settings › Machines that `address`, added as a machine, was one already here.
     func noteAdded(_ address: String, to machine: String) {
         folded = (address, machine)

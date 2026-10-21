@@ -6,6 +6,8 @@ struct MachinesSettings: View {
     @Environment(AppModel.self) private var app
     @State private var showsAdd = false
     @State private var removing: Machine?
+    /// Two machines you said were one computer, which said they're two.
+    @State private var notSame: (String, String)?
 
     var body: some View {
         ScrollingSettingsForm {
@@ -42,6 +44,11 @@ struct MachinesSettings: View {
             }
         }
         #endif
+        .alert("\(notSame?.0 ?? "") and \(notSame?.1 ?? "") are two computers", isPresented: Binding(get: { notSame != nil }, set: { if !$0 { notSame = nil } })) {
+            Button("OK") { notSame = nil }
+        } message: {
+            Text("Each told Kuvo Code its own name when it connected, and they differ, so they stay two machines.")
+        }
         .confirmationDialog("Remove \(removing?.name ?? "")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }), presenting: removing) { machine in
             Button("Remove", role: .destructive) { app.removeMachine(machine.id) }
         } message: { _ in
@@ -77,6 +84,17 @@ struct MachinesSettings: View {
         .contextMenu {
             ForEach(engine.machine.otherAddresses ?? [], id: \.self) { address in
                 Button("Stop Using \(address)") { app.machines.removeAddress(address, from: engine.machine.id) }
+            }
+            // The same computer at another address, when one of them can't be reached to tell.
+            let others = app.machines.list.filter { $0.id != engine.machine.id }
+            if !others.isEmpty {
+                Menu("Same Computer As") {
+                    ForEach(others) { other in
+                        Button(other.name) {
+                            if !app.machines.sameComputer(engine.machine.id, as: other.id) { notSame = (engine.machine.name, other.name) }
+                        }
+                    }
+                }
             }
         }
     }

@@ -6,7 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
-- A machine you reach at two addresses, like its name on your local network and over Tailscale, is one machine. Adding it again at its other address, or having added both before, makes the second one of the first's addresses, rather than a second machine that set everything up again, listed every session twice, and on removal would have signed out and stopped what the first still used. Kuvo Code uses whichever address answers. Right-click it in Settings › Machines to stop using an address.
+- A machine you reach at two addresses, like its name on your local network and over Tailscale, is one machine. Adding it again at its other address, or having added both before, makes the second one of the first's addresses, rather than a second machine that set everything up again, listed every session twice, and on removal would have signed out and stopped what the first still used. Kuvo Code uses whichever address answers. Right-click it in Settings › Machines to stop using an address, or, when one of the two can't be reached to tell, to say they're the same computer.
 - Signing in on a machine's browser (to connect an integration, or when an agent asks) no longer freezes when a site asks for a passkey: the site hears there's none here and offers its other ways, such as "Try another way". Chrome's passkey prompt, which the live view couldn't show, held the page still. The panel's browser on your Mac refuses passkeys the same way, however a site asks.
 
 ## 0.6.3
