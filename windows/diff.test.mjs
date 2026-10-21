@@ -14,8 +14,9 @@ import { diffGutterWidth, diffNumber, diffSide, parsePatch } from "./app/src/dif
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, "..");
-
-const mac = (...parts) => fs.readFileSync(path.join(root, ...parts), "utf8");
+// The Mac's source, read with the line endings put to one: a rule read as text must not
+// depend on whether the file was checked out on Windows or on a Mac.
+const mac = (...parts) => fs.readFileSync(path.join(root, ...parts), "utf8").replace(/\r\n/g, "\n");
 
 // A patch as git writes it: the headers, a hunk, and the lines of the change.
 const PATCH = [
