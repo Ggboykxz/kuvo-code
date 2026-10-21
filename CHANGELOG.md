@@ -4,6 +4,8 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
+## Unreleased
+
 ## 0.6.5
 
 - Settings › Permissions says what Default comes to, like "Default (Allow)" or "Default (Ask First)", and an agent's own permissions show what Settings › Permissions has for it.
