@@ -74,6 +74,14 @@ import Testing
         let message = BotTemplate.firstMessage(job: recipe.job, instructions: recipe.instructions)
         #expect(message.components(separatedBy: "Keeps CI green").count == 2, "the job said more than once: \(message)")
         #expect(message.contains("Watch main; when it fails, fix it on a branch."))
+        // Its details on the job's line, after it: said once, and the details kept.
+        let oneLine = BotTemplate.firstMessage(job: "Keeps CI green", instructions: "Keeps CI green. Watch main; when it fails, fix it on a branch.\n\nTell me what broke.")
+        #expect(oneLine.components(separatedBy: "Keeps CI green").count == 2, "the job said more than once: \(oneLine)")
+        #expect(oneLine.contains("Watch main; when it fails, fix it on a branch."), "the rest of its line stays: \(oneLine)")
+        #expect(oneLine.contains("Tell me what broke."))
+        // A short line that's all job goes whole.
+        let short = BotTemplate.firstMessage(job: "Keeps CI green. Fast", instructions: "Keeps CI green. Fast.\n\nWatch main.")
+        #expect(short.components(separatedBy: "Keeps CI green").count == 2, "\(short)")
         // A template's details don't repeat its job, and stay whole.
         let template = try #require(BotTemplate.all.first)
         #expect(BotTemplate.firstMessage(job: template.job, instructions: template.instructions).contains(template.instructions.trimmingCharacters(in: .whitespacesAndNewlines)))
