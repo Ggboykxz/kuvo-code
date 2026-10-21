@@ -768,6 +768,22 @@ test("a session can be pinned, and the mark goes out with the session's own meta
   assert.deepEqual(await unpinned.json(), { ok: true, pinned: false });
 });
 
+test("a session's own rules are set, the way the Mac sets them", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+
+  const asked = await fetch(`${url}api/sessions/${engine.session.id}/permissions`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ permissions: [{ action: "edit", resource: "*", effect: "ask" }] }),
+  });
+  assert.equal(asked.status, 200);
+  const change = engine.asked.find(entry => entry.method === "PATCH");
+  assert.ok(change, "the engine was asked to change the session");
+  assert.deepEqual(change.body.permissions, [{ action: "edit", resource: "*", effect: "ask" }]);
+});
+
 test("a picture sent with a message stays in the conversation", () => {
   // The message is delivered: the picture that came with it is not lost on the way
   // (the file travels with the message, as the Mac's does).

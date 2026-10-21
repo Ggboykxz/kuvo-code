@@ -1119,6 +1119,15 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       return json({ ok: true, pinned });
     }
 
+    // The session's own rules: what the agent may do without asking, and what waits for
+    // an OK (OpenCodeAPI.swift:339-343).
+    const rules = route(/^\/api\/sessions\/([^/]+)\/permissions$/);
+    if (rules && request.method === "POST") {
+      const body = await readBody(request);
+      await client.setPermissions(rules[0], Array.isArray(body.permissions) ? body.permissions : []);
+      return json({ ok: true });
+    }
+
     const rename = route(/^\/api\/sessions\/([^/]+)\/rename$/);
     if (rename && request.method === "POST") {
       const body = await readBody(request);

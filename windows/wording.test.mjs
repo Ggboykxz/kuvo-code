@@ -78,6 +78,12 @@ const SHELL = [
   "Close All Tabs",
   // The row at the top, which can be put away (GeneralSettings.swift:23).
   "Show the tab bar",
+  // The mode menu's tool permissions (ComposerMenus.swift:6-26, 120-135).
+  "Tool Permissions",
+  "Approve All",
+  "Ask First",
+  "Runs tools without asking",
+  "Asks before editing files or running commands",
 ];
 
 /// The transcript's own words, the same way.

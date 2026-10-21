@@ -509,6 +509,16 @@ test("the page, in a browser, against the real engine", {
     "the tab's menu is the Mac's, in its order",
   );
 
+  // The mode menu: the Mac's, with the tool permissions in it (ComposerMenus.swift:120-135).
+  await page.element("agent").click();
+  await page.seen("the mode menu to open", () => document.querySelectorAll(".choice-panel .choice-item").length > 0, null, 10_000);
+  const modeItems = (await page.page.locator(".choice-panel .choice-item").allTextContents()).map(text => text.trim());
+  assert.ok(modeItems.some(text => text.includes("Approve All")), "the menu offers Approve All");
+  assert.ok(modeItems.some(text => text.includes("Ask First")), "the menu offers Ask First");
+  assert.ok(modeItems.some(text => text.includes("Runs tools without asking")), "with the Mac's own words");
+  assert.ok(modeItems.some(text => text.includes("Asks before editing files or running commands")), "and the other one's too");
+  await page.page.keyboard.press("Escape");
+
   // The image viewer: the picture opens over the window, and the window under it dims with
   // it (ImageViewer.swift:33-41). A page of its own: a model that will not look at a
   // picture is the engine's mood, not this client's business.

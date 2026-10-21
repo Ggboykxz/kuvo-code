@@ -728,9 +728,12 @@ export async function stopRun() {
 /// a project's row (SidebarView.swift:358-361).
 export async function newSession(directory?: string) {
   try {
+    // A new session starts with the model picked last, as the Mac's does
+    // (SessionView.swift:459-490).
+    const model = lastModel();
     const { session } = await api<{ session: { id: string } }>("/api/sessions", {
       method: "POST",
-      body: directory ? { directory } : {},
+      body: { ...(directory ? { directory } : {}), ...(model ? { model } : {}) },
     });
     if (directory && directory !== state.project) {
       state.project = directory;
@@ -798,6 +801,61 @@ export async function exportConversation() {
   const session = state.session;
   if (!session) return;
   await exportMarkdownOf(session);
+}
+
+/// ---- The choices the Mac keeps ----
+
+/// The approval: the tools run without asking, or the edits and the commands wait for an
+/// OK (the Mac's ToolApproval, ComposerMenus.swift:6-26).
+export type Approval = "approveAll" | "askFirst";
+
+/// The actions that wait for an OK when the user asked first
+/// (PermissionsSettings.swift:22-31: the edits, the commands, the pages and the searches).
+const ASK_FIRST = ["edit", "shell", "webfetch", "websearch"];
+
+/// The approval as it was left.
+export function approval(): Approval {
+  try {
+    return localStorage.getItem("kuvo-toolApproval") === "askFirst" ? "askFirst" : "approveAll";
+  } catch {
+    return "approveAll";
+  }
+}
+
+/// The approval the user picks, and the session's own rules made from it
+/// (ComposerMenus.swift:45-53: the rules that ask become rules that allow, and the ones
+/// that are denied stay denied).
+export async function setApproval(next: Approval) {
+  try { localStorage.setItem("kuvo-toolApproval", next); } catch {}
+  const session = state.session;
+  if (!session) return;
+  const effect = next === "askFirst" ? "ask" : "allow";
+  const permissions = ASK_FIRST.map(action => ({ action, resource: "*", effect }));
+  try {
+    await api(`/api/sessions/${encodeURIComponent(session.id)}/permissions`, { method: "POST", body: { permissions } });
+  } catch (error) {
+    complain(error);
+  }
+}
+
+/// The model picked last, so a new session starts with it (the Mac's LastModel,
+/// SessionView.swift:459-490). It is kept whole: a model's id can have slashes in it
+/// (OpenRouter's "anthropic/claude-sonnet-4.5").
+export function lastModel(): { providerID: string; id: string } | null {
+  try {
+    const stored = localStorage.getItem("kuvo-lastModel");
+    if (!stored) return null;
+    const parsed = JSON.parse(stored) as { providerID?: string; id?: string };
+    if (!parsed.providerID || !parsed.id) return null;
+    return { providerID: parsed.providerID, id: parsed.id };
+  } catch {
+    return null;
+  }
+}
+
+/// The model picked last, kept.
+export function rememberModel(model: { providerID: string; id: string }) {
+  try { localStorage.setItem("kuvo-lastModel", JSON.stringify(model)); } catch {}
 }
 
 /// A session pinned to the top of the sidebar, or taken off (the Mac's

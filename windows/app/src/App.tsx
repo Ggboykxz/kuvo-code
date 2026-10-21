@@ -11,6 +11,7 @@ import { draftKey, readDraft, saveDraft } from "./drafts.mjs";
 import {
   answerPermission,
   applyLook,
+  approval,
   boot,
   archiveSession,
   closeSessionTab,
@@ -43,16 +44,19 @@ import {
   redoNow,
   render,
   rememberFolded,
+  rememberModel,
   removeProject,
   renameSession,
   replyForm,
   saveConfig,
   savePaneWidth,
   sendPrompt,
+  setApproval,
   setPaneWidth,
   showInFolder,
   state,
   stopRun,
+  type Approval,
   undoFromHere,
   useStore,
 } from "./store";
@@ -1562,6 +1566,9 @@ type Mention = { kind: "files" | "commands"; name: string; path?: string; relati
 
 function Composer() {
   const [text, setText] = useState("");
+  // The approval as it stands: the tools run without asking, or they wait for an OK
+  // (the Mac's ToolApproval, ComposerMenus.swift:6-26).
+  const [approvalShown, setApprovalShown] = useState<Approval>(approval);
   const [files, setFiles] = useState<Attachment[]>([]);
   const [mentions, setMentions] = useState<Mention[]>([]);
   const [queueOpen, setQueueOpen] = useState(false);
@@ -1863,6 +1870,13 @@ function Composer() {
           empty="Build"
           value={state.agent}
           onPick={async value => {
+            // The Mac's mode menu holds the modes and the tool permissions
+            // (ComposerMenus.swift:120-135: the modes, a line, then the permissions).
+            if (value === "approveAll" || value === "askFirst") {
+              setApprovalShown(value);
+              await setApproval(value);
+              return;
+            }
             state.agent = value;
             render();
             if (!state.session || value === "") return;
@@ -1870,7 +1884,16 @@ function Composer() {
               await api(`/api/sessions/${encodeURIComponent(state.session.id)}/agent`, { method: "POST", body: { agent: value } });
             } catch (error) { complain(error); }
           }}
-          groups={[{ name: "", items: state.agents.map(agent => ({ value: agent.id, label: agent.name ?? agent.id, detail: agent.mode })) }]}
+          groups={[
+            { name: "", items: state.agents.map(agent => ({ value: agent.id, label: agent.name ?? agent.id, detail: agent.mode })) },
+            {
+              name: "Tool Permissions",
+              items: [
+                { value: "approveAll", label: "Approve All", detail: "Runs tools without asking", checked: approvalShown === "approveAll" },
+                { value: "askFirst", label: "Ask First", detail: "Asks before editing files or running commands", checked: approvalShown === "askFirst" },
+              ],
+            },
+          ]}
         />
         <Choice
           id="model"
@@ -1885,6 +1908,8 @@ function Composer() {
             const slash = value.indexOf("/");
             if (slash < 1) return;
             const ref = { providerID: value.slice(0, slash), id: value.slice(slash + 1) };
+            // The model picked last, so the next session starts with it (SessionView.swift:459-490).
+            rememberModel(ref);
             const current = state.session;
             const previous = current.model ?? null;
             // The picker shows the model it now has, as the Mac's does (SessionModel.swift:
@@ -2006,7 +2031,7 @@ function AnalyticsNotice() {
 function Choice({ id, title, groups, value, onPick, empty }: {
   id: string;
   title: string;
-  groups: { name: string; items: { value: string; label: string; detail?: string; logo?: string }[] }[];
+  groups: { name: string; items: { value: string; label: string; detail?: string; logo?: string; checked?: boolean }[] }[];
   value: string;
   onPick: (value: string) => void;
   empty: string;
@@ -2056,7 +2081,7 @@ function Choice({ id, title, groups, value, onPick, empty }: {
                 {group.items.map(item => (
                   <button
                     key={item.value}
-                    className={`choice-item ${item.value === value ? "selected" : ""}`}
+                    className={`choice-item ${item.checked || item.value === value ? "selected" : ""}`}
                     onClick={() => { onPick(item.value); setOpen(false); setQuery(""); }}
                   >
                     {item.logo ? <ProviderLogo id={item.logo} size={15} /> : null}

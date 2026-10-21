@@ -881,6 +881,20 @@ const checks = [
     assert.match(app, /\(item\.files \?\? \[\]\)\.map/);
   }],
 
+  ["the mode menu keeps the Mac's tool permissions, and the last model is kept", ({ app, store }) => {
+    // The Mac's mode menu: the modes, a line, then the tool permissions
+    // (ComposerMenus.swift:120-135), with the Mac's own words.
+    assert.ok(app.includes('"Tool Permissions"'), "the menu holds the tool permissions");
+    for (const word of ["Approve All", "Ask First", "Runs tools without asking", "Asks before editing files or running commands"]) {
+      assert.ok(app.includes(`"${word}"`), `the app says "${word}"`);
+    }
+    // The model picked last is kept whole, and a new session starts with it
+    // (SessionView.swift:459-490).
+    assert.ok(store.includes("kuvo-lastModel"), "the last model is kept");
+    assert.match(store, /lastModel\(\)/);
+    assert.match(app, /rememberModel\(ref\)/);
+  }],
+
   ["the tab's own menu is the Mac's, in its order", ({ app, titlebar }) => {
     // The Mac's menu for a tab (TitleBar.swift:214-231): beside the one in view, its
     // name, and the tabs to close — the other ones, and all of them.

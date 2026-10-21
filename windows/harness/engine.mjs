@@ -177,6 +177,12 @@ export class EngineClient {
 
   /// Changes a session — its title, or a note in its metadata (how the Mac app archives
   /// one: a mark of its own, "kuvo.archived").
+  /// The session's own permission rules (OpenCodeAPI.swift:339-343): what the agent may
+  /// do without asking.
+  async setPermissions(session, permissions) {
+    await this.request("PATCH", `api/session/${encodeURIComponent(session)}`, { body: { permissions } });
+  }
+
   async updateSession(session, changes) {
     await this.request("PATCH", `api/session/${encodeURIComponent(session)}`, { body: changes });
   }
