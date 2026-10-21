@@ -906,6 +906,7 @@ final class Workspace {
         }
         upsert(moved)
         Drafts.shared[moved.id] = Drafts.shared[id]
+        await WakeUps.carry(from: session, to: moved)
         return moved
     }
 

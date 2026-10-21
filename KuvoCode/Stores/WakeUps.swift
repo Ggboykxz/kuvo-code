@@ -252,14 +252,17 @@ final class WakeUps {
 
     /// A session's folder, made as kuvo-wake makes it, for a wake-up you add before its agent made
     /// one: its session, where it works, and for a coding agent's, that its wake-ups go through the
-    /// agents' bridge (`via`). A bot's is made with it.
+    /// agents' bridge (`via`). A bot's is made with it. An archived session's is held from the
+    /// start, as its wake-ups would be had it had some when it was archived.
     private func makeFolder(of owner: Owner) async throws {
         guard !owner.isBot else { return }
         let directory = RemoteFolder.parse(owner.directory)?.path ?? owner.directory
+        let archived = app?.workspace.session(owner.session).map(Workspace.isArchived) == true
         if let machine = owner.machine {
             let folder = Self.shell(owner.folder)
             let via = owner.agents ? " && printf bridge >\(folder)/via" : ""
-            let script = "[ -f \(folder)/session ] || { (umask 077; mkdir -p \(folder)) && printf '%s' \(SSHConnection.quoted(owner.session)) >\(folder)/session && printf '%s' \(SSHConnection.quoted(directory)) >\(folder)/directory\(via); }"
+            let held = archived ? " && : >\(Self.shell(Self.pauseFile(of: owner)))" : ""
+            let script = "[ -f \(folder)/session ] || { (umask 077; mkdir -p \(folder)) && printf '%s' \(SSHConnection.quoted(owner.session)) >\(folder)/session && printf '%s' \(SSHConnection.quoted(directory)) >\(folder)/directory\(via)\(held); }"
             guard await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value != nil else { throw Failure.notConnected(machine) }
             return
         }
@@ -269,6 +272,7 @@ final class WakeUps {
         try Data(owner.session.utf8).write(to: URL(filePath: Self.path(owner, "session")))
         try Data(directory.utf8).write(to: URL(filePath: Self.path(owner, "directory")))
         if owner.agents { try Data("bridge".utf8).write(to: URL(filePath: Self.path(owner, "via"))) }
+        if archived { try await setPaused(true, owner) }
     }
 
     /// A wake-up you add: at `due`, `note` arrives in the conversation, and again at each repeat.
@@ -523,6 +527,28 @@ final class WakeUps {
         let owner = Self.owner(of: session)
         if owner.machine == nil, !FileManager.default.fileExists(atPath: owner.folder) { return }
         try? await setPaused(isArchived, owner)
+    }
+
+    /// A conversation that carries on in another session (moved to the coding agents): its
+    /// wake-ups and watches go with it, held still if you'd held them, rather than staying with
+    /// the old one, which goes to Archived and holds them there.
+    static func carry(from old: Session, to new: Session) async {
+        let from = owner(of: old), to = owner(of: new)
+        guard from.folder != to.folder, from.machine == to.machine else { return }
+        let directory = RemoteFolder.parse(to.directory)?.path ?? to.directory
+        if let machine = from.machine {
+            let source = shell(from.folder), target = shell(to.folder)
+            let via = to.agents ? "printf bridge >\(target)/via" : "rm -f \(target)/via"
+            let script = "[ -f \(source)/session ] && [ ! -e \(target) ] && mv \(source) \(target) && printf '%s' \(SSHConnection.quoted(to.session)) >\(target)/session && printf '%s' \(SSHConnection.quoted(directory)) >\(target)/directory && \(via); true"
+            _ = await Task.detached { RemoteShell.run(script, on: machine) }.value
+            return
+        }
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: path(from, "session")), !manager.fileExists(atPath: to.folder),
+              (try? manager.moveItem(atPath: from.folder, toPath: to.folder)) != nil else { return }
+        try? Data(to.session.utf8).write(to: URL(filePath: path(to, "session")))
+        try? Data(directory.utf8).write(to: URL(filePath: path(to, "directory")))
+        if to.agents { try? Data("bridge".utf8).write(to: URL(filePath: path(to, "via"))) } else { try? manager.removeItem(atPath: path(to, "via")) }
     }
 
     /// A session that's gone takes its wake-ups and watches with it; a bot's go with its folder.
