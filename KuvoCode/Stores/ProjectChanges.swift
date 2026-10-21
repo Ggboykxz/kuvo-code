@@ -455,7 +455,7 @@ nonisolated enum DiffParser {
             if line.hasPrefix("diff --git ") || line.hasPrefix("diff --cc ") {
                 finish()
                 let combined = line.hasPrefix("diff --cc ")
-                let path = combined ? String(line.dropFirst("diff --cc ".count)) : pathFromHeader(line)
+                let path = combined ? self.path(line.dropFirst("diff --cc ".count)) : pathFromHeader(line)
                 current = ChangedFile(path: path, status: .modified, url: RemoteFolder.url(root).appending(path: path))
                 sides = combined ? 2 : 1
                 sawHunk = false
@@ -474,9 +474,9 @@ nonisolated enum DiffParser {
             if !sawHunk {
                 if line.hasPrefix("new file mode") { file.status = .added; file.isFolder = line.hasSuffix(" 160000") }
                 else if line.hasPrefix("deleted file mode") { file.status = .deleted }
-                else if line.hasPrefix("rename from ") { file.oldPath = String(line.dropFirst("rename from ".count)); file.status = .renamed }
+                else if line.hasPrefix("rename from ") { file.oldPath = path(line.dropFirst("rename from ".count)); file.status = .renamed }
                 else if line.hasPrefix("rename to ") {
-                    file.path = String(line.dropFirst("rename to ".count))
+                    file.path = path(line.dropFirst("rename to ".count))
                     file.url = RemoteFolder.url(root).appending(path: file.path)
                 }
                 else if line.hasPrefix("Binary files ") { file.isBinary = true }
@@ -543,13 +543,69 @@ nonisolated enum DiffParser {
         return file
     }
 
-    /// "diff --git a/x b/x" → "x". Paths with spaces are fine; renames use the b side.
-    private static func pathFromHeader(_ line: String) -> String {
+    /// "diff --git a/x b/x" → "x": the b side. A name git quotes ("a/say \"hi\".txt", one with a
+    /// tab or a backslash) is read as git wrote it; one with " b/" in it ("Plan b/notes.md") by
+    /// both sides being the same. (A rename's own lines name its paths.)
+    static func pathFromHeader(_ line: String) -> String {
         let rest = line.dropFirst("diff --git ".count)
+        if rest.hasPrefix("\""), let (first, end) = unquoted(rest) {
+            let second = rest[end...].drop { $0 == " " }
+            let path = second.hasPrefix("\"") ? unquoted(second)?.text ?? String(second) : String(second)
+            return path.hasPrefix("b/") ? String(path.dropFirst(2)) : first.hasPrefix("a/") ? String(first.dropFirst(2)) : path
+        }
+        if rest.hasSuffix("\""), let range = rest.range(of: " \"b/", options: .backwards), let (path, _) = unquoted(rest[rest.index(after: range.lowerBound)...]) {
+            return String(path.dropFirst(2))
+        }
+        // "a/X b/X": X is half of what's left.
+        let half = (rest.count - 5) / 2
+        if rest.count % 2 == 1, half > 0, rest.hasPrefix("a/"), rest.dropFirst(2).prefix(half) == rest.suffix(half), rest.dropFirst(2 + half).hasPrefix(" b/") {
+            return String(rest.suffix(half))
+        }
         if let range = rest.range(of: " b/", options: .backwards) {
             return String(rest[range.upperBound...])
         }
         return String(rest)
+    }
+
+    /// A path from a line git may have quoted ("rename to", "diff --cc"): as it is, or unquoted.
+    static func path(_ text: some StringProtocol) -> String {
+        text.hasPrefix("\"") ? unquoted(text)?.text ?? String(text) : String(text)
+    }
+
+    /// The name in a C-style quoted string at the start of `text`, as git writes one ("\"", "\\",
+    /// "\t", "\303\251"), and where the string ends; nil when it isn't one.
+    private static func unquoted<S: StringProtocol>(_ text: S) -> (text: String, end: S.Index)? {
+        guard text.first == "\"" else { return nil }
+        var bytes: [UInt8] = []
+        var index = text.index(after: text.startIndex)
+        while index < text.endIndex {
+            let character = text[index]
+            if character == "\"" { return (String(decoding: bytes, as: UTF8.self), text.index(after: index)) }
+            guard character == "\\" else {
+                bytes += Array(String(character).utf8)
+                index = text.index(after: index)
+                continue
+            }
+            index = text.index(after: index)
+            guard index < text.endIndex else { return nil }
+            let escaped = text[index]
+            if let digit = escaped.wholeNumberValue, digit < 8 {
+                // Three octal digits: one byte of the name's UTF-8.
+                var value = 0
+                var digits = 0
+                while digits < 3, index < text.endIndex, let next = text[index].wholeNumberValue, next < 8 {
+                    value = value * 8 + next
+                    digits += 1
+                    index = text.index(after: index)
+                }
+                bytes.append(UInt8(truncatingIfNeeded: value))
+                continue
+            }
+            let known: [Character: UInt8] = ["a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, "\"": 34, "\\": 92]
+            bytes.append(known[escaped] ?? Array(String(escaped).utf8).first ?? 0)
+            index = text.index(after: index)
+        }
+        return nil
     }
 
     /// "@@@ -12,7 -12,8 +12,9 @@@" → (12, 12): the first side, and the file as it is.
