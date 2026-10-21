@@ -1920,7 +1920,8 @@ struct MainView: View {
     }
 
     /// KUVO_DEMO_GROUP=<name>|<bot>,<bot>,…[|<message>] makes that group chat of those bots unless
-    /// one has the name, opens it, and sends it the message; KUVO_DEMO_EDIT_GROUP opens its editor.
+    /// one has the name, opens it, and sends it the message; KUVO_DEMO_EDIT_GROUP opens its editor,
+    /// and KUVO_DEMO_MOVE_GROUP=<machine> moves it there first.
     private func runDemoGroup(_ environment: [String: String]) async {
         if environment["KUVO_DEMO_NEW_GROUP"] != nil { openGroupEditor(group: nil) }
         guard let spec = environment["KUVO_DEMO_GROUP"] else { return }
@@ -1940,8 +1941,23 @@ struct MainView: View {
                 Drafts.shared[BotGroups.tabKey(group.id)].text = text
             }
         }
+        // KUVO_DEMO_MOVE_GROUP=<machine>: then it moves there (once the machines it moves between run
+        // group chats), or to this Mac when empty, before its message goes.
+        if let place = environment["KUVO_DEMO_MOVE_GROUP"], groups.machine(of: group.id) != (place.isEmpty ? nil : place) {
+            let machine = place.isEmpty ? nil : place
+            let ends = [machine, groups.machine(of: group.id)].compactMap { $0 }
+            for _ in 0..<180 where !ends.allSatisfy(app.machineGroups.running.contains) { try? await Task.sleep(for: .seconds(1)) }
+            do {
+                try await app.moves.move(group: group.id, to: machine)
+                print("KUVO_DEMO_MOVE_GROUP moved \(group.name)")
+            } catch {
+                print("KUVO_DEMO_MOVE_GROUP failed: \(error.localizedDescription)")
+            }
+        }
         guard parts.count > 2, !parts[2].isEmpty else { return }
         while app.api == nil { try? await Task.sleep(for: .seconds(1)) }
+        // One on a machine: once it's reached there, as its composer waits.
+        for _ in 0..<180 where groups.unreachable(group.id) != nil { try? await Task.sleep(for: .seconds(1)) }
         try? await Task.sleep(for: .seconds(2))
         groups.send(parts[2], to: group.id)
         // KUVO_DEMO_GROUP_LATER=<seconds>|<message>: another message, sent while they talk.
