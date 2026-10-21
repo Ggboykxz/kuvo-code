@@ -46,8 +46,8 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | I1 Add a machine, at one or more addresses | AddMachineTests, MachineAddressesTests | choosing the address that answers (needs SSH) |
 | I2 A project on a machine | MachineFoldersTests, AttachmentRoutesTests, SignInSyncTests, MachineSignOutTests | |
 | I3 A machine that's away | MachineAwayTests | |
-| J1 The network goes away mid-reply | NetworkDropTests | |
 | I4 What machines share with this Mac, and what's their own | MachineSettingsTests, CustomAutoPlacesTests, SignInSyncTests | a connected machine's engine starting over with new settings (needs SSH) |
+| J1 The network goes away mid-reply | NetworkDropTests | |
 | K1 Settings keep what you change | EngineSettingsFileTests | |
 | K3 Notifications | NotificationMaskingTests | |
 | K5 Storage: what takes room | StorageReportTests | |
