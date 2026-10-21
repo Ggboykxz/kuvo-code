@@ -117,13 +117,14 @@ that undoes — and a pinned session sits at the top of the sidebar, in a sectio
 *Close All Tabs*, and the name is written in the tab itself, where the title was. In 0.5.75
 the window remembered its own state, as the Mac's does (`MainView.swift:38-40, 90`;
 `SidebarView.swift:32-34`): the panes' widths, what is folded away, and the row at the top,
-which the General settings can put away. The port's
+which the General settings can put away. In 0.5.76 a picture attached to a message reached
+the engine for the first time — it goes as the Mac sends it, a URI and a name — and the
+viewer that looks at one moves as the Mac's does (`ImageViewer.swift:22, 28, 40`: 0.16 in,
+0.14 out, the window under it dimmed over 0.15). The port's
 own list of what is left is now: the choices the Mac keeps (the
 last model, the approval mode, the steps' detail, the favourites, push after commit, the
-typeface and the window material); and the last three motions — the 45 % of a disabled
-control (`Pressable.swift:61`), the image viewer's own 0.16 / 0.14 / 0.15 easeOut, and the
-copy mark's replace. Everything else in §1–§9 is now the Mac's, and the checks hold it
-there.
+typeface and the window material). Everything else in §1–§9 is now the Mac's, and the
+checks hold it there.
 
 **The wording is finished with the screens it lives in.** The shell's strings are the Mac's,
 word for word, and a check holds them to the Mac's own source

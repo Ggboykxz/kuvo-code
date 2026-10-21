@@ -237,6 +237,18 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     which the General settings can put away, as the Mac's does (`GeneralSettings.swift:23`,
     "Show the tab bar"). With the row away, the project, its branch and the sessions as
     tabs go, and the window's own buttons stay.
+  - **2.71 (this change). The picture the model can see, and the viewer that looks at
+    it.** A picture attached to a message never reached the engine: the port sent the
+    file in the page's own shape, where the engine takes a URI and a name
+    (`OpenCodeKit`'s `PromptFile`, `OpenCodeAPI.swift:437-445`), and the harness threw
+    away the files that were not already on disk. The files go as the Mac sends them now
+    — a data URI for what the page read, a file's own path for what was on disk — and a
+    picture alone is a message, as it is on the Mac (`Composer.swift:109-113`). The picture
+    stays in the conversation when the message is delivered, and the viewer moves as the
+    Mac's does (`ImageViewer.swift:22, 28, 40`): it fades in over 160 ms and out over 140,
+    the window under it dims to 30 % over 150 ms and is out of reach of a click, the scrim
+    is the Mac's black at 62 %, and the picture comes in from 0.94 of its size. A
+    double-click zooms it, as the Mac's does.
   - **2.61 (this change). The provider's marks.** The Mac draws the maker's mark beside
     each model (`ProviderLogo.swift`), monochrome so it follows the ink, or in the maker's
     own colour where it has one. The marks themselves are not published as a package, but
