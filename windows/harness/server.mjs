@@ -873,7 +873,15 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       else await git(directory, ["add", "-A"]);
       await git(directory, ["commit", "-m", message]);
       const head = await git(directory, ["rev-parse", "--short", "HEAD"]);
-      return json({ ok: true, commit: head.trim(), message });
+      // The push afterwards, as the Mac's commit form does (ChangesPanel.swift:389-397).
+      if (body?.push === true) {
+        try {
+          await git(directory, ["push"]);
+        } catch (error) {
+          throw new HttpError(500, (error?.stdout?.toString() || "") + (error?.stderr?.toString() || error.message));
+        }
+      }
+      return json({ ok: true, commit: head.trim(), message, pushed: body?.push === true });
     }
 
     // ---- The engine's settings file, as the Mac app's engine config is ----

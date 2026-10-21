@@ -768,6 +768,38 @@ test("a session can be pinned, and the mark goes out with the session's own meta
   assert.deepEqual(await unpinned.json(), { ok: true, pinned: false });
 });
 
+test("a commit can push afterwards, as the Mac's commit form does", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+
+  const { execFileSync } = await import("node:child_process");
+  const project = fs.mkdtempSync(path.join(home, "git-push-"));
+  const remote = fs.mkdtempSync(path.join(home, "git-remote-"));
+  const git = (...args) => execFileSync("git", ["-C", project, ...args], { encoding: "utf8" });
+  git("init", "-q");
+  git("config", "user.email", "kuvo@example.test");
+  git("config", "user.name", "Kuvo");
+  // The branch it pushes to: a bare repository of its own, as a remote is.
+  execFileSync("git", ["init", "--bare", "-q", remote]);
+  git("remote", "add", "origin", remote);
+  fs.writeFileSync(path.join(project, "a.txt"), "one\n");
+  git("add", "-A");
+  git("commit", "-q", "-m", "first");
+  git("push", "-q", "-u", "origin", "HEAD:main");
+
+  fs.writeFileSync(path.join(project, "a.txt"), "two\n");
+  const pushed = await (await fetch(`${url}api/changes/commit`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ directory: project, message: "Second", push: true }),
+  })).json();
+  assert.equal(pushed.ok, true);
+  assert.equal(pushed.pushed, true, "the branch was pushed");
+  const log = git("log", "--oneline", "origin/main");
+  assert.match(log, /Second/, "the commit is on the branch that was pushed");
+});
+
 test("a session's own rules are set, the way the Mac sets them", async t => {
   const engine = await fakeEngine();
   t.after(engine.close);

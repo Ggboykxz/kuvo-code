@@ -78,6 +78,8 @@ const SHELL = [
   "Close All Tabs",
   // The row at the top, which can be put away (GeneralSettings.swift:23).
   "Show the tab bar",
+  // The commit form's own choice (ChangesPanel.swift:331, 344).
+  "Commit and Push",
   // The appearance's own choices (Look.swift:42-63, AppearanceSettings.swift:9-77).
   "Window",
   "Typeface",

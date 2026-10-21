@@ -28,7 +28,11 @@ export function ChangesPanel() {
   const [message, setMessage] = useState("");
   const [suggesting, setSuggesting] = useState(false);
   const [working, setWorking] = useState(false);
-  const [pushes, setPushes] = useState(false);
+  // Whether the commit pushes afterwards, kept for the next time (the Mac's
+  // "changes.pushAfterCommit", ChangesPanel.swift:304).
+  const [pushes, setPushes] = useState(() => {
+    try { return localStorage.getItem("kuvo-pushAfterCommit") === "on"; } catch { return false; }
+  });
   const [failure, setFailure] = useState("");
   const [draft, setDraft] = useState<{ file: string; line: number } | null>(null);
   const [draftText, setDraftText] = useState("");
@@ -104,7 +108,7 @@ export function ChangesPanel() {
     try {
       await api("/api/changes/commit", {
         method: "POST",
-        body: { directory: state.project, message, files: scope === "staged" ? [] : files.map(file => file.file) },
+        body: { directory: state.project, message, push: pushes, files: scope === "staged" ? [] : files.map(file => file.file) },
       });
       setMessage("");
       setOpen([]);
@@ -235,9 +239,16 @@ export function ChangesPanel() {
             {suggesting ? "Writing…" : "Suggest a Message"}
           </button>
           <label className="where">
-            <input type="checkbox" checked={pushes} onChange={event => setPushes(event.target.checked)} /> Push afterwards
+            <input
+              type="checkbox"
+              checked={pushes}
+              onChange={event => {
+                setPushes(event.target.checked);
+                try { localStorage.setItem("kuvo-pushAfterCommit", event.target.checked ? "on" : "off"); } catch {}
+              }}
+            /> Push afterwards
           </label>
-          <button className="primary small" disabled={working} onClick={() => void commit()}>Commit</button>
+          <button className="primary small" disabled={working} onClick={() => void commit()}>{pushes ? "Commit and Push" : "Commit"}</button>
         </div>
         {failure ? <div className="entry-error">{failure}</div> : null}
         {state.lineComments?.length ? (
