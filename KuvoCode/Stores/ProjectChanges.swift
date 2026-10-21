@@ -245,6 +245,11 @@ nonisolated enum Git {
             func clear(_ paths: [String]) -> String? {
                 for path in paths {
                     let url = RemoteFolder.url(root).appending(path: path)
+                    // A file (or a link) where one of its folders goes back: the same.
+                    if let blocking = fileInPlace(ofFoldersOf: path, in: root) {
+                        do { try trash(blocking) } catch { return error.localizedDescription }
+                        continue
+                    }
                     guard isFolder(url) else { continue }
                     let kept = scope == .unstaged ? on(["ls-files", "-s", "--", path]) : on(["ls-tree", "HEAD", "--", path])
                     if kept?.hasPrefix("160000") == true { continue }
@@ -281,6 +286,25 @@ nonisolated enum Git {
     private static func isFolder(_ url: URL) -> Bool {
         if url.isFileURL { return (try? FileManager.default.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType == .typeDirectory }
         return RemoteShell.isFolder(url) ?? true
+    }
+
+    /// The first of the folders `path` is in (in the repository at `root`) that is something else
+    /// now, a file or a link: git would delete it to put the folder back.
+    private static func fileInPlace(ofFoldersOf path: String, in root: String) -> URL? {
+        let folders = path.split(separator: "/").dropLast()
+        guard !folders.isEmpty else { return nil }
+        var url = RemoteFolder.url(root)
+        for folder in folders {
+            url = url.appending(path: String(folder))
+            if url.isFileURL {
+                guard let type = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType else { return nil }
+                if type != .typeDirectory { return url }
+            } else if let isFolder = RemoteShell.isFolder(url), !isFolder {
+                // Not a folder: something else there, or nothing (then nothing below it either).
+                return RemoteShell.exists(url) == true ? url : nil
+            }
+        }
+        return nil
     }
 
     /// To the Trash on this Mac; on a machine, which has none, to `~/.kuvo-code/trash` there.

@@ -112,6 +112,26 @@ import Testing
         #expect(try repo.status().isEmpty)
     }
 
+    /// A file where a committed file's folder was: Discard brings the folder's file back, and the
+    /// file in its way goes to the Trash rather than being deleted for good.
+    @Test func aFileInAFoldersPlaceGoesToTheTrash() async throws {
+        let precious = "precious \(UUID().uuidString)\n"
+        try FileManager.default.removeItem(at: repo.url.appending(path: "src"))
+        try repo.write("src", precious)
+        try await discard("src/app.swift")
+        #expect(repo.read("src/app.swift") == "let a = 1\n")
+        #expect(trashed(named: "src").contains(precious), "the file named src should be in the Trash")
+    }
+
+    /// What's in the Trash under `name`, each file's text.
+    private func trashed(named name: String) -> [String] {
+        let trash = AppInfo.testTrash
+        let found = FileManager.default.enumerator(atPath: trash.path(percentEncoded: false))?.compactMap { $0 as? String } ?? []
+        return found.filter { ($0 as NSString).lastPathComponent == name }.compactMap { path in
+            (try? Data(contentsOf: trash.appending(path: path))).map { String(decoding: $0, as: UTF8.self) }
+        }
+    }
+
     @Test func aMoveGoesBack() async throws {
         try repo.git("mv", "src/app.swift", "src/main.swift")
         let moved = try await row("src/main.swift")

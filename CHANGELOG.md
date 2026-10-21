@@ -18,6 +18,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - A wake-up an agent sets after its session was archived waits until you bring the session back, as the ones it had already do.
 - Redo after undoing twice keeps what you typed in the composer between the two undos; it used to put the composer back as it was before the first undo, and what you'd typed was lost.
 - In the Changes tab, files whose names have quotes, a backslash or a tab in them, or a folder named like "Plan b", are listed by their real paths, and Discard and Stage work on them. Some were listed under another file's name, and Discard could act on that file instead.
+- Discarding a deleted file whose folder has since been replaced by a file of the same name moves that file to the Trash. It used to be deleted for good.
 ## 0.6.2
 
 - A worktree's branch named after a title in another language keeps its letters ("Giriş düzeltmesi" is giris-duzeltmesi, not giri-dzeltmesi).

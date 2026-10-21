@@ -886,6 +886,15 @@ nonisolated extension RemoteShell {
         return String(decoding: data, as: UTF8.self).hasPrefix("yes")
     }
 
+    /// Whether anything (a link too, even a broken one) is at a path on a machine; nil when it
+    /// can't be asked.
+    static func exists(_ url: URL) -> Bool? {
+        guard let (machine, path) = RemoteFolder.parse(url) else { return nil }
+        let quoted = SSHConnection.quoted(path)
+        guard let data = run("if [ -e \(quoted) ] || [ -L \(quoted) ]; then echo yes; else echo no; fi", on: machine) else { return nil }
+        return String(decoding: data, as: UTF8.self).hasPrefix("yes")
+    }
+
     /// Moves a file on a machine into `~/.kuvo-code/trash`, where it can still be found: nil
     /// when it went, else why not.
     static func trash(_ url: URL) -> String? {
