@@ -285,6 +285,13 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     mark but forgot it when the panel was closed, and the button always said *Commit*; it
     is kept now, the button says what it does, and the commit pushes the branch when the
     mark is on.
+  - **2.76 (this change). The models the user keeps.** The Mac's model picker holds the
+    models the user keeps in a rail of their own, each with the mark that keeps it
+    (`ModelPicker.swift:40, 57, 436-440, 500, 732-755`); the port's picker listed every
+    model and nothing else. The star is here now — drawn, on the same 16 pt grid as the
+    Mac's other marks, not a text glyph — beside every model, and the models it keeps sit
+    in a *Starred* group at the top of the list. They are kept whole: the provider, and
+    the model's id with its slashes.
   - **2.61 (this change). The provider's marks.** The Mac draws the maker's mark beside
     each model (`ProviderLogo.swift`), monochrome so it follows the ink, or in the maker's
     own colour where it has one. The marks themselves are not published as a package, but

@@ -127,9 +127,11 @@ starts with it (`SessionView.swift:459-490`). In 0.5.78 the appearance took the 
 choices — the window's material, the typeface of the messages, and the detail of the
 agent's steps (`Look.swift:42-63`; `AppearanceSettings.swift:9-77`) — and the app learned
 to see a session's name as soon as the engine has it, and the commit form remembers
-whether the commit pushes afterwards (`ChangesPanel.swift:304`, `331`, `344`). The port's
-own list of what is left is now: the choices the Mac keeps (the
-favourites).
+whether the commit pushes afterwards (`ChangesPanel.swift:304`, `331`, `344`). In 0.5.80
+the model picker took the Mac's star (`ModelPicker.swift:436-440`, `500`): the models the
+user keeps sit in a *Starred* group of their own. The port's
+own list of what is left is now: the choices the Mac keeps (the Auto rail of the model
+picker, and the pair style of the tab bar).
 Everything else in §1–§9 is now the Mac's, and the checks hold it there.
 
 **The wording is finished with the screens it lives in.** The shell's strings are the Mac's,
