@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import { Symbol } from "./components/symbols";
 import { api } from "./api";
+import { diffGutterWidth, diffNumber, parsePatch } from "./diff.mjs";
 import { complain, notify, state, useStore } from "./store";
 
 type ChangeFile = { file: string; patch?: string; additions?: number; deletions?: number; status?: string };
@@ -135,6 +136,8 @@ export function ChangesPanel() {
           <div className="where">{scope === "session" ? "This session has not changed anything yet." : "Nothing has changed here."}</div>
         ) : files.map(file => {
           const isOpen = open.includes(file.file);
+          // The file's lines, as the Mac reads them (ProjectChanges.swift:40-48).
+          const lines = parsePatch(file.patch ?? "");
           return (
             <div className="changes-file" key={file.file}>
               <div className="changes-file-head">
@@ -159,20 +162,26 @@ export function ChangesPanel() {
                 ) : null}
               </div>
               {isOpen ? (
-                <div className="changes-diff">
-                  {String(file.patch ?? "").split("\n").map((line, index) => {
-                    if (line === "") return null;
-                    const kind = line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : "ctx";
+                <div className="changes-diff" style={{ "--gutter": `${diffGutterWidth(lines)}px` } as React.CSSProperties}>
+                  {lines.map((line, index) => {
+                    // The number in the gutter is the line's own: the old one for a removed
+                    // line, the new one otherwise (ChangesPanel.swift:882-885).
+                    const number = diffNumber(line);
+                    const kind = line.kind === "added" ? "add" : line.kind === "removed" ? "del" : "ctx";
                     return (
                       <div className={`diff-line ${kind}`} key={index}>
-                        <span className="diff-text">{line}</span>
-                        <button className="small icon diff-comment" title="Say something about this line; it goes to the agent with your next message" aria-label="Say something about this line" onClick={() => comment(file.file, index)}>
-                          {/* A pencil, drawn — one stroke, the same weight as the app's other marks. */}
-                          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                            <path d="M11.2 2.8 13.2 4.8 5.6 12.4 2.8 13.2 3.6 10.4z" />
-                          </svg>
+                        <span className="diff-number">{number || ""}</span>
+                        <button
+                          className="diff-comment"
+                          title="Comment on This Line"
+                          aria-label="Comment on This Line"
+                          onClick={() => comment(file.file, number)}
+                        >
+                          {/* The Mac's mark in the gutter: a plus, drawn. */}
+                          <Symbol name="plus" size={9} />
                         </button>
-                        {draft?.file === file.file && draft.line === index ? (
+                        <span className="diff-text">{line.text || " "}</span>
+                        {draft?.file === file.file && draft.line === number ? (
                           <span className="diff-draft">
                             <input
                               type="text"

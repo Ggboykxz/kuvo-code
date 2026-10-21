@@ -31,6 +31,7 @@ const sources = {
   symbols: read("app", "src", "components", "symbols.tsx"),
   lib: read("app", "src", "lib.ts"),
   changes: read("app", "src", "Changes.tsx"),
+  diff: read("app", "src", "diff.mjs"),
   styles: read("harness", "ui", "style.css"),
   shimmer: read("app", "src", "components", "ai-elements", "shimmer.tsx"),
   logo: read("app", "src", "components", "provider-logo.tsx"),
@@ -611,6 +612,29 @@ const checks = [
     assert.match(settings, /const MODES = \[/);
     assert.match(settings, /className=\{`mode-choice/);
     assert.match(rule(".mode-thumb {"), /width: 84px/);
+  }],
+
+  ["the changes' rows are the Mac's own: a number in a gutter, the text, and an edge", ({ css, changes, diff, rule }) => {
+    // The rows are read as lines of their own (ProjectChanges.swift:40-48), and the
+    // number in the gutter is the old one for a removed line, the new one otherwise
+    // (ChangesPanel.swift:882-885).
+    assert.match(changes, /parsePatch\(file\.patch \?\? ""\)/);
+    assert.match(changes, /diffNumber\(line\)/);
+    assert.match(diff, /kind === "removed" \? line\.oldNumber \?\? 0 : line\.newNumber \?\? 0/);
+    // The gutter holds the number, and the text sits 8 pt after it
+    // (ChangesPanel.swift:975-999).
+    assert.match(rule(".diff-line .diff-number {"), /width: calc\(var\(--gutter/);
+    assert.match(rule(".diff-line .diff-text {"), /padding-left: 8px/);
+    // A line that changed carries a 3 pt edge, and its own number is coloured with it
+    // (ChangesPanel.swift:1026-1042).
+    assert.match(rule(".diff-line.add {"), /inset 3px 0 0 var\(--ok\)/);
+    assert.match(rule(".diff-line.del {"), /inset 3px 0 0 var\(--danger\)/);
+    assert.match(rule(".diff-line.add .diff-number {"), /var\(--ok\)/);
+    assert.match(rule(".diff-line.del .diff-number {"), /var\(--danger\)/);
+    // And the mark that writes a comment on the line is the Mac's, in the gutter
+    // (ChangesPanel.swift:980-992).
+    assert.match(changes, /title="Comment on This Line"/);
+    assert.match(css, /\.diff-comment \{[^}]*left: 2px/);
   }],
 
   ["the panel's files are a tree, the Mac's way (FilesView.swift:250-275)", ({ app, css, overlays, symbols, rule }) => {

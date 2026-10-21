@@ -1357,21 +1357,34 @@ li.unread .session { position: relative; padding-left: 16px; }
 }
 .changes-file-head .where { font-variant-numeric: tabular-nums; }
 .changes-diff {
-  font-family: var(--font-mono); font-size: var(--text-xs); line-height: 1.55;
+  font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.55;
   border-top: 1px solid var(--line-soft);
   background: var(--code-bg);
 }
-.diff-line { display: flex; align-items: baseline; gap: var(--space-2); padding: 0 var(--space-3); position: relative; }
-.diff-line .diff-text { flex: 1; white-space: pre-wrap; word-break: break-word; }
-.diff-line.add { background: color-mix(in oklab, var(--ok), transparent 88%); }
-.diff-line.del { background: color-mix(in oklab, var(--danger), transparent 90%); }
-.diff-line.ctx { color: var(--ink-soft); }
-.diff-comment {
-  opacity: 0; border: 0; background: transparent; color: var(--ink-faint);
-  padding: 0 var(--space-1); font-size: var(--text-xs);
+/* A row is the Mac's own: the number in a gutter, the text without the patch's signs,
+   and a coloured edge on a line that changed (ChangesPanel.swift:959-1042). */
+.diff-line { display: flex; align-items: baseline; gap: 0; padding: 1.5px var(--space-3) 1.5px 0; position: relative; }
+.diff-line .diff-number {
+  flex: 0 0 auto; width: calc(var(--gutter, 30px) - 10px); padding-right: 10px;
+  text-align: right; font-size: 11.5px; color: color-mix(in oklab, var(--ink-soft), transparent 30%);
 }
-.diff-line:hover .diff-comment { opacity: 1; }
-.diff-comment:hover { color: var(--accent); }
+.diff-line .diff-text { flex: 1; padding-left: 8px; white-space: pre-wrap; word-break: break-word; }
+.diff-line.add { background: color-mix(in oklab, var(--ok), transparent 88%); box-shadow: inset 3px 0 0 var(--ok); }
+.diff-line.del { background: color-mix(in oklab, var(--danger), transparent 90%); box-shadow: inset 3px 0 0 var(--danger); }
+.diff-line.ctx { color: var(--ink-soft); }
+.diff-line.add .diff-number { color: color-mix(in oklab, var(--ok), transparent 10%); }
+.diff-line.del .diff-number { color: color-mix(in oklab, var(--danger), transparent 10%); }
+/* The mark that writes a comment on the line: the Mac's, in the gutter, under the
+   pointer (ChangesPanel.swift:980-992). */
+.diff-comment {
+  position: absolute; left: 2px; top: 50%; transform: translateY(-50%);
+  width: 16px; height: 16px; padding: 0; border: 0; border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent); color: var(--accent-ink);
+  opacity: 0; pointer-events: none;
+}
+.diff-line:hover .diff-comment { opacity: 1; pointer-events: auto; }
+.diff-comment:hover { filter: brightness(1.08); }
 .diff-draft { display: inline-flex; gap: var(--space-1); align-items: center; }
 .diff-draft input {
   width: 220px; padding: 2px var(--space-2);

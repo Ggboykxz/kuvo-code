@@ -12,6 +12,7 @@
 // checks below are the ones the Mac app's own behaviour would be measured against.
 
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -41,6 +42,16 @@ test("the page, in a browser, against the real engine", {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-page-"));
   fs.writeFileSync(path.join(project, "notes.txt"), "Shopping list\n- coffee\n- oats\n");
   fs.mkdirSync(path.join(project, "sub"));
+  // The project's own repository, with a change in it: the Changes panel reads git's diff,
+  // the way the Mac's panel reads the worktree's.
+  const git = (...args) => execFileSync("git", ["-C", project, ...args], { encoding: "utf8" });
+  git("init", "-b", "main");
+  git("config", "user.email", "page@example.com");
+  git("config", "user.name", "The Page");
+  git("config", "commit.gpgsign", "false");
+  git("add", "notes.txt");
+  git("commit", "-m", "The first list");
+  fs.writeFileSync(path.join(project, "notes.txt"), "Shopping list\n- coffee\n- oats\n- tea\n");
 
   /** The harness is the page's own server; these are the calls the page makes. */
   const harness = startHarness({ project, port: 0, log: message => t.diagnostic(message) });
@@ -142,6 +153,36 @@ test("the page, in a browser, against the real engine", {
     (await page.page.locator(".drawer-tab").allTextContents()).map(text => text.trim()),
     ["Files", "Changes", "Terminal"],
     "the panel's tabs are the Mac's",
+  );
+  await page.element("drawer-close").click();
+  await page.seen("the panel to close", () => document.getElementById("drawer")?.hidden === true, null, 10_000);
+
+  // The changes: the rows are the Mac's own — a number in a gutter, the text without the
+  // patch's signs, and an edge on a line that changed (ChangesPanel.swift:959-1042).
+  await page.element("toggle-files").click();
+  await page.seen("the panel to open", () => document.getElementById("drawer")?.hidden === false, null, 10_000);
+  await page.page.locator(".drawer-tab", { hasText: "Changes" }).click();
+  await page.seen("the changes to show the file", () => document.querySelectorAll(".changes-file").length > 0, null, 30_000);
+  await page.page.locator(".changes-file-toggle").first().click();
+  await page.seen("the diff's rows to show", () => document.querySelectorAll(".changes-diff .diff-line").length > 0, null, 10_000);
+  const rows = await page.page.locator(".changes-diff .diff-line").allTextContents();
+  const numbers = await page.page.locator(".changes-diff .diff-number").allTextContents();
+  const texts = await page.page.locator(".changes-diff .diff-text").allTextContents();
+  assert.deepEqual(
+    texts,
+    ["Shopping list", "- coffee", "- oats", "- tea"],
+    "the rows carry the text, not the patch's signs",
+  );
+  assert.deepEqual(numbers, ["1", "2", "3", "4"], "the gutter carries the line's own number");
+  assert.ok(
+    !rows.some(text => text.includes("@@") || text.includes("diff --git")),
+    `the patch's headers are not rows: ${JSON.stringify(rows)}`,
+  );
+  // The mark that writes a comment on the line is the Mac's, in the gutter.
+  assert.equal(
+    await page.page.locator(".changes-diff .diff-comment").first().getAttribute("title"),
+    "Comment on This Line",
+    "the line's mark is the Mac's",
   );
   await page.element("drawer-close").click();
   await page.seen("the panel to close", () => document.getElementById("drawer")?.hidden === true, null, 10_000);

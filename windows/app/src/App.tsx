@@ -1720,7 +1720,7 @@ function Composer() {
     // The notes on the changes go with the message, the way the Mac app sends them.
     const notes = state.lineComments ?? [];
     const withNotes = notes.length
-      ? `${text}\n\n${notes.map(note => `On ${note.file} (line ${note.line + 1}): ${note.text}`).join("\n")}`
+      ? `${text}\n\n${notes.map(note => `On ${note.file} (line ${note.line}): ${note.text}`).join("\n")}`
       : text;
     // The quote you are answering goes first, as a block, and your words after it
     // (Quoting.message).
