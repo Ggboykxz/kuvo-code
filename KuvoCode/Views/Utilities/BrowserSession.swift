@@ -268,6 +268,10 @@ final class BrowserSession: NSObject {
         if let url = URL(string: text), let scheme = url.scheme, ["http", "https", "file", "about"].contains(scheme.lowercased()) {
             return url
         }
+        // A file's path on this Mac ("/Users/me/report.html", "~/site/index.html").
+        if text.hasPrefix("/") || text.hasPrefix("~/") {
+            return URL(filePath: (text as NSString).expandingTildeInPath)
+        }
         // "localhost:3000", "example.com/path": an address without its scheme.
         let looksLikeHost = !text.contains(" ") && (text.contains(".") || text.hasPrefix("localhost") || text.contains(":"))
         if looksLikeHost, let url = URL(string: (text.hasPrefix("localhost") || text.hasPrefix("127.") ? "http://" : "https://") + text) {
