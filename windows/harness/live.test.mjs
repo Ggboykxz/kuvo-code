@@ -19,14 +19,25 @@ import { apply, emptyTranscript, fromHistory } from "./transcript.mjs";
 
 const live = process.env.KUVO_HARNESS_LIVE === "1";
 
-test("a real turn, end to end, on the pinned engine", { skip: live ? false : "set KUVO_HARNESS_LIVE=1 to install the engine and ask a public free model", timeout: 10 * 60_000 }, async t => {
+test("a real turn, end to end, on the pinned engine", { skip: live ? false : "set KUVO_HARNESS_LIVE=1 to install the engine and ask a public free model", timeout: 15 * 60_000 }, async t => {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-live-"));
   fs.writeFileSync(path.join(project, "hello.txt"), "hello from a file\n");
-  t.after(() => fs.rmSync(project, { recursive: true, force: true }));
 
   /** The harness is the page's own server; these are the calls the page makes. */
   const harness = startHarness({ project, port: 0, log: message => t.diagnostic(message) });
   t.after(() => harness.close());
+  t.after(async () => {
+    // The engine may still hold the folder for a moment on Windows: the removal is a
+    // courtesy, and a failure in it is not the test's verdict.
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        fs.rmSync(project, { recursive: true, force: true });
+        break;
+      } catch {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+  });
   const url = await harness.url();
   const get = async route => {
     const response = await fetch(`${url}${route}`);
@@ -98,8 +109,7 @@ test("a real turn, end to end, on the pinned engine", { skip: live ? false : "se
   const models = (await get("api/models")).models ?? [];
   const free = models
     .filter(model => (model.cost ?? []).every(cost => !cost.input && !cost.output))
-    .map(model => ({ providerID: model.providerID, id: model.id }))
-    .slice(0, 5);
+    .map(model => ({ providerID: model.providerID, id: model.id }));
   const refused = model => /rate limit|quota|429|free usage/i.test(JSON.stringify(model?.data?.error ?? ""));
   let turn = null;
   let id = null;
@@ -111,12 +121,17 @@ test("a real turn, end to end, on the pinned engine", { skip: live ? false : "se
     const asked = await post(`api/sessions/${encodeURIComponent(session.id)}/prompt`, { text });
     id = asked.id;
     assert.match(id, /^msg_/, "the prompt's id is one of ours");
-    const deadline = Date.now() + 60_000;
+    const deadline = Date.now() + 90_000;
     while (turns.length === before && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 250));
     }
     turn = turns[turns.length - 1] ?? null;
-    if (turn === null) break;
+    if (turn === null) {
+      // The turn did not end in time: the model is stuck in its own retries. Another
+      // free model is asked, and this turn is stopped.
+      t.diagnostic(`the model (${model.providerID}/${model.id}) did not answer in time`);
+      continue;
+    }
     if (turn.type !== "session.execution.failed") break;
     if (!refused(turn)) break;
     t.diagnostic(`the model refused (${model.providerID}/${model.id}); asking another free model`);

@@ -41,6 +41,9 @@ test("the page, in a browser, against the real engine", {
 }, async t => {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-page-"));
   fs.writeFileSync(path.join(project, "notes.txt"), "Shopping list\n- coffee\n- oats\n");
+  // A file long enough for its unchanged stretches to be folded, the Mac's way.
+  const long = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join("\n") + "\n";
+  fs.writeFileSync(path.join(project, "z-long.txt"), long);
   fs.mkdirSync(path.join(project, "sub"));
   // The project's own repository, with a change in it: the Changes panel reads git's diff,
   // the way the Mac's panel reads the worktree's.
@@ -49,9 +52,10 @@ test("the page, in a browser, against the real engine", {
   git("config", "user.email", "page@example.com");
   git("config", "user.name", "The Page");
   git("config", "commit.gpgsign", "false");
-  git("add", "notes.txt");
+  git("add", "notes.txt", "z-long.txt");
   git("commit", "-m", "The first list");
   fs.writeFileSync(path.join(project, "notes.txt"), "Shopping list\n- coffee\n- oats\n- tea\n");
+  fs.writeFileSync(path.join(project, "z-long.txt"), long.replace("line 15\n", "line 15, changed\n"));
 
   /** The harness is the page's own server; these are the calls the page makes. */
   const harness = startHarness({ project, port: 0, log: message => t.diagnostic(message) });
@@ -59,9 +63,20 @@ test("the page, in a browser, against the real engine", {
   // Letting go of the pages is what lets this process end: a page keeps its timers, and
   // the browser's own processes would keep them too.
   t.after(async () => {
-    for (const page of opened) await page.close().catch(() => {});
+    // The closes are bounded: a page that will not let go must not hold the build up.
+    for (const page of opened) await page.close({ timeout: 5_000 }).catch(() => {});
+    await browser.close().catch(() => {});
     await harness.close();
-    fs.rmSync(project, { recursive: true, force: true });
+    // The engine may still hold the folder for a moment on Windows: the removal is a
+    // courtesy, and a failure in it is not the test's verdict.
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        fs.rmSync(project, { recursive: true, force: true });
+        break;
+      } catch {
+        await wait(500);
+      }
+    }
   });
   const url = await harness.url();
 
@@ -70,7 +85,6 @@ test("the page, in a browser, against the real engine", {
     executablePath: process.env.KUVO_CHROME || undefined,
     args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--font-render-hinting=none"],
   });
-  t.after(async () => { await browser.close(); });
 
   // One context: the pages share the storage, the way a browser shares it for an address:
   // a draft written by one is read by the next.
@@ -162,12 +176,13 @@ test("the page, in a browser, against the real engine", {
   await page.element("toggle-files").click();
   await page.seen("the panel to open", () => document.getElementById("drawer")?.hidden === false, null, 10_000);
   await page.page.locator(".drawer-tab", { hasText: "Changes" }).click();
-  await page.seen("the changes to show the file", () => document.querySelectorAll(".changes-file").length > 0, null, 30_000);
+  await page.seen("the changes to show the files", () => document.querySelectorAll(".changes-file").length > 1, null, 30_000);
   await page.page.locator(".changes-file-toggle").first().click();
   await page.seen("the diff's rows to show", () => document.querySelectorAll(".changes-diff .diff-line").length > 0, null, 10_000);
-  const rows = await page.page.locator(".changes-diff .diff-line").allTextContents();
-  const numbers = await page.page.locator(".changes-diff .diff-number").allTextContents();
-  const texts = await page.page.locator(".changes-diff .diff-text").allTextContents();
+  const first = page.page.locator(".changes-diff").first();
+  const rows = await first.locator(".diff-line").allTextContents();
+  const numbers = await first.locator(".diff-number").allTextContents();
+  const texts = await first.locator(".diff-text").allTextContents();
   assert.deepEqual(
     texts,
     ["Shopping list", "- coffee", "- oats", "- tea"],
@@ -180,13 +195,13 @@ test("the page, in a browser, against the real engine", {
   );
   // The mark that writes a comment on the line is the Mac's, in the gutter.
   assert.equal(
-    await page.page.locator(".changes-diff .diff-comment").first().getAttribute("title"),
+    await first.locator(".diff-comment").first().getAttribute("title"),
     "Comment on This Line",
     "the line's mark is the Mac's",
   );
   // A comment: written in the Mac's editor, and kept as a card under its line
   // (ChangesPanel.swift:1088-1212).
-  const row = page.page.locator(".changes-diff .diff-line").last();
+  const row = first.locator(".diff-line").last();
   await row.hover();
   await row.locator(".diff-comment").click();
   await page.seen("the comment's editor to open", () => Boolean(document.querySelector(".comment-editor textarea")), null, 10_000);
@@ -200,6 +215,31 @@ test("the page, in a browser, against the real engine", {
   assert.match(card, /Comment on line R4/, "the card names the line, as the Mac's does");
   assert.match(card, /You/, "the card is yours");
   assert.match(card, /Delete/, "the card can be taken away");
+  // The long unchanged stretches are folded, the Mac's way (ChangesPanel.swift:890-927).
+  await page.page.locator(".changes-file-toggle").nth(1).click();
+  const secondFile = page.page.locator(".changes-diff").nth(1);
+  await page.seen("the fold to show", () => document.querySelectorAll(".changes-diff .diff-fold").length > 0, null, 10_000);
+  const fold = (await secondFile.locator(".diff-fold").first().textContent()) ?? "";
+  assert.match(fold, /\d+ unmodified lines/, "the fold says how many lines it holds");
+  assert.equal(
+    await secondFile.locator(".diff-fold").first().getAttribute("title"),
+    "Show these lines",
+    "the fold's help is the Mac's",
+  );
+  // And it opens when it is pressed.
+  const folds = await page.page.locator(".changes-diff .diff-fold").count();
+  await secondFile.locator(".diff-fold").first().click();
+  await page.seen("the fold to open", ([before]) => document.querySelectorAll(".changes-diff .diff-fold").length < before, [folds], 10_000);
+  // The file view numbers its lines, as the Mac's does (CodeTextView.swift:119-168).
+  await page.page.locator(".drawer-tab", { hasText: "Files" }).click();
+  await page.seen("the files to show", () => document.querySelectorAll(".file-row").length > 0, null, 10_000);
+  await page.page.locator(".file-row", { hasText: "notes.txt" }).first().click();
+  await page.seen("the file to open", () => Boolean(document.querySelector(".file-view")), null, 10_000);
+  assert.deepEqual(
+    await page.page.locator(".file-numbers span").allTextContents(),
+    ["1", "2", "3", "4"],
+    "the lines are numbered, as the Mac's ruler numbers them",
+  );
   await page.element("drawer-close").click();
   await page.seen("the panel to close", () => document.getElementById("drawer")?.hidden === true, null, 10_000);
 
@@ -242,9 +282,9 @@ test("the page, in a browser, against the real engine", {
     const node = document.getElementById(id);
     return Boolean(node?.textContent?.includes(text));
   }, ["entries", asked], 30_000);
-  // The public free models can refuse for a while (a rate limit): the question is asked
-  // again, and another free model is asked, rather than the build failing on the
-  // provider's mood — the engine's own test asks again, the same way.
+  // The public free models can refuse for a while (a rate limit): the turn is stopped,
+  // another free model is asked, and the question is asked again — rather than the build
+  // failing on the provider's mood. The engine's own test asks again, the same way.
   const freeModels = async () => {
     const answer = await fetch(`${url}api/models`).then(reply => reply.json()).catch(() => ({}));
     return (answer.models ?? [])
@@ -263,12 +303,21 @@ test("the page, in a browser, against the real engine", {
     }).catch(() => {});
   };
   const free = await freeModels();
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    const said = (await page.element("entries").textContent().catch(() => "")) ?? "";
-    if (/hello from the page/i.test(said)) break;
-    // The page says it is retrying when the model refuses; the refusal is the engine's.
-    if (!/rate limit|retrying/i.test(said)) break;
-    await wait(15_000);
+  const answered = /hello from the page/i;
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    // The round ends when the model answers, or when the turn is over without an answer.
+    const until = Date.now() + 120_000;
+    let said = "";
+    while (Date.now() < until) {
+      said = (await page.element("entries").textContent().catch(() => "")) ?? "";
+      if (answered.test(said)) break;
+      // The turn is over, and the model did not answer: it refused.
+      const running = await page.page.evaluate(() => document.getElementById("stop")?.hidden === false);
+      if (!running && said.includes(asked)) break;
+      await wait(2_000);
+    }
+    if (answered.test(said)) break;
+    // The model refused: another free model is asked, and the question again.
     if (free.length) await askWith(free[attempt % free.length]);
     await ask();
   }

@@ -44,7 +44,8 @@ test("the page's own values, measured against the Mac's", {
   const problems = [];
   page.on("pageerror", error => problems.push(String(error)));
   t.after(async () => {
-    await browser.close();
+    // The closes are bounded: a browser that will not let go must not hold the build up.
+    await browser.close().catch(() => {});
     await harness.close();
   });
   await page.goto(url, { waitUntil: "domcontentloaded" });
