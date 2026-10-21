@@ -43,6 +43,7 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | H1, H2 MCP servers | MCPCommandTests, ChromeDevToolsUpgradeTests, IntegrationsTests | |
 | H3 An MCP server asks mid-task | AgentAsksTests | |
 | H4 A skill from GitHub | SkillLibraryTests | |
+| J1 The network goes away mid-reply | NetworkDropTests | |
 | I1 Add a machine, at one or more addresses | AddMachineTests, MachineAddressesTests | choosing the address that answers (needs SSH) |
 | I2 A project on a machine | MachineFoldersTests, AttachmentRoutesTests, SignInSyncTests, MachineSignOutTests | |
 | I3 A machine that's away | MachineAwayTests | |
