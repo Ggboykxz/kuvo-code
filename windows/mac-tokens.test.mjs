@@ -40,6 +40,7 @@ const sources = {
   toolCall: read("app", "src", "components", "tool-call.tsx"),
   mac: read("..", "Packages", "OpenCodeKit", "Sources", "OpenCodeKit", "Events", "Transcript.swift"),
   sidebar: read("..", "KuvoCode", "Views", "SidebarView.swift"),
+  titlebar: read("..", "KuvoCode", "Views", "TitleBar.swift"),
   tailwind: read("app", "app", "globals.css"),
   postcss: read("app", "postcss.config.mjs"),
   next: read("app", "next.config.mjs"),
@@ -839,6 +840,28 @@ const checks = [
     assert.match(app, /title="Pinned"/);
     assert.match(app, /className="sessions pinned"/);
     assert.match(app, /filter\(session => session\.metadata\?\.\["kuvo\.pinned"\] !== true\)/);
+  }],
+
+  ["the tab's own menu is the Mac's, in its order", ({ app, titlebar }) => {
+    // The Mac's menu for a tab (TitleBar.swift:214-231): beside the one in view, its
+    // name, and the tabs to close — the other ones, and all of them.
+    const order = ["Open Beside", "Rename…", "Close Tab", "Close Other Tabs", "Close All Tabs"];
+    // The menu itself, and not the tab's own close mark, which says the same words.
+    const menu = app.slice(app.indexOf("The Mac's menu for a tab"));
+    let last = -1;
+    for (const label of order) {
+      const where = menu.indexOf(`"${label}"`);
+      assert.ok(where > last, `the tab's menu keeps the Mac's order (${label})`);
+      last = where;
+    }
+    // The Mac's own words, said by the Mac itself.
+    for (const label of order) {
+      assert.ok(titlebar.includes(`"${label}"`), `the Mac says "${label}"`);
+    }
+    // The one that closes the rest is dimmed when there is only one tab (TitleBar.swift:224).
+    assert.match(app, /label: "Close Other Tabs", disabled: state\.openSessions\.length <= 1/);
+    // And the name is written in the tab itself, where the title was (TitleBar.swift:170-200).
+    assert.match(app, /className="tab-rename"/);
   }],
 
   ["the window is built by Next.js, and exported as the static files the harness serves", ({ next, page, build }) => {

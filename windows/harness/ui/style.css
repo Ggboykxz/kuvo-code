@@ -2359,6 +2359,17 @@ header.titlebar.sidebar-hidden .titlebar-identity { flex-basis: auto; width: aut
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* The name written in the tab itself, where the title was (TitleBar.swift:170-200). */
+.tab-rename {
+  width: 130px;
+  height: 20px;
+  padding: 0 4px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 12px;
+}
 .tab-close {
   width: 16px;
   height: 16px;

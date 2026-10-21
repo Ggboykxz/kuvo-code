@@ -72,6 +72,10 @@ const SHELL = [
   "Unarchive",
   "Delete…",
   "Pinned",
+  // A tab's own menu, the Mac's (TitleBar.swift:214-231).
+  "Close Tab",
+  "Close Other Tabs",
+  "Close All Tabs",
 ];
 
 /// The transcript's own words, the same way.

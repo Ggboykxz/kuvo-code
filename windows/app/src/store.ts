@@ -241,6 +241,37 @@ export function closeSessionTab(id: string) {
   }
 }
 
+/// The Mac's "Close Other Tabs" and "Close All Tabs" (TitleBar.swift:223-229): every tab
+/// but the one named, or every tab at all.
+export function closeTabs(keep: string | null) {
+  const closing = state.openSessions.filter(id => id !== keep);
+  if (!closing.length) return;
+  state.openSessions = state.openSessions.filter(id => id === keep);
+  for (const id of closing) state.transcripts.delete(id);
+  if (state.session && !state.openSessions.includes(state.session.id)) {
+    const next = state.openSessions[state.openSessions.length - 1];
+    if (next) void openSession(next);
+    else { state.session = null; state.transcript = null; render(); }
+  } else {
+    render();
+  }
+}
+
+/// A session's name, changed: the sidebar's row and the tab's own field both write here
+/// (the Mac's rename, in the row and in the tab).
+export async function renameSession(id: string, title: string) {
+  const name = title.trim();
+  const known = [...state.sessions, ...Object.values(state.sessionsByProject).flat()].find(session => session.id === id);
+  if (!name || name === (known?.title ?? "")) return;
+  try {
+    await api(`/api/sessions/${encodeURIComponent(id)}/rename`, { method: "POST", body: { title: name } });
+    await loadSessions();
+    await loadProjectSessions();
+  } catch (error) {
+    complain(error);
+  }
+}
+
 export async function deleteSession(session: SessionSummary) {
   try {
     if (!confirm(`Delete “${session.title || "Untitled"}”?`)) return;

@@ -481,6 +481,16 @@ test("the page, in a browser, against the real engine", {
     return Boolean(section) && Boolean(document.querySelector(".sessions.pinned li"));
   }, null, 10_000);
 
+  // The tab's own menu: the Mac's, in its order (TitleBar.swift:214-231). The tab in view
+  // has no "Open Beside" — the Mac offers it for the tabs beside the one in view only.
+  await page.page.locator(".tab-track [role='tab']:not([aria-selected='true'])").first().click({ button: "right" });
+  await page.seen("the tab's menu to open", () => document.querySelector(".context-menu") !== null, null, 10_000);
+  assert.deepEqual(
+    (await page.page.locator(".context-menu [role='menuitem']").allTextContents()).map(text => text.trim()),
+    ["Open Beside", "Rename…", "Close Tab", "Close Other Tabs", "Close All Tabs"],
+    "the tab's menu is the Mac's, in its order",
+  );
+
   // Nothing in the page complained.
   assert.deepEqual([...page.errors, ...reloaded.errors, ...reread.errors], [], "the page had nothing to complain about");
 

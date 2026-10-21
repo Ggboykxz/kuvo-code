@@ -14,6 +14,7 @@ import {
   boot,
   archiveSession,
   closeSessionTab,
+  closeTabs,
   complain,
   copyMarkdown,
   deleteSession,
@@ -42,6 +43,7 @@ import {
   redoNow,
   render,
   removeProject,
+  renameSession,
   replyForm,
   saveConfig,
   sendPrompt,
@@ -959,6 +961,10 @@ function Header() {
 /// and the close button under the pointer. The strip starts where the conversation card
 /// does, so the project identity takes the sidebar's width.
 function SessionTabs() {
+  // The Mac's own menu for a tab (TitleBar.swift:214-231), and the name written in the
+  // tab itself, where the title was (TitleBar.swift:170-200).
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
   if (!state.openSessions.length) return null;
   return (
     <div className="tab-track" role="tablist" aria-label="Open sessions">
@@ -978,6 +984,10 @@ function SessionTabs() {
             aria-selected={active}
             tabIndex={active ? 0 : -1}
             title={help}
+            onContextMenu={event => {
+              event.preventDefault();
+              setMenu({ id, x: event.clientX, y: event.clientY });
+            }}
             onClick={() => { state.settingsOpen = false; void openSession(id); }}
           >
             {active ? <motion.span className="tab-pill" layoutId="session-tab-pill" transition={macSpringOrStill(motionIsReduced())} /> : null}
@@ -987,11 +997,27 @@ function SessionTabs() {
               </svg>
               {status ? (
                 <span className={`tab-status ${status}`}>
-                  {status === "running" ? <Spinner size={8} /> : null}
+                  {running ? <Spinner size={8} /> : null}
                 </span>
               ) : null}
             </span>
-            <span className="tab-title">{title}</span>
+            {renaming === id ? (
+              <input
+                className="tab-rename"
+                defaultValue={title}
+                autoFocus
+                aria-label="Rename this session"
+                onFocus={event => event.currentTarget.select()}
+                onClick={event => event.stopPropagation()}
+                onKeyDown={event => {
+                  if (event.key === "Enter") { event.preventDefault(); const name = event.currentTarget.value; setRenaming(null); void renameSession(id, name); }
+                  if (event.key === "Escape") { event.preventDefault(); setRenaming(null); }
+                }}
+                onBlur={event => { const name = event.currentTarget.value; setRenaming(null); void renameSession(id, name); }}
+              />
+            ) : (
+              <span className="tab-title">{title}</span>
+            )}
             <span
               className="tab-close"
               role="button"
@@ -1006,6 +1032,24 @@ function SessionTabs() {
           </button>
         );
       })}
+      {menu ? (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            // The Mac's menu for a tab (TitleBar.swift:214-231), in its order and with its
+            // words: beside the one in view, its name, and the tabs to close.
+            ...(menu.id !== state.session?.id ? [{ label: "Open Beside", run: () => void openBeside(menu.id) }] : []),
+            { label: "Rename…", run: () => { setRenaming(menu.id); void openSession(menu.id); } },
+            { label: "", separator: true },
+            { label: "Close Tab", run: () => closeSessionTab(menu.id) },
+            { label: "Close Other Tabs", disabled: state.openSessions.length <= 1, run: () => closeTabs(menu.id) },
+            { label: "", separator: true },
+            { label: "Close All Tabs", run: () => closeTabs(null) },
+          ]}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1164,14 +1208,7 @@ function Sidebar() {
   const [showsAll, setShowsAll] = useState<Record<string, boolean>>({});
   const commitRename = async (id: string, title: string) => {
     setRenaming(null);
-    const name = title.trim();
-    const known = [...state.sessions, ...Object.values(state.sessionsByProject).flat()].find(session => session.id === id);
-    if (!name || name === (known?.title ?? "")) return;
-    try {
-      await api(`/api/sessions/${encodeURIComponent(id)}/rename`, { method: "POST", body: { title: name } });
-      await loadSessions();
-      await loadProjectSessions();
-    } catch (error) { complain(error); }
+    await renameSession(id, title);
   };
 
   // The Mac's projects, each with its own sessions (SidebarView.swift:178-196), and the
