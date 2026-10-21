@@ -71,6 +71,7 @@ end-to-end runs' alone, as are those that need a real machine over SSH (F9, L46,
 | K5 Storage: what takes room | StorageReportTests | |
 | L50 Quit mid-job, open again | InterruptedRunTests | |
 | The panel's terminal | TerminalColorsTests | |
+| The context ring: how full, of what the model takes | ContextRingTests | the coding agents' windows, as each says (Agents/test) |
 | Export a conversation | ConversationExportTests | |
 | Move to Applications (to update itself) | AppLocationTests | the offer, a modal alert, and a disk image's read-only copy |
 | Anonymous usage stays anonymous | AnalyticsPrivacyTests | |

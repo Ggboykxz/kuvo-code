@@ -52,8 +52,11 @@ struct ContextGauge: View {
     /// What the last step sent and got back is what's in the window now.
     private var used: Int? { model.contextUsed }
 
-    private var limit: Int? {
-        // On Auto, the window of the model in your list at work now.
+    private var limit: Int? { Self.window(of: model, in: catalog) }
+
+    /// What the session's model can hold of the conversation: on Auto, the model in your list at
+    /// work now.
+    static func window(of model: SessionModel, in catalog: Catalog) -> Int? {
         let current = model.session.model?.providerID == OutsideAgents.autoProvider ? model.modelInUse : model.session.model
         return catalog.model(current)?.limit.usable
     }
