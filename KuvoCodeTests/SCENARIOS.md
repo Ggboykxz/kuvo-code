@@ -64,6 +64,7 @@ end-to-end runs' alone, as are those that need a real machine over SSH (F9, L46,
 | J3 The engine stops; the app brings it back | EngineRestartTests | |
 | J4 A huge file, a binary file in the changes | ChangesDiscardTests, ChangesBinaryTests | very large command output (the engine keeps it) |
 | K1 Settings keep what you change; its tabs | EngineSettingsFileTests, SettingsTabsTests | |
+| L42 Web search works from the start (the engine has no search chosen; every search failed) | EngineSettingsFileTests | |
 | K3 Notifications | NotificationMaskingTests | |
 | K2 Menu commands and shortcuts | | menus and keys (UI; the end-to-end runs check each against Settings › Keyboard Shortcuts) |
 | K4 The menu bar's usage panel | UsageKit's own tests | which accounts count there (handing them over makes the panel ask the providers' services) |
