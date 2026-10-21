@@ -4,7 +4,7 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
-## Unreleased
+## 0.6.2
 
 - A worktree's branch named after a title in another language keeps its letters ("Giriş düzeltmesi" is giris-duzeltmesi, not giri-dzeltmesi).
 - A model or mode changed elsewhere (a bot's editor, your phone, another Mac) shows in a conversation you have open, and picking the one before works again.
