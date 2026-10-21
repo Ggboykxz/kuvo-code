@@ -48,6 +48,8 @@ routes = [{"path": p, "allowed": a} for p, a in [
     ("api/fs/read/Sources/main.swift", True), ("api/fs/read", False), ("api/fs/write/x", False), ("api/fs/read/../../etc/hosts", False),
     ("api/fs/list?path=%2E%2E", False), ("api/fs/list?path=..%2F", False), ("api/fs/read/%2e%2e%2fsecret", False),
     ("api/session/%2E%2E/credential", False), ("api/session/%2e%2e/credential", False), ("api/session%2f..%2fcredential", False),
+    ("api/session/.\t./.\t./api/credential", False), ("api/session/.\n./.\r./api/config", False), ("api/session/x\x7f", False),
+    ("api/session#/../credential", False),
     ("api/fs/read/..%5c..%5csecret", False), ("api/fs/read/a%5cb", False), ("api/fs/read/bad%E0%A4%A", False),
     ("api/sessions", False), ("api/eventual", False), ("api/session/../credential", False), ("kuvo/info", False), ("", False),
     ("api/pty", True), ("api/pty?location[directory]=x", True), ("api/pty/pty_1", True), ("api/pty/pty_1/connect-token", True),
@@ -68,4 +70,22 @@ sockets = [{"path": p, "allowed": a} for p, a in [
     ("api/experimental/persistent-pty/pty_1/connect", False), ("api/session/ses_1/connect", False),
 ]]
 
-json.dump({"addresses": addresses, "relay": relay, "frames": frames, "messages": messages, "routes": routes, "sockets": sockets}, open("link.json", "w"), indent=2)
+# What a phone may ask the coding agents' bridge for, on a Mac or a machine (`kuvo/agents/api/…`,
+# without the prefix): the engine's routes, their accounts and Auto; never where the engine is,
+# nor an agent's update, however the path is written.
+agent_routes = [{"path": p, "allowed": a, "method": m} for p, a, m in [
+    ("api/session/ses_1/prompt", True, "POST"), ("api/session", True, "GET"), ("api/event", True, "GET"),
+    ("api/integration", True, "GET"), ("api/integration/claude-code@1f2e/connect/oauth", True, "POST"),
+    ("api/kuvo/auto", True, "PUT"), ("api/kuvo/auto/limits", True, "DELETE"), ("api/kuvo/accounts", True, "POST"),
+    ("api/kuvo/accounts/codex-cli@9a8b", True, "PATCH"), ("api/model", True, "GET"),
+    ("api/kuvo/engine", False, "PUT"), ("api/kuvo/%65ngine", False, "GET"), ("api/kuvo//engine", False, "POST"),
+    ("api/integration/claude-code/update", False, "POST"), ("api/integration/claude-code/%75pdate", False, "POST"),
+    ("api/integration/claude-code//update", False, "POST"), ("api/integration/claude-code/./update", False, "POST"),
+    ("api/integration/claude-code/%2e/update", False, "POST"), ("api/integration//claude-code/update", False, "POST"),
+    ("api/integration/claude-code/update/", False, "POST"), ("api/integration/claude-code/update#x", False, "POST"),
+    ("api/kuvo/engine#", False, "POST"), ("api/fs/read/../../etc/passwd", False, "GET"), ("api/credential", False, "GET"),
+    ("api/config", False, "GET"), ("api/kuvo/other", False, "GET"), ("api/shell", False, "POST"),
+]]
+
+json.dump({"addresses": addresses, "relay": relay, "frames": frames, "messages": messages, "routes": routes, "sockets": sockets,
+           "agentRoutes": agent_routes}, open("link.json", "w"), indent=2)

@@ -190,17 +190,21 @@ itself. A host serves:
   engine's own remove (which deletes the output, and the agent hears the command wasn't found).
   Answers `200 {"stopped": "signal"}` or `200 {"stopped": "removed"}`, or `404 {}` when no such
   command runs. A machine's bridge does it there (from 0.5.1), with the Mac closed too.
-- `kuvo/info`: what the host is and runs; a Mac also names its folder of chats (conversations of
-  no project), whether its coding agents' bridge is up (`agents`), and `integrations`, each integration's name by its MCP server's (`{"microsoft-365":
-  "Outlook and Microsoft 365", …}`), for a card when one asks something.
-- On a Mac, `kuvo/agents/api/…`: the coding agents you already have (Claude Code, Codex,
-  Cursor, Grok, Antigravity), through the Mac's agents bridge, which answers the same paths as
-  the engine for them: sessions, messages, prompts, permissions, questions, events
+- `kuvo/info`: what the host is and runs, and whether its coding agents' bridge is up
+  (`agents`; a machine's bridge says so from 0.6.0); a Mac also names its folder of chats
+  (conversations of no project), and `integrations`, each integration's name by its MCP server's
+  (`{"microsoft-365": "Outlook and Microsoft 365", …}`), for a card when one asks something.
+- `kuvo/agents/api/…`: the coding agents you already have (Claude Code, Codex, Cursor, Grok,
+  Antigravity), through the agents bridge beside the host's engine, which answers the same paths
+  as the engine for them: sessions, messages, prompts, permissions, questions, events
   (`kuvo/agents/api/event`) and models (`kuvo/agents/api/model`, only signed-in agents'). Its
-  sessions carry `metadata.kuvoAgent` and run on the Mac; a new session with one of their
-  models (providers `claude-code`, `codex-cli`, `cursor`, `grok-cli`, `antigravity`) is made
-  there, never on the engine. `kuvo/info` has `agents: true` while the bridge is up; otherwise
-  these answer 503.
+  sessions carry `metadata.kuvoAgent` and run where that bridge does; a new session with one of
+  their models (providers `claude-code`, `codex-cli`, `cursor`, `grok-cli`, `antigravity`) is
+  made there, never on the engine. A Mac answers for its own; a machine's bridge (from 0.6.0) for
+  the machine's, with the Mac closed too: each machine signs in to them on its own, and has its
+  own Custom Auto lists. `kuvo/info` has `agents: true` while the bridge is up; otherwise these
+  answer 503. What a phone may ask for is the same on both (`Vectors/link.json`,
+  `agentRoutes`).
   - Accounts: besides each agent's own sign-in, ones you added, each its own provider
     `<agent's provider>@<id>` (`claude-code@1f2e3d4c`), named `Claude Code · Work` in
     `kuvo/agents/api/integration` (`metadata.accountID`, `metadata.accountLabel`). Their models

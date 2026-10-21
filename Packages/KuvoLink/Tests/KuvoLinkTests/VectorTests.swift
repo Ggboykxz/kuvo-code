@@ -52,6 +52,12 @@ import Testing
         }
     }
 
+    @Test func agentRoutes() {
+        for item in list("agentRoutes") {
+            #expect(EngineRoutes.allowsAgents(item["path"] as! String, method: item["method"] as? String ?? "GET") == item["allowed"] as! Bool, "\(item["path"]!) \(item["method"] ?? "GET")")
+        }
+    }
+
     @Test func sockets() {
         for item in list("sockets") {
             #expect(EngineRoutes.allowsSocket(item["path"] as! String) == item["allowed"] as! Bool, "\(item["path"]!)")

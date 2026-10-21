@@ -71,6 +71,7 @@ test("addresses, relay messages, frames and messages match the vectors", () => {
   }
   for (const r of v.routes) assert.equal(link.allowed(r.path, r.method ?? "GET"), r.allowed, `${r.path} ${r.method ?? "GET"}`);
   for (const r of v.sockets) assert.equal(link.socketAllowed(r.path), r.allowed, r.path);
+  for (const r of v.agentRoutes) assert.equal(link.agentsAllowed(r.path, r.method ?? "GET"), r.allowed, `agents: ${r.path} ${r.method ?? "GET"}`);
   for (const m of v.messages) {
     assert.equal(link.encodeMessage(m.head, hex(m.body)).toString("hex"), m.bytes);
     assert.deepEqual(link.decodeMessage(hex(m.bytes)), { head: m.head, body: hex(m.body) });

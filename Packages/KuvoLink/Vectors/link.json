@@ -426,5 +426,142 @@
       "path": "api/session/ses_1/connect",
       "allowed": false
     }
+  ],
+  "agentRoutes": [
+    {
+      "path": "api/session/ses_1/prompt",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/session",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/event",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/integration",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/integration/claude-code@1f2e/connect/oauth",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/kuvo/auto",
+      "allowed": true,
+      "method": "PUT"
+    },
+    {
+      "path": "api/kuvo/auto/limits",
+      "allowed": true,
+      "method": "DELETE"
+    },
+    {
+      "path": "api/kuvo/accounts",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/kuvo/accounts/codex-cli@9a8b",
+      "allowed": true,
+      "method": "PATCH"
+    },
+    {
+      "path": "api/model",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/kuvo/engine",
+      "allowed": false,
+      "method": "PUT"
+    },
+    {
+      "path": "api/kuvo/%65ngine",
+      "allowed": false,
+      "method": "GET"
+    },
+    {
+      "path": "api/kuvo//engine",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/claude-code/update",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/claude-code/%75pdate",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/claude-code//update",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/claude-code/./update",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/claude-code/%2e/update",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration//claude-code/update",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/claude-code/update/",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/claude-code/update#x",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/kuvo/engine#",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/fs/read/../../etc/passwd",
+      "allowed": false,
+      "method": "GET"
+    },
+    {
+      "path": "api/credential",
+      "allowed": false,
+      "method": "GET"
+    },
+    {
+      "path": "api/config",
+      "allowed": false,
+      "method": "GET"
+    },
+    {
+      "path": "api/kuvo/other",
+      "allowed": false,
+      "method": "GET"
+    },
+    {
+      "path": "api/shell",
+      "allowed": false,
+      "method": "POST"
+    }
   ]
 }

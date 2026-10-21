@@ -27,6 +27,8 @@ const K = process.env.KUVO_HOME || path.join(os.homedir(), ".kuvo-code");
 const RUN = path.join(K, "run");
 export const LINK_FILE = path.join(RUN, "link.json");
 const ENGINE_FILE = path.join(RUN, "engine.json");
+// The coding agents' bridge beside the engine (kuvo-agents.js): its port and password.
+const BRIDGE_FILE = path.join(RUN, "bridge.json");
 const PID_FILE = path.join(RUN, "link.pid");
 const VERSION_FILE = path.join(RUN, "link.version");
 const PAIRING_MINUTES = 10;
@@ -543,18 +545,104 @@ export const allowed = (path, method = "GET") => {
 };
 export const socketAllowed = path => !leavesProject(path) && SOCKETS.some(pattern => pattern.test(path));
 
+// `path` as the coding agents' bridge routes it: split into parts, without empty ones or "."
+// ones (which its URL parser drops, "%2e" too), each decoded ("%75pdate" is "update").
+export const routedPath = path => {
+  const at = path.indexOf("?");
+  const parts = (at < 0 ? path : path.slice(0, at)).split("/")
+    .filter(part => part !== "" && part !== "." && part.toLowerCase() !== "%2e")
+    .map(part => {
+      try {
+        return decodeURIComponent(part);
+      } catch {
+        return part;
+      }
+    });
+  return parts.join("/") + (at < 0 ? "" : path.slice(at));
+};
+
+// What a phone may ask the coding agents' bridge for (`kuvo/agents/api/…`): what it may ask the
+// engine for, and their accounts (adding, naming, removing and signing in to them) and Auto's
+// lists. Never where the engine is, nor updating an agent's program. As the Mac allows them
+// (KuvoLink's EngineRoutes.allowsAgents; both are checked against Vectors/link.json).
+export const agentsAllowed = (path, method = "GET") => {
+  if (leavesProject(path)) return false;
+  const routed = routedPath(path);
+  if (/^api\/kuvo\/engine(\/|\?|$)/.test(routed)) return false;
+  if (/^api\/integration\/[^/?]+\/update(\/|\?|$)/.test(routed)) return false;
+  return allowed(path, method) || /^api\/integration(\/|\?|$)/.test(path) || /^api\/kuvo\/(auto|accounts)(\/|\?|$)/.test(path);
+};
+
 const readEngineFile = () => JSON.parse(fs.readFileSync(ENGINE_FILE, "utf8"));
+// The coding agents' bridge beside the engine, when it runs: its port and password.
+const readBridgeFile = () => JSON.parse(fs.readFileSync(BRIDGE_FILE, "utf8"));
+const AGENTS = "kuvo/agents/";
+
+// Passes `path` to the engine or the agents' bridge on this machine, with its password, and
+// streams back what it answers.
+async function* forward(target, path, request, signal) {
+  const headers = { authorization: `Basic ${Buffer.from(`opencode:${target.password}`).toString("base64")}` };
+  const given = Object.fromEntries(Object.entries(request.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v]));
+  for (const name of REQUEST_HEADERS) if (given[name]) headers[name] = given[name];
+  const method = request.method.toUpperCase();
+  const response = await fetch(`http://127.0.0.1:${target.port}/${path}`, {
+    method,
+    headers,
+    body: method === "GET" || method === "HEAD" ? undefined : request.body,
+    signal,
+  });
+  const out = {};
+  for (const name of RESPONSE_HEADERS) {
+    const value = response.headers.get(name);
+    if (value) out[name] = value;
+  }
+  yield { head: { status: response.status, headers: out } };
+  if (!response.body) return;
+  const reader = response.body.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      yield { body: Buffer.from(value) };
+    }
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+}
 
 // The handler LinkHost runs for each request.
-export function engineHandler(readEngine = readEngineFile, info = {}) {
+export function engineHandler(readEngine = readEngineFile, info = {}, readBridge = readBridgeFile) {
+  // The agents' bridge, while it runs.
+  const bridge = () => {
+    try {
+      const found = readBridge();
+      return found?.port && found?.password && (!found.pid || alive(found.pid)) ? found : null;
+    } catch {
+      return null;
+    }
+  };
   return async function* (request, phone, signal) {
     const text = (status, words) => [{ head: { status, headers: { "content-type": "text/plain" } } }, { body: Buffer.from(words) }];
     if (request.path === "kuvo/info") {
       let engine = {};
       try { engine = readEngine(); } catch {}
       yield { head: { status: 200, headers: { "content-type": "application/json" } } };
-      yield { body: Buffer.from(JSON.stringify({ kind: "machine", bridge: BRIDGE_VERSION, engine: engine.version ?? null, ...info })) };
+      yield { body: Buffer.from(JSON.stringify({ kind: "machine", bridge: BRIDGE_VERSION, engine: engine.version ?? null, agents: Boolean(bridge()), ...info })) };
       return;
+    }
+    // The coding agents' sessions, accounts and Auto, through their bridge, as the engine's go
+    // to it; never where the engine is, nor an agent's update.
+    if (request.path.startsWith(AGENTS)) {
+      const path = request.path.slice(AGENTS.length);
+      if (!agentsAllowed(path, request.method)) return yield* text(403, "That isn't available over the link.");
+      const target = bridge();
+      if (!target) {
+        yield { head: { status: 503, headers: { "content-type": "application/json" } } };
+        yield { body: Buffer.from(JSON.stringify({ message: "The coding agents aren't running on this machine." })) };
+        return;
+      }
+      touchAttached();
+      return yield* forward(target, path, request, signal);
     }
     // This machine's bots and wake-ups, from their folders.
     if (request.path.split("?")[0] === "kuvo/bots") {
@@ -571,7 +659,7 @@ export function engineHandler(readEngine = readEngineFile, info = {}) {
       } catch {
         return yield* text(404, "No such session.");
       }
-      return yield* answerWakes(session, wakes[2], request, readEngine, signal);
+      return yield* answerWakes(session, wakes[2], request, readEngine, bridge, signal);
     }
     const stop = request.path.match(/^kuvo\/shell\/([^/?]+)\/stop$/);
     if (!stop && !allowed(request.path, request.method)) return yield* text(403, "That isn't available over the link.");
@@ -582,37 +670,14 @@ export function engineHandler(readEngine = readEngineFile, info = {}) {
       return yield* text(503, "The engine isn't running.");
     }
     touchAttached();
-    const headers = { authorization: `Basic ${Buffer.from(`opencode:${engine.password}`).toString("base64")}` };
-    const given = Object.fromEntries(Object.entries(request.headers).map(([k, v]) => [k.toLowerCase(), v]));
-    for (const name of REQUEST_HEADERS) if (given[name]) headers[name] = given[name];
     if (stop) {
       if (request.method.toUpperCase() !== "POST") return yield* text(405, "Stop it with POST.");
+      const headers = { authorization: `Basic ${Buffer.from(`opencode:${engine.password}`).toString("base64")}` };
+      const given = Object.fromEntries(Object.entries(request.headers).map(([k, v]) => [k.toLowerCase(), v]));
+      for (const name of REQUEST_HEADERS) if (given[name]) headers[name] = given[name];
       return yield* stopShell(decodeURIComponent(stop[1]), engine, headers, signal);
     }
-    const method = request.method.toUpperCase();
-    const response = await fetch(`http://127.0.0.1:${engine.port}/${request.path}`, {
-      method,
-      headers,
-      body: method === "GET" || method === "HEAD" ? undefined : request.body,
-      signal,
-    });
-    const out = {};
-    for (const name of RESPONSE_HEADERS) {
-      const value = response.headers.get(name);
-      if (value) out[name] = value;
-    }
-    yield { head: { status: response.status, headers: out } };
-    if (!response.body) return;
-    const reader = response.body.getReader();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) return;
-        yield { body: Buffer.from(value) };
-      }
-    } finally {
-      reader.cancel().catch(() => {});
-    }
+    return yield* forward(engine, request.path, request, signal);
   };
 }
 
@@ -701,7 +766,6 @@ function touchAttached() {
 // watches and pause that `kuvo-wake` keeps beside them.
 const BOTS = path.join(K, "bots");
 const SESSION_WAKES = path.join(K, "wakes");
-const BRIDGE_FILE = path.join(RUN, "bridge.json");
 // The version of `bot.json` this reads (the app's `Bot.Descriptor`).
 const DESCRIPTION = 1;
 const WAKE_MARKER = "[Wake-up] ";
@@ -855,7 +919,7 @@ const wakingNow = new Set();
 
 // `kuvo/wakes/<session>`: its wake-ups, watches and pause; `…/cancel` with {"wake"} or {"watch"};
 // `…/now` with {"wake"}, sent at once (one that repeats still comes back at its time).
-async function* answerWakes(session, action, request, readEngine, signal) {
+async function* answerWakes(session, action, request, readEngine, bridge, signal) {
   const json = (status, value) => [{ head: { status, headers: { "content-type": "application/json" } } }, { body: Buffer.from(JSON.stringify(value)) }];
   const method = request.method.toUpperCase();
   const folder = wakeFolder(session);
@@ -894,12 +958,11 @@ async function* answerWakes(session, action, request, readEngine, signal) {
     const note = textOf(path.join(folder, "wakes", wake.id));
     if (note === null) return yield* json(404, {});
     const agents = (textOf(path.join(folder, "via")) ?? "").trim() === "bridge";
-    let target;
+    let target = null;
     try {
-      target = agents ? JSON.parse(fs.readFileSync(BRIDGE_FILE, "utf8")) : readEngine();
-    } catch {
-      return yield* json(503, { message: agents ? "The coding agents aren't running on this machine." : "The engine isn't running." });
-    }
+      target = agents ? bridge() : readEngine();
+    } catch {}
+    if (!target) return yield* json(503, { message: agents ? "The coding agents aren't running on this machine." : "The engine isn't running." });
     touchAttached();
     const authorization = `Basic ${Buffer.from(`opencode:${target.password}`).toString("base64")}`;
     const directory = textOf(path.join(folder, "directory"));
