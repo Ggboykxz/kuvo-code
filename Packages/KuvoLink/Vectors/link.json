@@ -198,6 +198,14 @@
       "allowed": false
     },
     {
+      "path": "api/integration",
+      "allowed": true
+    },
+    {
+      "path": "api/integration/github-copilot",
+      "allowed": true
+    },
+    {
       "path": "api/config",
       "allowed": false
     },
@@ -391,6 +399,171 @@
       "path": "api/shell/sh_1/output",
       "allowed": true,
       "method": "GET"
+    },
+    {
+      "path": "api/integration",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/integration?fresh=1",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/integration/github-copilot",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/integration/anthropic/connect/key",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/github-copilot/connect/oauth",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/github-copilot/connect/oauth/att_1",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/integration/gitlab/connect/oauth/att_1/complete",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/gitlab/connect/oauth/att_1",
+      "allowed": true,
+      "method": "DELETE"
+    },
+    {
+      "path": "api/credential/cred_1/activate",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/credential/cred_1",
+      "allowed": true,
+      "method": "DELETE"
+    },
+    {
+      "path": "api/integration/openai@work/connect/key",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/credential",
+      "allowed": false,
+      "method": "GET"
+    },
+    {
+      "path": "api/credential/cred_1",
+      "allowed": false,
+      "method": "GET"
+    },
+    {
+      "path": "api/credential",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/credential?x=1",
+      "allowed": false,
+      "method": "GET"
+    },
+    {
+      "path": "api/credential/cred_1/activate",
+      "allowed": false,
+      "method": "GET"
+    },
+    {
+      "path": "api/credential/cred_1/x",
+      "allowed": false,
+      "method": "DELETE"
+    },
+    {
+      "path": "api/integration/anthropic/update",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/anthropic/connect/external",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/anthropic/connect/%6bey",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/anthropic//connect/key",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/./connect/key",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/anthropic/connect/key/x",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/anthropic/connect/key?x=1",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/anthropic",
+      "allowed": false,
+      "method": "DELETE"
+    },
+    {
+      "path": "api/integration/anthropic",
+      "allowed": false,
+      "method": "PATCH"
+    },
+    {
+      "path": "api/integration/anthropic/connect/key",
+      "allowed": false,
+      "method": "GET"
+    },
+    {
+      "path": "api/integration/anthropic/connect/key",
+      "allowed": false,
+      "method": "PUT"
+    },
+    {
+      "path": "api/integration/../credential",
+      "allowed": false,
+      "method": "GET"
+    },
+    {
+      "path": "api/integration/%2e%2e/credential",
+      "allowed": false,
+      "method": "GET"
+    },
+    {
+      "path": "api/integration/anthropic/connect/oauth/att_1/complete ",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/a#/../../credential",
+      "allowed": false,
+      "method": "GET"
+    },
+    {
+      "path": "api/credential/.hidden",
+      "allowed": false,
+      "method": "DELETE"
     }
   ],
   "sockets": [

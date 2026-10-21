@@ -405,6 +405,9 @@ final class Catalog {
         if endedSignIns[provider] != nil { endedSignIns[provider] = nil }
     }
 
+    /// The plans whose sign-in in use ended.
+    var endedProviders: [String] { endedSignIns.keys.filter(hasEndedSignIn).sorted() }
+
     /// `provider`'s sign-in in use ended: the one refused is still the one in use (signed in again,
     /// it's another).
     func hasEndedSignIn(_ provider: String) -> Bool {
