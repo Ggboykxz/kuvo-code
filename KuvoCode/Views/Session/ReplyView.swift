@@ -301,32 +301,21 @@ final class ReplyTextView: NSTextView, NSTextViewDelegate {
         return text.replacingOccurrences(of: "\u{2028}", with: "\n").replacingOccurrences(of: "\u{200B}", with: "---")
     }
 
-    // A press starts a selection across the conversation (see `RowStackView.trackSelection`),
-    // which goes on into the rows above and below; one that doesn't move is a click, a link's
-    // opening. A double or triple click selects a word or paragraph here, as text does.
+    // In a conversation, what's selected is the conversation's (see `RowStackView`): a press, a
+    // double or triple click and a shift-click select through it, across its rows; one that
+    // selects nothing is a click, a link's opening. This text only shows its part.
     override func mouseDown(with event: NSEvent) {
-        guard event.clickCount == 1, let stack = enclosingRowStack else {
-            // A word or a paragraph, here: the keyboard comes here with it, for ⌘C.
-            if let stack = enclosingRowStack {
-                stack.clearSelection()
-                window?.makeFirstResponder(self)
-            }
-            super.mouseDown(with: event)
-            if selectedRange().length > 0 { SelectionMenu.selected(in: window) }
-            return
-        }
+        guard let stack = enclosingRowStack else { return super.mouseDown(with: event) }
         stack.trackSelection(from: event) { [self] in
-            // A click: a word double-clicked here before is let go, and a link opens.
-            setSelectedRange(NSRange(location: selectedRange().location, length: 0))
-            guard let link = link(at: convert(event.locationInWindow, from: nil)) else { return }
+            guard event.clickCount == 1, let link = link(at: convert(event.locationInWindow, from: nil)) else { return }
             _ = textView(self, clickedOnLink: link.value, at: link.index)
         }
     }
 
-    // Not while the conversation holds a selection: a right-click (whose menu copies it) or a
-    // shift-click (which extends it) would take the keyboard here first, and that would end it.
+    // The keyboard goes to the conversation with its selection, never to one of its texts: two
+    // holders of one selection would each draw and clear it their own way.
     override var acceptsFirstResponder: Bool {
-        enclosingRowStack?.selection == nil && super.acceptsFirstResponder
+        enclosingRowStack == nil && super.acceptsFirstResponder
     }
 
     /// The link under `point`, if one is.
@@ -340,13 +329,11 @@ final class ReplyTextView: NSTextView, NSTextViewDelegate {
         return (value, index)
     }
 
-    // Another text taking the keyboard leaves this one's selection behind; clear it, so only
-    // one selection shows at a time, as in Textual. Not the conversation's selection, which this
-    // shows its part of: the conversation takes the keyboard as a drag ends (the press gave it
-    // here), and that would take the selection away as it's made.
+    // Outside a conversation: another text taking the keyboard leaves this one's selection
+    // behind; clear it, so only one selection shows at a time, as in Textual.
     override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
-        if resigned, enclosingRowStack?.selection == nil, selectedRange().length > 0 { setSelectedRange(NSRange(location: selectedRange().location, length: 0)) }
+        if resigned, selectedRange().length > 0 { setSelectedRange(NSRange(location: selectedRange().location, length: 0)) }
         return resigned
     }
 }
@@ -614,24 +601,14 @@ final class ReplyCodeTextView: NSTextView {
         needsDisplay = true
     }
 
-    // As a reply's text: a press selects across the conversation (see `ReplyTextView`).
+    // As a reply's text: what's selected is the conversation's (see `ReplyTextView`).
     override func mouseDown(with event: NSEvent) {
-        guard event.clickCount == 1, let stack = enclosingRowStack else {
-            if let stack = enclosingRowStack {
-                stack.clearSelection()
-                window?.makeFirstResponder(self)
-            }
-            super.mouseDown(with: event)
-            if selectedRange().length > 0 { SelectionMenu.selected(in: window) }
-            return
-        }
-        stack.trackSelection(from: event) { [self] in
-            setSelectedRange(NSRange(location: selectedRange().location, length: 0))
-        }
+        guard let stack = enclosingRowStack else { return super.mouseDown(with: event) }
+        stack.trackSelection(from: event) {}
     }
 
     override var acceptsFirstResponder: Bool {
-        enclosingRowStack?.selection == nil && super.acceptsFirstResponder
+        enclosingRowStack == nil && super.acceptsFirstResponder
     }
 
     private var cachedSize: CGSize?
@@ -827,15 +804,17 @@ nonisolated final class ReplyCodeLayoutManager: NSLayoutManager {
     }
 }
 
-/// A selection across the conversation is drawn as the one with the keyboard is, in each of its
-/// texts, though none of them has the keyboard (the conversation does).
+/// A text in a conversation draws its part of the selection in the conversation's look (in use,
+/// or set aside), as its other texts and the rows it tints do: none of them has the keyboard
+/// (the conversation does), so each would otherwise draw it set aside.
 nonisolated enum SelectionColor {
     static func shown(_ color: NSColor, in text: NSTextView?) -> NSColor {
         MainActor.assumeIsolated {
-            guard color == .unemphasizedSelectedTextBackgroundColor, let text, let window = text.window, window.isKeyWindow,
-                  window.firstResponder is RowStackView else { return color }
-            NSColor.selectedTextBackgroundColor.setFill()
-            return .selectedTextBackgroundColor
+            guard color == .unemphasizedSelectedTextBackgroundColor || color == .selectedTextBackgroundColor,
+                  let stack = text?.enclosingRowStack else { return color }
+            let shown: NSColor = stack.isSelectionEmphasized ? .selectedTextBackgroundColor : .unemphasizedSelectedTextBackgroundColor
+            shown.setFill()
+            return shown
         }
     }
 }

@@ -118,7 +118,10 @@ struct ConversationScroll<Rows: View>: View {
                     .id(ScrollAnchor.end)
             }
             .environment(\.scrollAnchor, anchor)
-            .onAppear { anchor.stopFollowing = { [scroller] in scroller.follow(false) } }
+            .onAppear {
+                anchor.stopFollowing = { [scroller] in scroller.follow(false) }
+                anchor.quote = quote
+            }
             .padding(.horizontal, Metrics.gutter)
             // Room under the card's header, which the conversation scrolls beneath (and under
             // Find's bar while it's open).
@@ -478,6 +481,8 @@ final class EndFollower {
 /// SwiftUI would put a position of its own back over what this did.
 final class ScrollAnchor {
     static let space = "conversation"
+    /// Add to Chat, for what's selected in the conversation: a quote over the composer.
+    var quote: ((String) -> Void)?
     /// The conversation's end, after its last row.
     static let end = "conversation-end"
     #if DEBUG
