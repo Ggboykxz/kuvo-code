@@ -294,75 +294,7 @@ final class PhoneLink {
         return LinkServer(key: key, hello: hello) { [weak self] key, address, hello in
             await self?.authorize(key, address, hello) ?? false
         } handle: { [weak self] request, _ in
-            guard request.path.hasPrefix("kuvo/") else {
-                return Self.namingAgents(in: request, by: self) { EngineRoutes.forward($0, to: base, password: password) }
-            }
-            // The outside agents' sessions, through their bridge, as the engine's go through it.
-            if request.path.hasPrefix(Self.agentsPrefix) {
-                var forwarded = request
-                forwarded.path = String(request.path.dropFirst(Self.agentsPrefix.count))
-                guard let bridge = agents?.endpoint else { return Self.unavailable() }
-                let base = bridge.url.absoluteString.hasSuffix("/") ? bridge.url : URL(string: bridge.url.absoluteString + "/")!
-                // Their accounts and Auto too; never where the engine is (the Mac says).
-                return Self.namingAgents(in: forwarded, by: self) {
-                    EngineRoutes.forward($0, to: base, password: bridge.password, allowing: { EngineRoutes.allowsAgents($0, method: $1) })
-                }
-            }
-            if request.path == "kuvo/asks/events" { return Self.following { self?.asksJSON() } }
-            if request.path == "kuvo/groups/events" { return Self.following { self?.groupsJSON() } }
-            if let id = Self.groupID(in: request.path, then: "events") { return Self.following { self?.groupJSON(id) } }
-            if request.path == "kuvo/usage/events" { return Self.following { self?.usageJSON() } }
-            // What a phone does in a group chat: one on a machine answers once the machine has.
-            if request.path.hasPrefix("kuvo/groups/"), request.method.uppercased() == "POST" {
-                return AsyncThrowingStream { continuation in
-                    Task { @MainActor in
-                        let (status, body) = await self?.answerGroup(String(request.path.dropFirst("kuvo/groups/".count)), with: request.body) ?? (503, Data())
-                        continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
-                        continuation.yield(.body(body))
-                        continuation.finish()
-                    }
-                }
-            }
-            // This Mac's accounts, without what they're signed in with.
-            if request.path.split(separator: "?").first == "kuvo/accounts/credentials" {
-                return AsyncThrowingStream { continuation in
-                    Task { @MainActor in
-                        let (status, body) = await self?.credentialsJSON() ?? (503, Data())
-                        continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
-                        continuation.yield(.body(body))
-                        continuation.finish()
-                    }
-                }
-            }
-            // A session's wake-ups and watches: read, or one canceled.
-            if request.path.hasPrefix("kuvo/wakes/") {
-                return AsyncThrowingStream { continuation in
-                    Task { @MainActor in
-                        let (status, body) = await self?.answerWakes(request) ?? (503, Data())
-                        continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
-                        continuation.yield(.body(body))
-                        continuation.finish()
-                    }
-                }
-            }
-            if let id = Self.shellID(in: request.path), request.method.uppercased() == "POST" {
-                return AsyncThrowingStream { continuation in
-                    Task { @MainActor in
-                        let (status, body) = await self?.stopShell(id, with: request.body) ?? (503, Data())
-                        continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
-                        continuation.yield(.body(body))
-                        continuation.finish()
-                    }
-                }
-            }
-            return AsyncThrowingStream { continuation in
-                Task { @MainActor in
-                    let (status, body) = self?.answer(request) ?? (503, Data())
-                    continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
-                    continuation.yield(.body(body))
-                    continuation.finish()
-                }
-            }
+            Self.respond(to: request, link: self, engine: base, password: password, agents: agents)
         } connect: { request, _, input in
             // Terminals: the engine's, in a project's folder.
             EngineRoutes.connect(request, to: base, password: password, input: input)
@@ -376,6 +308,81 @@ final class PhoneLink {
             }
         } confirmed: { [weak self] phone in
             Task { @MainActor in self?.confirmed(phone) }
+        }
+    }
+
+    /// What this Mac answers a paired phone's request with: Kuvo's own routes (`kuvo/…`), the
+    /// coding agents' bridge's (`kuvo/agents/…`, at `agents`) and the engine's (at `base`).
+    nonisolated static func respond(to request: LinkRequest, link: PhoneLink?, engine base: URL, password: String?,
+                                    agents: OutsideAgents.Address?) -> AsyncThrowingStream<LinkResponsePart, Error> {
+        guard request.path.hasPrefix("kuvo/") else {
+            return Self.namingAgents(in: request, by: link) { EngineRoutes.forward($0, to: base, password: password) }
+        }
+        // The outside agents' sessions, through their bridge, as the engine's go through it.
+        if request.path.hasPrefix(Self.agentsPrefix) {
+            var forwarded = request
+            forwarded.path = String(request.path.dropFirst(Self.agentsPrefix.count))
+            guard let bridge = agents?.endpoint else { return Self.unavailable() }
+            let base = bridge.url.absoluteString.hasSuffix("/") ? bridge.url : URL(string: bridge.url.absoluteString + "/")!
+            // Their accounts and Auto too; never where the engine is (the Mac says).
+            return Self.namingAgents(in: forwarded, by: link) {
+                EngineRoutes.forward($0, to: base, password: bridge.password, allowing: { EngineRoutes.allowsAgents($0, method: $1) })
+            }
+        }
+        if request.path == "kuvo/asks/events" { return Self.following { link?.asksJSON() } }
+        if request.path == "kuvo/groups/events" { return Self.following { link?.groupsJSON() } }
+        if let id = Self.groupID(in: request.path, then: "events") { return Self.following { link?.groupJSON(id) } }
+        if request.path == "kuvo/usage/events" { return Self.following { link?.usageJSON() } }
+        // What a phone does in a group chat: one on a machine answers once the machine has.
+        if request.path.hasPrefix("kuvo/groups/"), request.method.uppercased() == "POST" {
+            return AsyncThrowingStream { continuation in
+                Task { @MainActor in
+                    let (status, body) = await link?.answerGroup(String(request.path.dropFirst("kuvo/groups/".count)), with: request.body) ?? (503, Data())
+                    continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
+                    continuation.yield(.body(body))
+                    continuation.finish()
+                }
+            }
+        }
+        // This Mac's accounts, without what they're signed in with.
+        if request.path.split(separator: "?").first == "kuvo/accounts/credentials" {
+            return AsyncThrowingStream { continuation in
+                Task { @MainActor in
+                    let (status, body) = await link?.credentialsJSON() ?? (503, Data())
+                    continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
+                    continuation.yield(.body(body))
+                    continuation.finish()
+                }
+            }
+        }
+        // A session's wake-ups and watches: read, or one canceled.
+        if request.path.hasPrefix("kuvo/wakes/") {
+            return AsyncThrowingStream { continuation in
+                Task { @MainActor in
+                    let (status, body) = await link?.answerWakes(request) ?? (503, Data())
+                    continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
+                    continuation.yield(.body(body))
+                    continuation.finish()
+                }
+            }
+        }
+        if let id = Self.shellID(in: request.path), request.method.uppercased() == "POST" {
+            return AsyncThrowingStream { continuation in
+                Task { @MainActor in
+                    let (status, body) = await link?.stopShell(id, with: request.body) ?? (503, Data())
+                    continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
+                    continuation.yield(.body(body))
+                    continuation.finish()
+                }
+            }
+        }
+        return AsyncThrowingStream { continuation in
+            Task { @MainActor in
+                let (status, body) = link?.answer(request) ?? (503, Data())
+                continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
+                continuation.yield(.body(body))
+                continuation.finish()
+            }
         }
     }
 
