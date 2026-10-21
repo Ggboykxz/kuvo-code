@@ -1090,13 +1090,33 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       return json({ ok: true });
     }
 
+    // A mark of the app's own, as the Mac app keeps it. The flag goes out with the
+    // session's own metadata, because the engine may merge metadata rather than replace
+    // it (Workspace.swift:366-375): a session that is both pinned and archived keeps both.
+    const mark = async (id, key, value) => {
+      const current = await client.session(id);
+      const metadata = { ...(current?.metadata ?? {}), [key]: value };
+      await client.updateSession(id, { metadata });
+      return metadata;
+    };
+
     // Archiving: a mark of the app's own, as the Mac app keeps it.
     const archive = route(/^\/api\/sessions\/([^/]+)\/archive$/);
     if (archive && request.method === "POST") {
       const body = await readBody(request);
       const archived = body?.archived !== false;
-      await client.updateSession(archive[0], { metadata: { "kuvo.archived": archived } });
+      await mark(archive[0], "kuvo.archived", archived);
       return json({ ok: true, archived });
+    }
+
+    // Pinning: the same mark, the Mac's own key (Workspace.swift:342-364). A pinned
+    // session sits at the top of the sidebar, and is not in the recents.
+    const pin = route(/^\/api\/sessions\/([^/]+)\/pin$/);
+    if (pin && request.method === "POST") {
+      const body = await readBody(request);
+      const pinned = body?.pinned !== false;
+      await mark(pin[0], "kuvo.pinned", pinned);
+      return json({ ok: true, pinned });
     }
 
     const rename = route(/^\/api\/sessions\/([^/]+)\/rename$/);

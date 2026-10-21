@@ -39,6 +39,7 @@ const sources = {
   preload: read("electron", "preload.js"),
   toolCall: read("app", "src", "components", "tool-call.tsx"),
   mac: read("..", "Packages", "OpenCodeKit", "Sources", "OpenCodeKit", "Events", "Transcript.swift"),
+  sidebar: read("..", "KuvoCode", "Views", "SidebarView.swift"),
   tailwind: read("app", "app", "globals.css"),
   postcss: read("app", "postcss.config.mjs"),
   next: read("app", "next.config.mjs"),
@@ -810,6 +811,34 @@ const checks = [
     // And the code block's copy mark, which becomes a check (CodeBlockStyle.swift).
     assert.match(lib, /doc\.on\.doc/);
     assert.match(lib, /checkmark/);
+  }],
+
+  ["the session's own menu is the Mac's, in its order", ({ app, sidebar }) => {
+    // The Mac's menu for a session (SidebarView.swift:600-643): pinned or not, beside the
+    // one in view, its name, the folder it works in, the conversation as Markdown, put away
+    // or brought back, and the one that undoes.
+    const order = ["Open Beside", "Rename…", "Show in Folder", "Copy as Markdown", "Export as Markdown…", "Archive", "Delete…"];
+    let last = -1;
+    for (const label of order) {
+      const where = app.indexOf(`"${label}"`);
+      assert.ok(where > last, `the menu keeps the Mac's order (${label})`);
+      last = where;
+    }
+    // The Mac's own words, said by the Mac itself.
+    for (const label of ["Pin", "Unpin", "Open Beside", "Rename…", "Copy as Markdown", "Export as Markdown…", "Archive", "Unarchive", "Delete…"]) {
+      assert.ok(sidebar.includes(`"${label}"`), `the Mac says "${label}"`);
+    }
+    // Pinned or not, the app says both.
+    assert.ok(app.includes('"Unpin"') && app.includes('"Pin"'), "the app says Pin and Unpin");
+    assert.ok(app.includes('"Unarchive"') && app.includes('"Archive"'), "the app says Archive and Unarchive");
+    // The one that undoes is the Mac's own: red, and with the ellipsis that says a
+    // question follows.
+    assert.match(app, /label: "Delete…", danger: true/);
+    // The pinned sessions sit at the top of the sidebar, in a section of their own
+    // (SidebarView.swift:115-121, 513-515), and are not in the recents.
+    assert.match(app, /title="Pinned"/);
+    assert.match(app, /className="sessions pinned"/);
+    assert.match(app, /filter\(session => session\.metadata\?\.\["kuvo\.pinned"\] !== true\)/);
   }],
 
   ["the window is built by Next.js, and exported as the static files the harness serves", ({ next, page, build }) => {

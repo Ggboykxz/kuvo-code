@@ -61,6 +61,17 @@ const SHELL = [
   "Send",
   "Nothing matches.",
   "Attach Files… You can also drop files here, or paste them.",
+  // A session's own menu, the Mac's (SidebarView.swift:600-643).
+  "Pin",
+  "Unpin",
+  "Open Beside",
+  "Rename…",
+  "Copy as Markdown",
+  "Export as Markdown…",
+  "Archive",
+  "Unarchive",
+  "Delete…",
+  "Pinned",
 ];
 
 /// The transcript's own words, the same way.
@@ -78,6 +89,7 @@ const OURS = {
   "The engine's choice": "What the composer says when the engine has not chosen a model yet; the Mac shows the model's own name.",
   "Compact context": "The gauge's own action; the Mac compacts from the transcript, which this client does not have.",
   "Queue for After This Run": "The Mac's own name for the queue; ours says the same thing in the queue's own words.",
+  "Show in Folder": "The Mac's \"Show in Finder\" opens the Finder; a Windows client opens the Explorer, and says so.",
 };
 
 test("the Mac says the shell's strings, and so does the app", () => {

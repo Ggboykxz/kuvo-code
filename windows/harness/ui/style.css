@@ -3156,6 +3156,17 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
   padding: 5px 8px;
 }
 .context-menu button:hover { background: var(--hover); }
+/* A menu carries what a menu carries: a line between groups, an item that cannot be
+   chosen, and the one that undoes (the Mac's own menus are the system's). */
+.context-menu button[disabled] { opacity: .45; cursor: default; }
+.context-menu button[disabled]:hover { background: transparent; }
+.context-menu button.danger { color: var(--danger); }
+.menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  border: 0;
+  background: var(--line);
+}
 .session-rename {
   flex: 1;
   min-width: 0;

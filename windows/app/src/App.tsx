@@ -12,11 +12,14 @@ import {
   answerPermission,
   applyLook,
   boot,
+  archiveSession,
   closeSessionTab,
   complain,
+  copyMarkdown,
   deleteSession,
   dismissForm,
   exportConversation,
+  exportMarkdownOf,
   loadAgents,
   loadCommands,
   loadForms,
@@ -35,12 +38,14 @@ import {
   openProjectFile,
   openSession,
   openSplit,
+  pinSession,
   redoNow,
   render,
   removeProject,
   replyForm,
   saveConfig,
   sendPrompt,
+  showInFolder,
   state,
   stopRun,
   undoFromHere,
@@ -1099,17 +1104,26 @@ function folderName(path: string) {
 }
 
 /// A menu, where the Mac has one (RightClickMenu.swift:4-65): the items, and the place
-/// it was asked for.
+/// it was asked for. The Mac's menus are the system's own, and they carry what a menu
+/// carries: a line between groups, an item that cannot be chosen, and the one that undoes.
 function ContextMenu({ x, y, items, onClose }: {
   x: number;
   y: number;
-  items: { label: string; run: () => void }[];
+  items: { label: string; run?: () => void; disabled?: boolean; danger?: boolean; separator?: boolean }[];
   onClose: () => void;
 }) {
   return (
     <div className="context-menu" style={{ left: x, top: y }} role="menu" onMouseLeave={onClose}>
-      {items.map(item => (
-        <button key={item.label} role="menuitem" onClick={() => { onClose(); item.run(); }}>{item.label}</button>
+      {items.map((item, index) => item.separator ? (
+        <hr key={`separator_${index}`} className="menu-separator" role="separator" />
+      ) : (
+        <button
+          key={item.label}
+          role="menuitem"
+          disabled={item.disabled}
+          className={item.danger ? "danger" : undefined}
+          onClick={() => { onClose(); item.run?.(); }}
+        >{item.label}</button>
       ))}
     </div>
   );
@@ -1169,9 +1183,18 @@ function Sidebar() {
       .filter(session => (query ? (session.title || "").toLowerCase().includes(query) : true))
       .sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0));
   };
+  // The Mac's pinned sessions, at the top of the sidebar (SidebarView.swift:115-121,
+  // 513-515): a session kept there, out of the recents.
+  const pinned = state.projects
+    .flatMap(folder => sessionsOf(folder))
+    .filter((session, index, all) => all.findIndex(other => other.id === session.id) === index)
+    .filter(session => session.metadata?.["kuvo.pinned"] === true)
+    .sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0));
+  // Pinned ones are already at the top (SidebarView.swift:511).
   const recents = state.projects
     .flatMap(folder => sessionsOf(folder))
     .filter((session, index, all) => all.findIndex(other => other.id === session.id) === index)
+    .filter(session => session.metadata?.["kuvo.pinned"] !== true)
     .sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0))
     .slice(0, 8);
   const folded = (key: string) => Boolean(state.collapsed[key]);
@@ -1334,6 +1357,12 @@ function Sidebar() {
           );
         })
       ) : null}
+      {pinned.length ? (
+        <>
+          <SectionHeader title="Pinned" folded={folded("pinned")} onToggle={() => toggle("pinned")} />
+          {!folded("pinned") ? <ul className="sessions pinned">{pinned.map(sessionRow)}</ul> : null}
+        </>
+      ) : null}
       {recents.length ? (
         <>
           <SectionHeader title="Recents" folded={folded("recents")} onToggle={() => toggle("recents")} />
@@ -1342,22 +1371,38 @@ function Sidebar() {
       ) : null}
       <MessageSearch query={state.sessionQuery} />
       </div>
-      {menu ? (
-        <ContextMenu
-          x={menu.x}
-          y={menu.y}
-          onClose={() => setMenu(null)}
-          items={[
-            // The Mac's Open Beside: how a session is chosen for the split (SidebarView.swift:609).
-            ...(menu.id !== state.session?.id ? [{ label: "Open Beside", run: () => void openBeside(menu.id) }] : []),
-            { label: "Rename…", run: () => setRenaming(menu.id) },
-            { label: "Delete", run: () => {
-              const found = [...state.sessions, ...Object.values(state.sessionsByProject).flat()].find(session => session.id === menu.id);
-              if (found) void deleteSession(found);
-            } },
-          ]}
-        />
-      ) : null}
+      {menu ? (() => {
+        // The Mac's own menu for a session (SidebarView.swift:600-643), in its order and
+        // with its words: pinned or not, beside the one in view, its name, the folder it
+        // works in, the conversation as Markdown, put away or brought back, and the one
+        // that undoes.
+        const found = [...state.sessions, ...Object.values(state.sessionsByProject).flat()].find(session => session.id === menu.id);
+        const isArchived = found ? archived(found) : false;
+        const isPinned = found?.metadata?.["kuvo.pinned"] === true;
+        return (
+          <ContextMenu
+            x={menu.x}
+            y={menu.y}
+            onClose={() => setMenu(null)}
+            items={[
+              ...(isArchived || !found ? [] : [{
+                label: isPinned ? "Unpin" : "Pin",
+                run: () => void pinSession(found, !isPinned),
+              }]),
+              // The Mac's Open Beside: how a session is chosen for the split (SidebarView.swift:609).
+              ...(menu.id !== state.session?.id ? [{ label: "Open Beside", run: () => void openBeside(menu.id) }] : []),
+              { label: "Rename…", run: () => setRenaming(menu.id) },
+              { label: "Show in Folder", run: () => showInFolder(found?.location?.directory ?? "") },
+              { label: "", separator: true },
+              { label: "Copy as Markdown", run: () => { if (found) void copyMarkdown(found); } },
+              { label: "Export as Markdown…", run: () => { if (found) void exportMarkdownOf(found); } },
+              { label: "", separator: true },
+              { label: isArchived ? "Unarchive" : "Archive", run: () => { if (found) void archiveSession(found, !isArchived); } },
+              { label: "Delete…", danger: true, run: () => { if (found) void deleteSession(found); } },
+            ]}
+          />
+        );
+      })() : null}
       {projectMenu ? (
         <ContextMenu
           x={projectMenu.x}

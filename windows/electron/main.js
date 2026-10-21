@@ -316,6 +316,13 @@ ipcMain.on("kuvo:maximize", () => {
   else mainWindow.maximize();
 });
 
+// A folder opened where the user can see it: the Mac's "Show in Finder" is the Explorer
+// here (SidebarView.swift:616).
+ipcMain.on("kuvo:show-in-folder", (_event, path) => {
+  if (typeof path !== 'string' || !path) return;
+  shell.openPath(path);
+});
+
 // The page asks the bridge what only the shell knows (preload.js): the terminal's port.
 ipcMain.on("kuvo:terminal-port", (event) => {
   event.returnValue = terminalPort;

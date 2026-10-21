@@ -6,6 +6,8 @@ import { useEffect, useState } from "react";
 import { api } from "./api";
 import type { Agent, AppState, Attachment, Command, FormRequest, McpServer, Model, SessionDiff, SessionSummary, Transcript, VcsInfo } from "./api";
 import { apply, emptyTranscript, fromHistory, sessionOf } from "../../harness/transcript.mjs";
+import { conversationMarkdown } from "../../harness/markdown.mjs";
+import { toolSummary } from "./components/tool-call";
 import { compatibilitySettings, copilotClaude } from "./compatibility.mjs";
 
 export const state: AppState = {
@@ -641,28 +643,94 @@ export async function newSession(directory?: string) {
   }
 }
 
-/// The conversation as Markdown, the way the Mac app writes it out.
-export async function exportConversation() {
-  const transcript = state.transcript;
-  if (!transcript) return;
-  const lines: string[] = [];
-  const query = state.findQuery.trim().toLowerCase();
-  const visible = query
-    ? transcript.entries.filter(entry => (entry.parts ?? []).map(part => part.text ?? "").join(" ").toLowerCase().includes(query))
-    : transcript.entries;
-  for (const entry of visible) {
-    if (entry.kind === "user") lines.push(`## You\n\n${entry.text ?? ""}`);
-    else if (entry.kind === "assistant") {
-      for (const part of entry.parts ?? []) if (part.type === "text") lines.push(part.text ?? "");
-    }
+/// The conversation as Markdown, the way the Mac app writes it out
+/// (ConversationExport.swift:9-69): the title over it, "You" and "Agent" as the speakers,
+/// the agent's steps listed together. Any session, not only the one in view: the Mac
+/// reads the session's own history (Workspace.swift:462-466).
+export async function markdownOf(session: SessionSummary): Promise<string> {
+  const detail = await api<{ session: SessionSummary; messages: unknown[]; permissions: unknown[]; running: boolean; revert?: { messageID: string } }>(
+    `/api/sessions/${encodeURIComponent(session.id)}`,
+  );
+  const messages = [...((detail.messages ?? []) as { id?: string }[])];
+  // What an undo took back is not in the export (ConversationExport.swift:81-83).
+  const undone = detail.revert?.messageID ? messages.findIndex(message => message?.id === detail.revert?.messageID) : -1;
+  if (undone >= 0) messages.splice(undone);
+  const transcript = fromHistory(session.id, messages as never[], (detail.permissions ?? []) as never[], detail.running);
+  const directory = session.location?.directory ?? "";
+  return conversationMarkdown(session.title || "New Session", transcript, {
+    directory,
+    summary: part => toolSummary(part.name, part.input, false, directory),
+  });
+}
+
+/// The conversation written out, as a file the user chooses where to put: the Mac asks
+/// with a save panel, and the download asks the shell for one.
+export async function exportMarkdownOf(session: SessionSummary) {
+  try {
+    const text = await markdownOf(session);
+    const blob = new Blob([text], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    // The Mac's own name for the file (Workspace.swift:572): the session's name, with the
+    // slashes a name cannot hold turned into dashes.
+    anchor.download = `${(session.title || "Conversation").replace(/\//g, "-")}.md`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    complain(error);
   }
-  const blob = new Blob([lines.join("\n\n")], { type: "text/markdown" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = `${state.session?.title ?? "conversation"}.md`;
-  anchor.click();
-  URL.revokeObjectURL(url);
+}
+
+/// The conversation on the clipboard, as Markdown (the Mac's "Copy as Markdown",
+/// SidebarView.swift:626-634).
+export async function copyMarkdown(session: SessionSummary) {
+  try {
+    const text = await markdownOf(session);
+    await navigator.clipboard?.writeText(text);
+  } catch (error) {
+    complain(error);
+  }
+}
+
+export async function exportConversation() {
+  const session = state.session;
+  if (!session) return;
+  await exportMarkdownOf(session);
+}
+
+/// A session pinned to the top of the sidebar, or taken off (the Mac's
+/// Workspace.swift:360-364, the mark "kuvo.pinned").
+export async function pinSession(session: SessionSummary, pinned: boolean) {
+  try {
+    await api(`/api/sessions/${encodeURIComponent(session.id)}/pin`, { method: "POST", body: { pinned } });
+    await loadSessions();
+    await loadProjectSessions();
+  } catch (error) {
+    complain(error);
+  }
+}
+
+/// A session put away, or brought back (the Mac's Workspace.swift:351-355).
+export async function archiveSession(session: SessionSummary, archived: boolean) {
+  try {
+    await api(`/api/sessions/${encodeURIComponent(session.id)}/archive`, { method: "POST", body: { archived } });
+    if (archived && state.session?.id === session.id) {
+      state.session = null;
+      state.transcript = null;
+    }
+    await loadSessions();
+    await loadProjectSessions();
+  } catch (error) {
+    complain(error);
+  }
+}
+
+/// The folder a session works in, opened where the user can see it: the Mac's "Show in
+/// Finder" is the Explorer here (SidebarView.swift:616).
+export function showInFolder(directory: string) {
+  if (!directory) return;
+  (window as unknown as { kuvo?: { showInFolder?: (path: string) => void } }).kuvo?.showInFolder?.(directory);
 }
 
 export async function undoFromHere(entry: { id?: string; text?: string }) {

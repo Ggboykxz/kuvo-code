@@ -16,4 +16,7 @@ contextBridge.exposeInMainWorld("kuvo", {
   // The project the app switched to: the shell remembers it, so the app opens here next
   // time (Workspace.projects, and the Mac's own list of folders).
   rememberProject: (folder) => ipcRenderer.send("kuvo:remember-project", folder),
+  // A folder opened where the user can see it: the Mac's "Show in Finder" is the
+  // Explorer here (SidebarView.swift:616).
+  showInFolder: (path) => ipcRenderer.send("kuvo:show-in-folder", path),
 });

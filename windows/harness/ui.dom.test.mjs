@@ -465,6 +465,22 @@ test("the page, in a browser, against the real engine", {
   await page.element("split-close").click();
   await page.seen("the split card to close", () => document.getElementById("split-pane")?.hidden === true, null, 10_000);
 
+  // The session's own menu: the Mac's, in its order (SidebarView.swift:600-643), and the
+  // pin that keeps a session at the top of the sidebar.
+  const other = page.page.locator("#sessions li:not(.current) button.session").first();
+  await other.click({ button: "right" });
+  await page.seen("the session's menu to open", () => document.querySelector(".context-menu") !== null, null, 10_000);
+  assert.deepEqual(
+    (await page.page.locator(".context-menu [role='menuitem']").allTextContents()).map(text => text.trim()),
+    ["Pin", "Open Beside", "Rename…", "Show in Folder", "Copy as Markdown", "Export as Markdown…", "Archive", "Delete…"],
+    "the menu is the Mac's, in its order",
+  );
+  await page.page.locator(".context-menu [role='menuitem']", { hasText: "Pin" }).click();
+  await page.seen("the pinned session to sit at the top of the sidebar", () => {
+    const section = [...document.querySelectorAll(".section-title")].find(node => node.textContent?.trim() === "Pinned");
+    return Boolean(section) && Boolean(document.querySelector(".sessions.pinned li"));
+  }, null, 10_000);
+
   // Nothing in the page complained.
   assert.deepEqual([...page.errors, ...reloaded.errors, ...reread.errors], [], "the page had nothing to complain about");
 

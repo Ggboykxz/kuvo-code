@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { EngineClient, EngineError, messageID } from "./engine.mjs";
+import { conversationMarkdown } from "./markdown.mjs";
 import { paneLayout } from "./layout.mjs";
 import { apply, applyAll, emptyTranscript, fromHistory } from "./transcript.mjs";
 import { startHarness } from "./server.mjs";
@@ -738,6 +739,72 @@ test("a session can be put away and brought back, the way the Mac app does it", 
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ archived: false }),
   });
   assert.equal(back.status, 200);
+});
+
+test("a session can be pinned, and the mark goes out with the session's own metadata", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+
+  // The session carries a mark of its own: the pin goes out with it, because the engine
+  // may merge metadata rather than replace it (Workspace.swift:366-375).
+  engine.session.metadata = { "kuvo.archived": false };
+
+  const pinned = await fetch(`${url}api/sessions/${engine.session.id}/pin`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pinned: true }),
+  });
+  assert.equal(pinned.status, 200);
+  assert.deepEqual(await pinned.json(), { ok: true, pinned: true });
+  const change = engine.asked.find(asked => asked.method === "PATCH");
+  assert.ok(change, "the engine was asked to change the session");
+  assert.equal(change.body.metadata["kuvo.pinned"], true);
+  assert.equal(change.body.metadata["kuvo.archived"], false, "the other marks stay");
+
+  const unpinned = await fetch(`${url}api/sessions/${engine.session.id}/pin`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pinned: false }),
+  });
+  assert.equal(unpinned.status, 200);
+  assert.deepEqual(await unpinned.json(), { ok: true, pinned: false });
+});
+
+test("a conversation is written out as Markdown, the Mac's way", () => {
+  // ConversationExport.swift:9-69: the title over it, "You" and "Agent" as the speakers,
+  // the agent's steps listed together, the blocks a blank line apart.
+  const transcript = {
+    entries: [
+      { kind: "user", text: "What should we do?", files: [{ name: "notes.txt" }] },
+      {
+        kind: "assistant",
+        parts: [
+          { type: "tool", name: "read", input: { path: "notes.txt" } },
+          { type: "text", text: "We read the notes." },
+        ],
+      },
+    ],
+  };
+  const markdown = conversationMarkdown("Notes", transcript, { summary: part => `Read ${part.input.path}` });
+  assert.equal(
+    markdown,
+    [
+      "# Notes",
+      "",
+      "**You**",
+      "",
+      "What should we do?",
+      "",
+      "Attached: notes.txt",
+      "",
+      "**Agent**",
+      "",
+      "- Read notes.txt",
+      "",
+      "We read the notes.",
+      "",
+    ].join("\n"),
+  );
+  // A conversation with nothing in it is still its title.
+  assert.equal(conversationMarkdown("New Session", { entries: [] }), "# New Session\n");
 });
 
 test("the project's changes are read from git, and a commit is really made", async t => {
