@@ -211,6 +211,19 @@ final class Catalog {
         OutsideAgents.runsInBridge(ref.providerID) ? areAgentsLoaded : isLoaded
     }
 
+    /// What the composer's chip shows for `ref`: its model; one whose models aren't known yet
+    /// (the coding agents still starting) as it is, by its ID, not the default as if that were
+    /// the one in use; nothing picked, the default.
+    func shownModel(_ ref: ModelRef?) -> Model? {
+        if let model = model(ref) { return model }
+        guard let ref, !isKnown(ref) else { return ref == nil ? defaultModel : nil }
+        var placeholder = Self.autoTemplate
+        placeholder.id = ref.id
+        placeholder.providerID = ref.providerID
+        placeholder.name = ref.providerID == OutsideAgents.autoProvider ? "Custom Auto" : ref.id
+        return placeholder
+    }
+
     /// The model a new session or bot starts on: the first of `wanted` (the one picked, the one
     /// picked last) you can use now; else the engine's default, if you can; else the first model
     /// you can use. A model whose account you signed out of would only fail. Before the models are

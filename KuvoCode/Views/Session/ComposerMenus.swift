@@ -218,7 +218,7 @@ struct ModelChip<Label: View>: View {
     /// The model picked can't be used now: the chip asks for another rather than show the
     /// default as if it were in use.
     private var isUnavailable: Bool { catalog.isUnavailable(selection) || selection.map { !scope.allows($0.providerID) } == true }
-    private var current: Model? { isUnavailable ? nil : catalog.model(selection) ?? catalog.defaultModel }
+    private var current: Model? { isUnavailable ? nil : catalog.shownModel(selection) ?? catalog.defaultModel }
     private var variant: String? { current.flatMap { model in selection?.sameModel(as: model.ref) == true ? selection?.variant : nil } }
 
     var body: some View {

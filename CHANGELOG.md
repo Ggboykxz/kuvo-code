@@ -15,6 +15,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - With two sessions side by side, Add to Message and Add Screenshot to Message from the panel go to the session you're working in, the one beside once you've clicked into it, rather than the other; the panel stays that session's.
 - A group chat's panel browser doesn't offer Add Screenshot to Message, which did nothing there: a group chat's messages are words only.
 - The number on the Dock counts a session once while its subagents ask you something, rather than once for each subagent.
+- While the coding agents start, the composer's chip shows the session's Claude Code, Codex or Custom Auto model as it is, rather than the engine's default as if that were the one in use.
 
 ## 0.6.4
 

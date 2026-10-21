@@ -122,6 +122,10 @@ import Testing
         try await engine(accounts: [Self.account("openai", signedIn: true)], models: [Self.model("openai", "luna")], defaultModel: Self.model("openai", "luna"))
         let claude = ModelRef(id: "opus", providerID: "claude-code")
         #expect(catalog.startingModel(claude) == claude)
+        // The chip shows it, not the default as if that were the one in use.
+        #expect(catalog.shownModel(claude)?.ref.sameModel(as: claude) == true)
+        #expect(catalog.shownModel(Catalog.autoRef)?.name == "Custom Auto")
+        #expect(catalog.shownModel(nil)?.ref.sameModel(as: luna) == true, "nothing picked: the default")
         // The agents can't run (their bridge stopped): the default instead.
         catalog.forgetAgents()
         #expect(catalog.startingModel(claude) == luna)
