@@ -96,4 +96,26 @@ import Testing
         func add(_ delivery: String) { lock.withLock { list.append(delivery) } }
         var all: [String] { lock.withLock { list } }
     }
+
+    /// The agent asks to run a command: the ask shows in the conversation; your answer (from a
+    /// notification too) goes to the engine, and the ask goes once the engine has it.
+    @Test func aPermissionAskedAndAnswered() async throws {
+        defer { done() }
+        let bodies = Bodies()
+        StubWeb.handle(Self.engine + "/api/session/\(id)/permission/") { request, body in
+            bodies.add((try? JSONSerialization.jsonObject(with: body) as? [String: Any])?["decision"] as? String ?? "")
+            return StubWeb.json([:])
+        }
+        let model = try #require(workspace.model(for: id))
+        func event(_ type: String, _ data: [String: Any]) throws -> ServerEvent {
+            try ServerEvent(json: JSONSerialization.data(withJSONObject: ["id": UUID().uuidString, "type": type, "created": 1, "data": data]))
+        }
+        workspace.handle(try event("permission.asked", ["id": "per_1", "sessionID": id, "action": "shell", "resources": ["rm -rf build"]]))
+        #expect(model.permissions.map(\.id) == ["per_1"])
+        workspace.answer("per_1", in: id, with: .once)
+        try await until { !bodies.all.isEmpty }
+        #expect(bodies.all == ["once"])
+        workspace.handle(try event("permission.replied", ["sessionID": id, "requestID": "per_1"]))
+        #expect(model.permissions.isEmpty)
+    }
 }
