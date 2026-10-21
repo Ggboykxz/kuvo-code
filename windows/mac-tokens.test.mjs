@@ -638,7 +638,8 @@ const checks = [
   ["a comment in the conversation is the Mac's own card", ({ app, css, review, symbols, rule }) => {
     // The message is taken apart, and the comments shown above the words
     // (AgentReferences.swift:170-179, YourMessage.swift:22, 829-831).
-    assert.match(app, /splitComments\(entry\.text \?\? ""\)/);
+    assert.match(app, /function UserWords\(/);
+    assert.match(app, /splitComments\(text\)/);
     assert.match(app, /className="comment-reference"/);
     // The place it points to, with the Mac's mark beside it (ChangesPanel.swift:1130).
     assert.match(app, /<Symbol name="text\.bubble" size=\{11\} \/>/);
