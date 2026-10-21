@@ -298,20 +298,35 @@ nonisolated enum Git {
     /// The first of the folders `path` is in (in the repository at `root`) that is something else
     /// now, a file or a link: git would delete it to put the folder back.
     private static func fileInPlace(ofFoldersOf path: String, in root: String) -> URL? {
-        let folders = path.split(separator: "/").dropLast()
+        let folders = path.split(separator: "/").dropLast().map(String.init)
         guard !folders.isEmpty else { return nil }
         var url = RemoteFolder.url(root)
+        // On a machine, every level in one go: something else there, or nothing (then nothing
+        // below it either).
+        if !url.isFileURL, let (machine, base) = RemoteFolder.parse(url) {
+            var levels: [String] = []
+            for folder in folders { levels.append((levels.last.map { $0 + "/" } ?? "") + folder) }
+            guard let data = RemoteShell.run(fileInPlaceScript(base: base, levels: levels), on: machine), !data.isEmpty else { return nil }
+            return url.appending(path: String(decoding: data, as: UTF8.self))
+        }
         for folder in folders {
-            url = url.appending(path: String(folder))
-            if url.isFileURL {
-                guard let type = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType else { return nil }
-                if type != .typeDirectory { return url }
-            } else if let isFolder = RemoteShell.isFolder(url), !isFolder {
-                // Not a folder: something else there, or nothing (then nothing below it either).
-                return RemoteShell.exists(url) == true ? url : nil
-            }
+            url = url.appending(path: folder)
+            guard let type = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType else { return nil }
+            if type != .typeDirectory { return url }
         }
         return nil
+    }
+
+    /// Of `levels` (folders in `base`, each inside the one before), the first that's a file or a
+    /// link now, as it says it; nothing when they're all folders, or one isn't there.
+    static func fileInPlaceScript(base: String, levels: [String]) -> String {
+        """
+        cd \(SSHConnection.quoted(base)) || exit 0
+        for d in \(levels.map(SSHConnection.quoted).joined(separator: " ")); do
+          if [ -L "$d" ] || { [ -e "$d" ] && [ ! -d "$d" ]; }; then printf '%s' "$d"; exit 0; fi
+          [ -d "$d" ] || exit 0
+        done
+        """
     }
 
     /// To the Trash on this Mac; on a machine, which has none, to `~/.kuvo-code/trash` there.
