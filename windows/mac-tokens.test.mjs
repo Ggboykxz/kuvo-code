@@ -176,11 +176,11 @@ const checks = [
     assert.match(fade, /height: 62px/);
     assert.match(fade, /mask-image: linear-gradient/);
     assert.match(app, /className="card conversation-card"/);
-    assert.match(app, /<CardHeader \/>/);
+    assert.match(app, /<CardHeader\s+session=\{state\.session\}/);
   }],
 
   ["the conversation runs under the header, and the composer is inside the card", ({ css, app }) => {
-    assert.match(css, /#conversation #entries \{ padding: calc\(var\(--card-header\) \+ 16px\)/);
+    assert.match(css, /#conversation #entries, #split-entries \{ padding: calc\(var\(--card-header\) \+ 16px\)/);
     const composer = css.slice(css.lastIndexOf(".composer {"));
     assert.match(composer, /max-width: var\(--readable-width\)/);
     assert.match(app, /<Composer \/>/);
@@ -425,6 +425,38 @@ const checks = [
     // was over (the live test kept meeting it).
     assert.ok(transcript.includes("const done = Boolean(last?.completed)"), "the message's own state is read");
     assert.match(transcript, /transcript\.running = !done && Boolean\(running\) && \(unfinished \|\| !written\)/, "either half can end the run, and a finished message ends it first");
+  }],
+
+  ["the split pane is a card, and its head is the conversation's own", ({ app, css }) => {
+    // The Mac draws the split as a Card with the same header the conversation has
+    // (MainView.swift:733-754): its session's title, its ring, Swap and Close. Nothing
+    // there is a strip of its own — no picker, no band that could pass for a title bar.
+    assert.ok(app.includes('id="split-pane" className="card split-pane"'), "the split is a card");
+    assert.ok(!app.includes('className="split-head"') && !app.includes('id="split-session"'), "no strip of controls of its own");
+    assert.ok(css.includes("#conversation #entries, #split-entries { padding: calc(var(--card-header) + 16px)"), "its rows run under its header as the conversation's do");
+    assert.ok(app.includes("function SplitHeader()") && app.includes("<CardHeader session={split}"), "the very same CardHeader heads it");
+    assert.ok(app.includes('title="Swap the two sessions"') && app.includes('title="Close Split View"'), "the Mac's two actions");
+    assert.ok(app.includes("<ContextGauge session={split} />"), "its own ring");
+  }],
+
+  ["every open conversation follows the engine's events, and a connection re-reads them", ({ store }) => {
+    // The Mac routes each event to the model of the session it names (Workspace.swift:1458)
+    // and at a reconnection reads everything on screen again (AppModel.swift:448-459 →
+    // Workspace.resync, Workspace.swift:1347-1359). The page does the same: the split's
+    // transcript is kept current, and a connection re-reads the list and both conversations.
+    assert.ok(store.includes("state.transcripts.forEach((transcript, id) =>"), "the events reach the split's own transcript");
+    assert.ok(store.includes("source.onopen = () => { void resync(); }"), "a connection re-reads");
+    assert.match(store, /async function resync\(\)[\s\S]*?await loadSessions\(\);[\s\S]*?await openSession\(state\.session\.id\);[\s\S]*?await openSplit\(state\.split, true\);/, "the list and both open conversations");
+    assert.ok(store.includes("if (state.split && ended === state.split) await openSplit(state.split, true);"), "a turn that ends in the split is read back");
+  }],
+
+  ["a session opens beside another the Mac's way", ({ app, store }) => {
+    // Open Beside is the Mac's (SidebarView.swift:609, MainView.swift:757-775): the session
+    // opens beside the one in view — the pane never carries a picker of its own.
+    assert.ok(app.includes('label: "Open Beside"'), "the session's menu offers it");
+    assert.ok(app.includes("async function openBeside(id: string)"), "it opens the pair");
+    assert.ok(app.includes("if (!id || id === state.session?.id) return;"), "the session in view is not opened beside itself");
+    assert.ok(store.includes("export async function openSplit(id: string, force = false)"), "the split's history reads through the store");
   }],
 
   ["the page listens for the engine's own event names, and the transcript knows them", ({ app, transcript, mac }) => {

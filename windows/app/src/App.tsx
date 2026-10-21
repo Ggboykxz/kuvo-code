@@ -1,10 +1,9 @@
 // The conversation view, in React: sessions on the left, the transcript and the composer
 // on the right. The engine's events keep the transcript current, as they always did.
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "./api";
 import type { Attachment, FormRequest, PermissionRequest, SessionSummary, Transcript, TranscriptEntry } from "./api";
-import { fromHistory } from "../../harness/transcript.mjs";
 import { brief, compactTokens, errorText, renderMarkdown } from "./lib";
 import { isRecording, keysOf, matchesEvent, shortcutFor } from "./shortcuts";
 import { draftKey, readDraft, saveDraft } from "./drafts.mjs";
@@ -34,6 +33,7 @@ import {
   openProject,
   openProjectFile,
   openSession,
+  openSplit,
   redoNow,
   render,
   removeProject,
@@ -716,11 +716,12 @@ function FormCard({ form }: { form: FormRequest }) {
 
 // ---- The header ----
 
-/// The Mac's context ring, in the conversation card's header (the same figures as before).
-function ContextGauge() {
+/// The Mac's context ring, in a card's header (the same figures as before) — the
+/// conversation's own card and the split's each take one, over their own session.
+function ContextGauge({ session = state.session }: { session?: SessionSummary | null }) {
   const [gaugeOpen, setGaugeOpen] = useState(false);
-  const total = state.session?.tokens?.total ?? 0;
-  const model = state.models.find(item => state.session?.model && `${item.providerID}/${item.id}` === `${state.session.model.providerID}/${state.session.model.id}`);
+  const total = session?.tokens?.total ?? 0;
+  const model = state.models.find(item => session?.model && `${item.providerID}/${item.id}` === `${session.model.providerID}/${session.model.id}`);
   const limit = model?.limit?.context ?? 0;
   const fraction = limit > 0 ? Math.min(total / limit, 1) : null;
   // The popover sits by the gauge, and flips to the other side when it would not fit
@@ -739,8 +740,9 @@ function ContextGauge() {
   }, [gaugeOpen]);
   return (
     <>
+      {/* No id: the split card carries the same gauge, and both know each other (and are
+          known) by class — two cards, one ring each, never a claim on the window. */}
       <div
-        id="context-gauge"
         ref={gauge}
         className={`context-gauge ${fraction !== null && fraction > 0.8 ? "warn" : ""}`}
         hidden={!total}
@@ -750,7 +752,6 @@ function ContextGauge() {
         {fraction !== null ? `${Math.round(fraction * 100)}%` : compactTokens(total)}
       </div>
       <div
-        id="gauge-pop"
         ref={pop}
         className="gauge-pop"
         hidden={!gaugeOpen}
@@ -760,17 +761,17 @@ function ContextGauge() {
           {fraction !== null ? `${Math.round(fraction * 100)}% of the context window` : `${compactTokens(total)} tokens in the context window`}
         </div>
         {limit ? <div className="gauge-line">{`${compactTokens(total)} of ${compactTokens(limit)} tokens`}</div> : null}
-        {typeof state.session?.cost === "number" ? <div className="gauge-line">{`Session cost so far: $${state.session.cost.toFixed(4)}`}</div> : null}
-        {state.session?.model ? <div className="gauge-line faint">{`${state.session.model.providerID}/${state.session.model.id}`}</div> : null}
+        {typeof session?.cost === "number" ? <div className="gauge-line">{`Session cost so far: $${session.cost.toFixed(4)}`}</div> : null}
+        {session?.model ? <div className="gauge-line faint">{`${session.model.providerID}/${session.model.id}`}</div> : null}
         <button
           className="small"
           title="Squeeze the conversation into a summary, like the Mac app's compact"
           onClick={async () => {
-            if (!state.session) return;
+            if (!session) return;
             try {
-              await api(`/api/sessions/${encodeURIComponent(state.session.id)}/compact`, { method: "POST", body: {} });
+              await api(`/api/sessions/${encodeURIComponent(session.id)}/compact`, { method: "POST", body: {} });
               setGaugeOpen(false);
-              await openSession(state.session.id);
+              await openSession(session.id);
             } catch (error) { complain(error); }
           }}
         >
@@ -781,11 +782,16 @@ function ContextGauge() {
   );
 }
 
-/// The conversation card's 38 pt header: the session, its project, and the card's own
-/// actions (Card.swift:91-124). The title bar above keeps the window's own controls.
-function CardHeader() {
-  const title = state.session?.title || "New Session";
-  const folder = state.project ? state.project.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "" : "";
+/// The Mac's card header (Card.swift:91-124): the card's mark, the session's name over
+/// its project, and the card's own actions. The conversation card and the split beside it
+/// take the same one — it is a card's head, never the window's title bar, which keeps the
+/// window's controls above it (TitleBar.swift).
+function CardHeader({ session, folder, tooltip, children }: {
+  session?: SessionSummary | null;
+  folder?: string;
+  tooltip?: string;
+  children: ReactNode;
+}) {
   return (
     <div className="card-header">
       <span className="card-icon" aria-hidden="true">
@@ -793,36 +799,12 @@ function CardHeader() {
           <path d="M2.75 3.25h10.5v6.9H8.1l-3.1 2.6v-2.6H2.75z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
         </svg>
       </span>
-      <div className="card-title" title={state.project ?? undefined}>
-        <span>{title}</span>
+      <div className="card-title" title={tooltip}>
+        <span>{session?.title || "New Session"}</span>
         {folder ? <span className="card-detail">{"\u00A0| "}{folder}</span> : null}
       </div>
       <div className="spacer" />
-      <div className="card-actions">
-        <button
-          id="split"
-          className={`card-action icon ${state.split ? "active" : ""}`}
-          title="Show a second session beside this one"
-          aria-label="Split view"
-          onClick={() => void toggleSplit()}
-        >
-          <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-            <rect x="2.2" y="3" width="11.6" height="10" rx="2" stroke="currentColor" strokeWidth="1.2" />
-            <path d="M8 3v10" stroke="currentColor" strokeWidth="1.2" />
-          </svg>
-        </button>
-        {state.sessionDiff.length ? (
-          <button
-            id="changes"
-            className="card-action"
-            title="The files this session changed"
-            onClick={() => { state.diffOpen = true; render(); }}
-          >
-            {`Changes (${state.sessionDiff.length})`}
-          </button>
-        ) : null}
-        <ContextGauge />
-      </div>
+      <div className="card-actions">{children}</div>
     </div>
   );
 }
@@ -1023,24 +1005,88 @@ function SessionTabs() {
 }
 
 /// The session the split pane shows, read as the main pane reads its own.
-async function openSplit(id: string) {
-  if (!id) return;
-  if (state.transcripts.has(id)) return;
-  try {
-    const detail = await api<{ session: SessionSummary; messages: unknown[]; permissions: unknown[]; running: boolean }>(`/api/sessions/${encodeURIComponent(id)}`);
-    state.transcripts.set(id, fromHistory(id, detail.messages as never[], detail.permissions as never[], detail.running));
-  } catch (error) {
-    complain(error);
-  }
+/// The Mac's Open Beside (SidebarView.swift:609, MainView.swift:757-775): the session
+/// opens beside the one in view, as the pair the split keeps — how a session is chosen for
+/// the split, with no picker of its own inside the pane.
+async function openBeside(id: string) {
+  if (!id || id === state.session?.id) return;
+  state.split = id;
+  await openSplit(id);
+  render();
 }
 
 async function toggleSplit() {
   const other = state.openSessions.find(id => id !== state.session?.id) ?? state.sessions.find(s => s.id !== state.session?.id)?.id;
   if (state.split) { state.split = null; render(); return; }
   if (!other) return;
-  state.split = other;
-  await openSplit(other);
-  render();
+  await openBeside(other);
+}
+
+/// The Mac's Swap (MainView.swift:743-747): the session in view and the one beside it
+/// exchange places.
+function swapSplit() {
+  const other = state.split;
+  const main = state.session?.id;
+  if (!other || !main || other === main) return;
+  state.split = main;
+  void openSplit(main);
+  void openSession(other);
+}
+
+/// The session beside the one in view: the list's own row for it, or its id alone — the
+/// Mac's split card titles itself from its session (MainView.swift:735), not from a picker.
+function splitSession(): SessionSummary | null {
+  if (!state.split) return null;
+  const found = [...state.sessions, ...Object.values(state.sessionsByProject).flat()].find(s => s.id === state.split);
+  return found ?? { id: state.split, title: null };
+}
+
+/// The split card's own head: the Mac draws the split as a card with the very header the
+/// conversation's card has (MainView.swift:733-754) — its session's name over the
+/// project, its ring, and Swap and Close. No strip of controls, nothing that could pass
+/// for the window's title bar above.
+function SplitHeader() {
+  const split = splitSession();
+  if (!state.split || !split) return null;
+  const directory = split.location?.directory ?? "";
+  return (
+    <CardHeader session={split} folder={folderName(directory)} tooltip={directory || undefined}>
+      <ContextGauge session={split} />
+      <button id="split-swap" className="card-action icon" title="Swap the two sessions" aria-label="Swap the two sessions" onClick={swapSplit}>
+        <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+          <path
+            d="M4 6.5h8M12 6.5 9.5 4M12 6.5 9.5 9M12 9.5H4M4 9.5 6.5 7M4 9.5 6.5 12"
+            stroke="currentColor"
+            strokeWidth="1.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </button>
+      <button id="split-close" className="card-action icon" title="Close Split View" aria-label="Close Split View" onClick={() => { state.split = null; render(); }}>
+        <Symbol name="xmark" size={11} />
+      </button>
+    </CardHeader>
+  );
+}
+
+/// The split card's conversation: the same rows the conversation shows, with the Mac's
+/// question over them while there is nothing in them yet — the same TranscriptView draws
+/// it there too (TranscriptView.swift:69-75) — and the working line while its run goes.
+function SplitEntries() {
+  const transcript = state.split
+    ? state.transcripts.get(state.split) ?? { entries: [], pending: [], permissions: [], running: false }
+    : null;
+  if (!transcript) return null;
+  return (
+    <>
+      {transcript.entries.length === 0 && transcript.pending.length === 0
+        ? <EmptyConversation directory={splitSession()?.location?.directory ?? ""} />
+        : null}
+      <EntryNodes transcript={transcript} />
+      {transcript.running ? <WorkingLine transcript={transcript} /> : null}
+    </>
+  );
 }
 
 // ---- The sidebar ----
@@ -1301,6 +1347,8 @@ function Sidebar() {
           y={menu.y}
           onClose={() => setMenu(null)}
           items={[
+            // The Mac's Open Beside: how a session is chosen for the split (SidebarView.swift:609).
+            ...(menu.id !== state.session?.id ? [{ label: "Open Beside", run: () => void openBeside(menu.id) }] : []),
             { label: "Rename…", run: () => setRenaming(menu.id) },
             { label: "Delete", run: () => {
               const found = [...state.sessions, ...Object.values(state.sessionsByProject).flat()].find(session => session.id === menu.id);
@@ -2025,7 +2073,35 @@ export function App() {
         <PaneResizer />
         <section id="conversation" className="card conversation-card">
           <div className="card-fade" aria-hidden="true" />
-          <CardHeader />
+          <CardHeader
+            session={state.session}
+            folder={state.project ? state.project.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "" : ""}
+            tooltip={state.project ?? undefined}
+          >
+            <button
+              id="split"
+              className={`card-action icon ${state.split ? "active" : ""}`}
+              title="Show a second session beside this one"
+              aria-label="Split view"
+              onClick={() => void toggleSplit()}
+            >
+              <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+                <rect x="2.2" y="3" width="11.6" height="10" rx="2" stroke="currentColor" strokeWidth="1.2" />
+                <path d="M8 3v10" stroke="currentColor" strokeWidth="1.2" />
+              </svg>
+            </button>
+            {state.sessionDiff.length ? (
+              <button
+                id="changes"
+                className="card-action"
+                title="The files this session changed"
+                onClick={() => { state.diffOpen = true; render(); }}
+              >
+                {`Changes (${state.sessionDiff.length})`}
+              </button>
+            ) : null}
+            <ContextGauge />
+          </CardHeader>
           {state.findOpen ? <FindBar /> : null}
           <div id="empty" className="empty" hidden={hasSession}>
             <h1>{needsFolder ? "Open a folder" : "A session to work in"}</h1>
@@ -2075,25 +2151,11 @@ export function App() {
           </div>
           <Composer />
         </section>
-        <section id="split-pane" className="split-pane" hidden={!state.split}>
-          <div className="split-head">
-            <select
-              id="split-session"
-              title="The session shown here"
-              value={state.split ?? ""}
-              onChange={event => { state.split = event.target.value; void openSplit(event.target.value); render(); }}
-            >
-              {state.openSessions.map(id => {
-                const session = state.sessions.find(s => s.id === id);
-                return <option key={id} value={id}>{session?.title || id.slice(0, 8)}</option>;
-              })}
-            </select>
-            <button id="split-close" className="small" title="Close this session" aria-label="Close this session" onClick={() => { state.split = null; render(); }}>
-              <Symbol name="xmark" size={11} />
-            </button>
-          </div>
+        <section id="split-pane" className="card split-pane" hidden={!state.split}>
+          <div className="card-fade" aria-hidden="true" />
+          <SplitHeader />
           <div id="split-entries" className="entries">
-            {state.split ? <EntryNodes transcript={state.transcripts.get(state.split) ?? { entries: [], pending: [], permissions: [], running: false }} /> : null}
+            <SplitEntries />
           </div>
         </section>
         <Drawer />

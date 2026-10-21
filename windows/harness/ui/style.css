@@ -802,18 +802,6 @@ main { display: flex; }
   background: var(--panel);
 }
 .split-pane[hidden] { display: none; }
-.split-head {
-  display: flex; align-items: center; gap: var(--space-2);
-  padding: var(--space-2) var(--gutter);
-  border-bottom: 1px solid var(--line-soft);
-}
-.split-head select {
-  flex: 1; max-width: 320px;
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--line); border-radius: var(--radius-sm);
-  background: var(--panel-2); color: var(--ink);
-  font-size: var(--text-sm);
-}
 #split-entries { flex: 1; overflow: auto; }
 #split.active {
   background: var(--accent-soft);
@@ -2089,8 +2077,9 @@ header:has(#find:focus) .header-find {
   opacity: 1;
 }
 
-/* The conversation runs under the header: 38 + 16 pt above, 32 pt under. */
-#conversation #entries { padding: calc(var(--card-header) + 16px) var(--gutter) 32px; }
+/* The conversation runs under the header: 38 + 16 pt above, 32 pt under — the split's
+   rows run under theirs the same way (one Card geometry, two cards). */
+#conversation #entries, #split-entries { padding: calc(var(--card-header) + 16px) var(--gutter) 32px; }
 #conversation .empty { padding-top: var(--card-header); }
 
 /* The composer is inside the card, on the readable column (SessionView.swift:179-181). */
@@ -2104,14 +2093,9 @@ header:has(#find:focus) .header-find {
   border-bottom: 1px solid var(--line-soft);
 }
 
-/* The split view is a card too. */
-.split-pane {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-card);
-  overflow: hidden;
-}
+/* The split view is the same card as the conversation (MainView.swift:733-754): it takes
+   the card's own class in the markup — radius, hairline, shadow — and never a strip of
+   its own that could be read as a second title bar. */
 
 /* The title bar is glass over the canvas, with no line drawn across the window. */
 header { border-bottom: 0; }

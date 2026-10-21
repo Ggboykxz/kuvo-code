@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
 import type { Agent, AppState, Attachment, Command, FormRequest, McpServer, Model, SessionDiff, SessionSummary, Transcript, VcsInfo } from "./api";
-import { apply, emptyTranscript, fromHistory } from "../../harness/transcript.mjs";
+import { apply, emptyTranscript, fromHistory, sessionOf } from "../../harness/transcript.mjs";
 import { compatibilitySettings, copilotClaude } from "./compatibility.mjs";
 
 export const state: AppState = {
@@ -208,6 +208,22 @@ export async function openSession(id: string) {
   }
 }
 
+/// The conversation beside the one in view: read once when it opens (the events keep it
+/// current from then on), and re-read when its turn ends or the line reconnects.
+export async function openSplit(id: string, force = false) {
+  if (!id) return;
+  if (!force && state.transcripts.has(id)) return;
+  try {
+    const detail = await api<{ session: SessionSummary; messages: unknown[]; permissions: unknown[]; running: boolean }>(
+      `/api/sessions/${encodeURIComponent(id)}`,
+    );
+    state.transcripts.set(id, fromHistory(id, detail.messages as never[], detail.permissions as never[], detail.running));
+    render();
+  } catch (error) {
+    complain(error);
+  }
+}
+
 export function closeSessionTab(id: string) {
   state.openSessions = state.openSessions.filter(s => s !== id);
   state.transcripts.delete(id);
@@ -248,7 +264,25 @@ export function connectEvents() {
       handleEvent(payload);
     } catch {}
   };
+  // Missed events are not replayed, so at a connection the Mac re-reads everything on
+  // screen — the catalog and every open session (AppModel.swift:448-459 →
+  // Workspace.resync, Workspace.swift:1347-1359). The page does the same with the three
+  // reads it already trusts: the list, the conversation in view, the one beside it.
+  source.onopen = () => { void resync(); };
   source.onerror = () => {};
+}
+
+/// After a connection: what the engine has now — a session made or put away while the
+/// line was down is in the list again, and the conversations open on screen are read from
+/// the engine's own messages, their words and their asks as they stand.
+async function resync() {
+  try {
+    await loadSessions();
+    if (state.session) await openSession(state.session.id);
+    if (state.split) await openSplit(state.split, true);
+  } catch (error) {
+    complain(error);
+  }
 }
 
 /// The events the engine sends, and the transcript's own names for them
@@ -305,14 +339,24 @@ function handleEvent(event: { type: string; data?: unknown }) {
   }
   if (CONVERSATION_EVENTS.has(event.type)) {
     state.transcript = apply(state.transcript, event as never);
+    // The session beside it keeps its own transcript current the same way: the Mac routes
+    // every event to the model of the session it names (Workspace.swift:1458, `models[id]`),
+    // so a conversation open beside the one in view keeps writing while you watch the
+    // other. An event for another session changes nothing (transcript.mjs filters by id).
+    state.transcripts.forEach((transcript, id) => {
+      state.transcripts.set(id, apply(transcript, event as never));
+    });
     render();
     // The run is over: read it back, the way the Mac does when the engine says the
     // turn ended (SessionModel.swift:640-655) — the words it has now are the words
     // there are.
     if (event.type === "session.execution.succeeded" || event.type === "session.execution.failed" || event.type === "session.execution.interrupted") {
+      const ended = sessionOf(event as never);
       void (async () => {
         await openSession(state.session!.id);
         await loadSessions();
+        // The words the split has now too, when its turn is the one that ended.
+        if (state.split && ended === state.split) await openSplit(state.split, true);
       })();
     }
   }

@@ -412,6 +412,33 @@ test("the page, in a browser, against the real engine", {
     return Boolean(node?.value?.includes(text));
   }, ["prompt", "a draft that is not sent"], 30_000);
 
+  // The split: another session beside this one, as the Mac draws it — a card with the same
+  // header the conversation has (its session's name, Swap, Close), the session's own rows
+  // read into it, and no strip of controls that could pass for the title bar.
+  const firstTitle = await page.page.locator("#sessions li .session-title").first().textContent();
+  await page.element("new-session").click();
+  await page.seen("the second session to be listed", () => document.querySelectorAll("#sessions li").length === 2, null, 30_000);
+  await page.element("split").click();
+  await page.seen("the split card to open", () => {
+    const pane = document.getElementById("split-pane");
+    return Boolean(pane) && pane.hidden === false && Boolean(pane.querySelector(".card-header"));
+  }, null, 30_000);
+  assert.equal(await page.page.locator("#split-pane .split-head").count(), 0, "the split has no strip of its own");
+  assert.equal(await page.page.locator("#split-pane .card-title > span:first-child").textContent(), firstTitle, "its head names the session beside this one");
+  await page.seen("the session beside this one to read back", ([id, text]) => {
+    const node = document.getElementById(id);
+    return Boolean(node?.textContent?.match(new RegExp(text, "i")));
+  }, ["split-entries", "hello from the page"], 30_000);
+  assert.equal(await page.page.locator("#split-swap").count(), 1, "Swap sits in its header");
+  await page.element("split-swap").click();
+  await page.seen("the two to change places", () => {
+    const title = document.querySelector("#split-pane .card-title");
+    return Boolean(title?.textContent?.includes("New Session"));
+  }, null, 10_000);
+  await page.seen("the empty session's own question beside", () => Boolean(document.querySelector("#split-pane .empty-conversation p")), null, 10_000);
+  await page.element("split-close").click();
+  await page.seen("the split card to close", () => document.getElementById("split-pane")?.hidden === true, null, 10_000);
+
   // Nothing in the page complained.
   assert.deepEqual([...page.errors, ...reloaded.errors, ...reread.errors], [], "the page had nothing to complain about");
 

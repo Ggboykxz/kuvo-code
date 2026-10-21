@@ -5,4 +5,5 @@ declare module "*/transcript.mjs" {
   export function apply(transcript: any, event: any): any;
   export function emptyTranscript(): any;
   export function fromHistory(id: string, messages: any[], permissions: any[], running: boolean): any;
+  export function sessionOf(event: any): string | null;
 }
