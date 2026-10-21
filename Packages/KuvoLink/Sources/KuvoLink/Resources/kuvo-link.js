@@ -699,6 +699,18 @@ export function engineHandler(readEngine = readEngineFile, info = {}, readBridge
       yield { body: Buffer.from(JSON.stringify({ credentials: listed })) };
       return;
     }
+    // The group chats that live here, as the Mac answers its own (`kuvo/groups`), from the
+    // coding agents' bridge, which runs them.
+    const group = request.path.split("?")[0].match(GROUP_ROUTE);
+    if (group) {
+      const target = bridge();
+      if (!target) {
+        yield { head: { status: 503, headers: { "content-type": "application/json" } } };
+        yield { body: Buffer.from(JSON.stringify({ message: "Group chats run with the coding agents' bridge, which isn't running on this machine." })) };
+        return;
+      }
+      return yield* answerGroups(target, group[1], group[2], request, signal);
+    }
     // This machine's bots and wake-ups, from their folders.
     if (request.path.split("?")[0] === "kuvo/bots") {
       if (!["GET", "HEAD"].includes(request.method.toUpperCase())) return yield* text(405, "Read them with GET.");
@@ -922,6 +934,138 @@ export function readWakes(folder) {
     return { letters, every: (textOf(path.join(at, "every")) ?? "").trim(), check: oneLine(check, 300), note: oneLine(textOf(path.join(at, "note")) ?? "", 400) };
   }).filter(Boolean);
   return { wakes, watches, paused: fs.existsSync(path.join(folder, "paused")) };
+}
+
+// ---- Group chats that live here ----
+
+// What a phone asks of them, as of a Mac's: the list and one chat (read, or followed as they
+// change), and what it does in one (writes to it, stops it, lets it keep going, looks at it, takes
+// a message back, starts the work a wrap-up split up).
+const GROUP_ROUTE = /^kuvo\/groups(?:\/(grp_[a-z0-9]+))?(?:\/(events|stop|keep-going|viewed|undo|start))?$/;
+
+// Times as the Mac sends them to a phone: seconds since 1970.
+const seconds = text => {
+  const time = Date.parse(text ?? "");
+  return Number.isFinite(time) ? time / 1000 : undefined;
+};
+
+// A message as the Mac sends it: its times in seconds, without the block naming agents (the
+// machine's own record of who you named) nor, in a list, what each bot did on its turn.
+export function phoneMessage(message, withSteps = true) {
+  if (!message) return undefined;
+  const { named: _, steps, time, tasks, ...rest } = message;
+  const out = { ...rest, time: seconds(time) };
+  if (withSteps && steps) out.steps = steps;
+  if (tasks) out.tasks = tasks.map(({ started, finished, ...task }) => ({ ...task, ...(started ? { started: seconds(started) } : {}), ...(finished ? { finished: seconds(finished) } : {}) }));
+  return out;
+}
+
+// A chat's bot as the Mac lists it: who it is, how it looks, its own conversation and folder.
+function groupMember(id) {
+  if (!/^bot_[A-Za-z0-9]+$/.test(id)) return null;
+  const folder = path.join(BOTS, id);
+  let described;
+  try {
+    described = JSON.parse(textOf(path.join(folder, "bot.json")) ?? "");
+  } catch {
+    return null;
+  }
+  const session = (textOf(path.join(folder, "session")) ?? "").trim();
+  if (!described?.name || !session) return null;
+  return {
+    id, name: described.name, look: described.look, session,
+    directory: (textOf(path.join(folder, "directory")) ?? "").trim() || path.join(folder, "workspace"),
+    agents: (textOf(path.join(folder, "via")) ?? "").trim() === "bridge",
+  };
+}
+
+async function askGroups(target, method, route, body, signal) {
+  const response = await fetch(`http://127.0.0.1:${target.port}/api/kuvo/groups${route}`, {
+    method,
+    headers: { authorization: `Basic ${Buffer.from(`opencode:${target.password}`).toString("base64")}`, ...(body ? { "content-type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+    signal,
+  });
+  const value = await response.json().catch(() => ({}));
+  return { status: response.status, value };
+}
+
+// The list, as the Mac's `kuvo/groups` has it; null when the bridge can't be asked.
+export async function groupsList(target, signal) {
+  const { status, value } = await askGroups(target, "GET", "", undefined, signal);
+  if (status !== 200) return null;
+  const groups = (value.data ?? []).filter(chat => chat.status === "active").map(({ group, state, said, fromBot }) => {
+    const meeting = group.meeting ? { ...group.meeting, next: seconds(group.meeting.next) } : undefined;
+    return {
+      id: group.id, name: group.name, purpose: group.purpose, members: group.members.map(groupMember).filter(Boolean),
+      speaking: state?.speaking, discussing: Boolean(state?.discussing), paused: Boolean(state?.paused),
+      unread: Boolean(fromBot && (!group.viewed || Date.parse(fromBot.time) > Date.parse(group.viewed))),
+      last: phoneMessage(said, false), meeting,
+    };
+  });
+  return { groups };
+}
+
+// One chat, as the Mac's `kuvo/groups/<id>/events` sends it; null once it's gone (or moving).
+export async function groupChat(target, id, signal) {
+  const { status, value } = await askGroups(target, "GET", `/${id}`, undefined, signal);
+  if (status !== 200 || value.data?.status !== "active") return null;
+  const { messages, state } = value.data;
+  return { messages: messages.slice(-300).map(message => phoneMessage(message)), speaking: state?.speaking, discussing: Boolean(state?.discussing), paused: Boolean(state?.paused) };
+}
+
+async function* answerGroups(target, id, action, request, signal) {
+  const method = request.method.toUpperCase();
+  const json = (status, value) => [{ head: { status, headers: { "content-type": "application/json" } } }, { body: Buffer.from(JSON.stringify(value)) }];
+  // Read, or followed: a line of JSON each time it changes, as a Mac's.
+  if (method === "GET" && (!action || action === "events")) {
+    const read = () => (id ? groupChat(target, id, signal) : groupsList(target, signal));
+    let now = await read().catch(() => null);
+    if (!now) return yield* json(404, {});
+    if (!action) return yield* json(200, now);
+    yield { head: { status: 200, headers: { "content-type": "application/x-ndjson" } } };
+    let last = "";
+    while (!signal?.aborted && now) {
+      const line = JSON.stringify(now);
+      if (line !== last) {
+        yield { body: Buffer.from(line + "\n") };
+        last = line;
+      }
+      await new Promise(done => setTimeout(done, 1000));
+      if (signal?.aborted) break;
+      now = await read().catch(() => now);
+    }
+    return;
+  }
+  if (method !== "POST" || !id || action === "events") return yield* json(405, {});
+  let given = {};
+  try {
+    given = JSON.parse(Buffer.from(request.body ?? []).toString("utf8") || "{}");
+  } catch {}
+  let asked;
+  switch (action) {
+    case undefined:
+      if (typeof given.text !== "string" || !given.text.trim()) return yield* json(400, {});
+      asked = await askGroups(target, "POST", `/${id}/send`, { text: given.text }, signal);
+      break;
+    case "stop":
+    case "keep-going":
+      asked = await askGroups(target, "POST", `/${id}/${action}`, {}, signal);
+      break;
+    case "viewed":
+      asked = await askGroups(target, "PATCH", `/${id}`, { viewed: new Date().toISOString().replace(/\.\d{3}Z$/, "Z") }, signal);
+      break;
+    case "undo": {
+      if (typeof given.message !== "string") return yield* json(404, {});
+      asked = await askGroups(target, "POST", `/${id}/undo`, { message: given.message }, signal);
+      return yield* json(asked.status === 200 ? 200 : 404, asked.status === 200 ? { text: asked.value.data?.text ?? "" } : {});
+    }
+    case "start":
+      if (typeof given.message !== "string") return yield* json(404, {});
+      asked = await askGroups(target, "POST", `/${id}/start-work`, { wrapUp: given.message }, signal);
+      break;
+  }
+  return yield* json(asked.status === 200 ? 200 : asked.status === 409 ? 409 : 404, {});
 }
 
 // This machine's bots, as the Mac lists them in `kuvo/bots`: each by its session, with its name,

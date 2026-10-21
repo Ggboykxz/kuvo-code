@@ -12190,7 +12190,17 @@ class GroupRunner {
     return { speaking: live.speaking ?? live.splitting, discussing: live.abort !== undefined, paused: live.paused };
   }
   list() {
-    return [...this.chats.values()].map((kept2) => ({ group: kept2.group, status: kept2.status, state: this.talk(kept2.group.id), last: kept2.messages.at(-1) }));
+    return [...this.chats.values()].map((kept2) => {
+      const said3 = kept2.messages.filter((message) => message.kind !== "note");
+      return {
+        group: kept2.group,
+        status: kept2.status,
+        state: this.talk(kept2.group.id),
+        last: kept2.messages.at(-1),
+        said: said3.at(-1),
+        fromBot: said3.filter((message) => message.author !== undefined).at(-1)
+      };
+    });
   }
   get(id) {
     const kept2 = this.chats.get(id);
@@ -13434,4 +13444,4 @@ if (onMachine) {
 }
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
-// Built from Agents/src e08be8721ae349638b32c6befdad7e9098500c81219205f9dd2092f376cb2f5b
+// Built from Agents/src 6ba85399008c20288c44ebcdb0a5371c96a410966d197d07f5ee6ca7befba706

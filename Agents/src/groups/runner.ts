@@ -142,8 +142,19 @@ export class GroupRunner {
     return { speaking: live.speaking ?? live.splitting, discussing: live.abort !== undefined, paused: live.paused }
   }
 
+  /** Each chat, with its last message, the last said (not a note) and the last from a bot, as a list shows them. */
   list() {
-    return [...this.chats.values()].map((kept) => ({ group: kept.group, status: kept.status, state: this.talk(kept.group.id), last: kept.messages.at(-1) }))
+    return [...this.chats.values()].map((kept) => {
+      const said = kept.messages.filter((message) => message.kind !== "note")
+      return {
+        group: kept.group,
+        status: kept.status,
+        state: this.talk(kept.group.id),
+        last: kept.messages.at(-1),
+        said: said.at(-1),
+        fromBot: said.filter((message) => message.author !== undefined).at(-1),
+      }
+    })
   }
 
   get(id: string) {
