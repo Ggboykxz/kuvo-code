@@ -77,8 +77,11 @@ struct GroupChatView: View {
             .padding(.bottom, 16)
             .readableColumn()
         }
-        .onAppear { groups.markViewed(group.id) }
-        .onChange(of: messages.count) { groups.markViewed(group.id) }
+        // Seen only while you're here, as a session is: what's said while you're in another app
+        // waits for you (its notifications too), and counts as seen when you come back.
+        .onAppear { if NSApp.isActive { groups.markViewed(group.id) } }
+        .onChange(of: messages.count) { if NSApp.isActive { groups.markViewed(group.id) } }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in groups.markViewed(group.id) }
     }
 
     /// The words Find looks in, as the message shows them: yours, or a bot's reply.

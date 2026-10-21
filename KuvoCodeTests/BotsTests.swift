@@ -39,6 +39,19 @@ import Testing
         #expect(Bots.job(inMemory: "# Memory\n\n\(heading)\nKeeps CI green\n") != nil)
     }
 
+    /// A job written in its heading is the job: the bot isn't told it has none and asked again.
+    @Test func aJobInItsHeading() throws {
+        let inline = try #require(Bots.job(inMemory: "# Memory\n\n## Job: Keeps CI green\nWatch main; fix what breaks.\n\n## Notes\nx\n"))
+        #expect(inline.line == "Keeps CI green")
+        #expect(inline.section.contains("Keeps CI green") && inline.section.contains("Watch main"))
+        let alone = try #require(Bots.job(inMemory: "# Memory\n\n## Job — Sends a morning digest\n\n## Notes\nx\n"))
+        #expect(alone.line == "Sends a morning digest")
+        // A heading that only names the section: the job is what's under it.
+        let named = try #require(Bots.job(inMemory: "# Memory\n\n## Job — what I do\nKeeps CI green\n"))
+        #expect(named.line == "Keeps CI green")
+        #expect(!named.section.contains("what I do"))
+    }
+
     @Test(arguments: ["## Job log", "## Job history", "## Jobs done"])
     func headingsThatDont(heading: String) {
         #expect(Bots.job(inMemory: "# Memory\n\n\(heading)\nRan the build\n") == nil)

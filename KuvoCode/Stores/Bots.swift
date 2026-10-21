@@ -514,7 +514,13 @@ final class Bots {
     static func job(inMemory text: String) -> (line: String, section: String)? {
         let lines = text.components(separatedBy: "\n")
         guard let (start, end) = jobLines(lines) else { return nil }
-        let section = lines[(start + 1)..<end].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        var section = lines[(start + 1)..<end].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        // The job written in its heading ("## Job: Keeps CI green"): its first line. In another
+        // heading ("## Job — keeps CI green"), only with nothing under it: else it names the
+        // section ("## Job — what I do").
+        if let (inline, isColon) = jobInHeading(lines[start]), isColon || section.isEmpty {
+            section = [inline, section].filter { !$0.isEmpty }.joined(separator: "\n")
+        }
         let first = section.components(separatedBy: "\n").lazy.map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? ""
         var line = first
         for mark in ["- ", "* ", "> "] where line.hasPrefix(mark) { line.removeFirst(mark.count) }
@@ -563,6 +569,18 @@ final class Bots {
         let blankAfter = at == lines.count || lines[at].trimmingCharacters(in: .whitespaces).isEmpty
         lines.insert(contentsOf: ["", details] + (blankAfter ? [] : [""]), at: at)
         return lines.joined(separator: "\n")
+    }
+
+    /// What a job heading says after "Job" ("Job: …", "Job — …", "Job (…)"), and whether after a
+    /// colon; nil when nothing.
+    private static func jobInHeading(_ line: String) -> (String, isColon: Bool)? {
+        let title = line.trimmingCharacters(in: .whitespaces).drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)
+        guard title.lowercased().hasPrefix("job") else { return nil }
+        var rest = title.dropFirst(3).trimmingCharacters(in: .whitespaces)
+        guard let mark = rest.first, ":-–—(".contains(mark) else { return nil }
+        rest = rest.dropFirst().trimmingCharacters(in: .whitespaces)
+        if mark == "(", rest.hasSuffix(")") { rest = String(rest.dropLast()).trimmingCharacters(in: .whitespaces) }
+        return rest.isEmpty ? nil : (rest, mark == ":")
     }
 
     private static func isJobHeading(_ line: String) -> Bool {
