@@ -15,7 +15,7 @@ end-to-end runs' alone, as are those that need a real machine over SSH (F9, L46,
 | A1, J2 A model ready, or the one you picked when it can't run | StartingModelTests, ProviderCompatibilityTests | |
 | A2, A3 First launch with no account, then connecting one | StartingModelTests (the model a session starts on, free ones without an account) | the welcome card and the Accounts sheet (UI; tests that drive the window would take over your keyboard and mouse, so the end-to-end runs try them) |
 | A5 Theme, accent and text size everywhere | | all on screen (UI; the end-to-end runs) |
-| A4 Bring over an opencode setup | OpencodeImportTests | |
+| A4 Bring over an opencode setup, or Claude Code's agents and commands | OpencodeImportTests, ClaudeCodeImportTests | |
 | A6 Quit with work running, open again | DraftsTests, StoredFilesTests, QueueTests, LastSeenTests | |
 | B5 Review the changes, comment on a line, send the comments | SessionEditsTests, SentMessageTests, DraftsTests | |
 | B6 Undo a turn, then change your mind | ComposerReturnsTests, AttachmentsTests, UndoRedoTests | |
