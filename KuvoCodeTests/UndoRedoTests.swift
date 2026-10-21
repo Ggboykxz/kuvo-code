@@ -118,6 +118,19 @@ import Testing
         try await eventually { model.draftText == "Then run the tests" }
         model.send("Then run the tests, and the linter", for: nil)
         #expect(model.transcript.messages.map(\.id) == ["msg_01", "msg_02", "msg_04", "msg_05"], "the reply before the undone message should stay")
+        // The engine's word that it made the undo final, as it takes the message: already done.
+        model.apply(try engine.event("session.revert.committed", session: id, ["to": "msg_03"]))
+        #expect(model.transcript.messages.map(\.id) == ["msg_01", "msg_02", "msg_04", "msg_05"], "and stays when the engine says so")
+
+        // Opened afresh (Kuvo Code started again) as the engine's word of it comes in.
+        engine.conversation(id, Array(conversation.prefix(4)))
+        let again = Workspace()
+        again.api = engine.api
+        await again.refresh()
+        let reopened = try #require(again.model(for: id))
+        await reopened.load()
+        reopened.apply(try engine.event("session.revert.committed", session: id, ["to": "msg_03"]))
+        #expect(reopened.transcript.messages.map(\.id) == ["msg_01", "msg_02", "msg_04", "msg_05"])
     }
 
     /// What Undo says it does before you confirm (B6): in a git repository (a folder inside one

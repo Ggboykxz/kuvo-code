@@ -98,15 +98,22 @@ public struct Transcript: Sendable, Equatable {
 
     /// Makes an undo final: the conversation from `to` on goes, from where it is, as the engine
     /// takes it back (a message that waited in the queue is older than the steps before it, which
-    /// stay). One not here goes by its time. What's waiting to be sent stays, newer as it is:
-    /// sending a message is what makes an undo final, and that message is among it.
+    /// stay). One not here is either before every message read, which all go, or gone already:
+    /// the engine's word of an undo this Mac made final as you sent comes after it, as does a
+    /// read made since, and what's left is from before it. What's waiting to be sent stays,
+    /// newer as it is: sending a message is what makes an undo final, and that message is among it.
     public mutating func commitRevert(to: String) {
+        guard to != committedRevert else { return }
+        committedRevert = to
         if let index = messages.firstIndex(where: { $0.id == to }) {
             messages.removeSubrange(index...)
-        } else {
-            messages.removeAll { $0.id >= to }
+        } else if let first = messages.lazy.map(\.id).min(), to < first {
+            messages.removeAll()
         }
     }
+
+    /// The undo made final last, so the engine's word of one made final here finds it done.
+    public var committedRevert: String?
 
     public mutating func removeLocal(id: String) {
         pending.removeAll { $0.id == id && $0.isLocal }
