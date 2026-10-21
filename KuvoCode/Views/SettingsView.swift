@@ -8,6 +8,10 @@ import SwiftUI
 struct SettingsView: View {
     /// The sessions' sidebar width, so the window keeps its shape.
     var sidebarWidth: CGFloat = 280
+    /// How narrow and wide the sidebar can be dragged, and what to keep: the sessions' sidebar
+    /// width, the same one.
+    var sidebarRange: ClosedRange<Double> = 220...440
+    var resizeSidebar: (Double) -> Void = { _ in }
     /// Room above the sidebar's first row for the window's buttons, when they sit there.
     var topInset: CGFloat = 0
     /// Back to the sessions.
@@ -22,7 +26,7 @@ struct SettingsView: View {
     private var tabs: SettingsTabs { app.settingsTabs }
 
     var body: some View {
-        HStack(spacing: Metrics.paneGap) {
+        HStack(spacing: 0) {
             // A tab with an editor open keeps it, and what's typed in it.
             SettingsSidebar(selection: Binding(get: { tabs.page }, set: { page in withAnimation(.ui) { tabs.show(page) { navigators[$0]?.detail != nil } } }), search: $search) { page in
                 withAnimation(.ui) { tabs.show(page, inNewTab: true) }
@@ -31,6 +35,7 @@ struct SettingsView: View {
             }
                 .padding(.top, topInset)
                 .frame(width: sidebarWidth)
+            PaneResizer(width: Binding(get: { sidebarWidth }, set: resizeSidebar), range: sidebarRange, side: .leading)
             // Every tab, kept as it is while another is in view (where you'd scrolled to, what
             // you'd typed, a page you're signing in on), as a browser keeps its tabs.
             ZStack {

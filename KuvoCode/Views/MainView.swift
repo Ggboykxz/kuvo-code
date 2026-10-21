@@ -320,8 +320,11 @@ struct MainView: View {
             .accessibilityHidden(app.showsSettings)
             .overlay {
                 if app.showsSettings {
+                    let widest = max(PaneLayout.sessionsRange.lowerBound, min(PaneLayout.sessionsRange.upperBound, proxy.size.width * 0.4))
                     SettingsView(
-                        sidebarWidth: min(max(layout.sessions ?? sessionsWidth, PaneLayout.sessionsRange.lowerBound), proxy.size.width * 0.4),
+                        sidebarWidth: min(max(layout.sessions ?? sessionsWidth, PaneLayout.sessionsRange.lowerBound), widest),
+                        sidebarRange: PaneLayout.sessionsRange.lowerBound...widest,
+                        resizeSidebar: { sessionsWidth = $0 },
                         topInset: keepsTitleBar ? 0 : Metrics.windowControlsHeight,
                         close: closeSettings
                     )
@@ -335,6 +338,8 @@ struct MainView: View {
         // Without the tab bar, the cards reach up into the title bar; the window's buttons sit
         // at the top of the sidebar.
         .padding(.top, keepsTitleBar ? 0 : Metrics.paneGap)
+        // The gaps around the cards move the window, as a title bar does.
+        .background { WindowGapDragArea() }
         .ignoresSafeArea(.container, edges: keepsTitleBar ? [] : .top)
         // Without the tab bar, the panel's button stays at the top right, on the rightmost card's
         // header row, so the panel can still be found.

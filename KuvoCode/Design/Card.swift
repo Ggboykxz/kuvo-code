@@ -186,6 +186,27 @@ struct WindowDragArea: View {
     }
 }
 
+/// The window's own glass, around and between the cards: dragging it moves the window, and a
+/// double-click does what a title bar's does, wherever the gap is (the top, the sides, the bottom).
+/// Behind the cards, so it only gets the clicks nothing else takes.
+struct WindowGapDragArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { GapView() }
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    private final class GapView: NSView {
+        override func mouseDown(with event: NSEvent) {
+            guard let window else { return }
+            if event.clickCount == 2 {
+                TitleBarDoubleClick.perform()
+            } else {
+                TitleBarMoveGate.drag(window, with: event)
+            }
+        }
+
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    }
+}
+
 /// A double-click on a title bar, as System Settings › Desktop & Dock sets it: the window fills
 /// the screen (or zooms), minimizes, or nothing happens. Our title bar row is our own views,
 /// and they'd take the click before macOS saw it.

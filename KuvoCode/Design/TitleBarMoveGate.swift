@@ -22,6 +22,18 @@ import SwiftUI
     private var heldUntil: ContinuousClock.Instant?
     private static var keys: Any?
 
+    /// Moves the window with a drag that starts outside the title bar (the gaps around the cards):
+    /// movable while the button's down, then as the pointer has it.
+    static func drag(_ window: NSWindow, with event: NSEvent) {
+        let gate = gates[ObjectIdentifier(window)]
+        window.isMovable = true
+        window.performDrag(with: event)
+        Task { @MainActor in
+            while NSEvent.pressedMouseButtons != 0 { try? await Task.sleep(for: .milliseconds(100)) }
+            gate?.update()
+        }
+    }
+
     static func install(on window: NSWindow) {
         guard gates[ObjectIdentifier(window)] == nil else { return }
         let gate = TitleBarMoveGate(window: window)
