@@ -33,19 +33,20 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | C1–C3 Attach pictures, PDFs, files | AttachmentRoutesTests, AttachmentsTests, SentFilesTests | |
 | C4 Quote part of a reply and answer it | QuotingTests | |
 | C5, C6 Files in the panel; the agent shows one; agents' tabs tidied | FileLinksTests, PanelTabsTests, ProjectFilesTests, BrowserHistoryTests, AgentTabsTests | |
+| D3 A reply with a widget shows as one | | how a reply's steps become rows is the transcript view's own (no seam outside it); the bridge naming coding agents' show_widget is in Agents/test |
 | D4 A chat moved into a project | SessionLifecycleTests | |
 | E, B15 The agent's browser | BrowserToolServerTests | |
 | E4, L21 A file downloaded in the browser, to work with | BrowserDownloadsTests | a machine's browser's downloads (its keeper, on the machine) |
 | E6, L37 Browse yourself in the panel: the address field, a page's dialogs | PageDialogsTests, BrowserHistoryTests, AgentTabsTests | tabs, Back and the new tab page (UI) |
 | E5, L33, L34, K6 Sign-ins, codes, passwords | BrowserAsksTests, MachineSignOutTests, PasskeysTests | a machine's Chrome refusing passkeys (checked by hand in Chromium; no Chrome in the tests) |
-| F1 Make a bot from scratch | BotCreationTests | |
+| F1, L44 Make a bot from scratch; its job, as it grows, under its name | BotCreationTests | |
 | F2, F6 A bot's job, told or edited | BotsTests | |
-| F3, F4, L15–L19, L26 Wake-ups | WakeUpsTests, StepSummariesTests | |
+| F3–F5, L15–L19, L26, L43 Wake-ups and watches | WakeUpsTests, StepSummariesTests; OpenCodeKit's WakesTests (a watch wakes only on a change, keeping its last value) | |
 | F7 Export and import a bot | AgentMessagesTests | |
 | F8 Delete a bot | BotDeletionTests, GroupChatTests | |
 | F10, L39, L40 Agents writing to each other | AgentMessagesTests, AgentReferencesTests | |
 | G1–G4 Group chats, meetings on a schedule | BotsTests, AgentMessagesTests, GroupChatTests | |
-| H1, H2 MCP servers | MCPCommandTests, ChromeDevToolsUpgradeTests, IntegrationsTests | |
+| H1, H2, H5 MCP servers and integrations, before and after their keys | MCPCommandTests, ChromeDevToolsUpgradeTests, IntegrationsTests | an integration's card in Settings (UI) |
 | H3 An MCP server asks mid-task | AgentAsksTests | |
 | H4 A skill from GitHub | SkillLibraryTests | |
 | I1 Add a machine, at one or more addresses | AddMachineTests, MachineAddressesTests | choosing the address that answers (needs SSH) |
