@@ -131,7 +131,14 @@ whether the commit pushes afterwards (`ChangesPanel.swift:304`, `331`, `344`). I
 the model picker took the Mac's star (`ModelPicker.swift:436-440`, `500`): the models the
 user keeps sit in a *Starred* group of their own. In 0.5.81 the picker asked a model for
 the effort it wants it at (`ModelPicker.swift:5-14`, `567-614`), and the composer names
-the model the conversation would use (`Catalog.swift:219-226`). The port's
+the model the conversation would use (`Catalog.swift:219-226`). In 0.5.82 the image viewer
+took the Mac's own header (`ImageViewer.swift:22, 28, 40`), in 0.5.83 a project took a name
+of its own (`ProjectEditor.swift`), in 0.5.84 a project runs its own command, in 0.5.85 its
+other folders are the agent's too (`SessionModel.swift:1379-1405`), and in 0.5.86 the
+palette took the Mac's order and the Run its own key (`MainView.swift:1418-1487`). In 0.5.87
+the changes' rows took the Mac's own shape (`ChangesPanel.swift:959-1042`): a number in a
+gutter, the text without the patch's signs, and a coloured edge on a line that changed. The
+port's
 own list of what is left is now: the two structures that are the Mac's alone — the Auto
 rail of the model picker (the coding agents' accounts, which a Windows client has no
 accounts for) and the pair style of the tab bar (a split pair shown as one tab, where the

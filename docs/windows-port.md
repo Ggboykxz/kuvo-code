@@ -332,6 +332,17 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     run in the primary folder; the agent can work in the others too" — and the session in
     view is given them: the rules that allow those folders, and the note that tells the
     agent that "in chugs-pinterest" means that folder (`SessionModel.swift:1379-1405`).
+  - **2.83 (this change). The changes' rows are the Mac's own.** The Mac reads a project's
+    changes into lines of their own — a kind, the number the line has on each side, and the
+    text (`ProjectChanges.swift:40-48`) — and shows them in a gutter, with the text and no
+    patch's signs, and a coloured edge on a line that changed
+    (`ChangesPanel.swift:959-1042`). The port showed the patch itself: every line of it, with
+    its `+` or `−`, its headers, and no number at all. The rows are the Mac's now — the
+    number in the gutter is the old one for a removed line and the new one otherwise
+    (`ChangesPanel.swift:882-885`), the text is the line as it reads, and a line that changed
+    carries the Mac's 3 pt edge. The mark that writes a comment on a line is the Mac's too,
+    in the gutter, under the pointer (*Comment on This Line*,
+    `ChangesPanel.swift:980-992`).
   - **2.82 (this change). The Run command's own key, and the palette in the Mac's order.**
     The Mac's palette holds the usual actions first, and the project's *Run* among them
     (`MainView.swift:1418-1462`), with the key that does it (⌘R). The port's palette had
