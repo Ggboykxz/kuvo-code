@@ -95,10 +95,15 @@ import Testing
         #expect(selected.contains("lit the great lamp for the ships."), "\(selected)")
         #expect(selected.contains("Out at sea"), "\(selected)")
         #expect(first.selectedRange().length > 0 && second.selectedRange().length > 0, "each reply shows its part")
-        // One look for all of it, whatever has the keyboard.
-        let look = SelectionColor.shown(.unemphasizedSelectedTextBackgroundColor, in: first)
-        #expect(SelectionColor.shown(.selectedTextBackgroundColor, in: second) == look)
-        #expect(SelectionColor.shown(.unemphasizedSelectedTextBackgroundColor, in: second) == look)
+        // One look for all of it, whatever color TextKit would fill each part with.
+        let look: NSColor = stack.isSelectionEmphasized ? .selectedTextBackgroundColor : .unemphasizedSelectedTextBackgroundColor
+        for text in [first, second] {
+            for given in [NSColor.unemphasizedSelectedTextBackgroundColor, .selectedTextBackgroundColor, .systemGray] {
+                #expect(SelectionColor.shown(given, in: text, for: text.selectedRange()) == look)
+            }
+        }
+        // Another fill, outside the selection (an inline code's background), as it is.
+        #expect(SelectionColor.shown(.systemTeal, in: first, for: NSRange(location: 0, length: 2)) == .systemTeal)
         // The conversation has the keyboard, never one of its texts.
         #expect(window.firstResponder === stack)
         #expect(!first.acceptsFirstResponder && !second.acceptsFirstResponder)

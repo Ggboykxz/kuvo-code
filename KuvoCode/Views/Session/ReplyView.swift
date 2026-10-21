@@ -342,7 +342,7 @@ final class ReplyTextView: NSTextView, NSTextViewDelegate {
 /// and a rule.
 nonisolated final class ReplyLayoutManager: NSLayoutManager {
     override func fillBackgroundRectArray(_ rectArray: UnsafePointer<NSRect>, count rectCount: Int, forCharacterRange charRange: NSRange, color: NSColor) {
-        super.fillBackgroundRectArray(rectArray, count: rectCount, forCharacterRange: charRange, color: SelectionColor.shown(color, in: firstTextView))
+        super.fillBackgroundRectArray(rectArray, count: rectCount, forCharacterRange: charRange, color: SelectionColor.shown(color, in: firstTextView, for: charRange))
     }
 
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
@@ -800,18 +800,21 @@ enum ReplyText {
 /// A code block's layout: its selection in the color of the conversation's.
 nonisolated final class ReplyCodeLayoutManager: NSLayoutManager {
     override func fillBackgroundRectArray(_ rectArray: UnsafePointer<NSRect>, count rectCount: Int, forCharacterRange charRange: NSRange, color: NSColor) {
-        super.fillBackgroundRectArray(rectArray, count: rectCount, forCharacterRange: charRange, color: SelectionColor.shown(color, in: firstTextView))
+        super.fillBackgroundRectArray(rectArray, count: rectCount, forCharacterRange: charRange, color: SelectionColor.shown(color, in: firstTextView, for: charRange))
     }
 }
 
 /// A text in a conversation draws its part of the selection in the conversation's look (in use,
 /// or set aside), as its other texts and the rows it tints do: none of them has the keyboard
-/// (the conversation does), so each would otherwise draw it set aside.
+/// (the conversation does), so each would otherwise draw it set aside. What's filled is the
+/// selection when it's inside what's selected, whatever color TextKit gives it; another fill (an
+/// inline code's background, Find's marks) is left as it is.
 nonisolated enum SelectionColor {
-    static func shown(_ color: NSColor, in text: NSTextView?) -> NSColor {
+    static func shown(_ color: NSColor, in text: NSTextView?, for range: NSRange) -> NSColor {
         MainActor.assumeIsolated {
-            guard color == .unemphasizedSelectedTextBackgroundColor || color == .selectedTextBackgroundColor,
-                  let stack = text?.enclosingRowStack else { return color }
+            guard let text, let stack = text.enclosingRowStack, range.length > 0 else { return color }
+            let selected = text.selectedRange()
+            guard selected.length > 0, NSIntersectionRange(range, selected).length == range.length else { return color }
             let shown: NSColor = stack.isSelectionEmphasized ? .selectedTextBackgroundColor : .unemphasizedSelectedTextBackgroundColor
             shown.setFill()
             return shown
