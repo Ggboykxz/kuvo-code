@@ -94,6 +94,10 @@ final class SessionModel {
         if permissions != transcript.permissions {
             permissions = transcript.permissions
             permissionCommands = Self.commands(of: permissions, in: transcript.messages)
+        } else if permissions.contains(where: { $0.action == "shell" && permissionCommands[$0.id] == nil }) {
+            // Asked before the step's word of its command came (a step read again): once it has.
+            let commands = Self.commands(of: permissions, in: transcript.messages)
+            if commands != permissionCommands { permissionCommands = commands }
         }
         if forms != transcript.forms { forms = transcript.forms }
         let inline = Self.inlineShells(in: transcript.messages)
