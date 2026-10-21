@@ -889,3 +889,31 @@ test("a session is running while its last words are unfinished, not while a flag
   ], [], true);
   assert.equal(beginning.running, true, "the engine says the session is active, and no word has ended it");
 });
+
+test("a call carries its own metadata, in the history and in the events both", async () => {
+  const { apply, fromHistory } = await import("./transcript.mjs");
+
+  // What the engine stored with the call: the files it changed. The Mac reads the same
+  // field off the same messages (SessionEdits.swift:19-22, ToolCallView.swift:358-366).
+  const stored = fromHistory("ses_1", [
+    {
+      id: "msg_1", type: "assistant", time: { created: 1 },
+      content: [{ type: "tool", id: "tool_1", name: "edit", state: { status: "completed", metadata: { files: [{ filePath: "a.ts", additions: 3, deletions: 1 }] } } }],
+    },
+  ], [], false);
+  assert.deepEqual(
+    stored.entries[0].parts[0].metadata.files,
+    [{ filePath: "a.ts", additions: 3, deletions: 1 }],
+    "the stored call brings its metadata with it",
+  );
+
+  // And the outcome of a live call carries it too (Transcript.swift:422).
+  const live = fromHistory("ses_1", [], [], false);
+  apply(live, {
+    type: "session.tool.success",
+    sessionID: "ses_1",
+    created: 2,
+    data: { assistantMessageID: "msg_1", id: "tool_1", name: "edit", content: [], metadata: { files: [{ filePath: "a.ts", additions: 7, deletions: 2 }] } },
+  });
+  assert.equal(live.entries[0].parts[0].metadata.files[0].additions, 7, "the event's metadata reaches the call");
+});

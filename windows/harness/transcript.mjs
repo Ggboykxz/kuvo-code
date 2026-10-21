@@ -35,6 +35,10 @@ function messageEntry(message) {
           input: block.state?.input,
           output: block.state?.content,
           error: block.state?.error,
+          // The call's own metadata travels with it: the engine puts the files a call
+          // changed there, and that is where the Mac reads them from
+          // (SessionEdits.swift:19-22 reads it off the stored messages).
+          metadata: block.state?.metadata ?? null,
         });
       });
       return entry;
@@ -274,6 +278,8 @@ export function apply(transcript, event) {
       const part = toolBlock(assistant(transcript, payload.assistantMessageID, now), payload.id);
       part.status = "completed";
       part.output = payload.content ?? part.output;
+      // The metadata arrives with the outcome (Transcript.swift:422), as on the Mac.
+      part.metadata = payload.metadata ?? part.metadata;
       return transcript;
     }
     case "session.tool.failed": {
@@ -282,6 +288,7 @@ export function apply(transcript, event) {
       part.status = "error";
       part.error = payload.error;
       part.output = payload.content ?? part.output;
+      part.metadata = payload.metadata ?? part.metadata;
       return transcript;
     }
 

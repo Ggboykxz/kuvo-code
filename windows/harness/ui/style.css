@@ -1414,6 +1414,11 @@ li.unread .session { position: relative; padding-left: 16px; }
 /* Each step is a row of its own, the Mac's way (StepsRow.swift:69-77): the mark of the
    tool and what it did. */
 .steps-list li { padding: 1px 0; display: flex; align-items: center; gap: var(--space-2); font-family: inherit; }
+/* The lines a call added and removed (ToolCallView.swift:147-158): the Mac's system green
+   and red, monospaced digits. */
+.diff-stat { display: inline-flex; gap: 4px; font-size: var(--text-xs); font-variant-numeric: tabular-nums; font-weight: 500; }
+.diff-stat .added { color: var(--ok); }
+.diff-stat .removed { color: var(--danger); }
 .steps-list .tool-icon { width: 16px; flex: 0 0 16px; }
 
 /* The image, looked at: over the page, the way the Mac app shows it. */

@@ -385,6 +385,23 @@ const checks = [
     assert.match(app, /<Spinner size=\{11\} \/> : <Symbol name=\{toolSymbol\(/);
   }],
 
+  ["the lines a call added and removed come from where the Mac reads them", ({ app, css, toolCall, transcript }) => {
+    // The Mac sums the files out of the call's own metadata — nowhere else
+    // (ToolCallView.swift:358-366; SessionEdits.swift:19-22 reads the same field) — and
+    // prints them in the row (ToolCallView.swift:106-107, Theme.swift:147-156): the
+    // system's green and red, medium weight, monospaced digits, a space of four between.
+    assert.ok(transcript.includes("metadata: block.state?.metadata ?? null"), "the stored call brings its metadata with it");
+    assert.ok(transcript.includes("part.metadata = payload.metadata ?? part.metadata"), "the outcome's metadata reaches the call");
+    assert.match(toolCall, /metadata\?\.files as/);
+    assert.ok(!toolCall.includes("input?.files"), "the input is not where the engine keeps the files");
+    assert.match(app, /toolDiffStat\(part\.metadata\)/);
+    assert.ok(app.includes("+{stat.additions}") && app.includes("−{stat.deletions}"), "the Mac's own signs, the minus and not a hyphen");
+    assert.ok(css.includes(".diff-stat { display: inline-flex; gap: 4px; font-size: var(--text-xs);"), "the stat sits in the row at the caption size");
+    assert.ok(css.includes("font-variant-numeric: tabular-nums; font-weight: 500;"), "the digits line up, at the medium weight");
+    assert.ok(css.includes(".diff-stat .added { color: var(--ok); }"), "the system's green");
+    assert.ok(css.includes(".diff-stat .removed { color: var(--danger); }"), "the system's red");
+  }],
+
   ["the page listens for the engine's own event names, and the transcript knows them", ({ app, transcript, mac }) => {
     // The page was listening for names the engine never sends (`message.part.updated`), so
     // the words of a reply arrived only on a reload, and the Stop button stayed. The names

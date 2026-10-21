@@ -65,3 +65,16 @@ export function toolSymbol(name: string): SymbolName {
     default: return "wrench.and.screwdriver";
   }
 }
+
+/// The lines the call added and removed (ToolCallView.swift:358-366): the engine keeps the
+/// files a call changed in the call's own metadata, and the metadata is the only place the
+/// Mac reads them from — the same place its changes panel reads them (SessionEdits.swift:19-22).
+export function toolDiffStat(
+  metadata: Record<string, unknown> | null | undefined,
+): { additions: number; deletions: number } | null {
+  const files = metadata?.files as { additions?: number; deletions?: number }[] | undefined;
+  if (!Array.isArray(files) || files.length === 0) return null;
+  const additions = files.reduce((total, file) => total + (file.additions ?? 0), 0);
+  const deletions = files.reduce((total, file) => total + (file.deletions ?? 0), 0);
+  return { additions, deletions };
+}

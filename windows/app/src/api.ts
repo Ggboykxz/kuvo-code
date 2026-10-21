@@ -28,6 +28,9 @@ export interface MessagePart {
   inputText?: string;
   output?: unknown;
   error?: unknown;
+  /** The call's own metadata — the engine keeps the files a call changed there, which is
+      the only place the Mac reads the diff stat from (ToolCallView.swift:358-366). */
+  metadata?: Record<string, unknown> | null;
 }
 
 export interface TranscriptEntry {

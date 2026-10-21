@@ -50,7 +50,7 @@ import { DiffModal, Drawer, Palette, Picker, Toast } from "./Overlays";
 import { Shimmer } from "./components/ai-elements/shimmer";
 import { FolderIcon, Symbol } from "./components/symbols";
 import { Spinner } from "./components/spinner";
-import { toolSummary, toolSymbol } from "./components/tool-call";
+import { toolDiffStat, toolSummary, toolSymbol } from "./components/tool-call";
 import { ProviderLogo } from "./components/provider-logo";
 import { motion } from "motion/react";
 import { macSpringOrStill } from "./motion";
@@ -93,6 +93,18 @@ function ToolCard({ part }: { part: TranscriptEntry["parts"] extends (infer P)[]
           {going ? <Spinner size={11} /> : <Symbol name={toolSymbol(part.name ?? "tool")} size={12} />}
         </span>
         <span className="tool-name">{toolSummary(part.name ?? "tool", part.input as Record<string, unknown> | undefined, going, state.project)}</span>
+        {/* The lines it added and removed, the Mac's way (ToolCallView.swift:106-107,
+            the stat read off the call's own metadata and printed in the row). */}
+        {(() => {
+          const stat = toolDiffStat(part.metadata);
+          if (!stat) return null;
+          return (
+            <span className="diff-stat">
+              {stat.additions > 0 ? <span className="added">+{stat.additions}</span> : null}
+              {stat.deletions > 0 ? <span className="removed">−{stat.deletions}</span> : null}
+            </span>
+          );
+        })()}
         <span className="tool-chevron">{hasDetails ? <Symbol name="chevron.right" size={12} className={open ? "turned" : ""} /> : null}</span>
       </button>
       {open && hasDetails ? (
