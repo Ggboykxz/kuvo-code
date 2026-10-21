@@ -374,14 +374,23 @@ function StepsRow({ entry }: { entry: TranscriptEntry }) {
         <span>{summary}</span>
         <Symbol name="chevron.right" size={11} className={open ? "turned" : ""} />
       </button>
+      {/* Each step, as the Mac shows it (StepsRow.swift:69-77): the step itself, in its
+          own row — the tool's mark and what it did. */}
       {open ? (
         <ul className="steps-list">
-          {calls.map((call, index) => (
-            <li key={call.id ?? index}>
-              <span className={call.status === "error" ? "entry-error" : ""}>{call.name ?? "tool"}</span>
-              {call.status === "error" ? <span className="where"> · failed</span> : null}
-            </li>
-          ))}
+          {calls.map((call, index) => {
+            const name = call.name ?? "tool";
+            const going = call.status !== "completed" && call.status !== "error";
+            return (
+              <li key={call.id ?? index}>
+                <span className="tool-icon">
+                  {going ? <Spinner size={11} /> : <Symbol name={toolSymbol(name)} size={12} />}
+                </span>
+                <span className="tool-name">{toolSummary(name, call.input as Record<string, unknown> | undefined, going, state.project)}</span>
+                {call.status === "error" ? <span className="entry-error">Stopped</span> : null}
+              </li>
+            );
+          })}
         </ul>
       ) : null}
     </div>

@@ -1411,7 +1411,10 @@ li.unread .session { position: relative; padding-left: 16px; }
   margin: var(--space-1) 0 0; padding: 0 0 0 var(--space-4);
   list-style: none; font-size: var(--text-xs); color: var(--ink-soft);
 }
-.steps-list li { padding: 1px 0; font-family: var(--font-mono); }
+/* Each step is a row of its own, the Mac's way (StepsRow.swift:69-77): the mark of the
+   tool and what it did. */
+.steps-list li { padding: 1px 0; display: flex; align-items: center; gap: var(--space-2); font-family: inherit; }
+.steps-list .tool-icon { width: 16px; flex: 0 0 16px; }
 
 /* The image, looked at: over the page, the way the Mac app shows it. */
 .image-viewer {
