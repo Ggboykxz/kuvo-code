@@ -166,4 +166,24 @@ import Testing
         #expect(!app.wakeUps.paused.contains(id))
         #expect(!FileManager.default.fileExists(atPath: folder(id, "paused")))
     }
+
+    /// Archiving that the engine didn't take (it couldn't be reached): the session stays where it
+    /// was, not archived, and nothing is told it was (which would hold its wake-ups). Taken, it is.
+    @Test func anArchiveTheEngineDidntTakeHoldsNothing() async throws {
+        await start()
+        defer { done() }
+        var told: [Bool] = []
+        app.workspace.onArchived = { _, isArchived in told.append(isArchived) }
+        let answer = StubWeb.json(["data": Self.session(id)])
+        StubWeb.route(Self.engine + "/api/session/\(id)") { _ in StubWeb.json(["message": "Session is busy"], status: 500) }
+
+        await app.workspace.setArchived(id, true)
+        #expect(!Workspace.isArchived(try #require(app.workspace.session(id))), "the engine didn't archive it")
+        #expect(told.isEmpty, "a session that wasn't archived holds nothing")
+
+        StubWeb.route(Self.engine + "/api/session/\(id)") { _ in answer }
+        await app.workspace.setArchived(id, true)
+        #expect(Workspace.isArchived(try #require(app.workspace.session(id))))
+        #expect(told == [true])
+    }
 }

@@ -350,7 +350,8 @@ final class Workspace {
 
     /// Archives a session, or brings it back.
     func setArchived(_ id: String, _ archived: Bool) async {
-        await setFlag(Self.archivedKey, archived, of: id)
+        // Not archived if the engine didn't take it: its wake-ups aren't held for it.
+        guard await setFlag(Self.archivedKey, archived, of: id) else { return }
         onArchived?(id, archived)
     }
 
@@ -363,14 +364,24 @@ final class Workspace {
         await setFlag(Self.pinnedKey, pinned, of: id)
     }
 
-    private func setFlag(_ key: String, _ value: Bool, of id: String) async {
-        guard let index = sessions.firstIndex(where: { $0.id == id }), let api = api(for: sessions[index]) else { return }
-        var metadata = sessions[index].metadata?.object ?? [:]
+    /// Sets a flag in a session's metadata, shown at once; put back as it was if the engine
+    /// doesn't take it (it would come back so with the next read). Whether it did.
+    @discardableResult
+    private func setFlag(_ key: String, _ value: Bool, of id: String) async -> Bool {
+        guard let index = sessions.firstIndex(where: { $0.id == id }), let api = api(for: sessions[index]) else { return false }
+        let before = sessions[index].metadata
+        var metadata = before?.object ?? [:]
         // Written either way: the engine may merge metadata rather than replace it.
         metadata[key] = .bool(value)
         sessions[index].metadata = .object(metadata)
         if let machine = RemoteFolder.machine(of: sessions[index].location.directory) { keepList(of: machine) }
-        try? await api.setMetadata(session: id, .object(metadata))
+        do {
+            try await api.setMetadata(session: id, .object(metadata))
+            return true
+        } catch {
+            if let index = sessions.firstIndex(where: { $0.id == id }), sessions[index].metadata?[key] == .bool(value) { sessions[index].metadata = before }
+            return false
+        }
     }
 
     func session(_ id: String?) -> Session? {
