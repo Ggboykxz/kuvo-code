@@ -302,40 +302,25 @@ final class OutsideAgents {
 
     // MARK: Auto
 
+    /// Its Custom Auto lists, as its bridge keeps them: this Mac's and each machine's are their
+    /// own, made from the models each has (a machine's agents are signed in there).
     func loadAuto() async {
         guard let api, let list = try? await api.autoList() else { return }
-        isAutoLoaded = true
         if list != auto { auto = list }
     }
 
-    /// Its lists have been read (a machine's copy is made from this Mac's only then).
-    @ObservationIgnored private(set) var isAutoLoaded = false
+    /// A Custom Auto list to show in Settings › Custom Auto as it opens (one picked to edit, or
+    /// just made), with these agents' lists in view.
+    var autoFocus: String?
 
-    /// This Mac's, for a machine's: your Custom Auto lists are this Mac's, and each machine's
-    /// bridge has a copy of them (with its own limits, its accounts being its own).
-    @ObservationIgnored weak var mac: OutsideAgents?
-    /// Your lists changed (this Mac's): for the machines' copies.
-    @ObservationIgnored var onListsChanged: (([AutoList.Named]) -> Void)?
-
-    /// A Custom Auto list to show in Settings › Custom Auto as it opens (one picked to edit, or just made).
-    var autoFocus: String? {
-        get { mac?.autoFocus ?? focus }
-        set {
-            if let mac { mac.autoFocus = newValue } else { focus = newValue }
-        }
-    }
-    private var focus: String?
-
-    /// Your lists as you arranged them (on a machine, this Mac's, which it copies).
+    /// Its lists as you arranged them.
     func saveAuto(_ lists: [AutoList.Named]) async throws {
-        if let mac { return try await mac.saveAuto(lists) }
         guard let api else { throw Failure.unavailable("Custom Auto") }
         let saved = auto
         let arranged = AutoList(entries: lists.first?.entries ?? [], lists: lists, limits: auto.limits)
         auto = arranged
         do {
             auto = try await api.saveAutoLists(lists)
-            onListsChanged?(auto.all)
         } catch {
             // Not saved, as far as it heard: the list Auto uses, which may have come meanwhile (a
             // save that went through, its answer lost), else the one before.
@@ -351,12 +336,6 @@ final class OutsideAgents {
         guard let api, auto.limits.contains(where: { $0.key == provider || $0.key.hasPrefix(provider + "/") }) else { return }
         try? await api.releaseAutoLimit(provider)
         await loadAuto()
-    }
-
-    /// A machine's copy of your lists, as this Mac has them now.
-    func copyLists(_ lists: [AutoList.Named]) async {
-        guard let api, lists != auto.all, let saved = try? await api.saveAutoLists(lists) else { return }
-        auto = saved
     }
 
     /// Every model at a limit tried again.

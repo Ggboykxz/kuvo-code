@@ -70,6 +70,8 @@ extension AppModel {
         // One machine at two addresses: the one added later is one of the other's addresses, and
         // what's kept under its name is the other's.
         machines.onFolded = { [weak self] address, machine in self?.machineFolded(address, into: machine) }
+        // Settings changed here (a mode, a rule): machines take them too, not only when they connect.
+        engineConfig.onSaved = { [weak self] in self?.settingsSaved() }
         workspace.onRunEnded = { [weak self] session in
             self?.bots.runEnded(session: session)
             // An ask its agent left in this Mac's browser has no one waiting for it now.
@@ -206,9 +208,8 @@ extension AppModel {
             if event.type == "credential.updated" { self?.nudgeSignIns(engine) }
         }
         engine.onReconnect = { [weak self] in _ = await self?.workspace.refresh(engine) }
-        // Its coding agents, beside its engine: their sessions as its engine's, their accounts and
-        // models in its catalog, and a copy of your Custom Auto lists.
-        engine.agents.mac = agents
+        // Its coding agents, beside its engine: their sessions as its engine's, their accounts,
+        // models and Custom Auto lists (its own) in its catalog.
         engine.agents.onEvent = { [weak self, weak engine] event in
             engine?.catalog.handle(event)
             self?.workspace.handleAgents(event, machine: machine)
@@ -218,8 +219,6 @@ extension AppModel {
             Task {
                 await engine.catalog.refreshAgents()
                 _ = await self.workspace.refresh(engine)
-                // (Not to an engine another Mac started: it has that Mac's.)
-                if self.agents.isAutoLoaded, !engine.isAnotherMacsEngine { await engine.agents.copyLists(self.agents.auto.all) }
             }
         }
         engine.onExit = { [weak self] in
@@ -402,6 +401,19 @@ extension AppModel {
                 try? await Task.sleep(for: .seconds(wait))
                 wait = min(wait * 2, 120)
             }
+        }
+    }
+
+    /// Settings changed here (a mode, a permission rule…): the machines connected now take them
+    /// as they would the next time they connect, their engines started over with them once nothing
+    /// runs there; a moment after the last change, so typing in a field doesn't start one over
+    /// for each letter.
+    func settingsSaved() {
+        settingsSync?.cancel()
+        settingsSync = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard let self, !Task.isCancelled else { return }
+            for engine in machines.engines.values where engine.isReady { keepSettingsCurrent(engine) }
         }
     }
 

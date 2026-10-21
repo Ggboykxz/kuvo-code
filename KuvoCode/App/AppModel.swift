@@ -45,6 +45,8 @@ final class AppModel {
     @ObservationIgnored private var agentsActivation: (any NSObjectProtocol)?
     /// The engine's settings file, for Settings.
     @ObservationIgnored private(set) lazy var engineConfig = EngineConfig(file: engineFolders.configFile)
+    /// Machines taking settings changed here, a moment after the last change (`settingsSaved`).
+    @ObservationIgnored var settingsSync: Task<Void, Never>?
     /// Engines to start again with new settings once nothing's at work in them: "" for this Mac's,
     /// else a machine's ID (see `renewEngines`).
     @ObservationIgnored var renewals: Set<String> = []
@@ -59,6 +61,9 @@ final class AppModel {
     /// in to them on its own), picked in the menu next to Coding Agents. The rest of the page is
     /// this Mac's accounts, which your machines get a copy of.
     var accountsPlace: String?
+    /// Whose Custom Auto lists Settings › Custom Auto shows: this Mac's (nil), or a machine's. Each
+    /// has its own, made from the models it has.
+    var autoPlace: String?
 
     /// Settings › Accounts, showing `machine`'s sign-ins (nil: this Mac's).
     func openAccounts(on machine: String?) {
@@ -362,16 +367,7 @@ final class AppModel {
             Task {
                 await self?.catalog.refreshAgents()
                 await self?.workspace.refreshAgents()
-                // Your Custom Auto lists, as the machines connected meanwhile copy them.
-                guard let self, self.agents.isAutoLoaded else { return }
-                for engine in self.machines.engines.values where engine.isReady && !engine.isAnotherMacsEngine { await engine.agents.copyLists(self.agents.auto.all) }
             }
-        }
-        // Each machine's bridge has a copy of your Custom Auto lists.
-        agents.onListsChanged = { [weak self] lists in
-            guard let self else { return }
-            // (Not to an engine another Mac started: it keeps that Mac's.)
-            for engine in machines.engines.values where engine.isReady && !engine.isAnotherMacsEngine { Task { await engine.agents.copyLists(lists) } }
         }
         var environment = shellEnvironment
         // Bots' wake-up command by name, and where their folders are, for their sessions with the

@@ -367,10 +367,25 @@ struct AccountsPlaceMenu: View {
     @Environment(AppModel.self) private var app
 
     var body: some View {
+        @Bindable var app = app
+        PlaceMenu(title: "Coding Agents and Plans On", selection: $app.accountsPlace,
+                  help: "Each machine signs in to the coding agents and plans on its own. API keys and GitHub Copilot work on all of them.")
+    }
+}
+
+/// Which place a Settings page shows, for what each machine has of its own (its coding agents'
+/// sign-ins, its Custom Auto lists): this Mac, or one of your machines. Shown once you have one.
+struct PlaceMenu: View {
+    let title: String
+    @Binding var selection: String?
+    let help: String
+    @Environment(AppModel.self) private var app
+
+    var body: some View {
         if !app.machines.list.isEmpty {
-            let current = app.accountsPlace.flatMap { id in app.machines.list.first { $0.id == id } }
+            let current = selection.flatMap { id in app.machines.list.first { $0.id == id } }
             Menu {
-                Picker("Coding Agents and Plans On", selection: Binding(get: { current?.id }, set: { id in withAnimation(.ui) { app.accountsPlace = id } })) {
+                Picker(title, selection: Binding(get: { current?.id }, set: { id in withAnimation(.ui) { selection = id } })) {
                     Label("This Mac", systemImage: "laptopcomputer").tag(String?.none)
                     Section("Machines") {
                         ForEach(app.machines.list) { machine in
@@ -391,7 +406,7 @@ struct AccountsPlaceMenu: View {
             .menuIndicator(.hidden)
             .buttonStyle(TextButtonStyle(cornerRadius: 6, dimsAtRest: false))
             .fixedSize()
-            .help("Each machine signs in to the coding agents and plans on its own. API keys and GitHub Copilot work on all of them.")
+            .help(help)
         }
     }
 }

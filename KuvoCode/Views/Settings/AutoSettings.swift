@@ -4,8 +4,37 @@ import SwiftUI
 /// Auto: your lists of models (any coding agent's or provider's, each with its effort), one for
 /// bugfixes, one for features, each to go through in order when one reaches a usage limit. A
 /// session on Auto runs each message on the first of its list that isn't held back, and goes on
-/// with the next, with what was done, when one reaches its limit partway.
+/// with the next, with what was done, when one reaches its limit partway. This Mac and each
+/// machine have lists of their own, made from the models each has, picked at the top.
 struct AutoSettings: View {
+    @Environment(AppModel.self) private var app
+    @Environment(Catalog.self) private var macCatalog
+
+    /// The machine whose lists show (nil: this Mac's).
+    private var engine: MachineEngine? { app.autoPlace.flatMap { app.machines.engine($0) } }
+
+    /// Where a list was picked to edit, in a session's model menu (or made there): "" for this
+    /// Mac, else a machine's ID; nil for none.
+    private var focusPlace: String? {
+        if app.agents.autoFocus != nil { return "" }
+        return app.machines.engines.values.first { $0.agents.autoFocus != nil }?.machine.id
+    }
+
+    var body: some View {
+        AutoLists(engine: engine)
+            .environment(engine?.catalog ?? macCatalog)
+            .id(app.autoPlace ?? "")
+            // That place's lists, whichever showed before.
+            .onChange(of: focusPlace, initial: true) { _, place in
+                guard let place else { return }
+                app.autoPlace = place.isEmpty ? nil : place
+            }
+    }
+}
+
+/// One place's lists: this Mac's, or a machine's (`engine`).
+private struct AutoLists: View {
+    let engine: MachineEngine?
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
     @State private var failure: String?
@@ -14,15 +43,27 @@ struct AutoSettings: View {
     @State private var names: [String: String] = [:]
     @FocusState private var naming: String?
 
-    private var agents: OutsideAgents { app.agents }
+    private var agents: OutsideAgents { engine?.agents ?? app.agents }
     private var lists: [AutoList.Named] { agents.auto.all }
 
     var body: some View {
+        @Bindable var app = app
         ScrollViewReader { proxy in
             ScrollingSettingsForm {
+                if !app.machines.list.isEmpty {
+                    Section {
+                        LabeledContent {
+                            PlaceMenu(title: "Custom Auto On", selection: $app.autoPlace,
+                                      help: "This Mac and each machine have their own lists, made from the models each has.")
+                        } label: {
+                            Text("Lists On")
+                            Text(engine.map { "\($0.machine.name)’s own, for its sessions, chats and bots, from the models it has." } ?? "This Mac’s own. Each machine has lists of its own, made from its models.")
+                        }
+                    }
+                }
                 if agents.api == nil {
                     Section {
-                        Text(agents.failure.map { "Custom Auto runs with the coding agents, which couldn't start: \($0)" } ?? "Custom Auto runs with the coding agents, which are still starting.")
+                        Text(unavailable)
                             .foregroundStyle(.secondary)
                     }
                 } else {
@@ -45,15 +86,14 @@ struct AutoSettings: View {
                         Text("When one reaches a limit on your whole account (a plan's 5-hour window), Custom Auto skips all of that account's models, in every list; when one model reaches its own limit, only that model. Each comes back once its limit resets.")
                     }
                 }
-                if !agents.auto.limits.isEmpty || !machinesHolding.isEmpty {
+                if !agents.auto.limits.isEmpty {
                     Section {
                         LabeledContent {
                             Button("Try All Again") { clearLimits() }
                                 .disabled(isClearing)
                         } label: {
                             Text("Held back at a limit")
-                            // Each machine's agents have limits of their own (their accounts are theirs).
-                            Text("If a limit has reset sooner than its agent said, Custom Auto can try them all again" + (machinesHolding.isEmpty ? "." : (agents.auto.limits.isEmpty ? ", on " : ", here and on ") + machinesHolding.map(\.machine.name).formatted(.list(type: .and)) + "."))
+                            Text("If a limit has reset sooner than its agent said, Custom Auto can try them all again.")
                         }
                     }
                 }
@@ -79,6 +119,16 @@ struct AutoSettings: View {
         } message: {
             Text(failure ?? "")
         }
+    }
+
+    /// Why the lists can't be shown: the coding agents there aren't running, or the machine isn't
+    /// connected.
+    private var unavailable: String {
+        guard let engine else {
+            return agents.failure.map { "Custom Auto runs with the coding agents, which couldn't start: \($0)" } ?? "Custom Auto runs with the coding agents, which are still starting."
+        }
+        guard engine.isReady else { return "\(engine.machine.name) isn’t connected. Its lists show once it is." }
+        return "Custom Auto on \(engine.machine.name) runs with the coding agents there, which aren’t running. They start with its engine."
     }
 
     /// One list: its name (typed in place), its models in order, a way to add one, and a menu to
@@ -189,20 +239,11 @@ struct AutoSettings: View {
         }
     }
 
-    /// Your machines whose agents have models held back at a limit.
-    private var machinesHolding: [MachineEngine] {
-        app.machines.list.compactMap { app.machines.engine($0.id) }.filter { $0.isReady && !$0.agents.auto.limits.isEmpty }
-    }
-
     private func clearLimits() {
         isClearing = true
-        let machines = machinesHolding
         Task {
             defer { isClearing = false }
-            do {
-                if !agents.auto.limits.isEmpty { try await agents.clearAutoLimits() }
-                for engine in machines { try await engine.agents.clearAutoLimits() }
-            } catch { failure = error.localizedDescription }
+            do { try await agents.clearAutoLimits() } catch { failure = error.localizedDescription }
         }
     }
 }

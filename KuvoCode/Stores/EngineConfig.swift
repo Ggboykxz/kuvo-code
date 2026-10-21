@@ -32,6 +32,9 @@ final class EngineConfig {
     /// This Mac's, for the places that make a session's rules.
     static weak var current: EngineConfig?
 
+    /// Saved with a change: machines take it too (`AppModel.settingsSaved`).
+    @ObservationIgnored var onSaved: () -> Void = {}
+
     /// Reads the file again and adds what Kuvo Code starts every engine with, unless it sets it:
     /// web search through Exa, which needs no key. The engine has none chosen, and every search
     /// the agent tried failed ("Web search provider is required"). Not "random": that keeps one
@@ -206,6 +209,7 @@ final class EngineConfig {
             try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try encoder.encode(document).write(to: target, options: .atomic)
             settings = document
+            onSaved()
         } catch {
             problem = "It couldn't be saved: \(error.localizedDescription)"
         }
