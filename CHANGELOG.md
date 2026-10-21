@@ -6,6 +6,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Settings › Storage counts the coding agents Kuvo Code installed, under a kind of their own, and your bots' and chats' folders: its total left them out, often the biggest part.
+
 ## 0.6.4
 
 - A message you'd sent for the agent's next step that was still waiting when Kuvo Code quit shows under Paused when you open the session again, first in line, and Resume sends it. It showed as sending for ever, and Resume went past it to the queue.

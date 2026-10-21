@@ -50,6 +50,7 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | I4 What machines share with this Mac, and what's their own | MachineSettingsTests, CustomAutoPlacesTests, SignInSyncTests | a connected machine's engine starting over with new settings (needs SSH) |
 | K1 Settings keep what you change | EngineSettingsFileTests | |
 | K3 Notifications | NotificationMaskingTests | |
+| K5 Storage: what takes room | StorageReportTests | |
 | L50 Quit mid-job, open again | InterruptedRunTests | |
 | The panel's terminal | TerminalColorsTests | |
 | Export a conversation | ConversationExportTests | |
