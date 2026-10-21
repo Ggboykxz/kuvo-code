@@ -12,19 +12,19 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | --- | --- | --- |
 | A1, J2 A model ready, or the one you picked when it can't run | StartingModelTests, ProviderCompatibilityTests | a model that's gone asks for another |
 | A4 Bring over an opencode setup | OpencodeImportTests | |
-| A6 Quit with work running, open again | DraftsTests, StoredFilesTests | the queue held under Paused, Resume sends it |
+| A6 Quit with work running, open again | DraftsTests, StoredFilesTests, QueueTests | |
 | B5 Review the changes, comment on a line, send the comments | SessionEditsTests, SentMessageTests, DraftsTests | |
 | B6 Undo a turn, then change your mind | ComposerReturnsTests, AttachmentsTests | outside git, Undo says the files stay as they are |
 | B7 Commit with a message, push, make a branch | ChangesCommitTests, ChangesDiscardTests | |
 | B8 A session in a worktree, merged back | WorktreeSessionTests, GitBranchesTests | |
 | B10 Ask First: allow once, always, deny | ComposerReturnsTests, ProjectFoldersTests | a piped command asked as one; Always Allowed lists every project's |
-| B12 Queue while it works | ComposerReturnsTests | |
+| B12 Queue while it works, Stop, Resume | ComposerReturnsTests, QueueTests | |
 | B14 Switch model mid-conversation, or elsewhere | SessionsTests | |
 | B16 Find in a long conversation | ConversationFindTests | |
 | B17 A folder that isn't a git repository | | the Changes tab lists what the session's edits changed |
 | B18 Rename, archive, restore, delete | SidebarListsTests, SessionsTests, SessionTitlesTests | search leaves deleted sessions out |
 | B20 Commands and skills | SlashCommandsTests, SkillLibraryTests | |
-| C1–C3 Attach pictures, PDFs, files | AttachmentRoutesTests, AttachmentsTests | a sent message keeps its files (C2) |
+| C1–C3 Attach pictures, PDFs, files | AttachmentRoutesTests, AttachmentsTests, SentFilesTests | |
 | C4 Quote part of a reply and answer it | QuotingTests | |
 | C5, C6 Files in the panel; the agent shows one | FileLinksTests, PanelTabsTests | |
 | E, B15 The agent's browser | BrowserToolServerTests | |
