@@ -861,8 +861,19 @@ final class Machines {
 
     private static func load() -> [Machine] {
         guard let data = UserDefaults.standard.data(forKey: key) else { return [] }
-        return (try? JSONDecoder().decode([Machine].self, from: data)) ?? []
+        do {
+            return try JSONDecoder().decode([Machine].self, from: data)
+        } catch {
+            // One that won't read (a newer version's, or damaged) is set aside, as Kuvo Code's
+            // files are (`JSONFile`), before adding a machine writes over it.
+            UserDefaults.standard.set(data, forKey: "\(unreadableKey)-\(Int(Date.now.timeIntervalSince1970))")
+            Logger(subsystem: "run.kuvo.code", category: "machine").error("The machines couldn't be read and were set aside: \(error.localizedDescription, privacy: .public)")
+            return []
+        }
     }
+
+    /// Where machines that wouldn't read are kept, followed by when.
+    static let unreadableKey = "machines.unreadable"
 }
 
 /// A sign-in to an agent on a machine whose page sends your browser back to `localhost` there
