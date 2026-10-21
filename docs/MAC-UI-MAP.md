@@ -140,7 +140,8 @@ the changes' rows took the Mac's own shape (`ChangesPanel.swift:959-1042`): a nu
 gutter, the text without the patch's signs, and a coloured edge on a line that changed. In
 0.5.88 a comment on a line became the Mac's own card (`ChangesPanel.swift:1088-1212`) — the
 editor under the line, the comment kept beneath it, and the block the agent reads
-(`ReviewComments.swift:21-39`). The port's
+(`ReviewComments.swift:21-39`) — and in 0.5.89 the conversation showed those comments back
+as the Mac's own cards (`ChangesPanel.swift:1123-1155`). The port's
 own list of what is left is now: the two structures that are the Mac's alone — the Auto
 rail of the model picker (the coding agents' accounts, which a Windows client has no
 accounts for) and the pair style of the tab bar (a split pair shown as one tab, where the

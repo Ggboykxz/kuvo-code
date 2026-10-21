@@ -332,6 +332,13 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     run in the primary folder; the agent can work in the others too" — and the session in
     view is given them: the rules that allow those folders, and the note that tells the
     agent that "in chugs-pinterest" means that folder (`SessionModel.swift:1379-1405`).
+  - **2.85 (this change). The conversation shows the comments back.** A message that carried
+    comments is taken apart when it is shown: the words are the user's own, and each
+    comment is a card of its own above them — the place it points to, with the Mac's mark
+    beside it, the line it was written on with its own coloured bar, and what it says
+    (`ChangesPanel.swift:1123-1155`, `AgentReferences.swift:170-179`). The port showed the
+    block the agent reads, as if it were the user's words. The words are the words now,
+    and the comments are the Mac's cards (`text.bubble` is drawn for the place).
   - **2.84 (this change). A comment on a line is the Mac's own.** The Mac writes a comment
     in the editor under the line — *Add a comment…*, Escape cancels, ⌘Return saves, and the
     button says *Comment* — and keeps it as a card under that line: the user, the line it
