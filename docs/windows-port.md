@@ -151,6 +151,23 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     measure (`Message.isRunning`); only a run with no assistant message at all is the
     engine's own answer alone. The live test, meeting a lingering run, re-reads the
     engine's own words and reloads once before it calls the lingering its own.
+  - **2.65 (this change). The split is a card, and both conversations stay current.** The
+    split pane was the port's own invention: a band at the top with a session picker, which
+    read as a second title bar — the one thing the Mac never draws. It is the Mac's card now
+    (`MainView.swift:733-754`): the same header the conversation's card has — the session's
+    name over its project, the card's mark, the ring, and Swap and Close among its actions
+    — over the same hairline, radius and fade, with its rows running under the header at the
+    conversation's own 38 + 16 pt. There is no picker inside the pane: a session opens
+    beside the one in view the Mac's way, with *Open Beside* in the session's menu
+    (`SidebarView.swift:609`, `MainView.swift:757-775`), and Swap exchanges the two places
+    (`MainView.swift:743-747`). The pane's conversation is a conversation like the other:
+    every event is routed to it the way the Mac routes an event to the model of the session
+    it names (`Workspace.swift:1458`, `models[id]`), a turn that ends beside you is read
+    back, and an empty one asks the Mac's own question about its folder. And a reconnection
+    is the Mac's (`AppModel.swift:448-459` → `Workspace.resync`,
+    `Workspace.swift:1347-1359`): the line's `onopen` re-reads the list, the conversation in
+    view and the one beside it, so what was said while the line was down is known again
+    from the engine's own messages.
   - **2.61 (this change). The provider's marks.** The Mac draws the maker's mark beside
     each model (`ProviderLogo.swift`), monochrome so it follows the ink, or in the maker's
     own colour where it has one. The marks themselves are not published as a package, but

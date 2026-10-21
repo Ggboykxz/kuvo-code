@@ -95,8 +95,20 @@ and removed, from where the Mac reads them — the call's own metadata (0.5.68);
 conversation with nothing in it asks the Mac's own question about the folder over its mark,
 instead of standing blank (0.5.69); and a turn the engine had already stamped finished no
 longer reads as under way while its session flag still says active — the message's own
-state ends the run, the Mac's measure (0.5.69). Everything else in §1–§9 is now the Mac's,
-and the checks hold it there.
+state ends the run, the Mac's measure (0.5.69). In 0.5.70 the split became the Mac's own
+card, with the conversation's header, Swap and Close, and no strip of controls of its own —
+a session is opened beside another with *Open Beside*, as on the Mac (`SidebarView.swift:609`,
+`MainView.swift:757-775`); and every open conversation follows the engine's events, while a
+reconnection re-reads the list and both conversations from the engine's own messages
+(`AppModel.swift:448-459` → `Workspace.resync`, `Workspace.swift:1347-1359`). The port's
+own list of what is left is now: the split's terrain and give-way (`PaneLayout`,
+`MainView.swift:2112-2179`); the session's and the tab's menus; the window's remembered
+state (the widths, the panels, the tabs and the selection); the choices the Mac keeps (the
+last model, the approval mode, the steps' detail, the favourites, push after commit, the
+typeface and the window material); and the last three motions — the 45 % of a disabled
+control (`Pressable.swift:61`), the image viewer's own 0.16 / 0.14 / 0.15 easeOut, and the
+copy mark's replace. Everything else in §1–§9 is now the Mac's, and the checks hold it
+there.
 
 **The wording is finished with the screens it lives in.** The shell's strings are the Mac's,
 word for word, and a check holds them to the Mac's own source
