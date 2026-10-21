@@ -6,6 +6,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Signing in on a machine's browser (to connect an integration, or when an agent asks) no longer freezes when a site asks for a passkey: the site hears there's none here and offers its other ways, such as "Try another way". Chrome's passkey prompt, which the live view couldn't show, held the page still. The panel's browser on your Mac refuses passkeys the same way, however a site asks.
+
 ## 0.6.3
 
 - Switching an MCP server between running on this Mac and on the web no longer writes a half-typed environment variable or header into the other kind.
