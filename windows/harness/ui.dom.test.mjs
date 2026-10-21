@@ -418,6 +418,10 @@ test("the page, in a browser, against the real engine", {
   const firstTitle = await page.page.locator("#sessions li .session-title").first().textContent();
   await page.element("new-session").click();
   await page.seen("the second session to be listed", () => document.querySelectorAll("#sessions li").length === 2, null, 30_000);
+  // The new session is the one in view before the split is asked for: Open Beside opens
+  // the session beside the one in view, and "beside" is only known once it is (and a
+  // Windows runner does not race the panel's own timing).
+  await page.seen("the new session to be in view", () => document.querySelector("#conversation .card-title > span:first-child")?.textContent === "New Session", null, 30_000);
   await page.element("split").click();
   await page.seen("the split card to open", () => {
     const pane = document.getElementById("split-pane");
