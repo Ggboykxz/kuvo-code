@@ -71,6 +71,7 @@ import { Settings, settingsPageTitle } from "./Settings";
 import { DiffModal, Drawer, Palette, Picker, ProjectEditor, runInTerminal, runTheProject, Toast } from "./Overlays";
 import { Shimmer } from "./components/ai-elements/shimmer";
 import { FolderIcon, Symbol } from "./components/symbols";
+import { ContextMenu } from "./components/context-menu";
 import { Spinner } from "./components/spinner";
 import { toolDiffStat, toolSummary, toolSymbol } from "./components/tool-call";
 import { ProviderLogo } from "./components/provider-logo";
@@ -1221,28 +1222,7 @@ function folderName(path: string) {
 /// A menu, where the Mac has one (RightClickMenu.swift:4-65): the items, and the place
 /// it was asked for. The Mac's menus are the system's own, and they carry what a menu
 /// carries: a line between groups, an item that cannot be chosen, and the one that undoes.
-function ContextMenu({ x, y, items, onClose }: {
-  x: number;
-  y: number;
-  items: { label: string; run?: () => void; disabled?: boolean; danger?: boolean; separator?: boolean }[];
-  onClose: () => void;
-}) {
-  return (
-    <div className="context-menu" style={{ left: x, top: y }} role="menu" onMouseLeave={onClose}>
-      {items.map((item, index) => item.separator ? (
-        <hr key={`separator_${index}`} className="menu-separator" role="separator" />
-      ) : (
-        <button
-          key={item.label}
-          role="menuitem"
-          disabled={item.disabled}
-          className={item.danger ? "danger" : undefined}
-          onClick={() => { onClose(); item.run?.(); }}
-        >{item.label}</button>
-      ))}
-    </div>
-  );
-}
+/// (The menu itself is in its own file, so the panel can show one too.)
 
 /// The Mac's section heading (SidebarView.swift:1039-1088): the title, a chevron that
 /// folds the section away, and what the section has on the right.
@@ -1736,6 +1716,24 @@ function Composer() {
     state.quote = undefined;
     promptRef.current?.focus();
   }, [state.quote]);
+
+  // Something from the panel is added to what you are writing, as the Mac adds it
+  // (MainView.swift:1239-1253): a space before it, and one after.
+  useEffect(() => {
+    if (!state.addition) return;
+    const addition = state.addition;
+    state.addition = undefined;
+    setText(current => {
+      const isBlock = addition.startsWith("```");
+      let text = current;
+      if (text !== "") {
+        if (isBlock) { if (!text.endsWith("\n")) text += "\n"; }
+        else if (!/\s$/.test(text)) text += " ";
+      }
+      return text + addition + (isBlock ? "\n" : " ");
+    });
+    promptRef.current?.focus();
+  }, [state.addition]);
 
   const queueItems = [
     ...state.inbox.map(item => ({ id: item.id, text: item.payload?.text ?? "", delivery: item.delivery })),

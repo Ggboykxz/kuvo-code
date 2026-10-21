@@ -674,6 +674,16 @@ const checks = [
     assert.match(rule(".file-code {"), /white-space: pre-wrap/);
   }],
 
+  ["the file's lines can be sent to the composer, as the Mac's own menu does", ({ app, overlays }) => {
+    // The menu is the Mac's: *Add to Message*, with the file named as a message names it
+    // and the lines that were picked (CodeTextView.swift:91-111, FilesView.swift:389-392).
+    assert.match(overlays, /label: "Add to Message"/);
+    assert.match(overlays, /state\.addition = `@\$\{relative\}:\$\{menu\.range\}`/);
+    // And it goes to the composer, with the Mac's spacing (MainView.swift:1239-1253).
+    assert.match(app, /if \(!state\.addition\) return;/);
+    assert.match(app, /text \+ addition \+ \(isBlock \? "\\n" : " "\)/);
+  }],
+
   ["a comment in the conversation is the Mac's own card", ({ app, css, review, symbols, rule }) => {
     // The message is taken apart, and the comments shown above the words
     // (AgentReferences.swift:170-179, YourMessage.swift:22, 829-831).

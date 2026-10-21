@@ -8,6 +8,7 @@ import { ChangesPanel } from "./Changes";
 import { complain, loadProjectFiles, loadSessions, notify, openProjectFile, openSession, projectName, projectRun, render, setProjectSettings, state, useStore, newSession, exportConversation, stopRun } from "./store";
 import { keysOf } from "./shortcuts";
 import { Symbol } from "./components/symbols";
+import { ContextMenu } from "./components/context-menu";
 
 // ---- The command palette ----
 
@@ -463,18 +464,76 @@ export function runInTerminal(command: string, folder: string) {
 ///
 /// The lines that are picked can be sent to the composer, as the Mac's own menu does
 /// (*Add to Message*, `CodeTextView.swift:91-111`, `FilesView.swift:389-392`).
-function FileView({ content }: { content: string }) {
+function FileView({ content, path }: { content: string; path: string }) {
   const lines = content.split("\n");
   // A file that ends with a newline has no last line of its own.
   if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
   const digits = String(lines.length).length;
+  const codeRef = useRef<HTMLPreElement | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; range: string } | null>(null);
+
+  /// The lines the selection covers, as the Mac counts them (CodeTextView.swift:99-105).
+  const selectedLines = () => {
+    const selection = window.getSelection();
+    const code = codeRef.current;
+    if (!selection || selection.isCollapsed || !selection.rangeCount || !code) return null;
+    const range = selection.getRangeAt(0);
+    const offsetOf = (node: Node, offset: number) => {
+      const before = document.createRange();
+      before.selectNodeContents(code);
+      before.setEnd(node, offset);
+      return before.toString().length;
+    };
+    const lineAt = (offset: number) => {
+      let line = 1;
+      const text = code.textContent ?? "";
+      for (let index = 0; index < offset && index < text.length; index += 1) {
+        if (text[index] === "\n") line += 1;
+      }
+      return line;
+    };
+    const first = lineAt(offsetOf(range.startContainer, range.startOffset));
+    const last = lineAt(offsetOf(range.endContainer, range.endOffset));
+    if (first === last) return `${first}`;
+    return `${first}-${last}`;
+  };
 
   return (
     <div className="file-view" style={{ "--ruler": `${digits * 7.5 + 20}px` } as React.CSSProperties}>
       <div className="file-numbers" aria-hidden="true">
         {lines.map((_, index) => <span key={index}>{index + 1}</span>)}
       </div>
-      <pre className="file-code">{content}</pre>
+      <pre
+        className="file-code"
+        ref={codeRef}
+        onContextMenu={event => {
+          // The menu is the Mac's: it holds what a menu holds (RightClickMenu.swift:4-65).
+          const range = selectedLines();
+          if (!range) return;
+          event.preventDefault();
+          setMenu({ x: event.clientX, y: event.clientY, range });
+        }}
+      >{content}</pre>
+      {menu ? (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          onClose={() => setMenu(null)}
+          items={[
+            {
+              label: "Add to Message",
+              run: () => {
+                // The file is named as a message names it: its path in the project, and the
+                // lines that were picked (FilesView.swift:38-45, 389-392).
+                const root = (state.project ?? "").replace(/[\\/]+$/, "");
+                const relative = root && path.startsWith(root) ? path.slice(root.length + 1) : path;
+                state.addition = `@${relative}:${menu.range}`;
+                render();
+              },
+            },
+          ]}
+        />
+      ) : null}
     </div>
   );
 }
@@ -608,7 +667,7 @@ export function Drawer() {
             render();
           } catch (error) { complain(error); }
         }} />
-        {state.openFile ? <FileView content={state.openFileContent ?? ""} /> : null}
+        {state.openFile ? <FileView content={state.openFileContent ?? ""} path={state.openFile} /> : null}
       </div>
       <div id="drawer-changes" className="drawer-body" hidden={state.drawerTab !== "changes"}>
         <ChangesPanel />

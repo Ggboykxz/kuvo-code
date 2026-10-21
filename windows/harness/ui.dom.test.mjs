@@ -240,6 +240,26 @@ test("the page, in a browser, against the real engine", {
     ["1", "2", "3", "4"],
     "the lines are numbered, as the Mac's ruler numbers them",
   );
+  // The lines that are picked can be sent to the composer, as the Mac's own menu does
+  // (CodeTextView.swift:91-111, FilesView.swift:389-392).
+  await page.page.evaluate(() => {
+    const code = document.querySelector(".file-code");
+    const text = code?.firstChild;
+    if (!text) return;
+    const range = document.createRange();
+    range.setStart(text, 14);
+    range.setEnd(text, 29);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  });
+  await page.page.locator(".file-code").click({ button: "right" });
+  await page.seen("the menu to show", () => Boolean(document.querySelector(".context-menu")), null, 10_000);
+  await page.page.locator(".context-menu button", { hasText: "Add to Message" }).click();
+  await page.seen("the mention to be in the composer", () => {
+    const box = document.getElementById("prompt");
+    return Boolean(box?.value?.includes("@notes.txt:2-3"));
+  }, null, 10_000);
   await page.element("drawer-close").click();
   await page.seen("the panel to close", () => document.getElementById("drawer")?.hidden === true, null, 10_000);
 

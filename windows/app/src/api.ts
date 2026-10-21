@@ -248,6 +248,9 @@ export interface AppState {
   /** A comment on a line of the changes, the Mac's own (ReviewComments.swift:6-18). */
   lineComments?: ReviewComment[];
   quote?: string;
+  /** Something to add to the composer, as the Mac's own *Add to Message* does
+   *  (MainView.swift:1239-1253). */
+  addition?: string;
   /** The picture in view, and the ones of the same message beside it (the Mac's viewer
    *  steps through them, ImageViewer.swift:128-131, 209-221). */
   viewing?: { items: { source: string; name: string; detail?: string }[]; index: number } | null;

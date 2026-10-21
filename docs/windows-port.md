@@ -332,6 +332,12 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     run in the primary folder; the agent can work in the others too" — and the session in
     view is given them: the rules that allow those folders, and the note that tells the
     agent that "in chugs-pinterest" means that folder (`SessionModel.swift:1379-1405`).
+  - **2.88 (this change). The file's lines can be sent to the composer.** The Mac's file
+    view carries its own right-click menu, and the lines that are picked can be sent to
+    the composer as *Add to Message* — the file named as a message names it, and the lines
+    that were picked (`CodeTextView.swift:91-111`, `FilesView.swift:38-45`, `389-392`).
+    The port's file view had no menu at all. It has the Mac's now, and what it adds goes
+    to the composer with the Mac's spacing (`MainView.swift:1239-1253`).
   - **2.87 (this change). A file is shown with its lines numbered.** The Mac shows a file
     in a read-only text view, with the lines numbered in a ruler beside it
     (`CodeTextView.swift:4-6`, `119-168`): the ruler is as wide as the widest number
