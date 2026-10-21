@@ -11,6 +11,8 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | Scenario | Suites | Not guarded yet |
 | --- | --- | --- |
 | A1, J2 A model ready, or the one you picked when it can't run | StartingModelTests, ProviderCompatibilityTests | |
+| A2, A3 First launch with no account, then connecting one | StartingModelTests (the model a session starts on, free ones without an account) | the welcome card and the Accounts sheet (UI; tests that drive the window would take over your keyboard and mouse, so the end-to-end runs try them) |
+| A5 Theme, accent and text size everywhere | | all on screen (UI; the end-to-end runs) |
 | A4 Bring over an opencode setup | OpencodeImportTests | |
 | A6 Quit with work running, open again | DraftsTests, StoredFilesTests, QueueTests, LastSeenTests | |
 | B5 Review the changes, comment on a line, send the comments | SessionEditsTests, SentMessageTests, DraftsTests | |
@@ -50,9 +52,11 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | I3 A machine that's away | MachineAwayTests | |
 | I4 What machines share with this Mac, and what's their own | MachineSettingsTests, CustomAutoPlacesTests, SignInSyncTests | a connected machine's engine starting over with new settings (needs SSH) |
 | J1 The network goes away mid-reply | NetworkDropTests | |
+| J3 The engine stops; the app brings it back | EngineRestartTests | |
 | J4 A huge file, a binary file in the changes | ChangesDiscardTests, ChangesBinaryTests | very large command output (the engine keeps it) |
 | K1 Settings keep what you change | EngineSettingsFileTests | |
 | K3 Notifications | NotificationMaskingTests | |
+| K2 Menu commands and shortcuts | | menus and keys (UI; the end-to-end runs check each against Settings › Keyboard Shortcuts) |
 | K5 Storage: what takes room | StorageReportTests | |
 | L50 Quit mid-job, open again | InterruptedRunTests | |
 | The panel's terminal | TerminalColorsTests | |

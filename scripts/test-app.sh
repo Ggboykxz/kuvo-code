@@ -27,6 +27,9 @@ clean() {
     done
     for folder in Caches HTTPStorages WebKit; do rm -rf "$HOME/Library/$folder/run.kuvo.code.tests"; done
     rm -rf "${TEMP%/}/KuvoCodeTests"
+    # And its temporary folder (the engine's scratch files, its agents bridge's). WebKit's
+    # processes keep folders of their own there too, which macOS looks after.
+    rm -rf "${TEMP%/}/run.kuvo.code.tests"
 }
 clean
 
