@@ -30,7 +30,7 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | B20 Commands and skills | SlashCommandsTests, SkillLibraryTests | |
 | C1–C3 Attach pictures, PDFs, files | AttachmentRoutesTests, AttachmentsTests, SentFilesTests | |
 | C4 Quote part of a reply and answer it | QuotingTests | |
-| C5, C6 Files in the panel; the agent shows one | FileLinksTests, PanelTabsTests, ProjectFilesTests, BrowserHistoryTests | |
+| C5, C6 Files in the panel; the agent shows one; agents' tabs tidied | FileLinksTests, PanelTabsTests, ProjectFilesTests, BrowserHistoryTests, AgentTabsTests | |
 | D4 A chat moved into a project | SessionLifecycleTests | |
 | E, B15 The agent's browser | BrowserToolServerTests | |
 | E5, L33, L34, K6 Sign-ins, codes, passwords | BrowserAsksTests, MachineSignOutTests, PasskeysTests | a machine's Chrome refusing passkeys (checked by hand in Chromium; no Chrome in the tests) |
