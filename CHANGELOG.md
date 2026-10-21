@@ -18,6 +18,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Removing a machine closes the tabs of its bots, which stayed open waiting for it.
 - A session shows working when Kuvo Code opens while a subagent of one of its subagents is still at work, not only one of its own.
 - Starting a bot from a shared one whose job and details are on the same line keeps the details in its first message; only the job's own sentence is left out, as it's said first.
+- A session archived with Kuvo Code 0.6.2 or earlier gets its wake-ups back when you bring it back; they stayed paused, as if you'd paused them.
 
 ## 0.6.3
 

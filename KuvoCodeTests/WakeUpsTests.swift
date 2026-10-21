@@ -165,6 +165,12 @@ import Testing
         await app.wakeUps.archived(session, false)
         #expect(!app.wakeUps.paused.contains(id))
         #expect(!FileManager.default.fileExists(atPath: folder(id, "paused")))
+
+        // Archived with an earlier Kuvo Code, whose hold said nothing: it comes back with it too.
+        await app.wakeUps.archived(session, true)
+        try Data().write(to: URL(filePath: folder(id, "paused")))
+        await app.wakeUps.archived(session, false)
+        #expect(!app.wakeUps.paused.contains(id), "archived before holds said whose they were: let go")
     }
 
     /// Archiving that the engine didn't take (it couldn't be reached): the session stays where it

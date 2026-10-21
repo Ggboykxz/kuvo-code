@@ -475,8 +475,10 @@ final class WakeUps {
     }
 
     /// What the pause file says when archiving held the wake-ups, not you: bringing the session
-    /// back takes only that hold away.
+    /// back takes only that hold away. Yours says `ownHold`; an empty one is from before they
+    /// said (0.6.3 and earlier), most likely archiving's, and goes too.
     private static let archivedHold = "archived"
+    private static let ownHold = "paused"
 
     /// Holds a conversation's wake-ups until you resume them; then those that came due meanwhile
     /// go. On a machine that can't be reached, nothing changes, and this says so. A session's
@@ -490,19 +492,19 @@ final class WakeUps {
             if pause, let engine = app?.machines.engine(machine) { try? await Wakes.install(on: engine.machine.connection) }
             let folder = Self.shell(owner.folder), paused = Self.shell(file)
             let script = switch (pause, byArchiving) {
-            case (true, false): "[ ! -d \(folder) ] || : > \(paused)"
+            case (true, false): "[ ! -d \(folder) ] || printf \(Self.ownHold) > \(paused)"
             case (true, true): "[ ! -d \(folder) ] || [ -e \(paused) ] || printf \(Self.archivedHold) > \(paused)"
             case (false, false): "rm -f \(paused)"
-            case (false, true): "[ \"$(cat \(paused) 2>/dev/null)\" != \(Self.archivedHold) ] || rm -f \(paused); [ -e \(paused) ] && echo held || true"
+            case (false, true): "case \"$(cat \(paused) 2>/dev/null)\" in \(Self.archivedHold)|'') rm -f \(paused);; esac; [ -e \(paused) ] && echo held || true"
             }
             guard let output = await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value else { throw Failure.notConnected(machine) }
             if !pause, byArchiving { isPaused = String(decoding: output, as: UTF8.self).hasPrefix("held") }
         } else if pause {
             guard owner.isBot || FileManager.default.fileExists(atPath: owner.folder) else { return }
             if !(byArchiving && FileManager.default.fileExists(atPath: file)) {
-                FileManager.default.createFile(atPath: file, contents: byArchiving ? Data(Self.archivedHold.utf8) : nil)
+                FileManager.default.createFile(atPath: file, contents: Data((byArchiving ? Self.archivedHold : Self.ownHold).utf8))
             }
-        } else if byArchiving, let held = FileManager.default.contents(atPath: file), String(decoding: held, as: UTF8.self) != Self.archivedHold {
+        } else if byArchiving, let held = FileManager.default.contents(atPath: file), !held.isEmpty, String(decoding: held, as: UTF8.self) != Self.archivedHold {
             // Yours: it stays.
             isPaused = true
         } else {
