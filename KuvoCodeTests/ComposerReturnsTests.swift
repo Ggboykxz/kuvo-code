@@ -70,4 +70,30 @@ import Testing
         try await until { model.session.revert == nil }
         #expect(model.draftText == "half a thought")
     }
+
+    /// Sent while the agent works, with Queue: it waits its turn. With nothing running: now.
+    @Test func whileItWorksAMessageWaitsItsTurn() async throws {
+        defer { done() }
+        let bodies = Bodies()
+        StubWeb.handle(Self.engine + "/api/session/\(id)/prompt") { _, body in
+            bodies.add((try? JSONSerialization.jsonObject(with: body) as? [String: Any])?["delivery"] as? String ?? "")
+            return StubWeb.json(["data": ["id": "x"]])
+        }
+        let model = try #require(workspace.model(for: id))
+        model.send("first", for: nil, queue: true)
+        try await until { bodies.all.count == 1 }
+        #expect(bodies.all == ["steer"])
+        let started = try ServerEvent(json: JSONSerialization.data(withJSONObject: ["id": "e1", "type": "session.execution.started", "created": 1, "data": ["sessionID": id]]))
+        workspace.handle(started)
+        model.send("second", for: nil, queue: true)
+        try await until { bodies.all.count == 2 }
+        #expect(bodies.all.last == "queue")
+    }
+
+    nonisolated final class Bodies: @unchecked Sendable {
+        private let lock = NSLock()
+        private var list: [String] = []
+        func add(_ delivery: String) { lock.withLock { list.append(delivery) } }
+        var all: [String] { lock.withLock { list } }
+    }
 }
