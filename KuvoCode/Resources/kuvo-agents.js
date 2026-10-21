@@ -1,7 +1,7 @@
 // @bun
 // Agents/src/main.ts
-import { mkdirSync as mkdirSync14, readdirSync as readdirSync7, readFileSync as readFileSync17, renameSync as renameSync7, rmSync as rmSync11, writeFileSync as writeFileSync12 } from "fs";
-import { join as join18 } from "path";
+import { mkdirSync as mkdirSync15, readdirSync as readdirSync8, readFileSync as readFileSync18, renameSync as renameSync8, rmSync as rmSync12, writeFileSync as writeFileSync13 } from "fs";
+import { join as join19 } from "path";
 
 // Agents/src/accounts.ts
 import { randomBytes } from "crypto";
@@ -10617,6 +10617,692 @@ function ownWords(message) {
   }
 }
 
+// Agents/src/groups/store.ts
+import { existsSync as existsSync12, mkdirSync as mkdirSync13, readdirSync as readdirSync6, readFileSync as readFileSync16, renameSync as renameSync6, rmSync as rmSync10, writeFileSync as writeFileSync11 } from "fs";
+import { join as join17 } from "path";
+
+// Agents/src/groups/rules.ts
+var stamp2 = (date = new Date) => date.toISOString().replace(/\.\d{3}Z$/, "Z");
+function length(text) {
+  let count = 0;
+  for (const _ of new Intl.Segmenter().segment(text))
+    count++;
+  return count;
+}
+var word = "[\\p{Alphabetic}\\p{M}\\p{Nd}\\p{Pc}\\u200c\\u200d]";
+var nonWord = "[^\\p{Alphabetic}\\p{M}\\p{Nd}\\p{Pc}\\u200c\\u200d]";
+var boundary = `(?<=${word})(?!${word})|(?<!${word})(?=${word})`;
+function lines2(text) {
+  return text.split(/\r\n|[\n\r\v\f\u0085\u2028\u2029]/).filter((line) => line.length > 0);
+}
+var escape = (text) => text.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
+var trimSpaces = (text) => text.replace(/^[\p{Zs}\t]+|[\p{Zs}\t]+$/gu, "");
+var trim = (text) => text.replace(/^[\s\p{Zs}\u0085]+|[\s\p{Zs}\u0085]+$/gu, "");
+function isPass(text) {
+  text = trim(text);
+  if (length(text) >= 80)
+    return false;
+  if (new RegExp(`^${nonWord}*PASS(?:${boundary})`, "u").test(text))
+    return true;
+  if (!new RegExp(`^${nonWord}*pass(?:${boundary})`, "iu").test(text))
+    return false;
+  const rest = text.replace(new RegExp(`^${nonWord}*pass${nonWord}*`, "iu"), "");
+  return rest.length === 0 || /^(nothing|no (new|more|comment|further)|i('| ha)ve nothing|skip|n\/a)/iu.test(rest);
+}
+function segments(message) {
+  const parts = [];
+  let quote;
+  let words = [];
+  const close = () => {
+    const text = trim(words.join(`
+`));
+    const quoted2 = quote ? trim(quote.join(`
+`)) : undefined;
+    if ((quoted2 ?? "").length > 0 || text.length > 0)
+      parts.push({ quote: quoted2 ? quoted2 : undefined, text });
+    quote = undefined;
+    words = [];
+  };
+  let inCode = false;
+  let previousBlank = true;
+  let quoting = false;
+  for (const line of message.split(`
+`)) {
+    const isQuoteLine = !inCode && (line === ">" || line.startsWith("> "));
+    if (line.startsWith("```"))
+      inCode = !inCode;
+    if (isQuoteLine && (quoting || previousBlank)) {
+      if (!quoting)
+        close();
+      quoting = true;
+      quote = [...quote ?? [], line === ">" ? "" : line.slice(2)];
+    } else {
+      quoting = false;
+      words.push(line);
+    }
+    previousBlank = trimSpaces(line).length === 0;
+  }
+  close();
+  return parts.length === 0 ? [{ text: message }] : parts;
+}
+var ownWords2 = (message) => segments(message).map((part) => part.text).filter((text) => text.length > 0).join(`
+
+`);
+function mentions(text, among) {
+  const found = [];
+  const folded = fold(text);
+  for (const bot of among) {
+    const name = fold("@" + bot.name);
+    let from = 0;
+    for (;; ) {
+      const at = folded.indexOf(name, from);
+      if (at < 0)
+        break;
+      const after = folded.slice(at + name.length);
+      if (after.length === 0 || !/^[\p{L}\p{N}]/u.test(after)) {
+        found.push({ id: bot.id, at });
+        break;
+      }
+      from = at + name.length;
+    }
+  }
+  return found.sort((a, b) => a.at - b.at).map((entry) => entry.id);
+}
+function fold(text) {
+  let out = "";
+  for (const { segment } of new Intl.Segmenter().segment(text)) {
+    const base = segment.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+    out += base.length > 0 ? base[0] + "\x00".repeat(segment.length - 1) : segment;
+  }
+  return out;
+}
+function nextSpeaker(group, all, members, quiet2, names) {
+  const last2 = [...all].reverse().find((message) => message.kind !== "note");
+  const missedYou = (bot) => {
+    const heard = group.heard[bot];
+    const index2 = heard ? all.map((message) => message.id).lastIndexOf(heard) : -1;
+    return all.slice(index2 + 1).some((message) => message.author === undefined && message.kind === "message");
+  };
+  const candidates = members.filter((bot) => (bot !== last2?.author || missedYou(bot)) && !quiet2.has(bot));
+  if (candidates.length === 0)
+    return;
+  if (last2) {
+    const named2 = mentions(ownWords2(last2.text), candidates.map((id) => ({ id, name: names.get(id) ?? "" })).filter((bot) => bot.name.length > 0))[0];
+    if (named2)
+      return named2;
+  }
+  const author = last2?.author;
+  const index = author ? group.members.indexOf(author) : -1;
+  if (!author || index < 0)
+    return candidates[0];
+  const order = [...group.members.slice(index + 1), ...group.members.slice(0, index)];
+  return order.find((bot) => candidates.includes(bot));
+}
+var limit = (members) => Math.min(16, Math.max(4, members * 3));
+function label(message, name) {
+  if (message.report !== undefined)
+    return name(message.author) + " (reporting back on its part of the work)";
+  switch (message.kind) {
+    case "wrapUp":
+      return name(message.author) + " (wrap-up)";
+    case "meeting":
+      return "Meeting the user scheduled, now";
+    default:
+      return name(message.author);
+  }
+}
+function turnText(bot, group, unheard, wrapUp, name, named2) {
+  let text = "";
+  const taken = group.retracted?.[bot];
+  if (taken !== undefined) {
+    text += `The user took back their message starting "${taken}" and everything said after it. Set all of that aside: it no longer stands.
+
+`;
+  }
+  if (unheard.length === 0) {
+    text += `Nothing new in "${group.name}" since you last spoke.
+`;
+  } else {
+    text += `New in "${group.name}" since you last spoke:
+`;
+    if (unheard.length > 40)
+      text += `
+(Earlier messages left out.)
+`;
+    for (const message of unheard.slice(-40)) {
+      const words = message.text.split(/\r\n|[\n\r\v\f\u0085\u2028\u2029]/).map((line) => "    " + line).join(`
+`);
+      text += `
+${label(message, name)}:
+${words}
+`;
+    }
+    if (named2)
+      text += `
+` + named2 + `
+`;
+  }
+  if (wrapUp) {
+    text += `
+Wrap up this discussion now, the one since the user last wrote: in a few short lines, what was decided, what's still open, and who does what next. Write to the user as "you". Don't reply PASS.`;
+  } else {
+    text += `
+Your turn, ${name(bot)}. Reply to the group, or just PASS if you have nothing new to add.`;
+  }
+  return text;
+}
+function splitText(names, said2) {
+  let text = `For the app, not the chat: list who does what next, from what was decided, one line for each bot with work, as
+@Name: what they do, with what they need to know
+If a part can only start once others are done, write it as @Name (after @Other): \u2026; it then starts when theirs is done, with what they reported.
+Only the bots in this chat (${names.map((name) => "@" + name).join(", ")}), and only work that was agreed on, not what's still open.
+Then, on a line of its own, GO or WAIT: GO if the user told you to go ahead and do the work (like "go ahead", "do it", "get going", "do your parts"), WAIT if they only asked for a plan or haven't decided.
+If there's no work to hand out, reply just NONE.`;
+  if (said2.length > 0) {
+    text += `
+
+What the user wrote in this discussion:
+` + said2.map((words) => `
+> ` + words.replaceAll(`
+`, `
+> `)).join(`
+`);
+  }
+  return text;
+}
+function parts(text, names) {
+  const found = [];
+  const said2 = new Map;
+  let go = false;
+  const byLength = [...names].sort((a, b) => length(b) - length(a));
+  for (const raw of lines2(text)) {
+    const line = trimSpaces(raw.replaceAll("**", "").replace(/^[\s>*\u2022\u00B7-]*(\d+[.)]\s*)?/u, ""));
+    if (new RegExp(`^${nonWord}*GO${nonWord}*$`, "u").test(line)) {
+      go = true;
+      continue;
+    }
+    if (new RegExp(`^${nonWord}*WAIT${nonWord}*$`, "u").test(line)) {
+      go = false;
+      continue;
+    }
+    for (const name of byLength) {
+      const match = new RegExp(`^@?${escape(name)}\\s*(?:\\(\\s*(?:after|once)\\s+([^)]*)\\))?\\s*[:\u2014\u2013-]\\s*`, "iu").exec(line);
+      if (!match)
+        continue;
+      const task = trimSpaces(line.slice(match[0].length));
+      if (task.length === 0)
+        break;
+      const waitsFor = match[1] ?? "";
+      const after = byLength.filter((other) => other !== name && new RegExp(`(^|[^\\p{L}\\p{N}])@?${escape(other)}($|[^\\p{L}\\p{N}])`, "iu").test(waitsFor));
+      const existing = found.find((part) => part.name === name);
+      if (existing)
+        existing.after.push(...after.filter((other) => !existing.after.includes(other)));
+      else
+        found.push({ name, task: "", after });
+      said2.set(name, [...said2.get(name) ?? [], task]);
+      break;
+    }
+  }
+  for (const part of found) {
+    const all = said2.get(part.name) ?? [];
+    part.task = all.length === 1 ? all[0] : all.map((task) => "- " + task).join(`
+`);
+  }
+  return { parts: found, go };
+}
+function tasks(text, members, newID2) {
+  const { parts: found, go } = parts(text, members.map((bot) => bot.name));
+  const ids = new Map;
+  for (const bot of members)
+    if (!ids.has(bot.name))
+      ids.set(bot.name, bot.id);
+  const working = new Set(found.map((part) => part.name));
+  const list = [];
+  for (const part of found) {
+    const bot = ids.get(part.name);
+    if (!bot)
+      continue;
+    const after = part.after.filter((name) => working.has(name)).flatMap((name) => ids.has(name) ? [ids.get(name)] : []);
+    list.push({ id: newID2(), bot, task: part.task, state: "proposed", ...after.length > 0 ? { after } : {} });
+  }
+  return { tasks: list, go };
+}
+function ring(task, all) {
+  const seen = new Set;
+  const path = (part) => {
+    for (const next of all) {
+      if (next.state !== "waiting" || next.id === part.id || !(part.after ?? []).includes(next.bot))
+        continue;
+      if (next.id === task.id)
+        return [part];
+      if (!seen.has(next.id)) {
+        seen.add(next.id);
+        const rest = path(next);
+        if (rest)
+          return [part, ...rest];
+      }
+    }
+    return;
+  };
+  return path(task);
+}
+var opening = "[Work from ";
+var divider = `
+
+---
+`;
+function compose(task, chat, wrapUp, from, before = []) {
+  let text = opening + chat.name + " \xB7 " + chat.id + `]
+
+` + task.task + divider + `The user agreed to this in the group chat "${chat.name}", and this part is yours. What was decided (${from}):
+
+` + wrapUp.text;
+  if (before.length > 0) {
+    text += `
+
+The parts before yours are done. What they reported:
+` + before.map((part) => `
+**${part.name}**: ${part.report}`).join(`
+`);
+  }
+  return text + `
+
+Do your part here, with all your tools, as you would any task from the user. When it's done, end with a few lines on what you did and anything left over. That last message of yours goes to the chat as your report on its own, so don't send it anywhere; the others' parts start from it.`;
+}
+function said2(messages) {
+  const found = [];
+  let part = "";
+  let error;
+  const steps = [];
+  for (const message of messages) {
+    if (message?.type === "user") {
+      if (part.length > 0)
+        found.push(part);
+      part = "";
+    } else if (message?.type === "assistant") {
+      const content = Array.isArray(message.content) ? message.content : [];
+      for (const block of content)
+        if (block?.type === "tool")
+          steps.push(block);
+      const words = trim(content.filter((block) => block?.type === "text").map((block) => String(block.text ?? "")).join(`
+
+`));
+      if (words.length > 0)
+        part = words;
+      error = message.error?.message;
+    }
+  }
+  if (part.length > 0)
+    found.push(part);
+  const kept2 = found.filter((text) => !isPass(text));
+  return { text: (kept2.length === 0 ? found.slice(-1) : kept2).join(`
+
+`), error, steps };
+}
+function trimmed(call) {
+  const cut = (output) => output.map((item) => item?.type === "text" && length(item.text) > 4000 ? { ...item, text: sliceCharacters(item.text, 4000) + "\u2026" } : item);
+  const state = call.state;
+  if (state?.status === "completed")
+    return { ...call, state: { ...state, content: cut(state.content ?? []) } };
+  if (state?.status === "error" && state.content)
+    return { ...call, state: { ...state, content: cut(state.content) } };
+  return call;
+}
+function sliceCharacters(text, count) {
+  let out = "";
+  let taken = 0;
+  for (const { segment } of new Intl.Segmenter().segment(text)) {
+    if (taken++ >= count)
+      break;
+    out += segment;
+  }
+  return out;
+}
+function seatInstructions(bot, group, others, lead, personality, identityNote) {
+  const who = others.map((other) => other.name + (other.job.length === 0 ? "" : ` (${other.job})`)).join(", ");
+  const job = trim(bot.instructions);
+  const purpose = group.purpose === undefined || group.purpose === null ? "" : group.purpose.length === 0 ? "" : ` The chat is for: ${group.purpose}`;
+  const leads = lead ? lead.id === bot.id ? "You lead it." : `${lead.name} leads it.` : "";
+  let text = `You are ${bot.name}, one of the user's bots in Kuvo Code${bot.job.length === 0 ? "" : `: ${bot.job}`}.${personality !== undefined ? ` ${personality}` : ""}${job.length === 0 ? "" : `
+Your job:
+${job}
+`}
+` + `Your memory file is "${bot.memoryFile}": read it for context on your work.
+` + `
+` + `This conversation is your seat in "${group.name}", a group chat between the user and these bots: ${who.length === 0 ? "just you" : who}, and you. ${leads}${purpose}
+` + `
+` + `Each message you get here holds what was said in the chat since you last spoke, and means it's your turn. Your reply is posted ` + `to the chat as your message, so write it to the group: a few sentences, plain and to the point, like a colleague in a team ` + `chat. Add something new: build on what others said instead of repeating it, disagree when you do, and ask someone directly ` + `with @Name. Write to the user as "you". If you have nothing new to add, reply with just PASS.
+` + `
+` + `You can look things up before you answer (read and search files, search the web) when it helps; there are no commands, subagents or messages to other agents here. ` + `Don't change files or start the work here: the chat is for talking it through. When something needs doing, say who should ` + `do it. Once the user says go, each of you gets your part in your own conversation, does it there with all your tools, and ` + `reports back here: don't send anyone the work yourself, and don't wait on it in the chat.
+` + `
+` + identityNote;
+  if (lead?.id === bot.id) {
+    text += `
+
+You lead this chat. When the user brings something up, you go first: frame it in a line or two and say who should ` + `weigh in on what. Keep it moving and short. When you're asked to wrap up, sum up what was decided, what's still open ` + `and who does what.`;
+  }
+  return text;
+}
+function seatRules(folder, askFirst, denies) {
+  const rules = [
+    "edit",
+    "write",
+    "patch",
+    "question",
+    "external_directory",
+    "shell",
+    "subagent",
+    "kuvo-browser_send_message",
+    "kuvo-browser_start_session",
+    "kuvo-browser_browser_save_pdf",
+    "kuvo-browser_browser_upload",
+    "kuvo-browser_schedule_wake_up",
+    "kuvo-browser_watch_for_change"
+  ].map((action) => ({ action, resource: "*", effect: "deny" }));
+  if (askFirst)
+    rules.push({ action: "webfetch", resource: "*", effect: "deny" });
+  rules.push({ action: "external_directory", resource: folder.replace(/\/+$/, "") + "/*", effect: "allow" });
+  return [...rules, ...denies];
+}
+function headingLevel(line) {
+  const trimmed2 = trimSpaces(line);
+  let marks = 0;
+  while (marks < trimmed2.length && trimmed2[marks] === "#")
+    marks++;
+  if (marks < 1 || marks > 6)
+    return;
+  const after = trimmed2.slice(marks);
+  return after.length === 0 || after[0] === " " ? marks : undefined;
+}
+function isJobHeading(line) {
+  const trimmed2 = trimSpaces(line);
+  if (!trimmed2.startsWith("#"))
+    return false;
+  const title = trimSpaces(trimmed2.replace(/^#+/, "")).toLowerCase();
+  if (title === "job" || title === "my job" || title === "the job" || title.startsWith("job:"))
+    return true;
+  if (!title.startsWith("job "))
+    return false;
+  const first = trimSpaces(title.slice(4))[0];
+  return first !== undefined && "-\u2013\u2014:(".includes(first);
+}
+function jobInHeading(line) {
+  const title = trimSpaces(trimSpaces(line).replace(/^#+/, ""));
+  if (!title.toLowerCase().startsWith("job"))
+    return;
+  let rest = trimSpaces(title.slice(3));
+  const mark = rest[0];
+  if (mark === undefined || !":-\u2013\u2014(".includes(mark))
+    return;
+  rest = trimSpaces(rest.slice(1));
+  if (mark === "(" && rest.endsWith(")"))
+    rest = trimSpaces(rest.slice(0, -1));
+  return rest.length === 0 ? undefined : { text: rest, isColon: mark === ":" };
+}
+function jobInMemory(text) {
+  const all = text.split(`
+`);
+  const start = all.findIndex(isJobHeading);
+  if (start < 0)
+    return;
+  const level = headingLevel(all[start]) ?? 1;
+  let end = all.length;
+  let inCode = false;
+  for (let index = start + 1;index < all.length; index++) {
+    const trimmed2 = trimSpaces(all[index]);
+    if (trimmed2.startsWith("```") || trimmed2.startsWith("~~~")) {
+      inCode = !inCode;
+      continue;
+    }
+    const other = inCode ? undefined : headingLevel(all[index]);
+    if (other !== undefined && other <= level) {
+      end = index;
+      break;
+    }
+  }
+  let section = trim(all.slice(start + 1, end).join(`
+`));
+  const inline = jobInHeading(all[start]);
+  if (inline && (inline.isColon || section.length === 0))
+    section = [inline.text, section].filter((part) => part.length > 0).join(`
+`);
+  let line = section.split(`
+`).map(trimSpaces).find((part) => part.length > 0) ?? "";
+  for (const mark of ["- ", "* ", "> "])
+    if (line.startsWith(mark))
+      line = line.slice(mark.length);
+  line = line.replaceAll("**", "").replaceAll("__", "");
+  if (line.toLowerCase().startsWith("job:"))
+    line = line.slice(4);
+  line = trimSpaces(line);
+  if (length(line) > 48) {
+    const stop = line.indexOf(". ");
+    if (stop >= 0)
+      line = line.slice(0, stop);
+  }
+  if (line.endsWith(".") && !line.endsWith(".."))
+    line = line.slice(0, -1);
+  return { line, section };
+}
+
+// Agents/src/groups/store.ts
+var version2 = 1;
+var read = (file) => {
+  try {
+    return JSON.parse(readFileSync16(file, "utf8"));
+  } catch {
+    return;
+  }
+};
+var text = (file) => {
+  try {
+    return readFileSync16(file, "utf8");
+  } catch {
+    return;
+  }
+};
+function write(file, value) {
+  writeFileSync11(file + ".new", JSON.stringify(value, null, 2), { mode: 384 });
+  renameSync6(file + ".new", file);
+}
+
+class GroupStore {
+  root;
+  bots;
+  constructor(root, bots) {
+    this.root = root;
+    this.bots = bots;
+    mkdirSync13(root, { recursive: true, mode: 448 });
+  }
+  folder(id) {
+    return join17(this.root, id);
+  }
+  load() {
+    const all = new Map;
+    let names = [];
+    try {
+      names = readdirSync6(this.root);
+    } catch {}
+    for (const id of names) {
+      if (!/^grp_[a-z0-9]+$/.test(id))
+        continue;
+      const kept2 = this.read(id);
+      if (kept2)
+        all.set(id, kept2);
+    }
+    return all;
+  }
+  read(id) {
+    const record = read(join17(this.folder(id), "group.json"));
+    if (!record?.group || typeof record.kuvo !== "number" || record.kuvo > version2)
+      return;
+    const messages = read(join17(this.folder(id), "messages.json"));
+    return { group: record.group, status: record.status === "held" ? "held" : "active", talking: record.talking === true, messages: Array.isArray(messages) ? messages : [] };
+  }
+  saveGroup(kept2) {
+    mkdirSync13(this.folder(kept2.group.id), { recursive: true, mode: 448 });
+    write(join17(this.folder(kept2.group.id), "group.json"), { kuvo: version2, status: kept2.status, ...kept2.talking ? { talking: true } : {}, group: kept2.group });
+  }
+  saveMessages(kept2) {
+    mkdirSync13(this.folder(kept2.group.id), { recursive: true, mode: 448 });
+    write(join17(this.folder(kept2.group.id), "messages.json"), kept2.messages);
+  }
+  setAwake(id, awake) {
+    const file = join17(this.folder(id), "awake");
+    if (awake && !existsSync12(file) && existsSync12(this.folder(id)))
+      writeFileSync11(file, "");
+    if (!awake)
+      rmSync10(file, { force: true });
+  }
+  trash(id, trash) {
+    if (!existsSync12(this.folder(id)))
+      return;
+    const into = join17(trash, `${new Date().toISOString().replace(/[-:]/g, "").replace(/\..*/, "")}-group-${id}`);
+    mkdirSync13(into, { recursive: true, mode: 448 });
+    renameSync6(this.folder(id), join17(into, id));
+  }
+  settings() {
+    const value = read(join17(this.root, "settings.json"));
+    if (!value || typeof value !== "object")
+      return;
+    return {
+      personalities: value.personalities && typeof value.personalities === "object" ? value.personalities : {},
+      identityNote: typeof value.identityNote === "string" ? value.identityNote : "",
+      askFirst: value.askFirst === true,
+      denies: Array.isArray(value.denies) ? value.denies.filter((rule) => rule?.effect === "deny" && typeof rule.action === "string") : [],
+      timeZone: typeof value.timeZone === "string" ? value.timeZone : undefined,
+      locale: typeof value.locale === "string" ? value.locale : undefined
+    };
+  }
+  writeSettings(settings) {
+    write(join17(this.root, "settings.json"), { kuvo: version2, ...settings });
+  }
+  bot(id) {
+    if (!/^bot_[A-Za-z0-9]+$/.test(id))
+      return;
+    const folder = join17(this.bots, id);
+    const described = read(join17(folder, "bot.json"));
+    const sessionID = text(join17(folder, "session"))?.trim();
+    if (!described?.name || !sessionID)
+      return;
+    const memory = text(join17(folder, "MEMORY.md"));
+    const job = memory ? jobInMemory(memory) : undefined;
+    const directory = text(join17(folder, "directory"))?.trim() || join17(folder, "workspace");
+    return {
+      id,
+      name: String(described.name),
+      job: job?.line ?? String(described.job ?? ""),
+      instructions: job?.section ?? "",
+      memoryFile: join17(folder, "MEMORY.md"),
+      folder,
+      sessionID,
+      directory,
+      model: described.model?.id && described.model?.providerID ? described.model : undefined,
+      personality: typeof described.personality === "string" ? described.personality : undefined,
+      agents: text(join17(folder, "via"))?.trim() === "bridge"
+    };
+  }
+  writeFile(path, contents) {
+    mkdirSync13(join17(path, ".."), { recursive: true });
+    writeFileSync11(path + ".new", contents, { mode: 384 });
+    renameSync6(path + ".new", path);
+  }
+  removeFile(path) {
+    rmSync10(path, { force: true });
+  }
+}
+
+// Agents/src/groups/routes.ts
+var json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
+var error = (status, message) => json({ message }, status);
+var isGroup = (value, id) => value && value.id === id && typeof value.name === "string" && Array.isArray(value.members) && value.members.every((member) => typeof member === "string") && typeof value.created === "string" && value.seats && typeof value.seats === "object" && value.heard && typeof value.heard === "object";
+var isMessages = (value) => Array.isArray(value) && value.every((message) => message && typeof message.id === "string" && typeof message.text === "string" && typeof message.time === "string" && typeof message.kind === "string");
+async function groupRoutes(runner, store, method, parts2, body) {
+  if (!runner || !store)
+    return error(404, "Group chats run on the Mac here.");
+  const [id, action] = parts2;
+  if (!id) {
+    if (method === "GET")
+      return json({ version: version2, data: runner.list() });
+    return error(405, "Not allowed");
+  }
+  if (id === "settings" && method === "PUT") {
+    const value = await body();
+    store.writeSettings({
+      personalities: value?.personalities && typeof value.personalities === "object" ? value.personalities : {},
+      identityNote: typeof value?.identityNote === "string" ? value.identityNote : "",
+      askFirst: value?.askFirst === true,
+      denies: Array.isArray(value?.denies) ? value.denies : [],
+      timeZone: typeof value?.timeZone === "string" ? value.timeZone : undefined,
+      locale: typeof value?.locale === "string" ? value.locale : undefined
+    });
+    return json({});
+  }
+  if (!/^grp_[a-z0-9]+$/.test(id))
+    return error(404, "No such chat.");
+  if (!action) {
+    if (method === "GET") {
+      const chat = runner.get(id);
+      return chat ? json({ version: version2, data: chat }) : error(404, "No such chat.");
+    }
+    if (method === "PUT") {
+      const { group, messages, status, replace } = await body();
+      if (!isGroup(group, id) || !isMessages(messages ?? []))
+        return error(400, "That isn't a group chat.");
+      if (!runner.put(group, messages ?? [], status === "active" ? "active" : "held", replace === true))
+        return error(409, "That chat is here already.");
+      return json({ data: runner.get(id) });
+    }
+    if (method === "PATCH")
+      return await runner.update(id, await body()) ? json({ data: runner.get(id) }) : error(404, "No such chat.");
+    if (method === "DELETE")
+      return await runner.delete(id) ? json({}) : error(404, "No such chat.");
+    return error(405, "Not allowed");
+  }
+  if (method !== "POST")
+    return error(405, "Not allowed");
+  const found = runner.get(id);
+  if (!found)
+    return error(404, "No such chat.");
+  switch (action) {
+    case "activate":
+      runner.activate(id);
+      return json({ data: runner.get(id) });
+    case "hold":
+      return json({ data: runner.hold(id) });
+    case "release":
+      runner.release(id);
+      return json({});
+  }
+  if (found.status !== "active")
+    return error(409, "That chat is moving.");
+  switch (action) {
+    case "send": {
+      const { text: text2, named: named2 } = await body();
+      const message = typeof text2 === "string" ? runner.send(id, text2, typeof named2 === "string" ? named2 : undefined) : undefined;
+      return message ? json({ data: message }) : error(400, "Nothing to send.");
+    }
+    case "stop":
+      runner.stop(id);
+      return json({});
+    case "keep-going":
+      runner.keepGoing(id);
+      return json({});
+    case "undo": {
+      const { message } = await body();
+      const text2 = typeof message === "string" ? runner.undo(id, message) : undefined;
+      return text2 === undefined ? error(404, "No such message.") : json({ data: { text: text2 } });
+    }
+    case "start-work": {
+      const { wrapUp } = await body();
+      if (typeof wrapUp === "string")
+        runner.startWork(wrapUp, id);
+      return json({});
+    }
+  }
+  return error(404, "Not found");
+}
+
 // Agents/src/server.ts
 var attempts = new Map;
 function cancelSignIns() {
@@ -10632,9 +11318,9 @@ setInterval(() => {
     attempts.delete(id);
   }
 }, 60000).unref?.();
-var json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
-var located = (value) => json({ location: { directory: process.cwd() }, data: value });
-var error = (status, message) => json({ message }, status);
+var json2 = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
+var located = (value) => json2({ location: { directory: process.cwd() }, data: value });
+var error2 = (status, message) => json2({ message }, status);
 var lastSeen = new Map;
 var lastMaintained = new Map;
 async function maintainedSoon(agent, fresh) {
@@ -10654,7 +11340,7 @@ async function maintainedSoon(agent, fresh) {
 }
 async function integration(agent, fresh = false, auto) {
   const [account, maintained] = await Promise.all([
-    agent.account(fresh).catch((error2) => ({ installed: false, signedIn: false, message: String(error2?.message ?? error2) })),
+    agent.account(fresh).catch((error3) => ({ installed: false, signedIn: false, message: String(error3?.message ?? error3) })),
     maintainedSoon(agent, fresh)
   ]);
   const seen = JSON.stringify([account.installed, account.signedIn, account.label]);
@@ -10702,7 +11388,7 @@ async function models(agents) {
   return lists.flat();
 }
 function page(items2, url) {
-  const limit = Number(url.searchParams.get("limit") ?? 100) || 100;
+  const limit2 = Number(url.searchParams.get("limit") ?? 100) || 100;
   const cursor = url.searchParams.get("cursor");
   let start = 0;
   if (cursor) {
@@ -10710,10 +11396,10 @@ function page(items2, url) {
     const index = items2.findIndex((item) => item.id === after);
     start = index >= 0 ? index + 1 : items2.length;
   }
-  const data = items2.slice(start, start + limit);
+  const data = items2.slice(start, start + limit2);
   const order = cursor?.split(":", 1)[0] ?? url.searchParams.get("order") ?? "desc";
   const filter = url.searchParams.get("parentID") ?? cursor?.split(":")[2];
-  const next = start + limit < items2.length && data.length ? `${order}:${data[data.length - 1].id}${filter ? `:${filter}` : ""}` : undefined;
+  const next = start + limit2 < items2.length && data.length ? `${order}:${data[data.length - 1].id}${filter ? `:${filter}` : ""}` : undefined;
   return { data, cursor: { next } };
 }
 function handler(context) {
@@ -10722,17 +11408,17 @@ function handler(context) {
   const agentFor = (id) => roster.find(id);
   return async (request) => {
     if (request.headers.get("authorization") !== expected)
-      return error(401, "Unauthorized");
+      return error2(401, "Unauthorized");
     const url = new URL(request.url);
-    const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    const parts2 = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
     const method = request.method;
     const body = async () => request.headers.get("content-type")?.includes("json") ? await request.json().catch(() => ({})) : {};
     try {
-      if (parts[0] !== "api")
-        return error(404, "Not found");
-      const [, area, a, b, c, d, e] = parts;
+      if (parts2[0] !== "api")
+        return error2(404, "Not found");
+      const [, area, a, b, c, d, e] = parts2;
       if (area === "info")
-        return json({ version: context.version, pid: process.pid });
+        return json2({ version: context.version, pid: process.pid });
       if (area === "event")
         return feed();
       if (area === "integration") {
@@ -10744,14 +11430,14 @@ function handler(context) {
         }
         const agent = agentFor(a);
         if (!agent)
-          return error(404, `No agent ${a}.`);
+          return error2(404, `No agent ${a}.`);
         if (!b)
           return located(await integration(agent, true, auto));
         if (b === "connect" && c === "oauth") {
           if (!d && method === "POST") {
             const { methodID } = await body();
             if (!agent.signIn)
-              return error(400, `${agent.name} signs in another way.`);
+              return error2(400, `${agent.name} signs in another way.`);
             const attempt = await agent.signIn(methodID);
             const id = newID("att");
             const created = Date.now();
@@ -10761,7 +11447,7 @@ function handler(context) {
           }
           const pending = d ? attempts.get(d) : undefined;
           if (!pending)
-            return error(404, "That sign-in is over. Start it again.");
+            return error2(404, "That sign-in is over. Start it again.");
           if (method === "GET" && !e) {
             const expired = Date.now() > pending.expires;
             const status = expired ? { status: "expired" } : pending.attempt.status();
@@ -10774,26 +11460,26 @@ function handler(context) {
           if (method === "POST" && e === "complete") {
             const { code } = await body();
             if (!pending.attempt.complete)
-              return error(400, "This sign-in finishes in the browser.");
+              return error2(400, "This sign-in finishes in the browser.");
             await pending.attempt.complete(String(code ?? ""));
-            return json({});
+            return json2({});
           }
           if (method === "DELETE") {
             pending.attempt.cancel();
             attempts.delete(d);
-            return json({});
+            return json2({});
           }
         }
         if (b === "connect" && c === "key" && method === "POST") {
           const { key } = await body();
           if (!agent.signInWithKey)
-            return error(400, `${agent.name} doesn't take a key here.`);
+            return error2(400, `${agent.name} doesn't take a key here.`);
           await agent.signInWithKey(String(key ?? "").trim());
-          return json({});
+          return json2({});
         }
         if (b === "update" && method === "POST") {
           if (!agent.update)
-            return error(400, `Update ${agent.name} the way you installed it.`);
+            return error2(400, `Update ${agent.name} the way you installed it.`);
           const result = await agent.update();
           if (result.updated) {
             for (const each of roster.all())
@@ -10802,13 +11488,13 @@ function handler(context) {
             emit("integration.updated", { integrationID: agent.providerID });
             emit("model.updated", {});
           }
-          return json({ data: result });
+          return json2({ data: result });
         }
         if (b === "disconnect" && method === "POST") {
           if (!agent.signOut)
-            return error(400, `Sign out of ${agent.name} where you signed in.`);
+            return error2(400, `Sign out of ${agent.name} where you signed in.`);
           await agent.signOut();
-          return json({});
+          return json2({});
         }
       }
       if (area === "model") {
@@ -10827,41 +11513,41 @@ function handler(context) {
           return located(shells(directory));
         if (a && !b && method === "GET") {
           const job = shell(a);
-          return job ? located(job) : error(404, "No such command.");
+          return job ? located(job) : error2(404, "No such command.");
         }
         if (a && b === "output" && method === "GET") {
-          const limit = url.searchParams.get("limit");
-          const read = await shellOutput(a, Number(url.searchParams.get("cursor") ?? 0) || 0, limit ? Number(limit) : undefined);
-          return read ? located(read) : error(404, "No such command.");
+          const limit2 = url.searchParams.get("limit");
+          const read2 = await shellOutput(a, Number(url.searchParams.get("cursor") ?? 0) || 0, limit2 ? Number(limit2) : undefined);
+          return read2 ? located(read2) : error2(404, "No such command.");
         }
         if (a && !b && method === "DELETE")
-          return await stopShell(a) ? json({}) : error(404, "No such command.");
+          return await stopShell(a) ? json2({}) : error2(404, "No such command.");
       }
       if (area === "session") {
         if (!a) {
           if (method === "POST")
-            return json({ data: sessions.create(await body()) });
+            return json2({ data: sessions.create(await body()) });
           const directory = url.searchParams.get("directory") ?? undefined;
           const under = url.searchParams.get("parentID") ?? url.searchParams.get("cursor")?.split(":")[2] ?? null;
           const roots = sessions.list(directory, under === null || under === "" ? undefined : under === "null" ? null : under);
           const ordered = url.searchParams.get("cursor")?.startsWith("asc") || url.searchParams.get("order") === "asc" ? [...roots].reverse() : roots;
-          return json(page(ordered, url));
+          return json2(page(ordered, url));
         }
         if (a === "active")
-          return json({ data: Object.fromEntries(sessions.active().map((id2) => [id2, { type: "busy" }])) });
+          return json2({ data: Object.fromEntries(sessions.active().map((id2) => [id2, { type: "busy" }])) });
         if (a === "import" && method === "POST")
-          return json({ data: sessions.importSession(await body()) });
+          return json2({ data: sessions.importSession(await body()) });
         const id = a;
         if (!b) {
           if (method === "GET")
-            return json({ data: sessions.get(id) });
+            return json2({ data: sessions.get(id) });
           if (method === "PATCH") {
             sessions.update(id, await body());
-            return json({ data: sessions.get(id) });
+            return json2({ data: sessions.get(id) });
           }
           if (method === "DELETE") {
             await sessions.remove(id);
-            return json({});
+            return json2({});
           }
         }
         switch (b) {
@@ -10871,119 +11557,119 @@ function handler(context) {
             const ordered = asc ? messages : [...messages].reverse();
             if (c) {
               const found = messages.find((message) => message.id === c);
-              return found ? json({ data: found }) : error(404, "No such message.");
+              return found ? json2({ data: found }) : error2(404, "No such message.");
             }
-            return json(page(ordered, url));
+            return json2(page(ordered, url));
           }
           case "inbox":
             if (method === "DELETE" && c) {
               sessions.cancelInput(id, c);
-              return json({});
+              return json2({});
             }
             if (method === "PATCH" && c) {
               sessions.setDelivery(id, c, (await body()).delivery);
-              return json({});
+              return json2({});
             }
-            return json({ data: sessions.inbox(id) });
+            return json2({ data: sessions.inbox(id) });
           case "prompt": {
             const input = await body();
             sessions.prompt(id, { id: input.id ?? newID("msg"), text: String(input.text ?? ""), files: input.files ?? [], delivery: input.delivery ?? "steer" });
-            return json({});
+            return json2({});
           }
           case "fork":
-            return json({ data: sessions.fork(id, String((await body()).before ?? "")) });
+            return json2({ data: sessions.fork(id, String((await body()).before ?? "")) });
           case "revert":
             if (c === "stage" && method === "POST")
-              return json({ data: await sessions.stageRevert(id, String((await body()).messageID ?? "")) });
+              return json2({ data: await sessions.stageRevert(id, String((await body()).messageID ?? "")) });
             if (!c && method === "DELETE") {
               await sessions.clearRevert(id);
-              return json({});
+              return json2({});
             }
             break;
           case "shell":
             if (method !== "POST")
               break;
             sessions.runShell(id, String((await body()).command ?? ""));
-            return json({});
+            return json2({});
           case "synthetic": {
             const input = await body();
             sessions.synthetic(id, String(input.text ?? ""), typeof input.description === "string" ? input.description : undefined);
-            return json({});
+            return json2({});
           }
           case "generate": {
             const prompt = String((await body()).prompt ?? "");
             if (!prompt.trim())
               throw new BadRequest("Say what to write.");
-            return json({ data: { text: await sessions.generate(id, prompt) } });
+            return json2({ data: { text: await sessions.generate(id, prompt) } });
           }
           case "command": {
             const input = await body();
             const name = String(input.name ?? "");
             const written = String(input.text ?? "");
             const template = name ? await link2.commandTemplate(name, sessions.get(id).location.directory) : undefined;
-            const text = template ? expandCommand(template, written) : `/${name} ${written}`.trim();
-            sessions.prompt(id, { id: newID("msg"), text, files: input.files ?? [], delivery: input.delivery ?? "steer" });
-            return json({});
+            const text2 = template ? expandCommand(template, written) : `/${name} ${written}`.trim();
+            sessions.prompt(id, { id: newID("msg"), text: text2, files: input.files ?? [], delivery: input.delivery ?? "steer" });
+            return json2({});
           }
           case "interrupt":
-            return json({ interrupted: await sessions.interrupt(id, url.searchParams.get("resume") === "true") });
+            return json2({ interrupted: await sessions.interrupt(id, url.searchParams.get("resume") === "true") });
           case "model":
             sessions.selectModel(id, (await body()).model);
-            return json({});
+            return json2({});
           case "agent":
             sessions.selectAgent(id, (await body()).agent);
-            return json({});
+            return json2({});
           case "permission":
             if (!c)
-              return json({ data: id === "global" ? [] : sessions.permissions(id) });
+              return json2({ data: id === "global" ? [] : sessions.permissions(id) });
             if (d === "reply") {
               const { decision } = await body();
               sessions.replyPermission(id, c, decision);
-              return json({});
+              return json2({});
             }
             break;
           case "form":
             if (!c)
-              return json({ data: id === "global" ? [] : sessions.forms(id) });
+              return json2({ data: id === "global" ? [] : sessions.forms(id) });
             if (d === "reply") {
               sessions.replyForm(id, c, (await body()).answer ?? {});
-              return json({});
+              return json2({});
             }
             if (method === "DELETE") {
               sessions.replyForm(id, c, null);
-              return json({});
+              return json2({});
             }
             break;
           case "view": {
             const { idle } = await body();
             sessions.view(id, Number(idle) || Date.now());
-            return json({});
+            return json2({});
           }
           case "diff":
-            return json({ data: [] });
+            return json2({ data: [] });
         }
       }
       if (area === "kuvo" && a === "accounts") {
         if (method === "POST" && !b) {
-          const { agent, label } = await body();
+          const { agent, label: label2 } = await body();
           if (!kinds.includes(agent))
-            return error(400, "That isn't one of the coding agents.");
-          const record = roster.accounts.add(agent, label);
+            return error2(400, "That isn't one of the coding agents.");
+          const record = roster.accounts.add(agent, label2);
           roster.sync();
           const added = roster.all().find((each) => each.instance.id === record.id && each.id === agent);
           emit("integration.updated", { integrationID: added.providerID });
-          return json({ data: { providerID: added.providerID } });
+          return json2({ data: { providerID: added.providerID } });
         }
         const target = b ? roster.find(b) : undefined;
         if (!target)
-          return error(404, "No such account.");
+          return error2(404, "No such account.");
         if (target.instance.id === "default")
-          return error(400, "That's the agent's own sign-in: sign out of it where you signed in.");
+          return error2(400, "That's the agent's own sign-in: sign out of it where you signed in.");
         if (method === "PATCH") {
           roster.accounts.rename(target.providerID, (await body()).label);
           roster.sync();
           emit("integration.updated", { integrationID: target.providerID });
-          return json({});
+          return json2({});
         }
         if (method === "DELETE") {
           sessions.forgetProvider(target.providerID);
@@ -10993,18 +11679,20 @@ function handler(context) {
           roster.sync();
           emit("integration.updated", { integrationID: target.providerID });
           emit("model.updated", {});
-          return json({});
+          return json2({});
         }
       }
+      if (area === "kuvo" && a === "groups")
+        return await groupRoutes(context.groups?.runner, context.groups?.store, method, parts2.slice(3), body);
       if (area === "kuvo" && a === "tools" && method === "PUT") {
         const { url: address, token, timeout } = await body();
         setToolServer(typeof address === "string" && address && typeof token === "string" ? { url: address, token, timeout: Number(timeout) || 960000 } : undefined);
-        return json({});
+        return json2({});
       }
       if (area === "kuvo" && a === "engine" && method === "PUT") {
         const { url: address, password } = await body();
         link2.configure(typeof address === "string" && address ? address : undefined, typeof password === "string" ? password : undefined);
-        return json({});
+        return json2({});
       }
       if (area === "kuvo" && a === "auto") {
         if (b === "limits" && method === "DELETE") {
@@ -11014,7 +11702,7 @@ function handler(context) {
           else
             auto.clearLimits();
           emit("kuvo.auto.updated", {});
-          return json({});
+          return json2({});
         }
         if (!b && method === "PUT") {
           const { entries, lists } = await body();
@@ -11022,36 +11710,36 @@ function handler(context) {
             try {
               auto.setLists(lists);
             } catch (problem) {
-              return error(400, problem.message);
+              return error2(400, problem.message);
             }
           } else if (Array.isArray(entries))
             auto.set(entries);
           else
-            return error(400, "Send the lists, or the first one's entries.");
+            return error2(400, "Send the lists, or the first one's entries.");
           emit("kuvo.auto.updated", {});
         }
         if (!b && (method === "GET" || method === "PUT"))
-          return json({ data: { entries: auto.list(), lists: auto.all(), limits: auto.limits() } });
+          return json2({ data: { entries: auto.list(), lists: auto.all(), limits: auto.limits() } });
       }
       if (area === "experimental" && a === "session" && b) {
         const id = b;
         if (c === "instructions" && d === "entries" && e) {
           sessions.setInstruction(id, e, method === "DELETE" ? undefined : String((await body()).value ?? ""));
-          return json({});
+          return json2({});
         }
         if (c === "wait") {
           while (sessions.active().includes(id))
             await Bun.sleep(200);
-          return json({});
+          return json2({});
         }
       }
-      return error(404, "Not available for this agent.");
+      return error2(404, "Not available for this agent.");
     } catch (caught) {
       if (caught instanceof NotFound)
-        return error(404, caught.message);
+        return error2(404, caught.message);
       if (caught instanceof BadRequest)
-        return error(400, caught.message);
-      return error(500, caught instanceof Error ? caught.message : String(caught));
+        return error2(400, caught.message);
+      return error2(500, caught instanceof Error ? caught.message : String(caught));
     }
   };
 }
@@ -11071,8 +11759,8 @@ ${all}`;
 }
 
 // Agents/src/store.ts
-import { mkdirSync as mkdirSync13, readdirSync as readdirSync6, readFileSync as readFileSync16, renameSync as renameSync6, rmSync as rmSync10, statSync as statSync6, writeFileSync as writeFileSync11 } from "fs";
-import { join as join17 } from "path";
+import { mkdirSync as mkdirSync14, readdirSync as readdirSync7, readFileSync as readFileSync17, renameSync as renameSync7, rmSync as rmSync11, statSync as statSync6, writeFileSync as writeFileSync12 } from "fs";
+import { join as join18 } from "path";
 
 class Store {
   root;
@@ -11080,18 +11768,18 @@ class Store {
   pending = new Map;
   constructor(root) {
     this.root = root;
-    mkdirSync13(root, { recursive: true });
-    for (const id of readdirSync6(root)) {
+    mkdirSync14(root, { recursive: true });
+    for (const id of readdirSync7(root)) {
       try {
-        const folder = join17(root, id);
-        const session = JSON.parse(readFileSync16(join17(folder, "session.json"), "utf8"));
+        const folder = join18(root, id);
+        const session = JSON.parse(readFileSync17(join18(folder, "session.json"), "utf8"));
         let messages = [];
         try {
-          messages = JSON.parse(readFileSync16(join17(folder, "messages.json"), "utf8"));
+          messages = JSON.parse(readFileSync17(join18(folder, "messages.json"), "utf8"));
         } catch {}
         let agent = {};
         try {
-          agent = JSON.parse(readFileSync16(join17(folder, "agent.json"), "utf8"));
+          agent = JSON.parse(readFileSync17(join18(folder, "agent.json"), "utf8"));
         } catch {}
         this.records.set(session.id, { session, messages, agent });
       } catch {}
@@ -11105,7 +11793,7 @@ class Store {
   }
   writtenAt(id) {
     try {
-      return statSync6(join17(this.root, id, "messages.json")).mtimeMs;
+      return statSync6(join18(this.root, id, "messages.json")).mtimeMs;
     } catch {
       return;
     }
@@ -11118,7 +11806,7 @@ class Store {
     this.records.delete(id);
     clearTimeout(this.pending.get(id));
     this.pending.delete(id);
-    rmSync10(join17(this.root, id), { recursive: true, force: true });
+    rmSync11(join18(this.root, id), { recursive: true, force: true });
   }
   save(id, now = false) {
     clearTimeout(this.pending.get(id));
@@ -11140,22 +11828,1354 @@ class Store {
     const record = this.records.get(id);
     if (!record)
       return;
-    const folder = join17(this.root, id);
-    mkdirSync13(folder, { recursive: true });
+    const folder = join18(this.root, id);
+    mkdirSync14(folder, { recursive: true });
     for (const [name, value] of [
       ["session.json", record.session],
       ["messages.json", record.messages],
       ["agent.json", record.agent]
     ]) {
-      const file = join17(folder, name);
-      writeFileSync11(file + ".new", JSON.stringify(value));
-      renameSync6(file + ".new", file);
+      const file = join18(folder, name);
+      writeFileSync12(file + ".new", JSON.stringify(value));
+      renameSync7(file + ".new", file);
     }
   }
 }
 
+// Agents/src/groups/api.ts
+function server2(url, password) {
+  const authorization = "Basic " + Buffer.from(`opencode:${password}`).toString("base64");
+  return {
+    async request(method, path, body, timeout = 30000) {
+      const response = await fetch(url.replace(/\/$/, "") + path, {
+        method,
+        headers: { Authorization: authorization, ...body === undefined ? {} : { "Content-Type": "application/json" } },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: AbortSignal.timeout(timeout)
+      });
+      const text2 = await response.text();
+      let value;
+      try {
+        value = text2 ? JSON.parse(text2) : undefined;
+      } catch {
+        value = text2;
+      }
+      if (!response.ok) {
+        const error3 = new Error(value?.message ?? `It answered ${response.status}.`);
+        error3.status = response.status;
+        throw error3;
+      }
+      return value;
+    }
+  };
+}
+var at = (id) => "/api/session/" + encodeURIComponent(id);
+
+class SeatAPI {
+  requester;
+  constructor(requester) {
+    this.requester = requester;
+  }
+  async active() {
+    const answer = await this.requester.request("GET", "/api/session/active");
+    return new Set(Object.keys(answer?.data ?? {}));
+  }
+  async session(id) {
+    return (await this.requester.request("GET", at(id)))?.data;
+  }
+  async create(directory, title, agent, model2, permissions) {
+    const body = { title, location: { directory }, permissions };
+    if (agent)
+      body.agent = agent;
+    if (model2)
+      body.model = model2;
+    return (await this.requester.request("POST", "/api/session", body))?.data;
+  }
+  async setPermissions(id, rules) {
+    await this.requester.request("PATCH", at(id), { permissions: rules });
+  }
+  async setMetadata(id, metadata) {
+    await this.requester.request("PATCH", at(id), { metadata });
+  }
+  async setInstruction(id, key, text2) {
+    await this.requester.request("PUT", `/api/experimental/session/${encodeURIComponent(id)}/instructions/entries/${encodeURIComponent(key)}`, { value: text2 });
+  }
+  async removeInstruction(id, key) {
+    await this.requester.request("DELETE", `/api/experimental/session/${encodeURIComponent(id)}/instructions/entries/${encodeURIComponent(key)}`);
+  }
+  async delete(id) {
+    await this.requester.request("DELETE", at(id));
+  }
+  async prompt(id, message, text2, delivery) {
+    await this.requester.request("POST", at(id) + "/prompt", { id: message, text: text2, delivery });
+  }
+  async interrupt(id) {
+    await this.requester.request("POST", at(id) + "/interrupt");
+  }
+  async selectModel(id, model2) {
+    await this.requester.request("POST", at(id) + "/model", { model: model2 });
+  }
+  async selectAgent(id, agent) {
+    await this.requester.request("POST", at(id) + "/agent", { agent });
+  }
+  async inbox(id) {
+    return (await this.requester.request("GET", at(id) + "/inbox"))?.data ?? [];
+  }
+  async messages(id, limit2, cursor) {
+    const query = cursor ? `limit=${limit2}&cursor=${encodeURIComponent(cursor)}` : `limit=${limit2}&order=desc`;
+    const answer = await this.requester.request("GET", `${at(id)}/message?${query}`);
+    const data = Array.isArray(answer?.data) ? [...answer.data].reverse() : [];
+    return { data, cursor: answer?.cursor?.next ?? answer?.cursor?.previous };
+  }
+  async permissions(id) {
+    return (await this.requester.request("GET", at(id) + "/permission"))?.data ?? [];
+  }
+  async reject(id, permission, message) {
+    await this.requester.request("POST", `${at(id)}/permission/${encodeURIComponent(permission)}/reply`, { decision: "reject", message });
+  }
+  async forms(id) {
+    return (await this.requester.request("GET", at(id) + "/form"))?.data ?? [];
+  }
+  async dismiss(id, form, message) {
+    await this.requester.request("DELETE", `${at(id)}/form/${encodeURIComponent(form)}?message=${encodeURIComponent(message)}`);
+  }
+}
+
+// Agents/src/groups/time.ts
+function parseRepeat(text2) {
+  if (text2 === "weekdays")
+    return { kind: "weekdays" };
+  const unit = text2.slice(-1);
+  const digits = text2.slice(0, -1);
+  if (!/^[1-9][0-9]*$/.test(digits) || text2.length > 7)
+    return;
+  const count = Number(digits);
+  if (unit === "m" && count >= 5 && count <= 525600)
+    return { kind: "minutes", count };
+  if (unit === "h" && count <= 8760)
+    return { kind: "hours", count };
+  if (unit === "d" && count <= 366)
+    return { kind: "days", count };
+  if (unit === "w" && count <= 52)
+    return { kind: "weeks", count };
+  return;
+}
+var keepsTimeOfDay = (every) => every.kind === "days" || every.kind === "weeks" || every.kind === "weekdays";
+var keepsWeekday = (every) => every.kind === "weeks";
+var formats = new Map;
+var weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+function local(time, zone2) {
+  let format = formats.get(zone2);
+  if (!format) {
+    format = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone2,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      weekday: "short"
+    });
+    formats.set(zone2, format);
+  }
+  const parts2 = {};
+  for (const part of format.formatToParts(new Date(time)))
+    parts2[part.type] = part.value;
+  return {
+    year: Number(parts2.year),
+    month: Number(parts2.month),
+    day: Number(parts2.day),
+    hour: Number(parts2.hour) % 24,
+    minute: Number(parts2.minute),
+    weekday: weekdays.indexOf(parts2.weekday) + 1
+  };
+}
+function offset(time, zone2) {
+  const at2 = local(time, zone2);
+  const wall = Date.UTC(at2.year, at2.month - 1, at2.day, at2.hour, at2.minute);
+  return wall - Math.floor(time / 60000) * 60000;
+}
+function moment(year, month, day, hour, minute, zone2) {
+  const wall = Date.UTC(year, month - 1, day, hour, minute);
+  const before = wall - offset(wall - 86400000, zone2);
+  const after = wall - offset(wall + 86400000, zone2);
+  const reads = (time) => {
+    const at2 = local(time, zone2);
+    return Date.UTC(at2.year, at2.month - 1, at2.day, at2.hour, at2.minute) === wall;
+  };
+  const fits = [before, after].filter(reads);
+  if (fits.length > 0)
+    return Math.min(...fits);
+  return before;
+}
+function plusDays(date, days) {
+  const shifted = new Date(Date.UTC(date.year, date.month - 1, date.day + days));
+  return { year: shifted.getUTCFullYear(), month: shifted.getUTCMonth() + 1, day: shifted.getUTCDate() };
+}
+var daysBetween = (from, to) => Math.round((Date.UTC(to.year, to.month - 1, to.day) - Date.UTC(from.year, from.month - 1, from.day)) / 86400000);
+function minutesOf(time, zone2) {
+  const at2 = local(time, zone2);
+  return at2.hour * 60 + at2.minute;
+}
+function isWeekend(time, zone2) {
+  const day = local(time, zone2).weekday;
+  return day === 1 || day === 7;
+}
+function next(every, due, now, zone2, at2, weekday) {
+  if (every.kind === "minutes" || every.kind === "hours") {
+    const period = every.count * (every.kind === "hours" ? 3600000 : 60000);
+    return due + (Math.floor((now - due) / period) + 1) * period;
+  }
+  const days = every.kind === "days" ? every.count : every.kind === "weeks" ? every.count * 7 : 1;
+  const minutes = at2 ?? minutesOf(due, zone2);
+  let first = local(due, zone2);
+  if (keepsWeekday(every) && weekday !== undefined) {
+    const shift = (weekday - local(due, zone2).weekday + 7) % 7;
+    first = plusDays(first, shift > 3 ? shift - 7 : shift);
+  }
+  const missed = daysBetween(first, local(now, zone2));
+  let periods = Math.max(1, Math.trunc(missed / days));
+  for (let tries = 0;tries < 400; tries++, periods++) {
+    const day = plusDays(first, periods * days);
+    const time = moment(day.year, day.month, day.day, Math.floor(minutes / 60), minutes % 60, zone2);
+    if (time > now && (every.kind !== "weekdays" || !isWeekend(time, zone2)))
+      return time;
+  }
+  return now + days * 86400000;
+}
+
+// Agents/src/groups/runner.ts
+var seatKey = "kuvo.seat";
+var memoryKey = "kuvo.groups.machine";
+
+class Cancelled extends Error {
+}
+var sleep = (ms, signal) => new Promise((done, fail) => {
+  if (signal?.aborted)
+    return fail(new Cancelled);
+  const timer = setTimeout(done, ms);
+  signal?.addEventListener("abort", () => {
+    clearTimeout(timer);
+    fail(new Cancelled);
+  }, { once: true });
+});
+var groupMessageID = () => "gm_" + crypto.randomUUID().toLowerCase();
+var reason2 = (error3) => String(error3?.message ?? error3 ?? "it failed").trim();
+var runsWithAgents = (model2) => Boolean(model2 && (model2.providerID === autoProvider || parseProvider(model2.providerID)));
+
+class GroupRunner {
+  context;
+  chats;
+  live = new Map;
+  runs = 0;
+  following = new Set;
+  declined = new Set;
+  seatsChecked = new Set;
+  seatTexts = new Map;
+  syncs = new Map;
+  meetings;
+  constructor(context) {
+    this.context = context;
+    this.chats = context.store.load();
+    for (const [id, kept2] of this.chats) {
+      if (kept2.talking) {
+        kept2.talking = false;
+        this.state(id).paused = true;
+        context.store.saveGroup(kept2);
+      }
+      this.keepAwake(id);
+    }
+  }
+  start() {
+    this.resumeWork();
+    this.scheduleMeetings(1e4);
+  }
+  state(id) {
+    let live = this.live.get(id);
+    if (!live)
+      this.live.set(id, live = { paused: false, asked: 0 });
+    return live;
+  }
+  talk(id) {
+    const live = this.state(id);
+    return { speaking: live.speaking ?? live.splitting, discussing: live.abort !== undefined, paused: live.paused };
+  }
+  list() {
+    return [...this.chats.values()].map((kept2) => ({ group: kept2.group, status: kept2.status, state: this.talk(kept2.group.id), last: kept2.messages.at(-1) }));
+  }
+  get(id) {
+    const kept2 = this.chats.get(id);
+    return kept2 && { group: kept2.group, status: kept2.status, state: this.talk(id), messages: kept2.messages };
+  }
+  chat(id) {
+    const kept2 = this.chats.get(id);
+    return kept2?.status === "active" ? kept2 : undefined;
+  }
+  bot(id) {
+    return id ? this.context.store.bot(id) : undefined;
+  }
+  name(author) {
+    return author === undefined ? "User" : this.bot(author)?.name ?? "A bot that left";
+  }
+  changed(id) {
+    const kept2 = this.chats.get(id);
+    if (!kept2)
+      return;
+    this.context.store.saveGroup(kept2);
+    this.keepAwake(id);
+    emit("kuvo.group.updated", { id, group: kept2.group, status: kept2.status, state: this.talk(id) });
+  }
+  told(id) {
+    const kept2 = this.chats.get(id);
+    if (kept2)
+      emit("kuvo.group.updated", { id, group: kept2.group, status: kept2.status, state: this.talk(id) });
+  }
+  keepAwake(id) {
+    const kept2 = this.chats.get(id);
+    if (!kept2)
+      return;
+    const working = kept2.messages.some((message) => message.tasks?.some((task) => task.state === "working" || task.state === "waiting"));
+    this.context.store.setAwake(id, kept2.status === "active" && (kept2.group.meeting !== undefined || this.state(id).abort !== undefined || working));
+  }
+  put(group, messages, status, replace) {
+    const existing = this.chats.get(group.id);
+    if (existing && !replace)
+      return false;
+    if (existing)
+      this.stop(group.id);
+    const kept2 = { group, status, messages };
+    this.chats.set(group.id, kept2);
+    this.context.store.saveMessages(kept2);
+    this.changed(group.id);
+    if (status === "active")
+      this.began(group.id);
+    return true;
+  }
+  activate(id) {
+    const kept2 = this.chats.get(id);
+    if (!kept2)
+      return false;
+    if (kept2.status !== "active") {
+      kept2.status = "active";
+      this.changed(id);
+      this.began(id);
+    }
+    return true;
+  }
+  began(id) {
+    this.resumeWork(id);
+    this.rememberSoon(id);
+    this.scheduleMeetings(0);
+  }
+  hold(id) {
+    const kept2 = this.chats.get(id);
+    if (!kept2)
+      return;
+    this.stop(id);
+    kept2.status = "held";
+    this.changed(id);
+    return { group: kept2.group, messages: kept2.messages };
+  }
+  release(id) {
+    const kept2 = this.chats.get(id);
+    if (!kept2)
+      return false;
+    this.stop(id);
+    this.chats.delete(id);
+    this.live.delete(id);
+    this.context.store.trash(id, this.context.trash);
+    emit("kuvo.group.deleted", { id });
+    for (const bot of kept2.group.members)
+      this.remember(bot, { forgetting: id });
+    return true;
+  }
+  async delete(id) {
+    const kept2 = this.chats.get(id);
+    if (!kept2)
+      return false;
+    this.stop(id);
+    this.chats.delete(id);
+    this.live.delete(id);
+    this.context.store.trash(id, this.context.trash);
+    emit("kuvo.group.deleted", { id });
+    for (const [bot, seat] of Object.entries(kept2.group.seats))
+      await this.deleteSeat(seat, kept2.group, bot);
+    for (const bot of kept2.group.members)
+      await this.remember(bot, { forgetting: id });
+    return true;
+  }
+  async update(id, edits2) {
+    const kept2 = this.chats.get(id);
+    if (!kept2)
+      return false;
+    const old = structuredClone(kept2.group);
+    const group = kept2.group;
+    if (typeof edits2.name === "string" && edits2.name.trim())
+      group.name = edits2.name;
+    if (edits2.purpose !== undefined)
+      group.purpose = edits2.purpose ?? undefined;
+    if (edits2.meeting !== undefined)
+      group.meeting = edits2.meeting ?? undefined;
+    if (typeof edits2.viewed === "string")
+      group.viewed = edits2.viewed;
+    const leaving = [];
+    if (Array.isArray(edits2.members) && edits2.members.every((member) => typeof member === "string")) {
+      group.members = [...edits2.members];
+      for (const bot of old.members) {
+        if (group.members.includes(bot))
+          continue;
+        const seat = group.seats[bot];
+        if (seat)
+          leaving.push({ bot, seat });
+        delete group.seats[bot];
+        delete group.heard[bot];
+        if (group.retracted)
+          delete group.retracted[bot];
+      }
+    }
+    this.changed(id);
+    if (edits2.meeting !== undefined)
+      this.scheduleMeetings(0);
+    for (const { bot, seat } of leaving)
+      await this.deleteSeat(seat, old, bot);
+    if (Array.isArray(edits2.members) || edits2.name !== undefined || edits2.purpose !== undefined) {
+      for (const bot of new Set([...old.members, ...group.members])) {
+        if (group.members.includes(bot))
+          await this.remember(bot);
+        else
+          await this.remember(bot, { changed: id, forgetting: id });
+      }
+    }
+    return true;
+  }
+  send(id, text2, named2) {
+    text2 = trim(text2);
+    const kept2 = this.chat(id);
+    if (!text2 || !kept2)
+      return;
+    const message = { id: groupMessageID(), text: text2, time: stamp2(), kind: "message", ...named2 ? { named: named2 } : {} };
+    this.append(message, id);
+    const live = this.state(id);
+    live.asked++;
+    live.paused = false;
+    if (live.speaking)
+      this.steer(live.speaking, id, message);
+    if (!live.abort)
+      this.begin(id);
+    this.told(id);
+    return message;
+  }
+  meet(id, topic) {
+    if (!this.chat(id))
+      return;
+    const message = this.append({ id: groupMessageID(), text: topic, time: stamp2(), kind: "meeting" }, id);
+    const live = this.state(id);
+    live.asked++;
+    live.paused = false;
+    live.meeting = message.id;
+    if (live.speaking)
+      this.steer(live.speaking, id, message);
+    if (!live.abort)
+      this.begin(id);
+    this.told(id);
+  }
+  meetingEnded(id) {
+    const live = this.state(id);
+    const start = live.meeting;
+    live.meeting = undefined;
+    const kept2 = this.chats.get(id);
+    if (!start || !kept2)
+      return;
+    const index = kept2.messages.findIndex((message) => message.id === start);
+    const since = index >= 0 ? kept2.messages.slice(index + 1) : [];
+    const last2 = [...since].reverse().find((message) => message.author !== undefined && message.kind !== "note");
+    emit("kuvo.group.met", { id, name: kept2.group.name, ...last2 ? { last: last2, who: this.name(last2.author) } : {} });
+  }
+  undo(id, messageID2) {
+    const kept2 = this.chat(id);
+    if (!kept2)
+      return;
+    const cut = kept2.messages.findIndex((message) => message.id === messageID2);
+    if (cut < 0)
+      return;
+    this.stop(id);
+    const taken = kept2.messages.slice(cut);
+    const text2 = kept2.messages[cut].text;
+    kept2.messages = kept2.messages.slice(0, cut);
+    this.context.store.saveMessages(kept2);
+    const retracted = { ...kept2.group.retracted ?? {} };
+    for (const bot of kept2.group.members) {
+      const heard = kept2.group.heard[bot];
+      if (!heard || !taken.some((message) => message.id === heard))
+        continue;
+      const last2 = kept2.messages.at(-1)?.id;
+      if (last2)
+        kept2.group.heard[bot] = last2;
+      else
+        delete kept2.group.heard[bot];
+      if (retracted[bot] === undefined)
+        retracted[bot] = [...new Intl.Segmenter().segment(text2)].slice(0, 120).map((part) => part.segment).join("");
+    }
+    kept2.group.retracted = Object.keys(retracted).length > 0 ? retracted : undefined;
+    this.changed(id);
+    emit("kuvo.group.reset", { id });
+    this.rememberSoon(id);
+    return text2;
+  }
+  stop(id) {
+    const live = this.state(id);
+    live.meeting = undefined;
+    live.abort?.abort();
+    live.abort = undefined;
+    live.run = undefined;
+    live.paused = false;
+    for (const speaker of [live.speaking, live.splitting]) {
+      const kept2 = this.chats.get(id);
+      const seat = speaker ? kept2?.group.seats[speaker] : undefined;
+      const bot = this.bot(speaker);
+      if (seat && bot && kept2)
+        this.seatAPI(bot, kept2.group, seat).then((api) => api?.interrupt(seat).catch(() => {}));
+    }
+    live.speaking = undefined;
+    live.splitting = undefined;
+    this.setTalking(id, false);
+    this.told(id);
+  }
+  keepGoing(id) {
+    const live = this.state(id);
+    if (live.abort || !this.chat(id))
+      return;
+    live.paused = false;
+    live.asked++;
+    this.begin(id);
+    this.told(id);
+  }
+  setTalking(id, talking) {
+    const kept2 = this.chats.get(id);
+    if (!kept2 || (kept2.talking ?? false) === talking)
+      return this.keepAwake(id);
+    kept2.talking = talking;
+    this.context.store.saveGroup(kept2);
+    this.keepAwake(id);
+  }
+  begin(id) {
+    const live = this.state(id);
+    const run2 = ++this.runs;
+    const abort = new AbortController;
+    live.run = run2;
+    live.abort = abort;
+    this.setTalking(id, true);
+    (async () => {
+      let epoch;
+      do {
+        epoch = await this.discuss(id, abort.signal);
+      } while (!abort.signal.aborted && this.state(id).asked !== epoch);
+      if (this.state(id).run !== run2)
+        return;
+      live.run = undefined;
+      live.abort = undefined;
+      live.speaking = undefined;
+      this.setTalking(id, false);
+      this.meetingEnded(id);
+      this.told(id);
+    })().catch((error3) => console.error("group chat:", error3));
+  }
+  async discuss(id, signal) {
+    const live = this.state(id);
+    let epoch = live.asked;
+    let turns = 0;
+    let quiet2 = new Set;
+    let absent = new Set;
+    let saidCount = 0;
+    while (!signal.aborted) {
+      const kept3 = this.chat(id);
+      if (!kept3)
+        return epoch;
+      if (live.asked !== epoch) {
+        epoch = live.asked;
+        turns = 0;
+        quiet2 = new Set;
+        absent = new Set;
+        saidCount = 0;
+      }
+      const names = new Map;
+      for (const member of kept3.group.members) {
+        const bot = this.bot(member);
+        if (bot)
+          names.set(member, bot.name);
+      }
+      const members = kept3.group.members.filter((member) => names.has(member) && !absent.has(member));
+      const speaker = nextSpeaker(kept3.group, kept3.messages, members, quiet2, names);
+      if (!speaker)
+        break;
+      if (turns >= limit(kept3.group.members.length)) {
+        live.paused = true;
+        break;
+      }
+      const outcome = await this.turn(speaker, id, signal);
+      if (signal.aborted)
+        return epoch;
+      turns++;
+      if (outcome === "said") {
+        quiet2 = new Set;
+        saidCount++;
+      } else if (outcome === "passed") {
+        quiet2.add(speaker);
+      } else {
+        absent.add(speaker);
+      }
+    }
+    const kept2 = this.chat(id);
+    const lead = kept2?.group.members[0];
+    if (signal.aborted || saidCount === 0 || live.asked !== epoch || !kept2 || !lead || !this.bot(lead))
+      return epoch;
+    if (saidCount >= (live.meeting !== undefined ? 2 : 3) && kept2.group.members.length >= 2) {
+      const before = kept2.messages.at(-1)?.id;
+      await this.turn(lead, id, signal, true);
+      const wrapUp = this.chat(id)?.messages.at(-1);
+      if (wrapUp && wrapUp.id !== before && wrapUp.kind === "wrapUp" && !signal.aborted && live.asked === epoch)
+        await this.splitWork(wrapUp.id, id, lead, signal);
+    } else {
+      const last2 = kept2.messages.at(-1);
+      if (last2 && last2.author !== undefined && last2.kind === "message" && last2.report === undefined)
+        await this.splitWork(last2.id, id, lead, signal);
+    }
+    return epoch;
+  }
+  async turn(botID, id, signal, wrapUp = false) {
+    const bot = this.bot(botID);
+    if (!bot)
+      return "absent";
+    const live = this.state(id);
+    live.speaking = botID;
+    this.told(id);
+    try {
+      const kept2 = this.chat(id);
+      if (!kept2)
+        return "absent";
+      const first = await this.seatAPI(bot, kept2.group, kept2.group.seats[botID]);
+      if (!first) {
+        this.note(`${bot.name} couldn\u2019t answer: the coding agents aren\u2019t running.`, id);
+        return "absent";
+      }
+      const seat = await this.seat(bot, id, first);
+      const current = this.chat(id);
+      if (!current)
+        return "absent";
+      const api = await this.seatAPI(bot, current.group, seat);
+      if (!api) {
+        this.note(`${bot.name} couldn\u2019t answer: the coding agents aren\u2019t running.`, id);
+        return "absent";
+      }
+      const all = current.messages;
+      const heard = current.group.heard[botID];
+      const start = heard ? all.findIndex((message) => message.id === heard) + 1 : 0;
+      const unheard = all.slice(start).filter((message) => message.author !== botID && message.kind !== "note");
+      const promptID = newID("msg");
+      await api.prompt(seat, promptID, turnText(botID, current.group, unheard, wrapUp, (author) => this.name(author), named2(unheard)), "queue");
+      const last2 = all.at(-1);
+      if (last2)
+        this.setHeard(last2.id, botID, id);
+      if (current.group.retracted?.[botID] !== undefined) {
+        delete current.group.retracted[botID];
+        if (Object.keys(current.group.retracted).length === 0)
+          current.group.retracted = undefined;
+        this.changed(id);
+      }
+      const sent = Date.now();
+      await this.waitForRun(seat, promptID, sent, api, signal);
+      const reply = await this.reply(seat, promptID, sent, api);
+      if (!reply.text) {
+        if (reply.error) {
+          this.note(`${bot.name} couldn\u2019t answer: ${reply.error}`, id);
+          return "absent";
+        }
+        return "passed";
+      }
+      if (!wrapUp && isPass(reply.text))
+        return "passed";
+      this.append({ id: groupMessageID(), author: botID, text: reply.text, time: stamp2(), kind: wrapUp ? "wrapUp" : "message", ...reply.steps.length ? { steps: reply.steps.map(trimmed) } : {} }, id);
+      return "said";
+    } catch (error3) {
+      if (signal.aborted || error3 instanceof Cancelled)
+        return "absent";
+      console.error(`${botID}'s turn in ${id} failed:`, reason2(error3));
+      this.note(`${bot.name} couldn\u2019t answer: ${reason2(error3)}`, id);
+      return "absent";
+    } finally {
+      if (live.speaking === botID)
+        live.speaking = undefined;
+      this.told(id);
+    }
+  }
+  async steer(botID, id, message) {
+    const kept2 = this.chat(id);
+    const bot = this.bot(botID);
+    const seat = kept2?.group.seats[botID];
+    if (!kept2 || !bot || !seat)
+      return;
+    const api = await this.seatAPI(bot, kept2.group, seat);
+    if (!api || !(await api.active().catch(() => new Set)).has(seat))
+      return;
+    const text2 = "The user, just now: " + message.text + (message.named ? `
+
+` + message.named : "");
+    try {
+      await api.prompt(seat, newID("msg"), text2, "steer");
+      this.setHeard(message.id, botID, id);
+    } catch {}
+  }
+  async waitForRun(seat, promptID, sent, api, signal) {
+    let gone = 0;
+    for (;; ) {
+      await sleep(600 * (this.context.pace ?? 1), signal);
+      await this.decline(seat, api);
+      const active = await api.active().catch(() => {
+        return;
+      });
+      if (active && !active.has(seat)) {
+        const inbox = await api.inbox(seat).catch(() => {
+          return;
+        });
+        if (inbox && !inbox.some((item) => item.id === promptID)) {
+          const { data } = await api.messages(seat, 60).catch(() => ({ data: [] }));
+          const at2 = data.findIndex((message) => message?.id === promptID);
+          if (at2 >= 0 ? data.slice(at2 + 1).some((message) => message?.type === "idle") : ++gone >= 3)
+            return;
+        }
+      }
+      if (Date.now() - sent > 600000) {
+        await api.interrupt(seat).catch(() => {});
+        throw new Error("It took too long, so it was stopped.");
+      }
+    }
+  }
+  async decline(seat, api) {
+    for (const request of await api.permissions(seat).catch(() => [])) {
+      if (this.declined.has(request.id))
+        continue;
+      this.declined.add(request.id);
+      await api.reject(seat, request.id, "Nobody can approve this in a group chat. Carry on without it, or say who should do it.").catch(() => {});
+    }
+    for (const form of await api.forms(seat).catch(() => [])) {
+      if (this.declined.has(form.id))
+        continue;
+      this.declined.add(form.id);
+      await api.dismiss(seat, form.id, "Ask the group in your reply instead.").catch(() => {});
+    }
+  }
+  async reply(seat, promptID, sent, api) {
+    const { data } = await api.messages(seat, 60);
+    const start = data.findIndex((message) => message?.id === promptID);
+    const since = sent - 2000;
+    return said2(start >= 0 ? data.slice(start + 1) : data.filter((message) => (message?.time?.created ?? 0) >= since));
+  }
+  async splitWork(wrapUpID, id, lead, signal) {
+    const kept2 = this.chat(id);
+    const bot = this.bot(lead);
+    const seat = kept2?.group.seats[lead];
+    if (!kept2 || !bot || !seat)
+      return;
+    const api = await this.seatAPI(bot, kept2.group, seat);
+    if (!api)
+      return;
+    const members = kept2.group.members.flatMap((member) => {
+      const found2 = this.bot(member);
+      return found2 ? [{ id: member, name: found2.name }] : [];
+    });
+    const all = kept2.messages;
+    const found = all.findIndex((message) => message.id === wrapUpID);
+    const end = found >= 0 ? found : all.length;
+    const before = all.slice(0, end);
+    let begin = 0;
+    for (let index = before.length - 1;index >= 0; index--) {
+      if (before[index].kind === "wrapUp") {
+        begin = index + 1;
+        break;
+      }
+    }
+    const yours = all.slice(begin, end).filter((message) => message.author === undefined && message.kind === "message").slice(-6).map((message) => [...new Intl.Segmenter().segment(ownWords2(message.text))].slice(0, 800).map((part) => part.segment).join(""));
+    const promptID = newID("msg");
+    const live = this.state(id);
+    const epoch = live.asked;
+    live.splitting = lead;
+    this.told(id);
+    const sent = Date.now();
+    try {
+      await api.prompt(seat, promptID, splitText(members.map((member) => member.name), yours), "queue");
+      await this.waitForRun(seat, promptID, sent, api, signal);
+      const reply = await this.reply(seat, promptID, sent, api);
+      const { tasks: tasks2, go } = tasks(reply.text, members, () => "gt_" + crypto.randomUUID().toLowerCase());
+      if (signal.aborted)
+        return;
+      if (tasks2.length === 0) {
+        if (go)
+          this.note(`${bot.name} didn\u2019t say who does what, so no parts were handed out.`, id);
+        return;
+      }
+      this.change(wrapUpID, id, (message) => message.tasks = tasks2);
+      if (go && this.state(id).asked === epoch)
+        this.startWork(wrapUpID, id);
+    } catch (error3) {
+      if (signal.aborted || error3 instanceof Cancelled)
+        return;
+      this.note(`${bot.name} couldn\u2019t hand out the work: ${reason2(error3)}`, id);
+    } finally {
+      if (live.splitting === lead)
+        live.splitting = undefined;
+      this.told(id);
+    }
+  }
+  startWork(wrapUpID, id) {
+    const tasks2 = this.chat(id)?.messages.find((message) => message.id === wrapUpID)?.tasks;
+    if (!tasks2)
+      return;
+    const proposed = tasks2.filter((task) => task.state === "proposed");
+    for (const task of proposed) {
+      this.changeTask(task.id, wrapUpID, id, (part) => {
+        part.state = (part.after ?? []).length === 0 ? "working" : "waiting";
+        part.started = stamp2();
+      });
+    }
+    for (const task of proposed)
+      if ((task.after ?? []).length === 0)
+        this.handSoon(task.id, wrapUpID, id);
+    this.startReady(wrapUpID, id);
+  }
+  startReady(wrapUpID, id) {
+    for (;; ) {
+      const tasks2 = this.chat(id)?.messages.find((message) => message.id === wrapUpID)?.tasks;
+      if (!tasks2)
+        return;
+      let changed = false;
+      for (const task of tasks2) {
+        if (task.state !== "waiting")
+          continue;
+        const first = tasks2.filter((other) => other.id !== task.id && (task.after ?? []).includes(other.bot));
+        const failed = first.find((other) => other.state === "failed");
+        if (failed) {
+          this.fail(task.id, wrapUpID, id, `${this.bot(failed.bot)?.name ?? "the bot before it"} couldn\u2019t finish its part first`, false);
+        } else if (first.every((other) => other.state === "done")) {
+          this.changeTask(task.id, wrapUpID, id, (part) => part.state = "working");
+          this.handSoon(task.id, wrapUpID, id);
+        } else {
+          const found = ring(task, tasks2);
+          if (!found)
+            continue;
+          for (const part of found) {
+            this.changeTask(part.id, wrapUpID, id, (each) => {
+              each.state = "failed";
+              each.finished = stamp2();
+            });
+          }
+          const names = new Intl.ListFormat("en", { type: "conjunction" }).format(found.map((part) => this.name(part.bot)));
+          this.note(`${names} wait on each other\u2019s parts, so ${found.length === 2 ? "neither" : "none of them"} could start.`, id);
+        }
+        changed = true;
+        break;
+      }
+      if (!changed)
+        return;
+    }
+  }
+  handSoon(taskID, wrapUpID, id) {
+    if (this.following.has(taskID))
+      return;
+    this.following.add(taskID);
+    this.hand(taskID, wrapUpID, id).catch((error3) => console.error("group chat part:", error3)).finally(() => this.following.delete(taskID));
+  }
+  ownAPI(bot) {
+    if (!bot.agents)
+      return new SeatAPI(this.context.engine);
+    const bridge = this.context.bridge();
+    return bridge ? new SeatAPI(bridge) : undefined;
+  }
+  async hand(taskID, wrapUpID, id) {
+    const kept2 = this.chat(id);
+    const wrapUp = kept2?.messages.find((message) => message.id === wrapUpID);
+    const task = wrapUp?.tasks?.find((part) => part.id === taskID);
+    if (!kept2 || !wrapUp || !task)
+      return;
+    const bot = this.bot(task.bot);
+    if (!bot)
+      return this.fail(taskID, wrapUpID, id, "the bot is gone");
+    const api = this.ownAPI(bot);
+    if (!api)
+      return this.fail(taskID, wrapUpID, id, "the coding agents aren\u2019t running");
+    const before = (wrapUp.tasks ?? []).filter((part) => (task.after ?? []).includes(part.bot)).flatMap((part) => {
+      const report = [...kept2.messages].reverse().find((message) => message.report === part.id);
+      return report ? [{ name: this.name(part.bot), report: report.text }] : [];
+    });
+    const promptID = newID("msg");
+    try {
+      const from = this.name(wrapUp.author) + (wrapUp.kind === "wrapUp" ? "'s wrap-up" : "'s last message");
+      await api.prompt(bot.sessionID, promptID, compose(task, kept2.group, wrapUp, from, before), "queue");
+      this.changeTask(taskID, wrapUpID, id, (part) => part.prompt = promptID);
+      await this.awaitReport(taskID, wrapUpID, id);
+    } catch (error3) {
+      this.fail(taskID, wrapUpID, id, reason2(error3));
+    }
+  }
+  taskState(taskID, wrapUpID, id) {
+    return this.chat(id)?.messages.find((message) => message.id === wrapUpID)?.tasks?.find((task) => task.id === taskID);
+  }
+  async awaitReport(taskID, wrapUpID, id) {
+    let misses = 0;
+    let stoppedChecks = 0;
+    for (;; ) {
+      await sleep(3000 * (this.context.pace ?? 1));
+      const task = this.taskState(taskID, wrapUpID, id);
+      if (!task || task.state !== "working")
+        return;
+      const bot = this.bot(task.bot);
+      if (!bot || !task.prompt)
+        return this.fail(taskID, wrapUpID, id, "the bot is gone");
+      const api = this.ownAPI(bot);
+      if (!api)
+        continue;
+      const active = await api.active().catch(() => {
+        return;
+      });
+      if (!active || active.has(bot.sessionID))
+        continue;
+      const queued = await api.inbox(bot.sessionID).catch(() => {
+        return;
+      });
+      if (!queued)
+        continue;
+      const read2 = await this.messagesFrom(task.prompt, bot.sessionID, task.started, api);
+      if (read2.kind !== "found") {
+        if (read2.kind === "missing" && !queued.some((item) => item.id === task.prompt)) {
+          if (++misses >= 2)
+            return this.fail(taskID, wrapUpID, id, `its message was taken back before ${bot.name} read it`);
+        } else {
+          misses = 0;
+        }
+        continue;
+      }
+      misses = 0;
+      const run2 = read2.messages.slice(1);
+      let end = run2.findIndex((message, index) => {
+        if (message?.type !== "idle")
+          return false;
+        if (message.outcome !== "interrupted")
+          return true;
+        return run2[index + 1]?.type === "user";
+      });
+      const lastIndex = run2.length - 1;
+      if (end < 0 && lastIndex >= 0 && run2[lastIndex]?.type === "idle" && run2[lastIndex].outcome === "interrupted") {
+        if (++stoppedChecks >= 2)
+          end = lastIndex;
+      } else {
+        stoppedChecks = 0;
+      }
+      const answered = end >= 0 || run2.some((message) => message?.type === "assistant" && message.time?.completed !== undefined);
+      if (!answered)
+        continue;
+      const stillActive = await api.active().catch(() => {
+        return;
+      });
+      if (!stillActive || stillActive.has(bot.sessionID))
+        continue;
+      const found = said2(end >= 0 ? run2.slice(0, end) : run2);
+      let error3 = found.error;
+      if (error3 === undefined && end >= 0 && run2[end]?.outcome === "failed")
+        error3 = run2[end].error?.message;
+      if (this.taskState(taskID, wrapUpID, id)?.state !== "working")
+        return;
+      if (!found.text)
+        return this.fail(taskID, wrapUpID, id, error3 ?? "it stopped without saying what it did");
+      this.changeTask(taskID, wrapUpID, id, (part) => {
+        part.state = "done";
+        part.finished = stamp2();
+      });
+      this.append({ id: groupMessageID(), author: bot.id, text: found.text, time: stamp2(), kind: "message", report: taskID }, id);
+      this.startReady(wrapUpID, id);
+      const kept2 = this.chats.get(id);
+      if (kept2)
+        emit("kuvo.group.done", { id, name: kept2.group.name, bot: bot.id, who: bot.name, text: found.text });
+      return;
+    }
+  }
+  async messagesFrom(promptID, session, started, api) {
+    let page2;
+    try {
+      page2 = await api.messages(session, 80);
+    } catch {
+      return { kind: "unreadable" };
+    }
+    let messages = page2.data;
+    const start = ((started ? Date.parse(started) : 0) / 1000 - 5) * 1000;
+    while (!messages.some((message) => message?.id === promptID) && messages.length > 0 && (messages[0]?.time?.created ?? 0) > start && messages.length < 2000 && page2.cursor) {
+      let older;
+      try {
+        older = await api.messages(session, 200, page2.cursor);
+      } catch {
+        break;
+      }
+      if (older.data.length === 0 || messages.some((message) => message?.id === older.data.at(-1)?.id))
+        break;
+      messages = [...older.data, ...messages];
+      page2 = older;
+    }
+    const index = messages.findIndex((message) => message?.id === promptID);
+    return index >= 0 ? { kind: "found", messages: messages.slice(index) } : { kind: "missing" };
+  }
+  fail(taskID, wrapUpID, id, why, thenOthers = true) {
+    this.changeTask(taskID, wrapUpID, id, (part) => {
+      part.state = "failed";
+      part.finished = stamp2();
+    });
+    const who = this.bot(this.taskState(taskID, wrapUpID, id)?.bot)?.name ?? "A bot";
+    const reasonText = trim(why).replace(/^\.+|\.+$/g, "");
+    this.note(`${who} couldn\u2019t do its part: ${reasonText}.`, id);
+    if (thenOthers)
+      this.startReady(wrapUpID, id);
+  }
+  resumeWork(only) {
+    for (const [id, kept2] of this.chats) {
+      if (kept2.status !== "active" || only && id !== only)
+        continue;
+      for (const message of kept2.messages) {
+        for (const task of message.tasks ?? []) {
+          if (task.state !== "working" || this.following.has(task.id))
+            continue;
+          if (!task.prompt) {
+            this.fail(task.id, message.id, id, "Kuvo Code stopped before it reached the bot");
+          } else {
+            this.following.add(task.id);
+            this.awaitReport(task.id, message.id, id).catch((error3) => console.error("group chat part:", error3)).finally(() => this.following.delete(task.id));
+          }
+        }
+        if (message.tasks?.some((task) => task.state === "waiting"))
+          this.startReady(message.id, id);
+      }
+    }
+  }
+  scheduleMeetings(delay) {
+    if (this.meetings)
+      clearTimeout(this.meetings);
+    this.meetings = setTimeout(() => {
+      this.meetings = undefined;
+      try {
+        this.meetDue();
+      } catch (error3) {
+        console.error("group meetings:", error3);
+      }
+      const soonest = Math.min(...[...this.chats.values()].flatMap((kept2) => kept2.status === "active" && kept2.group.meeting ? [Date.parse(kept2.group.meeting.next)] : []));
+      this.scheduleMeetings(Math.min(20000, Math.max(500, Number.isFinite(soonest) ? soonest - Date.now() : 20000)));
+    }, delay);
+    this.meetings.unref?.();
+  }
+  meetDue(now = Date.now()) {
+    const zone2 = this.context.store.settings()?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+    for (const [id, kept2] of this.chats) {
+      const meeting = kept2.group.meeting;
+      if (kept2.status !== "active" || !meeting)
+        continue;
+      const due = Date.parse(meeting.next);
+      if (!(due <= now))
+        continue;
+      const missed = due < now - 300000;
+      this.meet(id, meeting.topic);
+      const every = meeting.every ? parseRepeat(meeting.every) : undefined;
+      if (every) {
+        const updated = { ...meeting };
+        if (keepsTimeOfDay(every) && updated.at === undefined)
+          updated.at = minutesOf(due, zone2);
+        if (keepsWeekday(every) && updated.weekday === undefined)
+          updated.weekday = weekdayOf(due, zone2);
+        const at2 = keepsTimeOfDay(every) ? updated.at : undefined;
+        const weekday = keepsWeekday(every) ? updated.weekday : undefined;
+        let next2 = next(every, due, now, zone2, at2, weekday);
+        if (missed && keepsTimeOfDay(every) && next2 - now < 3 * 3600000)
+          next2 = next(every, next2, next2, zone2, at2, weekday);
+        updated.next = stamp2(new Date(next2));
+        kept2.group.meeting = updated;
+      } else {
+        kept2.group.meeting = undefined;
+      }
+      this.changed(id);
+    }
+  }
+  async seatAPI(bot, group, seat) {
+    let onAgents;
+    if (seat)
+      onAgents = group.agentSeats?.includes(seat) ?? false;
+    else
+      onAgents = runsWithAgents(await this.model(bot));
+    if (!onAgents)
+      return new SeatAPI(this.context.engine);
+    const bridge = this.context.bridge();
+    return bridge ? new SeatAPI(bridge) : undefined;
+  }
+  async model(bot) {
+    if (bot.model)
+      return bot.model;
+    const own = this.ownAPI(bot);
+    return (await own?.session(bot.sessionID).catch(() => {
+      return;
+    }))?.model;
+  }
+  async seat(bot, id, api) {
+    const kept2 = this.chat(id);
+    if (!kept2)
+      throw new Cancelled;
+    const settings = this.context.store.settings();
+    const rules = seatRules(bot.folder, settings?.askFirst ?? false, settings?.denies ?? []);
+    const text2 = this.seatText(bot, kept2.group);
+    const existing = kept2.group.seats[bot.id];
+    if (existing) {
+      if (!this.seatsChecked.has(existing)) {
+        this.seatsChecked.add(existing);
+        await api.setPermissions(existing, rules).catch(() => {});
+      }
+      if (this.seatTexts.get(existing) !== text2) {
+        await api.setInstruction(existing, seatKey, text2).catch(() => {});
+        this.seatTexts.set(existing, text2);
+      }
+      if (await this.keepModel(existing, bot, id, api))
+        return existing;
+    }
+    const current = this.chat(id);
+    if (!current)
+      throw new Cancelled;
+    const model2 = await this.model(bot);
+    const onAgents = runsWithAgents(model2);
+    const seatAPI = onAgents ? this.context.bridge() ? new SeatAPI(this.context.bridge()) : undefined : new SeatAPI(this.context.engine);
+    if (!seatAPI)
+      throw new Error("the coding agents aren\u2019t running");
+    const agent = onAgents && model2?.providerID.split("@")[0] === "cursor" ? "plan" : undefined;
+    const session = await seatAPI.create(bot.directory, `${bot.name} in ${current.group.name}`, agent, model2, rules);
+    await seatAPI.setMetadata(session.id, { kuvo: { seat: { group: id, bot: bot.id } } }).catch(() => {});
+    await seatAPI.setInstruction(session.id, seatKey, text2);
+    this.seatTexts.set(session.id, text2);
+    this.seatsChecked.add(session.id);
+    const after = this.chat(id);
+    if (!after || !after.group.members.includes(bot.id)) {
+      await seatAPI.delete(session.id).catch(() => {});
+      throw new Cancelled;
+    }
+    after.group.seats[bot.id] = session.id;
+    if (onAgents)
+      after.group.agentSeats = [...new Set([...after.group.agentSeats ?? [], session.id])];
+    this.changed(id);
+    return session.id;
+  }
+  seatText(bot, group) {
+    const settings = this.context.store.settings();
+    const others = group.members.filter((member) => member !== bot.id).flatMap((member) => this.bot(member) ?? []);
+    const lead = this.bot(group.members[0]);
+    const personality = bot.personality ? settings?.personalities[bot.personality] : undefined;
+    return seatInstructions(bot, group, others, lead, personality, settings?.identityNote ?? "");
+  }
+  async keepModel(seat, bot, id, api) {
+    const model2 = bot.model;
+    if (!model2)
+      return true;
+    const session = await api.session(seat).catch(() => {
+      return;
+    });
+    if (!session)
+      return true;
+    if (session.model?.id === model2.id && session.model?.providerID === model2.providerID)
+      return true;
+    const kept2 = this.chat(id);
+    if (!kept2)
+      return true;
+    const onSeatAgents = kept2.group.agentSeats?.includes(seat) ?? false;
+    if (onSeatAgents || !runsWithAgents(model2)) {
+      await api.selectModel(seat, model2).catch(() => {});
+      if (onSeatAgents)
+        await api.selectAgent(seat, model2.providerID.split("@")[0] === "cursor" ? "plan" : "build").catch(() => {});
+      return true;
+    }
+    await this.deleteSeat(seat, kept2.group, bot.id);
+    delete kept2.group.seats[bot.id];
+    delete kept2.group.heard[bot.id];
+    this.changed(id);
+    return false;
+  }
+  async deleteSeat(seat, group, botID) {
+    const bot = this.bot(botID);
+    const api = bot ? await this.seatAPI(bot, group, seat) : new SeatAPI(this.context.engine);
+    await api?.delete(seat).catch(() => {});
+    const kept2 = this.chats.get(group.id);
+    if (kept2?.group.agentSeats?.includes(seat)) {
+      kept2.group.agentSeats = kept2.group.agentSeats.filter((each) => each !== seat);
+      this.changed(group.id);
+    }
+  }
+  async remember(botID, options = {}) {
+    const bot = this.bot(botID);
+    if (!bot)
+      return;
+    const api = this.ownAPI(bot);
+    if (!api)
+      return;
+    const folder = bot.folder + "/groups";
+    if (options.forgetting)
+      this.context.store.removeFile(`${folder}/${options.forgetting}.md`);
+    const chats = [...this.chats.values()].filter((kept2) => kept2.status === "active" && kept2.group.members.includes(botID) && kept2.messages.length > 0).sort((a, b) => Date.parse(b.messages.at(-1)?.time ?? b.group.created) - Date.parse(a.messages.at(-1)?.time ?? a.group.created));
+    if (chats.length === 0) {
+      await api.removeInstruction(bot.sessionID, memoryKey).catch(() => {});
+      return;
+    }
+    let text2 = `You also take part in group chats in Kuvo Code, with the user and other bots. You remember them as you would a meeting: ` + `a recap of each is below, newest first, and the whole of each is in a file in "${folder}". When the user mentions one of ` + `these chats, or something talked about there, go by this, and read the file when you need more. What's marked ` + `"${bot.name}" is what you said.`;
+    for (const [index, kept2] of chats.entries()) {
+      const file = `${folder}/${kept2.group.id}.md`;
+      if (!options.changed || options.changed === kept2.group.id) {
+        try {
+          this.context.store.writeFile(file, this.transcript(kept2));
+        } catch {}
+      }
+      if (index >= 4)
+        continue;
+      const others = kept2.group.members.filter((member) => member !== botID).flatMap((member) => this.bot(member)?.name ?? []);
+      text2 += `
+
+## "${kept2.group.name}"${others.length ? " with " + others.join(", ") : ""}, in ${file}
+`;
+      text2 += this.recap(kept2);
+    }
+    await api.setInstruction(bot.sessionID, memoryKey, text2).catch(() => {});
+  }
+  when(time) {
+    const settings = this.context.store.settings();
+    try {
+      return new Intl.DateTimeFormat(settings?.locale ?? "en-US", { dateStyle: "medium", timeStyle: "short", timeZone: settings?.timeZone }).format(new Date(time));
+    } catch {
+      return time;
+    }
+  }
+  recap(kept2) {
+    const discussions = [];
+    for (const message of kept2.messages) {
+      if (message.kind === "note")
+        continue;
+      const current = discussions.at(-1);
+      if (!current || message.author === undefined && current.at(-1)?.author !== undefined)
+        discussions.push([message]);
+      else
+        current.push(message);
+    }
+    return discussions.slice(-3).flatMap((discussion) => {
+      let asked = 0;
+      while (asked < discussion.length && discussion[asked].author === undefined)
+        asked++;
+      const rest = discussion.slice(asked);
+      const wrapUp = [...rest].reverse().find((message) => message.kind === "wrapUp");
+      const shown = wrapUp ? [wrapUp] : rest.slice(-4);
+      return [...discussion.slice(0, asked), ...shown].map((message) => {
+        const segments2 = [...new Intl.Segmenter().segment(message.text)];
+        const words = segments2.length > 500 ? segments2.slice(0, 500).map((part) => part.segment).join("") + "\u2026" : message.text;
+        return `${label(message, (author) => this.name(author))} \xB7 ${this.when(message.time)}: ${words}`;
+      });
+    }).join(`
+`);
+  }
+  transcript(kept2) {
+    const names = kept2.group.members.flatMap((member) => this.bot(member)?.name ?? []);
+    let text2 = `# ${kept2.group.name}
+
+A group chat in Kuvo Code between the user and ${names.join(", ")}.
+`;
+    for (const message of kept2.messages) {
+      if (message.kind === "note")
+        text2 += `
+_${message.text}_
+`;
+      else
+        text2 += `
+**${label(message, (author) => this.name(author))}** \xB7 ${this.when(message.time)}
+
+${message.text}
+`;
+    }
+    return text2;
+  }
+  rememberSoon(id) {
+    const pending = this.syncs.get(id);
+    if (pending)
+      clearTimeout(pending);
+    const timer = setTimeout(() => {
+      this.syncs.delete(id);
+      const kept2 = this.chat(id);
+      if (!kept2)
+        return;
+      (async () => {
+        for (const bot of kept2.group.members)
+          await this.remember(bot, { changed: id });
+      })().catch(() => {});
+    }, 3000);
+    timer.unref?.();
+    this.syncs.set(id, timer);
+  }
+  append(message, id) {
+    const kept2 = this.chats.get(id);
+    if (!kept2)
+      return message;
+    kept2.messages.push(message);
+    this.context.store.saveMessages(kept2);
+    this.keepAwake(id);
+    emit("kuvo.group.message", { id, message });
+    this.rememberSoon(id);
+    return message;
+  }
+  note(text2, id) {
+    this.append({ id: groupMessageID(), text: text2, time: stamp2(), kind: "note" }, id);
+  }
+  change(messageID2, id, edit) {
+    const kept2 = this.chats.get(id);
+    const message = kept2?.messages.find((each) => each.id === messageID2);
+    if (!kept2 || !message)
+      return;
+    edit(message);
+    this.context.store.saveMessages(kept2);
+    this.keepAwake(id);
+    emit("kuvo.group.message", { id, message });
+  }
+  changeTask(taskID, messageID2, id, edit) {
+    this.change(messageID2, id, (message) => {
+      const task = message.tasks?.find((each) => each.id === taskID);
+      if (task)
+        edit(task);
+    });
+  }
+  setHeard(messageID2, botID, id) {
+    const kept2 = this.chats.get(id);
+    if (!kept2)
+      return;
+    const all = kept2.messages;
+    const heard = kept2.group.heard[botID];
+    const current = heard ? all.findIndex((message) => message.id === heard) : -1;
+    const next2 = all.findIndex((message) => message.id === messageID2);
+    if (next2 < 0 || next2 <= current)
+      return;
+    kept2.group.heard[botID] = messageID2;
+    this.context.store.saveGroup(kept2);
+  }
+}
+function named2(unheard) {
+  const blocks = unheard.slice(-40).filter((message) => message.author === undefined).map((message) => message.named).filter((block) => typeof block === "string" && block.length > 0);
+  if (blocks.length <= 1)
+    return blocks[0];
+  const lines3 = blocks[0].split(`
+`);
+  const items2 = [...new Set(blocks.flatMap((block) => block.split(`
+`).filter((line) => line.startsWith("- "))))];
+  const head = lines3.filter((line) => !line.startsWith("- "));
+  return [...head.slice(0, -1), ...items2, head.at(-1)].join(`
+`);
+}
+var weekdayOf = (time, zone2) => {
+  const name = new Intl.DateTimeFormat("en-US", { timeZone: zone2, weekday: "short" }).format(new Date(time));
+  return ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(name) + 1;
+};
+
 // Agents/src/main.ts
-var version2 = "1";
+var version3 = "1";
 var home2 = process.env.KUVO_AGENTS_HOME;
 var password = onMachine ? process.env.KUVO_AGENTS_PASSWORD : process.env.OPENCODE_PASSWORD;
 var enginePID = Number(process.env.KUVO_ENGINE_PID);
@@ -11170,33 +13190,33 @@ if (onMachine) {
   takeOwnFolders();
   if (home2)
     dropCarriedSignIns(home2);
-  process.env.KUVO_BIN = join18(machineHome, "bin");
-  process.env.KUVO_BOTS ??= join18(machineHome, "bots");
-  process.env.KUVO_WAKES ??= join18(machineHome, "wakes");
+  process.env.KUVO_BIN = join19(machineHome, "bin");
+  process.env.KUVO_BOTS ??= join19(machineHome, "bots");
+  process.env.KUVO_WAKES ??= join19(machineHome, "wakes");
   for (const name of ["OPENCODE_CONFIG_CONTENT", "OPENCODE_CONFIG", "OPENCODE_CLIENT", "KUVO_AGENTS_PASSWORD", "KUVO_AGENTS_PORT", "KUVO_ENGINE_PORT", "KUVO_ENGINE_PID"])
     delete process.env[name];
 }
-var temporary = process.env.TMPDIR?.replace(/\/$/, "") || join18(home2, "tmp");
-mkdirSync14(temporary, { recursive: true });
-rmSync11(join18(temporary, "antigravity"), { recursive: true, force: true });
+var temporary = process.env.TMPDIR?.replace(/\/$/, "") || join19(home2, "tmp");
+mkdirSync15(temporary, { recursive: true });
+rmSync12(join19(temporary, "antigravity"), { recursive: true, force: true });
 try {
-  for (const name of readdirSync7(join18(home2, "antigravity")))
+  for (const name of readdirSync8(join19(home2, "antigravity")))
     if (name.startsWith(".install-"))
-      rmSync11(join18(home2, "antigravity", name), { recursive: true, force: true });
+      rmSync12(join19(home2, "antigravity", name), { recursive: true, force: true });
 } catch {}
 delete process.env.BUN_BE_BUN;
 process.env.KUVO_WAKE_VIA = "bridge";
 delete process.env.OPENCODE_PASSWORD;
-process.on("unhandledRejection", (reason2) => console.error("unhandled:", reason2));
-process.on("uncaughtException", (error2) => {
-  console.error("uncaught:", error2);
+process.on("unhandledRejection", (reason3) => console.error("unhandled:", reason3));
+process.on("uncaughtException", (error3) => {
+  console.error("uncaught:", error3);
   process.exit(1);
 });
-var deps = new Deps(join18(home2, "runtime"), join18(home2, "cache"));
-rmSync11(join18(home2, "cache", "install"), { recursive: true, force: true });
+var deps = new Deps(join19(home2, "runtime"), join19(home2, "cache"));
+rmSync12(join19(home2, "cache", "install"), { recursive: true, force: true });
 var context = { home: home2, temporary, deps };
 var roster = new Roster(new Accounts(home2), context);
-var store = new Store(join18(home2, "sessions"));
+var store = new Store(join19(home2, "sessions"));
 var auto = new Auto(home2);
 var link2 = new EngineLink;
 if (machineEngine)
@@ -11211,24 +13231,40 @@ function engineAgent(providerID2) {
     engineAgents.set(providerID2, agent = new EngineAgent(link2, providerID2));
   return agent;
 }
-var sessions = new Sessions(store, roster, auto, engineAgent, (directory) => link2.policies(directory), (name, directory) => link2.agent(name, directory), new Snapshots(join18(home2, "snapshots")), (directory) => link2.titleModel(directory));
-var server2;
+var sessions = new Sessions(store, roster, auto, engineAgent, (directory) => link2.policies(directory), (name, directory) => link2.agent(name, directory), new Snapshots(join19(home2, "snapshots")), (directory) => link2.titleModel(directory));
+var self;
+var groups;
+if (onMachine) {
+  try {
+    const store2 = new GroupStore(join19(machineHome, "groups"), process.env.KUVO_BOTS ?? join19(machineHome, "bots"));
+    groups = { store: store2, runner: new GroupRunner({ store: store2, engine: link2, bridge: () => self, trash: join19(machineHome, "trash") }) };
+  } catch (error3) {
+    console.error("group chats:", error3);
+  }
+}
+var server3;
 try {
-  server2 = Bun.serve({
+  server3 = Bun.serve({
     hostname: "127.0.0.1",
     port,
     idleTimeout: 0,
-    fetch: handler({ roster, sessions, auto, link: link2, password, version: version2 })
+    fetch: handler({ roster, sessions, auto, link: link2, password, version: version3, groups })
   });
-} catch (error2) {
-  console.error("couldn't listen:", error2?.message ?? error2);
-  process.exit(onMachine && /in use|EADDRINUSE/i.test(String(error2?.code ?? error2?.message ?? error2)) ? 98 : 1);
+} catch (error3) {
+  console.error("couldn't listen:", error3?.message ?? error3);
+  process.exit(onMachine && /in use|EADDRINUSE/i.test(String(error3?.code ?? error3?.message ?? error3)) ? 98 : 1);
 }
-console.log(JSON.stringify({ url: `http://127.0.0.1:${server2.port}` }));
-var record = onMachine ? join18(machineHome, "run", "bridge.json") : undefined;
+console.log(JSON.stringify({ url: `http://127.0.0.1:${server3.port}` }));
+self = server2(`http://127.0.0.1:${server3.port}`, password);
+try {
+  groups?.runner.start();
+} catch (error3) {
+  console.error("group chats:", error3);
+}
+var record = onMachine ? join19(machineHome, "run", "bridge.json") : undefined;
 if (record) {
-  writeFileSync12(record + ".new", JSON.stringify({ pid: process.pid, port: server2.port, password }), { mode: 384 });
-  renameSync7(record + ".new", record);
+  writeFileSync13(record + ".new", JSON.stringify({ pid: process.pid, port: server3.port, password }), { mode: 384 });
+  renameSync8(record + ".new", record);
 }
 var stopping = false;
 function stop() {
@@ -11237,12 +13273,12 @@ function stop() {
   stopping = true;
   cancelSignIns();
   try {
-    if (record && JSON.parse(readFileSync17(record, "utf8")).pid === process.pid)
-      rmSync11(record, { force: true });
+    if (record && JSON.parse(readFileSync18(record, "utf8")).pid === process.pid)
+      rmSync12(record, { force: true });
   } catch {}
   sessions.closeAll();
   store.flush();
-  server2.stop(true);
+  server3.stop(true);
   process.exit(0);
 }
 if (onMachine) {
@@ -11260,4 +13296,4 @@ if (onMachine) {
 }
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
-// Built from Agents/src ff1b54d7ab0face5381720164fc049a3d5a80d6ed625e85d689716af96903916
+// Built from Agents/src 637946711cf344dc9b8baff2f6bf2cd850e2c55a6f70c39f110ff37ed463b711

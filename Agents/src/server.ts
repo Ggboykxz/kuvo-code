@@ -13,6 +13,9 @@ import { refreshLoginPath } from "./proc"
 import { setToolServer } from "./kuvotools"
 import { newID } from "./ids"
 import { BadRequest, NotFound, Sessions } from "./sessions"
+import { groupRoutes } from "./groups/routes"
+import type { GroupRunner } from "./groups/runner"
+import type { GroupStore } from "./groups/store"
 import { shell, shellOutput, shells, stopShell } from "./shells"
 import type { Integration, Model } from "./wire"
 
@@ -23,6 +26,8 @@ export interface Context {
   link: EngineLink
   password: string
   version: string
+  /** On a machine, its group chats (groups/runner.ts); none on the Mac, which runs its own. */
+  groups?: { runner: GroupRunner; store: GroupStore }
 }
 
 const attempts = new Map<string, { agent: Agent; attempt: SignInAttempt; created: number; expires: number }>()
@@ -416,6 +421,9 @@ export function handler(context: Context) {
       }
 
       // Where Kuvo Code's own tools are (the app says each time they start), for every agent here.
+      // The group chats that live on this machine.
+      if (area === "kuvo" && a === "groups") return await groupRoutes(context.groups?.runner, context.groups?.store, method, parts.slice(3), body)
+
       if (area === "kuvo" && a === "tools" && method === "PUT") {
         const { url: address, token, timeout } = await body()
         setToolServer(typeof address === "string" && address && typeof token === "string" ? { url: address, token, timeout: Number(timeout) || 960_000 } : undefined)

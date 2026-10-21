@@ -39,6 +39,8 @@ export interface GroupMessage {
   steps?: ToolCall[]
   tasks?: GroupTask[]
   report?: string
+  /** Yours on a machine: the block naming the agents it names with &, as the Mac wrote it (the machine doesn't know them). */
+  named?: string
 }
 
 export type TaskState = "proposed" | "waiting" | "working" | "done" | "failed"
