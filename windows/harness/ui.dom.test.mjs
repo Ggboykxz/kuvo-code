@@ -255,6 +255,15 @@ test("the page, in a browser, against the real engine", {
     const node = document.getElementById(id);
     return Boolean(node?.textContent?.match(new RegExp(text, "i")));
   }, ["entries", "hello from the page"], 180_000);
+  // The comment on the changes went with the message, and the conversation shows it as the
+  // Mac's own card (ChangesPanel.swift:1123-1155).
+  await page.seen("the comment to show in the conversation", () => {
+    const card = document.querySelector(".comment-reference");
+    return Boolean(card) && Boolean(card.textContent?.includes("please check this line"));
+  }, null, 30_000);
+  const reference = (await page.page.locator(".comment-reference").first().textContent()) ?? "";
+  assert.match(reference, /notes\.txt:4/, "the card names the place the comment is on");
+  assert.match(reference, /- tea/, "the card shows the line it was written on");
   await page.seen("the turn to end", () => document.getElementById("stop")?.hidden, null, 60_000);
   // With words in it, the conversation's question has stepped aside.
   await page.seen("the question to step aside", () => document.querySelector(".empty-conversation") === null, null, 10_000);

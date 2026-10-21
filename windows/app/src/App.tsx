@@ -9,7 +9,7 @@ import { isRecording, keysOf, matchesEvent, shortcutFor } from "./shortcuts";
 import { paneLayout, paneRanges } from "../../harness/layout.mjs";
 import { effortTitle } from "../../harness/models.mjs";
 import { draftKey, readDraft, saveDraft } from "./drafts.mjs";
-import { commentsText } from "./review-comments.mjs";
+import { commentsText, commentLocation, splitComments } from "./review-comments.mjs";
 import {
   answerPermission,
   applyLook,
@@ -553,6 +553,9 @@ function EntryNodes({ transcript }: { transcript: Transcript }) {
       {transcript.entries.map((entry, index) => {
         const key = entry.id ?? `${entry.kind}-${index}`;
         if (entry.kind === "user") {
+          // The words, and the comments on the changes that went with them
+          // (AgentReferences.swift:170-179, YourMessage.swift:22).
+          const { text: words, comments } = splitComments(entry.text ?? "");
           return (
             <article
               key={key}
@@ -562,20 +565,34 @@ function EntryNodes({ transcript }: { transcript: Transcript }) {
                 setMenu({ id: entry.id ?? key, x: event.clientX, y: event.clientY });
               }}
             >
-              <div className="text">{entry.text}</div>
+              {comments.map((one, index) => (
+                <div className="comment-reference" key={index}>
+                  <div className="comment-reference-place">
+                    <Symbol name="text.bubble" size={11} />
+                    <span>{commentLocation(one)}</span>
+                  </div>
+                  {one.snippet ? (
+                    <div className={`comment-reference-snippet ${one.side === "old" ? "removed" : "added"}`}>
+                      {one.snippet}
+                    </div>
+                  ) : null}
+                  <div className="comment-reference-text">{one.text}</div>
+                </div>
+              ))}
+              <div className="text">{words}</div>
               {(entry.files ?? []).map((file, i) => <AttachmentNode key={i} file={file} pictures={entry.files} />)}
               {/* The Mac's actions under your words (YourMessage.swift:41-64): the time it
                   was sent, Copy, a new session from here, and undo — always laid out, and
                   shown under the pointer, so nothing moves when they appear. */}
               <div className="entry-actions">
                 <span className="entry-time">{sentAt(entry.created)}</span>
-                {entry.text ? (
+                {words ? (
                   <button
                     className="entry-action"
                     title="Copy"
                     aria-label="Copy"
                     onClick={async () => {
-                      await navigator.clipboard?.writeText(entry.text ?? "").catch(() => {});
+                      await navigator.clipboard?.writeText(words).catch(() => {});
                     }}
                   >
                     <Symbol name="doc" size={12} />

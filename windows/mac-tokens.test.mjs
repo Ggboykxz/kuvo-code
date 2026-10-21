@@ -635,6 +635,22 @@ const checks = [
     assert.match(review, /Comments on lines of the current changes:/);
   }],
 
+  ["a comment in the conversation is the Mac's own card", ({ app, css, review, symbols, rule }) => {
+    // The message is taken apart, and the comments shown above the words
+    // (AgentReferences.swift:170-179, YourMessage.swift:22, 829-831).
+    assert.match(app, /splitComments\(entry\.text \?\? ""\)/);
+    assert.match(app, /className="comment-reference"/);
+    // The place it points to, with the Mac's mark beside it (ChangesPanel.swift:1130).
+    assert.match(app, /<Symbol name="text\.bubble" size=\{11\} \/>/);
+    assert.match(symbols, /"text\.bubble":/);
+    // The line it was written on, with the Mac's coloured bar (ChangesPanel.swift:1135-1143).
+    assert.match(app, /one\.side === "old" \? "removed" : "added"/);
+    assert.match(rule(".comment-reference-snippet {"), /border-left: 2px solid var\(--ok\)/);
+    assert.match(rule(".comment-reference-snippet.removed {"), /var\(--danger\)/);
+    // And the rules that read a message apart are the Mac's (ReviewComments.swift:42-69).
+    assert.match(review, /export function splitComments/);
+  }],
+
   ["the changes' rows are the Mac's own: a number in a gutter, the text, and an edge", ({ css, changes, diff, rule }) => {
     // The rows are read as lines of their own (ProjectChanges.swift:40-48), and the
     // number in the gutter is the old one for a removed line, the new one otherwise

@@ -83,6 +83,65 @@ export function escapeBlock(text) {
 }
 
 /**
+ * The message without the block that ends it, and the comments in it
+ * (ReviewComments.swift:42-69).
+ *
+ * @param {string} text
+ * @returns {{text: string, comments: {file: string, line: number, side: string, snippet: string, text: string}[]}}
+ */
+export function splitComments(text) {
+  const found = findBlock(text);
+  if (!found) return { text: String(text ?? ""), comments: [] };
+  const lines = found.lines;
+  const comments = [];
+  let current = null;
+  for (let index = 1; index < lines.length; index += 1) {
+    const line = lines[index];
+    // A comment starts after a blank line, with its line of the changes under it; a line
+    // like "[b.swift:10]" in what you wrote is part of it (ReviewComments.swift:50-52).
+    if (lines[index - 1] === "" && index + 1 < lines.length && lines[index + 1].startsWith("> ")) {
+      const header = parseHeader(line);
+      if (header) {
+        if (current) comments.push(current);
+        current = { file: header.file, line: header.line, side: header.side, snippet: "", text: "" };
+        continue;
+      }
+    }
+    if (current) {
+      if (line.startsWith("> ") && current.snippet === "" && current.text === "") current.snippet = line.slice(2);
+      else current.text += (current.text === "" ? "" : "\n") + line;
+    }
+  }
+  if (current) comments.push(current);
+  return {
+    text: String(text ?? "").slice(0, found.open).trim(),
+    comments: comments.map(comment => ({ ...comment, text: comment.text.trim() })),
+  };
+}
+
+/**
+ * The place a comment names: "[path/to/file.swift:124]" or "[notes.md:3 (removed)]"
+ * (ReviewComments.swift:71-82).
+ *
+ * @param {string} line
+ * @returns {{file: string, line: number, side: string}|null}
+ */
+function parseHeader(line) {
+  if (!line.startsWith("[") || !line.endsWith("]")) return null;
+  let body = line.slice(1, -1);
+  let side = "new";
+  if (body.endsWith(" (removed)")) {
+    body = body.slice(0, -" (removed)".length);
+    side = "old";
+  }
+  const colon = body.lastIndexOf(":");
+  if (colon < 0) return null;
+  const number = body.slice(colon + 1);
+  if (!/^\d+$/.test(number)) return null;
+  return { file: body.slice(0, colon), line: Number(number), side };
+}
+
+/**
  * The message with the comments in their block, the way the Mac sends them
  * (ReviewComments.swift:27-39).
  *

@@ -473,6 +473,33 @@ aside {
   font-size: var(--text-md);
   box-shadow: inset 0 1px 0 var(--lit);
 }
+/* A comment as the conversation shows it: the place it points to, the line it was
+   written on, and what it says — in accent glass, like the message it went with
+   (ChangesPanel.swift:1123-1155). */
+.comment-reference {
+  align-self: flex-end;
+  max-width: 80%;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklab, var(--accent), transparent 91%);
+  border: 1px solid color-mix(in oklab, var(--accent), transparent 80%);
+  backdrop-filter: blur(14px) saturate(1.6);
+  -webkit-backdrop-filter: blur(14px) saturate(1.6);
+  color: var(--ink);
+  box-shadow: inset 0 1px 0 var(--lit);
+}
+.comment-reference-place {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 500; color: var(--ink-soft);
+}
+.comment-reference-snippet {
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-soft);
+  padding-left: 8px; border-left: 2px solid var(--ok);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.comment-reference-snippet.removed { border-left-color: var(--danger); }
+.comment-reference-text { font-size: var(--text-md); white-space: pre-wrap; word-break: break-word; }
 .entry.user.pending .text { opacity: .5; }
 .entry-error { color: var(--danger); white-space: pre-wrap; font-size: var(--text-md); }
 .entry-meta { color: var(--ink-soft); font-size: var(--text-xs); }

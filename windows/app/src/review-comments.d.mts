@@ -34,3 +34,4 @@ export function commentLocation(comment: ReviewComment): string;
 export function findBlock(text: string): { open: number; lines: string[] } | null;
 export function escapeBlock(text: string): string;
 export function commentsText(text: string, comments: ReviewComment[]): string;
+export function splitComments(text: string): { text: string; comments: ReviewComment[] };

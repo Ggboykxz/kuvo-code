@@ -18,6 +18,7 @@ import {
   commentMatches,
   commentsText,
   escapeBlock,
+  splitComments,
 } from "./app/src/review-comments.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -116,4 +117,43 @@ test("the Mac's block and heading are the ones we send", () => {
   assert.equal(BLOCK_START, "<review-comments>");
   assert.equal(BLOCK_END, "</review-comments>");
   assert.equal(BLOCK_HEADING, "Comments on lines of the current changes:");
+});
+
+// ---- Reading the comments back ----
+
+test("a message is taken apart: the words, and the comments that went with them", () => {
+  const sent = commentsText("please look at this", [comment]);
+  const { text, comments } = splitComments(sent);
+  assert.equal(text, "please look at this", "the words are the user's own");
+  assert.equal(comments.length, 1, "one comment");
+  assert.equal(comments[0].file, "src/app.ts");
+  assert.equal(comments[0].line, 12);
+  assert.equal(comments[0].side, "new");
+  assert.equal(comments[0].snippet, "const added = 3;", "the line it was written on");
+  assert.equal(comments[0].text, "why is this here?", "what it says");
+});
+
+test("a removed line's comment comes back as the old side", () => {
+  const sent = commentsText("", [{ ...comment, side: "old", line: 11, snippet: "const removed = 2;" }]);
+  const { comments } = splitComments(sent);
+  assert.equal(comments[0].side, "old");
+  assert.equal(comments[0].line, 11);
+  assert.equal(comments[0].snippet, "const removed = 2;");
+});
+
+test("two comments come back as two", () => {
+  const sent = commentsText("look", [
+    comment,
+    { ...comment, id: "2", line: 20, snippet: "const other = 4;", text: "and this one" },
+  ]);
+  const { text, comments } = splitComments(sent);
+  assert.equal(text, "look");
+  assert.deepEqual(comments.map(one => one.text), ["why is this here?", "and this one"]);
+  assert.deepEqual(comments.map(one => one.line), [12, 20]);
+});
+
+test("a message with no comments is left alone", () => {
+  const { text, comments } = splitComments("just this");
+  assert.equal(text, "just this");
+  assert.deepEqual(comments, []);
 });
