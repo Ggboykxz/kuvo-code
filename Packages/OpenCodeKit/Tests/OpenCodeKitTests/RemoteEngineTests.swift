@@ -23,6 +23,20 @@ struct RemoteEngineTests {
         #expect(SSHConnection(destination: "box").arguments(running: "true", shared: false).contains("ControlPath=none"))
     }
 
+    /// A machine with several addresses (its local name, its VPN one): every connection to it goes
+    /// to the one in use, by the name it was added under, and back to that name when let go.
+    @Test func aMachineIsReachedAtTheAddressInUse() {
+        let name = "home-\(UUID().uuidString.prefix(6))"
+        defer { SSHConnection.route(name, to: nil) }
+        SSHConnection.route(name, to: name + ".tailnet")
+        #expect(SSHConnection(destination: name).arguments(running: "true").suffix(2).first == name + ".tailnet")
+        #expect(SSHConnection(destination: name).address == name + ".tailnet")
+        // Others aren't.
+        #expect(SSHConnection(destination: "box").address == "box")
+        SSHConnection.route(name, to: nil)
+        #expect(SSHConnection(destination: name).arguments(running: "true").suffix(2).first == name)
+    }
+
     @Test func theEngineRunsOnItsOwnOnTheMachinesLocalhost() {
         let script = RemoteServer.launchScript
         #expect(script.contains("read -r line"))

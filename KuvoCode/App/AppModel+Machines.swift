@@ -67,6 +67,9 @@ extension AppModel {
         browserAsks.conversation = { [weak self] session in self?.workspace.root(of: session) ?? session }
         workspace.botName = { [weak self] session in self?.bots.bot(forSession: session)?.name }
         workspace.botMachine = { [weak self] session in self?.bots.bot(forSession: session)?.machine }
+        // One machine at two addresses: the one added later is one of the other's addresses, and
+        // what's kept under its name is the other's.
+        machines.onFolded = { [weak self] address, machine in self?.machineFolded(address, into: machine) }
         workspace.onRunEnded = { [weak self] session in
             self?.bots.runEnded(session: session)
             // An ask its agent left in this Mac's browser has no one waiting for it now.
@@ -320,6 +323,17 @@ extension AppModel {
 
     /// Stops a machine's engine and forgets the machine, and its sessions' tabs with it. Its
     /// sessions stay on the machine, for when it's added again.
+    /// A machine found to be another one here at another address: its live views and asks go,
+    /// and what's kept under its name is the other's (nothing there is signed out or stopped).
+    func machineFolded(_ address: String, into machine: String) {
+        browserAsks.closeAll(on: address)
+        utilities.closeMachineBrowser(address)
+        phoneLink.forget(machine: address)
+        workspace.machines = Set(machines.list.map(\.id))
+        workspace.fold(address, into: machine)
+        bots.fold(address, into: machine)
+    }
+
     func removeMachine(_ id: String) {
         machines.engine(id)?.browser.reset()
         browserAsks.closeAll(on: id)

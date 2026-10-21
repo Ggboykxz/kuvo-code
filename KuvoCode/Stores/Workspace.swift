@@ -1324,6 +1324,47 @@ final class Workspace {
 
     /// A machine disconnected: its sessions stay as last seen until it's back, their
     /// conversations to read. Removed for good, they're forgotten.
+    /// A machine found to be another one here, reached at another address (see `Machines.fold`):
+    /// what's kept under its name (projects, their settings and worktrees) is the other's now. Its
+    /// sessions are the other's engine's, listed with the other's, and what you'd written in them
+    /// stays.
+    func fold(_ machine: String, into other: String) {
+        func moved(_ folder: String) -> String {
+            guard let parsed = RemoteFolder.parse(folder), parsed.machine == machine else { return folder }
+            return RemoteFolder.folder(parsed.path, on: other)
+        }
+        let gone = Set(sessions.filter { RemoteFolder.machine(of: $0.location.directory) == machine }.map(\.id))
+        sessions.removeAll { gone.contains($0.id) }
+        models = models.filter { RemoteFolder.machine(of: $0.value.session.location.directory) != machine }
+        running.subtract(gone)
+        connectedMachines.remove(machine)
+        listSaves[machine]?.cancel()
+        listSaves[machine] = nil
+        for (id, at) in sessionMachines where at == machine { sessionMachines[id] = other }
+        SessionCopies.removeSessions(of: machine)
+        remoteSessions = remoteSessions.filter { $0.value.machine != machine }
+        Self.saveRemoteSessions(remoteSessions)
+        var kept: [String] = []
+        for folder in folders.map(moved) where !kept.contains(folder) { kept.append(folder) }
+        folders = kept
+        UserDefaults.standard.set(folders, forKey: "projectFolders")
+        settings = Dictionary(settings.map { folder, project in
+            var project = project
+            project.folders = project.folders.map(moved)
+            return (moved(folder), project)
+        }, uniquingKeysWith: { first, _ in first })
+        saveSettings()
+        worktrees = Dictionary(worktrees.map { folder, tree in
+            var tree = tree
+            tree.project = moved(tree.project)
+            tree.root = moved(tree.root)
+            return (moved(folder), tree)
+        }, uniquingKeysWith: { first, _ in first })
+        saveWorktrees()
+        removedWorktrees = Dictionary(removedWorktrees.map { (moved($0.key), moved($0.value)) }, uniquingKeysWith: { first, _ in first })
+        UserDefaults.standard.set(removedWorktrees, forKey: "removedWorktrees")
+    }
+
     func forget(_ machine: String, forGood: Bool = false) {
         let gone = Set(sessions.filter { RemoteFolder.machine(of: $0.location.directory) == machine }.map(\.id))
         if !forGood, connectedMachines.contains(machine) { saveList(of: machine) }

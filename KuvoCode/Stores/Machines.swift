@@ -7,10 +7,37 @@ import os
 /// Mac's: a host from `~/.ssh/config` or `user@host`. Its projects are folders on it.
 nonisolated struct Machine: Codable, Hashable, Identifiable {
     var destination: String
+    /// The same computer's other addresses (its name on the local network and over Tailscale,
+    /// say): whichever answers is used, under `destination`, its name here.
+    var otherAddresses: [String]?
+    /// What the computer calls itself, kept in Kuvo Code's folder there, once read: two
+    /// addresses that reach the same one are one machine.
+    var identity: String?
+    /// The address that answered last, tried first next time (after a relaunch too).
+    var reachedAt: String?
 
     var id: String { destination }
     var name: String { destination }
+    /// Every address it has, its name first.
+    var addresses: [String] { [destination] + (otherAddresses ?? []) }
+    /// To it, at the address in use (see `SSHConnection.route`).
     var connection: SSHConnection { SSHConnection(destination: destination) }
+
+    /// The computer at `address` as it calls itself: a name made once, in Kuvo Code's folder there
+    /// (an account's own, as that folder is), the same whichever address reaches it. Nil when it
+    /// can't be asked.
+    static func identity(at address: String) async -> String? {
+        let script = """
+            F="$HOME/\(RemoteEngineInstaller.root)/machine-id"
+            if [ ! -s "$F" ]; then
+              mkdir -p "${F%/*}" && (umask 077; od -An -N16 -tx1 /dev/urandom | tr -d ' \\n' >"$F.new") && mv -f "$F.new" "$F" || exit 1
+            fi
+            cat "$F"
+            """
+        guard let output = try? await SSHConnection.direct(address).run(script) else { return nil }
+        let identity = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return identity.count == 32 && identity.allSatisfy(\.isHexDigit) ? identity : nil
+    }
 }
 
 /// One machine's engine: installed and started over SSH when Kuvo Code connects (or found still
@@ -18,7 +45,7 @@ nonisolated struct Machine: Codable, Hashable, Identifiable {
 /// there), and its live events.
 @Observable
 final class MachineEngine {
-    let machine: Machine
+    private(set) var machine: Machine
     private(set) var state = AppModel.EngineState.preparing
     private(set) var api: OpenCodeAPI?
     /// False while the live event feed is down.
@@ -61,6 +88,46 @@ final class MachineEngine {
         agents = OutsideAgents(machine: machine.id)
         catalog.outsideAgents = agents
         catalog.machine = machine.id
+    }
+
+    /// The machine as it's kept now: another address, or what it calls itself, learned.
+    func update(_ machine: Machine) {
+        guard machine.id == self.machine.id, machine != self.machine else { return }
+        self.machine = machine
+    }
+
+    /// What the computer calls itself, as first read (see `Machine.identity`): the app keeps it,
+    /// and tells one machine reached at two addresses from two.
+    @ObservationIgnored var onIdentity: (String) -> Void = { _ in }
+    /// Another of its addresses answered: the app keeps it, to try first next time.
+    @ObservationIgnored var onReached: (String) -> Void = { _ in }
+
+    /// Of its addresses, the one that answers as this computer, the one in use (or that answered
+    /// last) first: its connections go there from now on. One that answers as another computer (a
+    /// local name handed to another one since) isn't used. With one address, nothing to choose.
+    func reach() async {
+        let addresses = machine.addresses
+        guard addresses.count > 1 else { return }
+        let routed = machine.connection.address
+        let first = routed != machine.destination ? routed : machine.reachedAt.flatMap { addresses.contains($0) ? $0 : nil } ?? routed
+        for address in [first] + addresses.filter({ $0 != first }) {
+            guard let identity = await Machine.identity(at: address) else { continue }
+            if let known = machine.identity, known != identity { continue }
+            SSHConnection.route(machine.id, to: address)
+            if machine.identity == nil { onIdentity(identity) }
+            if machine.reachedAt != address { onReached(address) }
+            return
+        }
+    }
+
+    /// What it calls itself, read once it's connected, if it isn't known yet.
+    private func learnIdentity() {
+        guard machine.identity == nil else { return }
+        let address = machine.connection.address
+        Task { [weak self] in
+            guard let identity = await Machine.identity(at: address) else { return }
+            self?.onIdentity(identity)
+        }
     }
 
     var isReady: Bool { state == .ready }
@@ -175,13 +242,16 @@ final class MachineEngine {
         case .downloading, .starting, .ready: return
         }
         isStopping = false
-        let connection = machine.connection
         // Disconnecting (Connect Now) or a newer attempt ends this one at its next step.
         let attempt = connections
         let check = { if self.connections != attempt { throw Superseded() } }
         var attached: RemoteServer?
         do {
             state = .starting
+            // At whichever of its addresses answers.
+            await reach()
+            try check()
+            let connection = machine.connection
             var engine = try await RemoteServer.running(on: connection)
             try check()
             let isNewer = engine.map { $0.version.compare(OpenCodeEngine.version, options: .numeric) == .orderedDescending } ?? false
@@ -243,6 +313,7 @@ final class MachineEngine {
             catalog.api = current
             agents.connect(server.agentsEndpoint, folderPrefix: RemoteFolder.prefix(for: machine.id))
             state = .ready
+            learnIdentity()
             Analytics.shared.trackOnce("machine_connected")
             listen(to: current)
             keepAlive()
@@ -455,7 +526,7 @@ final class Machines {
     private static let key = "machines"
 
     init() {
-        for machine in list { engines[machine.id] = MachineEngine(machine: machine) }
+        for machine in list { engines[machine.id] = makeEngine(machine) }
         // What waits for a machine to answer: tried a little after launch, then every 15 minutes.
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(30))
@@ -611,10 +682,106 @@ final class Machines {
         }
         list.append(machine)
         Analytics.shared.track("machine_added")
-        let engine = MachineEngine(machine: machine)
+        let engine = makeEngine(machine)
         engines[machine.id] = engine
         save()
         return engine
+    }
+
+    private func makeEngine(_ machine: Machine) -> MachineEngine {
+        let engine = MachineEngine(machine: machine)
+        engine.onIdentity = { [weak self] identity in self?.note(identity, of: machine.id) }
+        engine.onReached = { [weak self] address in self?.noteReached(address, of: machine.id) }
+        return engine
+    }
+
+    // MARK: One computer, several addresses
+
+    /// A machine folded into another, being the same computer at another address: its name, and
+    /// the other's. The app moves what it kept under the first (its projects, its bots).
+    @ObservationIgnored var onFolded: (_ address: String, _ machine: String) -> Void = { _, _ in }
+    /// The last machine folded into another, to say so in Settings › Machines.
+    private(set) var folded: (address: String, machine: String)?
+
+    /// The machine already here that the computer at `address` is, if it's one of them.
+    func machine(calling identity: String) -> Machine? {
+        list.first { $0.identity == identity }
+    }
+
+    /// What `machine` calls itself, read: kept, and if another machine here is the same computer,
+    /// the one added later becomes one of the other's addresses.
+    func note(_ identity: String, of machine: String) {
+        guard let index = list.firstIndex(where: { $0.id == machine }) else { return }
+        if list[index].identity != identity {
+            list[index].identity = identity
+            engines[machine]?.update(list[index])
+            save()
+        }
+        // The one added first stays; any other is one of its addresses.
+        let same = list.filter { $0.identity == identity }
+        guard let first = same.first else { return }
+        for other in same.dropFirst() { fold(other.id, into: first.id) }
+    }
+
+    /// `machine` answered at `address`: tried first next time.
+    func noteReached(_ address: String, of machine: String) {
+        guard let index = list.firstIndex(where: { $0.id == machine }), list[index].reachedAt != address else { return }
+        list[index].reachedAt = address
+        engines[machine]?.update(list[index])
+        save()
+    }
+
+    /// Says in Settings › Machines that `address`, added as a machine, was one already here.
+    func noteAdded(_ address: String, to machine: String) {
+        folded = (address, machine)
+    }
+
+    /// `address` reaches `machine` too: tried when the one in use doesn't answer.
+    func addAddress(_ address: String, to machine: String) {
+        guard let index = list.firstIndex(where: { $0.id == machine }), !list[index].addresses.contains(address) else { return }
+        list[index].otherAddresses = (list[index].otherAddresses ?? []) + [address]
+        engines[machine]?.update(list[index])
+        save()
+    }
+
+    /// No longer tries `address` for `machine` (not its name, which every other is an address of).
+    func removeAddress(_ address: String, from machine: String) {
+        guard let index = list.firstIndex(where: { $0.id == machine }), address != machine else { return }
+        list[index].otherAddresses?.removeAll { $0 == address }
+        if list[index].otherAddresses?.isEmpty == true { list[index].otherAddresses = nil }
+        if list[index].reachedAt == address { list[index].reachedAt = nil }
+        if SSHConnection(destination: machine).address == address { SSHConnection.route(machine, to: nil) }
+        engines[machine]?.update(list[index])
+        save()
+    }
+
+    /// `duplicate` is `machine`, reached at another address: one machine from now on, under
+    /// `machine`'s name, with `duplicate`'s addresses among its own. Nothing there is signed out
+    /// or stopped, as removing it would: the engine it reached is `machine`'s.
+    func fold(_ duplicate: String, into machine: String) {
+        guard duplicate != machine, let other = list.first(where: { $0.id == duplicate }), let index = list.firstIndex(where: { $0.id == machine }) else { return }
+        var merged = list[index]
+        var addresses = merged.otherAddresses ?? []
+        for address in other.addresses where address != merged.destination && !addresses.contains(address) { addresses.append(address) }
+        merged.otherAddresses = addresses.isEmpty ? nil : addresses
+        merged.identity = merged.identity ?? other.identity
+        list[index] = merged
+        engines[machine]?.update(merged)
+        // Its connection goes; the engine there goes on, as this one's.
+        engines[duplicate]?.browser.reset()
+        engines[duplicate]?.disconnect()
+        engines[duplicate] = nil
+        list.removeAll { $0.id == duplicate }
+        SSHConnection.route(duplicate, to: nil)
+        // What waited for it waits for this one, but a removal: nothing was removed.
+        if let scripts = Self.waiting[duplicate] {
+            setWaiting([], on: duplicate)
+            let kept = scripts.filter { !$0.hasPrefix(Self.removalMark) }
+            if !kept.isEmpty { Self.waiting[machine, default: []] += kept }
+        }
+        save()
+        folded = (duplicate, machine)
+        onFolded(duplicate, machine)
     }
 
     func remove(_ id: String) {

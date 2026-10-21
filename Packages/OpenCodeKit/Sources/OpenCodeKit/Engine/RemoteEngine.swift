@@ -12,6 +12,32 @@ public struct SSHConnection: Sendable, Hashable, Codable {
         self.destination = destination
     }
 
+    /// Where a machine with several addresses (the same computer on the local network and over a
+    /// VPN) is reached now, by the name it was added under: the app sets it to the one that
+    /// answered. Every connection to it goes there.
+    private static let routesLock = NSLock()
+    nonisolated(unsafe) private static var routes: [String: String] = [:]
+
+    /// Sends connections to `destination` to `address` from now on (nil: to itself again).
+    public static func route(_ destination: String, to address: String?) {
+        routesLock.withLock { routes[destination] = address == destination ? nil : address }
+    }
+
+    /// Goes to the address itself, whatever machine it's an address of (to ask one that may not
+    /// be the one in use).
+    private var isDirect: Bool?
+
+    public static func direct(_ address: String) -> SSHConnection {
+        var connection = SSHConnection(destination: address)
+        connection.isDirect = true
+        return connection
+    }
+
+    /// The address `ssh` goes to: the one in use for this machine.
+    public var address: String {
+        isDirect == true ? destination : Self.routesLock.withLock { Self.routes[destination] } ?? destination
+    }
+
     /// For every connection: never a password prompt (there's no terminal to type it in), a
     /// timeout to connect, and a check that notices when the machine goes away.
     static let options = [
@@ -44,7 +70,7 @@ public struct SSHConnection: Sendable, Hashable, Codable {
     /// way, so the script goes as base64, which no shell changes, for `sh` to decode and run. Its
     /// standard input stays the command's.
     public func arguments(running script: String, extra: [String] = [], shared: Bool = true) -> [String] {
-        Self.options + (shared ? Self.sharing : Self.separate) + extra + [destination, Self.command(running: script)]
+        Self.options + (shared ? Self.sharing : Self.separate) + extra + [address, Self.command(running: script)]
     }
 
     /// The command line for the machine's login shell that runs `script` with `sh`. Without a
@@ -475,7 +501,7 @@ public final class RemoteServer: @unchecked Sendable {
         process.executableURL = URL(filePath: "/usr/bin/ssh")
         // Not `-N`: a command on the machine that reads this app's end of a pipe, so the tunnel
         // ends when the app does, however it ends (a crash, a force quit), like this Mac's engine.
-        process.arguments = SSHConnection.options + SSHConnection.separate + forwards + [connection.destination, "cat >/dev/null"]
+        process.arguments = SSHConnection.options + SSHConnection.separate + forwards + [connection.address, "cat >/dev/null"]
         process.standardInput = Pipe.unshared()
         process.standardOutput = FileHandle.nullDevice
         let stderr = Pipe.unshared()

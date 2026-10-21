@@ -21,8 +21,13 @@ struct MachinesSettings: View {
             } header: {
                 Text("Machines")
             } footer: {
-                Text("Linux servers you reach with SSH, like a home server or a VPS. Their projects open next to this Mac’s, and their sessions run there. Kuvo Code installs its engine in ~/.kuvo-code on each, and stops it when you quit.")
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 6) {
+                    if let folded = app.machines.folded {
+                        Text("\(folded.address) is \(folded.machine), reached another way, so it’s one of its addresses rather than another machine. Kuvo Code uses whichever answers.")
+                    }
+                    Text("Linux servers you reach with SSH, like a home server or a VPS. Their projects open next to this Mac’s, and their sessions run there. Kuvo Code installs its engine in ~/.kuvo-code on each, and stops it when you quit. A machine you reach at more than one address, like its name on your network and over Tailscale, is one machine: add either, and the other becomes one of its addresses.")
+                }
+                .foregroundStyle(.secondary)
             }
         }
         .settingsDetail(isPresented: $showsAdd, title: "Add a Machine") {
@@ -51,6 +56,11 @@ struct MachinesSettings: View {
                 .frame(width: 20)
             VStack(alignment: .leading, spacing: 2) {
                 Text(engine.machine.name)
+                if let others = engine.machine.otherAddresses, !others.isEmpty {
+                    Text("Also at \(others.joined(separator: ", "))")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
                 MachineStatus(engine: engine)
             }
             Spacer()
@@ -63,6 +73,11 @@ struct MachinesSettings: View {
                 EmptyView()
             }
             Button("Remove…") { removing = engine.machine }
+        }
+        .contextMenu {
+            ForEach(engine.machine.otherAddresses ?? [], id: \.self) { address in
+                Button("Stop Using \(address)") { app.machines.removeAddress(address, from: engine.machine.id) }
+            }
         }
     }
 }

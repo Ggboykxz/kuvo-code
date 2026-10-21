@@ -843,4 +843,18 @@ final class Bots {
     private func save() {
         JSONFile.write(list, to: Self.file, isoDates: true, readable: true)
     }
+
+    /// A machine found to be another one here at another address (see `Machines.fold`): its bots
+    /// live on the other, as they did all along.
+    func fold(_ machine: String, into other: String) {
+        var changed = false
+        for index in list.indices where list[index].machine == machine {
+            list[index].machine = other
+            if let project = list[index].project, let parsed = RemoteFolder.parse(project), parsed.machine == machine {
+                list[index].project = RemoteFolder.folder(parsed.path, on: other)
+            }
+            changed = true
+        }
+        if changed { save() }
+    }
 }

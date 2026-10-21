@@ -140,8 +140,8 @@ struct MachineForm: View {
             failure = problem
             return
         }
-        if app.machines.engine(destination) != nil {
-            added(destination)
+        if app.machines.engine(destination) != nil || app.machines.list.contains(where: { $0.addresses.contains(destination) }) {
+            added(app.machines.list.first { $0.addresses.contains(destination) }?.id ?? destination)
             return
         }
         isChecking = true
@@ -155,6 +155,16 @@ struct MachineForm: View {
                 return
             }
             // Canceled meanwhile: not added, nor your accounts copied to it.
+            guard !Task.isCancelled else { return }
+            // A machine already here, at another address (its local name, its Tailscale one): one
+            // of its addresses, not another machine to set up.
+            if let identity = await Machine.identity(at: destination), let known = app.machines.machine(calling: identity) {
+                guard !Task.isCancelled else { return }
+                app.machines.addAddress(destination, to: known.id)
+                app.machines.noteAdded(destination, to: known.id)
+                added(known.id)
+                return
+            }
             guard !Task.isCancelled else { return }
             app.addMachine(destination)
             added(destination)
