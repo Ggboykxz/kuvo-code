@@ -4,7 +4,7 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
-## Unreleased
+## 0.6.5
 
 - Settings › Permissions says what Default comes to, like "Default (Allow)" or "Default (Ask First)", and an agent's own permissions show what Settings › Permissions has for it.
 - Settings reads more easily: brighter descriptions, the first sentence of each skill (all of it on hover) and a search field for skills, text boxes you can see, a site count on Website Data, "Add Another" for a second account, "Added" beside integrations that need nothing, and MCP Servers sends you to Integrations for servers kept there. The sidebar scrolls to the page that's open.
