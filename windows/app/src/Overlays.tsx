@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import { errorText } from "./lib";
 import { ChangesPanel } from "./Changes";
-import { complain, loadProjectFiles, loadSessions, notify, openProjectFile, openSession, render, setProjectName, state, useStore, newSession, exportConversation, stopRun } from "./store";
+import { complain, loadProjectFiles, loadSessions, notify, openProjectFile, openSession, render, setProjectSettings, state, useStore, newSession, exportConversation, stopRun } from "./store";
 import { keysOf } from "./shortcuts";
 import { Symbol } from "./components/symbols";
 
@@ -324,11 +324,13 @@ export function Picker() {
 export function ProjectEditor() {
   useStore();
   const [name, setName] = useState("");
+  const [run, setRun] = useState("");
   const folder = state.editingProject;
 
   useEffect(() => {
     if (!folder) return;
     setName(state.projectNames[folder] ?? "");
+    setRun(state.projectRuns[folder] ?? "");
   }, [folder]);
 
   if (!folder) return null;
@@ -350,6 +352,16 @@ export function ProjectEditor() {
           <span>Folder</span>
           <input id="project-folder" value={folder} readOnly />
         </div>
+        <div className="settings-row">
+          <span>Run</span>
+          <input
+            id="project-run"
+            value={run}
+            placeholder="npm run dev"
+            onChange={event => setRun(event.target.value)}
+            onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void save(); } }}
+          />
+        </div>
         <div className="settings-editor-buttons">
           <button
             id="project-save"
@@ -367,12 +379,27 @@ export function ProjectEditor() {
   async function save() {
     if (!folder) return;
     state.editingProject = null;
-    await setProjectName(folder, name);
+    await setProjectSettings(folder, { name, run });
     render();
   }
 }
 
 // ---- The drawer: files and terminal ----
+
+/// The terminal the shell opened, and the command waiting for it: the Mac runs a
+/// project's run command in the panel's terminal (MainView.swift:1479-1491).
+let terminalSocket: WebSocket | null = null;
+let terminalWaiting: string | null = null;
+
+/// A command run in the terminal, in the project's folder: the Mac's own Run.
+export function runInTerminal(command: string, folder: string) {
+  state.drawerOpen = true;
+  state.drawerTab = "terminal";
+  render();
+  const line = folder ? `cd "${folder}"\r\n${command}\r\n` : `${command}\r\n`;
+  if (terminalSocket && terminalSocket.readyState === WebSocket.OPEN) terminalSocket.send(line);
+  else terminalWaiting = line;
+}
 
 export function Drawer() {
   useStore();
@@ -414,7 +441,16 @@ export function Drawer() {
     term.open(container);
     fitAddon?.fit();
     const socket = new WebSocket(`ws://127.0.0.1:${port}`);
-    socket.onopen = () => { setTerminalNote(""); term.focus(); };
+    terminalSocket = socket;
+    socket.onopen = () => {
+      setTerminalNote("");
+      term.focus();
+      // A command asked for before the terminal was there runs now.
+      if (terminalWaiting) {
+        socket.send(terminalWaiting);
+        terminalWaiting = null;
+      }
+    };
     socket.onmessage = event => term.write(typeof event.data === "string" ? event.data : "");
     socket.onclose = event => setTerminalNote(event.reason || "Terminal closed.");
     term.onData(data => { if (socket.readyState === WebSocket.OPEN) socket.send(data); });
@@ -423,7 +459,7 @@ export function Drawer() {
       if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
     };
     window.addEventListener("resize", onResize);
-    return () => { window.removeEventListener("resize", onResize); socket.close(); };
+    return () => { window.removeEventListener("resize", onResize); socket.close(); terminalSocket = null; };
   }, [state.drawerOpen, state.drawerTab]);
 
   useEffect(() => {

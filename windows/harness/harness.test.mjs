@@ -787,6 +787,15 @@ test("a project has a name of its own, the Mac's way", async t => {
   const projects = await (await fetch(`${url}api/projects`)).json();
   assert.equal(projects.names[folder], "The Project", "the project is named");
 
+  // The project's run command, the Mac's own (Workspace.ProjectSettings.run).
+  const withRun = await (await fetch(`${url}api/projects/settings`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: folder, run: "npm run dev" }),
+  })).json();
+  assert.equal(withRun.run, "npm run dev");
+  const running = await (await fetch(`${url}api/projects`)).json();
+  assert.equal(running.runs[folder], "npm run dev", "the project has a run command");
+
   // And the name can be taken away again: the folder's own name stands in.
   const unnamed = await (await fetch(`${url}api/projects/settings`, {
     method: "POST", headers: { "content-type": "application/json" },
@@ -795,6 +804,7 @@ test("a project has a name of its own, the Mac's way", async t => {
   assert.equal(unnamed.name, null);
   const after = await (await fetch(`${url}api/projects`)).json();
   assert.equal(after.names[folder], undefined, "the project is back to its folder's name");
+  assert.equal(after.runs[folder], "npm run dev", "and it keeps its run command");
 });
 
 test("a commit can push afterwards, as the Mac's commit form does", async t => {

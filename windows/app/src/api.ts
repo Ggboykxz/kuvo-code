@@ -184,6 +184,8 @@ export interface AppState {
   projects: string[];
   /** The projects' own names, by their folder (the Mac's Workspace.Project.name). */
   projectNames: Record<string, string>;
+  /** The projects' run commands, by their folder (the Mac's Workspace.ProjectSettings.run). */
+  projectRuns: Record<string, string>;
   /** The project being named, in the editor over the window. */
   editingProject: string | null;
   /** The sessions of every project, by its folder (SidebarView.swift:194). */

@@ -922,12 +922,26 @@ const checks = [
     assert.match(symbols, /"star": \["M8 2\.2l1\.76/);
   }],
 
+  ["a project runs its own command, as the Mac's does", ({ app, store, over, symbols }) => {
+    // The Mac's run command (Workspace.ProjectSettings.run, Workspace.swift:198): the
+    // title bar's button, the editor's field, and the terminal it runs in
+    // (MainView.swift:562-566, 601-610, 1479-1491).
+    assert.ok(store.includes("projectRun"), "the app knows the project's command");
+    assert.match(app, /id="run"/);
+    assert.match(app, /aria-label="Run"/);
+    assert.ok(over.includes('id="project-run"'), "the editor has the command in it");
+    assert.ok(over.includes('placeholder="npm run dev"'), "with the Mac's own prompt");
+    assert.ok(over.includes("runInTerminal"), "and the terminal runs it");
+    // The mark is drawn, not a text glyph.
+    assert.match(symbols, /"play": \["M5\.4 3\.3l7 4\.7/);
+  }],
+
   ["a project has a name of its own, as the Mac's has", ({ app, store, over }) => {
     // The Mac's project (Workspace.swift:179-199): a folder, and a name of its own shown
     // instead of the folder's — changed in the editor over the window (ProjectEditor.swift:8-13),
     // from the project's own menu (SidebarView.swift:382).
     assert.ok(store.includes("projectName"), "the app knows the project's name");
-    assert.ok(store.includes("setProjectName"), "and can set it");
+    assert.ok(store.includes("setProjectSettings"), "and can set it");
     assert.ok(app.includes('"Edit Project…"'), "the project's menu offers the editor");
     assert.match(app, /className="project-name">\{projectName\(folder\)\}/);
     // The editor is a card over the window, as the Mac's is.
