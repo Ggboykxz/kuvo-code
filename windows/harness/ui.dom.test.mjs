@@ -607,6 +607,25 @@ test("the page, in a browser, against the real engine", {
   await viewer.page.keyboard.press("Escape");
   await viewer.seen("the picture to go away", () => document.querySelector(".image-viewer") === null, null, 10_000);
 
+  // The project's other folders, where the agent may work too: the session is given the
+  // rules that allow them, and the note that names them (ProjectFolders.swift:20-46,
+  // SessionModel.swift:1379-1405).
+  await fetch(`${url}api/projects/settings`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: project, folders: [path.join(project, "sub")] }),
+  });
+  await page.page.reload({ waitUntil: "domcontentloaded" });
+  const listed = await (await fetch(`${url}api/sessions?directory=${encodeURIComponent(project)}`)).json();
+  let given = false;
+  for (let attempt = 0; attempt < 30 && !given; attempt += 1) {
+    for (const session of listed.sessions ?? []) {
+      const detail = await (await fetch(`${url}api/sessions/${session.id}`)).json();
+      if ((detail.session?.permissions ?? []).some(rule => rule.action === "external_directory" && rule.effect === "allow")) { given = true; break; }
+    }
+    if (!given) await wait(1000);
+  }
+  assert.ok(given, "a session was given the project's folders");
+
   // The project's own run command, and the button that runs it in the panel's terminal
   // (MainView.swift:562-566, 1479-1491). The terminal itself is the shell's, so what the
   // page shows here is the panel opening on it.

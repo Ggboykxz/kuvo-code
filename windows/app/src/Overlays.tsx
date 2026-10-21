@@ -325,13 +325,24 @@ export function ProjectEditor() {
   useStore();
   const [name, setName] = useState("");
   const [run, setRun] = useState("");
+  const [folders, setFolders] = useState<string[]>([]);
+  const [typedFolder, setTypedFolder] = useState("");
   const folder = state.editingProject;
 
   useEffect(() => {
     if (!folder) return;
     setName(state.projectNames[folder] ?? "");
     setRun(state.projectRuns[folder] ?? "");
+    setFolders(state.projectFolderList[folder] ?? []);
+    setTypedFolder("");
   }, [folder]);
+
+  const addFolder = () => {
+    const typed = typedFolder.trim();
+    if (!typed) return;
+    if (!folders.includes(typed)) setFolders([...folders, typed]);
+    setTypedFolder("");
+  };
 
   if (!folder) return null;
   return (
@@ -352,6 +363,33 @@ export function ProjectEditor() {
           <span>Folder</span>
           <input id="project-folder" value={folder} readOnly />
         </div>
+        {/* The Mac's Folders section (ProjectEditor.swift:129-131): the project's other
+            folders, where the agent may work too. */}
+        <div className="settings-row">
+          <span>Folders</span>
+          <div className="project-folders">
+            {folders.map((one, index) => (
+              <div className="cfg-row" key={one}>
+                <div className="cfg-row-main"><div className="cfg-row-title"><strong>{one}</strong></div></div>
+                {index > 0 ? (
+                  <button className="small" onClick={() => setFolders(folders.filter(other => other !== one))}>Remove</button>
+                ) : null}
+              </div>
+            ))}
+            <div className="settings-row">
+              <span />
+              <input
+                id="project-folder-add"
+                value={typedFolder}
+                placeholder="Another folder"
+                onChange={event => setTypedFolder(event.target.value)}
+                onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); addFolder(); } }}
+              />
+              <button className="small" id="project-folder-add-button" onClick={addFolder}>Add</button>
+            </div>
+          </div>
+        </div>
+        <div className="settings-note">Sessions run in the primary folder; the agent can work in the others too.</div>
         <div className="settings-row">
           <span>Run</span>
           <input
@@ -379,7 +417,7 @@ export function ProjectEditor() {
   async function save() {
     if (!folder) return;
     state.editingProject = null;
-    await setProjectSettings(folder, { name, run });
+    await setProjectSettings(folder, { name, run, folders });
     render();
   }
 }

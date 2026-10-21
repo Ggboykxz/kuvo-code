@@ -82,6 +82,7 @@ function fakeEngine({ password = PASSWORD, session = null } = {}) {
     if (url.pathname.endsWith("/reply")) return send({ ok: true });
     if (url.pathname.endsWith("/interrupt") || url.pathname.endsWith("/model") || url.pathname.endsWith("/move")) return send({ ok: true });
     if (url.pathname.startsWith(`/api/session/${engine.session.id}`) && request.method === "DELETE") return send({ ok: true });
+    if (url.pathname.startsWith(`/api/experimental/session/${engine.session.id}/instructions`) && request.method === "PUT") return send({ ok: true });
     return send({ message: `No route ${request.method} ${url.pathname}` }, 404);
   });
   engine.close = () => new Promise(resolve => { for (const r of subscribers) r.end(); server.close(resolve); });
@@ -805,6 +806,34 @@ test("a project has a name of its own, the Mac's way", async t => {
   const after = await (await fetch(`${url}api/projects`)).json();
   assert.equal(after.names[folder], undefined, "the project is back to its folder's name");
   assert.equal(after.runs[folder], "npm run dev", "and it keeps its run command");
+});
+
+test("a project has other folders, and the agent is told of them", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+
+  const folder = path.join(home, "a-project-with-folders");
+  const other = path.join(folder, "sub");
+  fs.mkdirSync(other, { recursive: true });
+  const saved = await (await fetch(`${url}api/projects/settings`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: folder, folders: [other] }),
+  })).json();
+  assert.equal(saved.ok, true);
+  const projects = await (await fetch(`${url}api/projects`)).json();
+  assert.deepEqual(projects.folders[folder], [other], "the project's other folders are kept");
+
+  // And a session is told of them, under the key the Mac uses (ProjectFolders.swift:10).
+  const note = await (await fetch(`${url}api/sessions/${engine.session.id}/instruction`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ key: "kuvo.project-folders", value: "This project spans several folders." }),
+  })).json();
+  assert.equal(note.ok, true);
+  const asked = engine.asked.find(entry => entry.method === "PUT" && entry.path.includes("instructions"));
+  assert.ok(asked, "the engine was asked to keep the note");
+  assert.equal(asked.body.value, "This project spans several folders.");
 });
 
 test("a commit can push afterwards, as the Mac's commit form does", async t => {

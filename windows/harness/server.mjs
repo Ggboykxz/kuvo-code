@@ -208,11 +208,13 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       const settings = projectSettings();
       const names = {};
       const runs = {};
+      const folders = {};
       for (const [folder, own] of Object.entries(settings)) {
         if (own && typeof own.name === "string" && own.name) names[folder] = own.name;
         if (own && typeof own.run === "string" && own.run) runs[folder] = own.run;
+        if (own && Array.isArray(own.folders) && own.folders.length) folders[folder] = own.folders;
       }
-      return json({ projects: recentProjects(), current: currentProject, names, runs });
+      return json({ projects: recentProjects(), current: currentProject, names, runs, folders });
     }
     if (url.pathname === "/api/projects/settings" && request.method === "POST") {
       const body = await readBody(request);
@@ -229,6 +231,11 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       if (body.run !== undefined) {
         if (body.run === null || body.run === "") delete own.run;
         else own.run = String(body.run).trim();
+      }
+      if (body.folders !== undefined) {
+        const list = Array.isArray(body.folders) ? body.folders.map(item => String(item)).filter(Boolean) : [];
+        if (!list.length) delete own.folders;
+        else own.folders = list;
       }
       if (Object.keys(own).length === 0) delete settings[folder];
       else settings[folder] = own;
@@ -1172,6 +1179,18 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       const pinned = body?.pinned !== false;
       await mark(pin[0], "kuvo.pinned", pinned);
       return json({ ok: true, pinned });
+    }
+
+    // A note for the agent, under a key: the project's folders, named (ProjectFolders.swift:10,
+    // 36-46; OpenCodeAPI.swift:355-358).
+    const instruction = route(/^\/api\/sessions\/([^/]+)\/instruction$/);
+    if (instruction && request.method === "POST") {
+      const body = await readBody(request);
+      const key = String(body.key ?? "").trim();
+      if (!key) throw new HttpError(400, "A note needs a key.");
+      const value = String(body.value ?? "");
+      await client.setInstruction(instruction[0], key, value);
+      return json({ ok: true });
     }
 
     // The session's own rules: what the agent may do without asking, and what waits for

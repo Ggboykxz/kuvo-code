@@ -922,6 +922,20 @@ const checks = [
     assert.match(symbols, /"star": \["M8 2\.2l1\.76/);
   }],
 
+  ["a project's other folders are the agent's too, as the Mac's makes them", ({ app, store, over }) => {
+    // The Mac's folders beyond the first (Workspace.ProjectSettings.folders, Workspace.swift:196):
+    // the agent may work in them (the rules, ProjectFolders.swift:20-27) and is told of them
+    // by name (the note, ProjectFolders.swift:36-46) — the session is given both
+    // (SessionModel.swift:1379-1405).
+    assert.ok(store.includes("projectFolders"), "the app knows the project's other folders");
+    assert.ok(store.includes("folderRules"), "and the rules that allow them");
+    assert.ok(store.includes("folderInstruction"), "and the note that names them");
+    assert.ok(store.includes("syncFolders"), "and gives them to the session");
+    assert.match(store, /action: "external_directory"/);
+    assert.ok(over.includes('id="project-folder-add"'), "the editor has the folders in it");
+    assert.ok(over.includes("Sessions run in the primary folder; the agent can work in the others too."));
+  }],
+
   ["a project runs its own command, as the Mac's does", ({ app, store, over, symbols }) => {
     // The Mac's run command (Workspace.ProjectSettings.run, Workspace.swift:198): the
     // title bar's button, the editor's field, and the terminal it runs in
