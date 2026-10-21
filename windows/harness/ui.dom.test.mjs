@@ -380,6 +380,24 @@ test("the page, in a browser, against the real engine", {
   await page.element("settings-back").click();
   await page.seen("the settings to close", () => document.getElementById("settings-modal")?.hidden === true, null, 10_000);
 
+  // The window remembers: the row at the top can be put away, and stays away
+  // (TabBar.showsKey, GeneralSettings.swift:23).
+  await page.element("settings-open").click();
+  await pressNav("general");
+  const tabBar = page.page.locator('.settings-page[data-section="general"] input[type="checkbox"]').first();
+  await tabBar.uncheck();
+  await page.element("settings-back").click();
+  await page.seen("the row at the top to go", () => document.querySelector("header.titlebar")?.classList.contains("no-tab-bar") === true, null, 10_000);
+  const remembered = await open();
+  await remembered.seen("the row at the top to stay away", () => document.querySelector("header.titlebar")?.classList.contains("no-tab-bar") === true, null, 10_000);
+  await remembered.page.close();
+  // And it comes back when the user says so.
+  await page.element("settings-open").click();
+  await pressNav("general");
+  await page.page.locator('.settings-page[data-section="general"] input[type="checkbox"]').first().check();
+  await page.element("settings-back").click();
+  await page.seen("the row at the top to come back", () => document.querySelector("header.titlebar")?.classList.contains("no-tab-bar") === false, null, 10_000);
+
   // The find: it is invoked, and it is the Mac's bar over the conversation.
   await page.page.keyboard.press("Control+f");
   await page.seen("the find bar to open", () => Boolean(document.getElementById("find-bar")), null, 10_000);

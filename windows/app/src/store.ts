@@ -10,6 +10,75 @@ import { conversationMarkdown } from "../../harness/markdown.mjs";
 import { toolSummary } from "./components/tool-call";
 import { compatibilitySettings, copilotClaude } from "./compatibility.mjs";
 
+// ---- What the window remembers ----
+
+/// The window's own state, kept between runs: the panes' widths, what is folded away and
+/// the row at the top (the Mac's own AppStorage: sessionsWidth, changesWidth, splitWidth,
+/// collapsedSections, collapsedProjects, showsTabBar).
+const remembered = {
+  sessionsWidth: "kuvo-sessionsWidth",
+  changesWidth: "kuvo-changesWidth",
+  splitWidth: "kuvo-splitWidth",
+  collapsed: "kuvo-collapsed",
+  showsTabBar: "kuvo-showsTabBar",
+};
+
+const tabBarShown = () => {
+  try {
+    return localStorage.getItem(remembered.showsTabBar) !== "off";
+  } catch {
+    return true;
+  }
+};
+
+const width = (key: string, fallback: number) => {
+  try {
+    const stored = Number(localStorage.getItem(key));
+    return Number.isFinite(stored) && stored > 0 ? stored : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+/// The window's own state, read when the app starts (MainView.swift:38-40, 90;
+/// SidebarView.swift:32-34; TabBar.showsKey).
+export function rememberWindow() {
+  state.sessionsWidth = width(remembered.sessionsWidth, state.sessionsWidth);
+  state.changesWidth = width(remembered.changesWidth, state.changesWidth);
+  state.splitWidth = width(remembered.splitWidth, state.splitWidth);
+  try {
+    const folded = JSON.parse(localStorage.getItem(remembered.collapsed) ?? "{}");
+    if (folded && typeof folded === "object") state.collapsed = folded as Record<string, boolean>;
+    state.showsTabBar = localStorage.getItem(remembered.showsTabBar) !== "off";
+  } catch {}
+}
+
+/// A pane's width, dragged.
+export function setPaneWidth(pane: "sessions" | "changes" | "split", next: number) {
+  if (pane === "sessions") state.sessionsWidth = next;
+  else if (pane === "changes") state.changesWidth = next;
+  else state.splitWidth = next;
+}
+
+/// A pane's width, kept for the next time the window opens.
+export function savePaneWidth(pane: "sessions" | "changes" | "split") {
+  const key = pane === "sessions" ? remembered.sessionsWidth : pane === "changes" ? remembered.changesWidth : remembered.splitWidth;
+  const now = pane === "sessions" ? state.sessionsWidth : pane === "changes" ? state.changesWidth : state.splitWidth;
+  try { localStorage.setItem(key, String(now)); } catch {}
+}
+
+/// What is folded away, kept for the next time the window opens.
+export function rememberFolded(key: string, folded: boolean) {
+  state.collapsed = { ...state.collapsed, [key]: folded };
+  try { localStorage.setItem(remembered.collapsed, JSON.stringify(state.collapsed)); } catch {}
+}
+
+/// The row at the top, kept for the next time the window opens.
+export function rememberTabBar(shows: boolean) {
+  state.showsTabBar = shows;
+  try { localStorage.setItem(remembered.showsTabBar, shows ? "on" : "off"); } catch {}
+}
+
 export const state: AppState = {
   project: null,
   engine: null,
@@ -30,6 +99,7 @@ export const state: AppState = {
   projects: [],
   sessionsByProject: {} as Record<string, SessionSummary[]>,
   collapsed: {} as Record<string, boolean>,
+  showsTabBar: tabBarShown(),
   contextGauge: null,
   inbox: [],
   vcs: null,
@@ -62,9 +132,9 @@ export const state: AppState = {
   quote: undefined,
   viewing: null,
   sidebarOpen: true,
-  sessionsWidth: 280,
-  changesWidth: 420,
-  splitWidth: 560,
+  sessionsWidth: width(remembered.sessionsWidth, 280),
+  changesWidth: width(remembered.changesWidth, 420),
+  splitWidth: width(remembered.splitWidth, 560),
 };
 
 // ---- The redraw ----
@@ -830,6 +900,9 @@ export async function boot() {
   const info = await api<{ project: string | null; engine: AppState["engine"] }>("/api/state");
   state.project = info.project;
   state.engine = info.engine;
+  // The window's own state, from the last time it was open: the panes' widths, what was
+  // folded away, and the row at the top.
+  rememberWindow();
   // The project that is open is a project of its own from the start: its sessions are
   // listed under it, before the rest of the projects are known (SidebarView.swift:194).
   state.projects = info.project ? [info.project] : [];

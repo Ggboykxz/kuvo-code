@@ -181,6 +181,9 @@ export interface AppState {
   /** What the user folded away: the sections' names and the projects' folders
    *  (SidebarView.swift:33-37). */
   collapsed: Record<string, boolean>;
+  /** Whether the row at the top — the project, its branch and the sessions as tabs —
+   *  is shown (TabBar.showsKey, MainView.swift:22). */
+  showsTabBar: boolean;
   contextGauge: unknown;
   inbox: { id: string; delivery?: string; payload?: { text?: string } }[];
   vcs: VcsInfo | null;

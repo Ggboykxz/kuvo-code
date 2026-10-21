@@ -40,6 +40,7 @@ const sources = {
   toolCall: read("app", "src", "components", "tool-call.tsx"),
   mac: read("..", "Packages", "OpenCodeKit", "Sources", "OpenCodeKit", "Events", "Transcript.swift"),
   sidebar: read("..", "KuvoCode", "Views", "SidebarView.swift"),
+  main: read("..", "KuvoCode", "Views", "MainView.swift"),
   titlebar: read("..", "KuvoCode", "Views", "TitleBar.swift"),
   tailwind: read("app", "app", "globals.css"),
   postcss: read("app", "postcss.config.mjs"),
@@ -840,6 +841,24 @@ const checks = [
     assert.match(app, /title="Pinned"/);
     assert.match(app, /className="sessions pinned"/);
     assert.match(app, /filter\(session => session\.metadata\?\.\["kuvo\.pinned"\] !== true\)/);
+  }],
+
+  ["the window remembers its own state, as the Mac's does", ({ app, store, settings, main, sidebar, titlebar }) => {
+    // The Mac keeps the panes' widths, what is folded away, and the row at the top
+    // (MainView.swift:38-40, 90; SidebarView.swift:32-34; TabBar.showsKey).
+    assert.match(main, /@AppStorage\("sessionsWidth"\) private var sessionsWidth = 280/);
+    assert.match(main, /@AppStorage\("changesWidth"\) private var changesWidth = 420/);
+    assert.match(main, /@AppStorage\("splitWidth"\) private var splitWidth = 560/);
+    assert.match(sidebar, /@AppStorage\("collapsedProjects"\)/);
+    assert.match(sidebar, /@AppStorage\("collapsedSections"\)/);
+    assert.match(titlebar, /static let showsKey = "showsTabBar"/);
+    // And the app keeps the same things, under its own names.
+    for (const key of ["kuvo-sessionsWidth", "kuvo-changesWidth", "kuvo-splitWidth", "kuvo-collapsed", "kuvo-showsTabBar"]) {
+      assert.ok(store.includes(key), `the app keeps ${key}`);
+    }
+    // The row at the top can be put away, as the Mac's setting says (GeneralSettings.swift:23).
+    assert.ok(settings.includes('"Show the tab bar"'), "the app says \"Show the tab bar\"");
+    assert.match(app, /no-tab-bar/);
   }],
 
   ["the tab's own menu is the Mac's, in its order", ({ app, titlebar }) => {

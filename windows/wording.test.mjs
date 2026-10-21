@@ -76,6 +76,8 @@ const SHELL = [
   "Close Tab",
   "Close Other Tabs",
   "Close All Tabs",
+  // The row at the top, which can be put away (GeneralSettings.swift:23).
+  "Show the tab bar",
 ];
 
 /// The transcript's own words, the same way.

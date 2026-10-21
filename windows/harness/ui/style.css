@@ -2191,6 +2191,10 @@ header.titlebar {
   height: 100%;
 }
 header.titlebar.sidebar-hidden .titlebar-identity { flex-basis: auto; width: auto; }
+/* The row at the top, put away (TabBar.showsKey, MainView.swift:22, 342): the project, its
+   branch and the sessions as tabs go, and the window's own buttons stay. */
+header.titlebar.no-tab-bar .titlebar-tabs { display: none; }
+header.titlebar.no-tab-bar .titlebar-identity .identity { display: none; }
 .titlebar-icon {
   width: 28px;
   height: 28px;

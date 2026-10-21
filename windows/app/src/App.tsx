@@ -42,11 +42,14 @@ import {
   pinSession,
   redoNow,
   render,
+  rememberFolded,
   removeProject,
   renameSession,
   replyForm,
   saveConfig,
+  savePaneWidth,
   sendPrompt,
+  setPaneWidth,
   showInFolder,
   state,
   stopRun,
@@ -826,7 +829,7 @@ function Header() {
   const engineText = running ? `engine ${state.engine?.version ?? ""}`.trim() : state.engine?.status ?? "…";
   return (
     <header
-      className={`titlebar ${sidebarOpen ? "" : "sidebar-hidden"} ${showingSettings ? "showing-settings" : ""}`}
+      className={`titlebar ${sidebarOpen ? "" : "sidebar-hidden"} ${showingSettings ? "showing-settings" : ""} ${state.showsTabBar || showingSettings ? "" : "no-tab-bar"}`}
       onDoubleClick={event => {
         // The Mac's double-click on the title bar zooms the window (Card.swift:186-198);
         // on Windows, that is the window maximised.
@@ -1235,7 +1238,7 @@ function Sidebar() {
     .sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0))
     .slice(0, 8);
   const folded = (key: string) => Boolean(state.collapsed[key]);
-  const toggle = (key: string) => { state.collapsed[key] = !folded(key); render(); };
+  const toggle = (key: string) => { rememberFolded(key, !folded(key)); render(); };
 
   const sessionRow = (session: SessionSummary) => {
     const running = state.session?.id === session.id && state.transcript?.running;
@@ -1501,13 +1504,13 @@ function PaneResizer({ pane }: { pane: "sessions" | "split" | "changes" }) {
             Math.max(start.current.width + sideways * (moveEvent.clientX - start.current.x), range.lower),
             Math.min(range.upper, Math.max(range.lower, room)),
           );
-          if (pane === "sessions") state.sessionsWidth = next;
-          else if (pane === "split") state.splitWidth = next;
-          else state.changesWidth = next;
+          setPaneWidth(pane, next);
           render();
         };
         const up = () => {
           setDragging(false);
+          // The width is kept for the next time the window opens (MainView.swift:38-40).
+          savePaneWidth(pane);
           window.removeEventListener("pointermove", move);
           window.removeEventListener("pointerup", up);
         };

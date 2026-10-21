@@ -24,6 +24,7 @@ import {
   look,
   lookAccents,
   notify,
+  rememberTabBar,
   render,
   restartEngineNow,
   saveConfig,
@@ -374,6 +375,19 @@ function GeneralPage() {
 
   return (
     <>
+      {/* The Mac's Window group (GeneralSettings.swift:12-30): the row at the top. */}
+      <SettingGroup title="Window">
+        <SettingRow
+          label="Show the tab bar"
+          note="The row at the top, with the project, its branch and your sessions as tabs. Without it, switch sessions in the sidebar or with Ctrl+K."
+        >
+          <input
+            type="checkbox"
+            checked={state.showsTabBar}
+            onChange={event => { rememberTabBar(event.target.checked); render(); }}
+          />
+        </SettingRow>
+      </SettingGroup>
       <SettingGroup title="Updates">
         <SettingRow label="Check for updates automatically" note="Updates are signed and come from Kuvo Code's releases.">
           <input type="checkbox" checked={settings.updates} onChange={event => void set({ updates: event.target.checked })} />
