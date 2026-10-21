@@ -70,6 +70,12 @@ final class AppModel {
         accountsPlace = machine
         openSettings(.accounts)
     }
+
+    /// Settings › Custom Auto, showing `machine`'s lists (nil: this Mac's).
+    func openAuto(on machine: String?) {
+        autoPlace = machine
+        openSettings(.auto)
+    }
     /// Settings' tabs: the page, and the sites you're signing in to.
     let settingsTabs = SettingsTabs()
 

@@ -126,4 +126,24 @@ import Testing
         catalog.forgetAgents()
         #expect(catalog.startingModel(claude) == luna)
     }
+
+    /// The same on a machine, whose coding agents run beside its engine and answer after it: a
+    /// Claude Code model is kept while they load, and while the machine is away and back; one
+    /// whose engine came without them can't run there.
+    @Test func onAMachineToo() async throws {
+        defer { StubWeb.stop() }
+        let machine = Catalog()
+        machine.machine = "box"
+        machine.api = catalog.api
+        try await engine(accounts: [Self.account("openai", signedIn: true)], models: [Self.model("openai", "luna")], defaultModel: Self.model("openai", "luna"))
+        await machine.refresh()
+        let claude = ModelRef(id: "opus", providerID: "claude-code")
+        #expect(machine.startingModel(claude) == claude, "its agents still loading")
+        #expect(!machine.isUnavailable(claude))
+        machine.forgetAgents(untilBack: true)
+        #expect(!machine.isUnavailable(claude), "away, not gone")
+        machine.forgetAgents()
+        #expect(machine.startingModel(claude) == luna)
+        #expect(machine.isUnavailable(claude))
+    }
 }

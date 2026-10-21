@@ -7,6 +7,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 ## Unreleased
 
 - Settings › Storage counts the coding agents Kuvo Code installed, under a kind of their own, and your bots' and chats' folders: its total left them out, often the biggest part.
+- A session on a machine keeps its Claude Code, Codex or Custom Auto model while the machine's coding agents start, after it connects or reconnects, rather than a new one starting on another model or an open one saying to choose one. Settings › Custom Auto no longer says an agent's models aren't signed in while the agents start.
+- Set Up Custom Auto in a machine's session opens that machine's lists, not this Mac's.
 
 ## 0.6.4
 

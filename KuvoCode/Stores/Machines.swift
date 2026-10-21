@@ -339,6 +339,8 @@ final class MachineEngine {
             self.api = current
             catalog.api = current
             agents.connect(server.agentsEndpoint, folderPrefix: RemoteFolder.prefix(for: machine.id))
+            // An engine started without its agents bridge (an older one): none to wait for.
+            if server.agentsEndpoint == nil { catalog.forgetAgents() }
             state = .ready
             learnIdentity()
             Analytics.shared.trackOnce("machine_connected")
@@ -415,7 +417,7 @@ final class MachineEngine {
         api = nil
         catalog.api = nil
         agents.disconnect()
-        catalog.forgetAgents()
+        catalog.forgetAgents(untilBack: true)
         isLive = false
         state = .preparing
     }

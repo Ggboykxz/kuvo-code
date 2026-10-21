@@ -269,7 +269,8 @@ private struct AutoEntryRow: View {
             let until = limit.known ? "until \(when)" : "for now (until about \(when))"
             return limit.isWholeAccount ? "Its account is at its limit \(until)" : "At its limit \(until)"
         }
-        if catalog.isLoaded, catalog.offeredModel(entry.ref) == nil {
+        // (Not while its agents are still loading.)
+        if catalog.isUnavailable(entry.ref) {
             // Its account signed in but the model gone, or the account signed out.
             let signedIn = catalog.integrations.first { $0.id == entry.providerID }?.isConnected ?? false
             return OutsideAgents.isAgent(entry.providerID) && !signedIn ? "Not signed in: Custom Auto passes it by" : "Not available now: Custom Auto passes it by"

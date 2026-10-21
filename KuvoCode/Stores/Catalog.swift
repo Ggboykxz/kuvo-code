@@ -206,9 +206,9 @@ final class Catalog {
     }
 
     /// Whether the models `ref` would be among are known yet: the engine's, or the coding agents'
-    /// (this Mac's; a machine has none).
+    /// (this Mac's, or the machine's beside its engine).
     private func isKnown(_ ref: ModelRef) -> Bool {
-        OutsideAgents.runsInBridge(ref.providerID) && isMac ? areAgentsLoaded : isLoaded
+        OutsideAgents.runsInBridge(ref.providerID) ? areAgentsLoaded : isLoaded
     }
 
     /// The model a new session or bot starts on: the first of `wanted` (the one picked, the one
@@ -314,13 +314,14 @@ final class Catalog {
         if read { areAgentsLoaded = true }
     }
 
-    /// The agents bridge stopped for good: its agents and their models aren't there to use.
-    func forgetAgents() {
+    /// The agents bridge stopped for good, or isn't there (a machine's engine started without
+    /// it): its agents and their models aren't there to use. `untilBack`: it's away for now (its
+    /// machine disconnected), and they're unknown until it's back, not gone.
+    func forgetAgents(untilBack: Bool = false) {
         agentIntegrations = []
         agentModels = []
         merge()
-        // Known: not there.
-        areAgentsLoaded = true
+        areAgentsLoaded = !untilBack
     }
 
     /// True while the agents are being asked anew.
