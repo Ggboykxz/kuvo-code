@@ -281,7 +281,7 @@ public struct RemoteEngineInstaller: Sendable {
 /// machine is removed. What's needed to find it again (its process, port and password) is kept in
 /// `~/.kuvo-code/run/engine.json`, readable by that user only, who could read it from the engine's
 /// process anyway. If the app hasn't been connected for a day, the engine stops by itself, unless
-/// wake-ups wait there or a phone paired with the machine used it in the last week (its link
+/// wake-ups wait there, a group chat there has a meeting coming or talk or work under way, or a phone paired with the machine used it in the last week (its link
 /// keeps the engine up for it, KuvoLink's `kuvo-link.js`).
 public final class RemoteServer: @unchecked Sendable {
     /// The engine running on a machine.
@@ -460,7 +460,8 @@ public final class RemoteServer: @unchecked Sendable {
     /// restart (see `bootScript`), and go when the machine is removed.
     ///
     /// Every minute the watchdog sends bots' and sessions' wake-ups that are due ([Wakes]). Every
-    /// ten, it stops the engine if the app hasn't been around for a day and no wake-up is waiting.
+    /// ten, it stops the engine if the app hasn't been around for a day and nothing waits there (a
+    /// wake-up, a group chat's meeting, talk or work).
     ///
     /// With `KUVO_AGENTS_PORT` and `KUVO_AGENTS_PASSWORD`, the agents bridge starts beside the
     /// engine once it listens, with the same settings, and stops with it ([agentsScript]). Only it
@@ -598,7 +599,7 @@ public final class RemoteServer: @unchecked Sendable {
         if [ -f "$R/link.json" ] && [ -f "$K/bin/kuvo-link.js" ]; then
           KUVO_HOME="$K" BUN_BE_BUN=1 BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 setsid "$K/engine/\(OpenCodeEngine.version)/opencode" "$K/bin/kuvo-link.js" run >"$R/link.log" 2>&1 </dev/null &
         fi
-        setsid sh -c 'i=0; while kill -0 "$1" 2>/dev/null; do sleep 60; grep -q "\\"pid\\":$1," "$2/engine.json" 2>/dev/null || break; "$3/bin/kuvo-wake" fire "$3/bots" "$2/engine.json" 2>/dev/null; i=$((i + 1)); [ $((i % 10)) -eq 0 ] || continue; { ls "$3"/bots/*/wakes/* || ls -d "$3"/bots/*/watches/*/ || ls "$3"/wakes/*/wakes/* || ls -d "$3"/wakes/*/watches/*/; } >/dev/null 2>&1 && continue; [ -n "$(find "$2/attached" -mmin +1440 2>/dev/null)" ] && { kill "$1"; rm -f "$2/engine.json"; }; done' watchdog "$pid" "$R" "$K" >/dev/null 2>&1 </dev/null &
+        setsid sh -c 'i=0; while kill -0 "$1" 2>/dev/null; do sleep 60; grep -q "\\"pid\\":$1," "$2/engine.json" 2>/dev/null || break; "$3/bin/kuvo-wake" fire "$3/bots" "$2/engine.json" 2>/dev/null; i=$((i + 1)); [ $((i % 10)) -eq 0 ] || continue; { ls "$3"/bots/*/wakes/* || ls -d "$3"/bots/*/watches/*/ || ls "$3"/wakes/*/wakes/* || ls -d "$3"/wakes/*/watches/*/ || ls "$3"/groups/*/awake; } >/dev/null 2>&1 && continue; [ -n "$(find "$2/attached" -mmin +1440 2>/dev/null)" ] && { kill "$1"; rm -f "$2/engine.json"; }; done' watchdog "$pid" "$R" "$K" >/dev/null 2>&1 </dev/null &
         \(boot ? "" : startAgainScript)
         echo "$pid${aport:+ $aport}"
         """
@@ -721,7 +722,7 @@ public final class RemoteServer: @unchecked Sendable {
     /// for (`$aport`, and its password in the environment) and on the machine: in a session of its
     /// own, from the engine's workspace, with everything it keeps in `$K/agents`; an older one there
     /// stops first. It stops by itself when the engine does; one that stops otherwise (it crashed)
-    /// starts again, a few times. A port someone else has (it says so, exiting 98) gives way to
+    /// starts again, a few times in a row (one that ran ten minutes or more starts the count again). A port someone else has (it says so, exiting 98) gives way to
     /// another, written in the engine's record and said with its process (`$aport`). What runs it
     /// is kept in `run/agents.pid`.
     static var agentsScript: String {
@@ -732,7 +733,7 @@ public final class RemoteServer: @unchecked Sendable {
           try=0
           while :; do
             : >"$R/agents.log"
-            KUVO_AGENTS_REMOTE=1 KUVO_AGENTS_HOME="$K/agents" KUVO_HOME="$K" KUVO_AGENTS_PORT="$aport" KUVO_ENGINE_PORT="$port" KUVO_ENGINE_PID="$pid" BUN_BE_BUN=1 BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 setsid sh -c 'n=0; while kill -0 "$1" 2>/dev/null && [ $n -lt 5 ]; do "$2" "$3" >>"$4" 2>&1 </dev/null; [ $? -eq 98 ] && exit 98; n=$((n + 1)); sleep 5; done' kuvo-agents "$pid" "$K/engine/\(OpenCodeEngine.version)/opencode" "$K/bin/kuvo-agents.js" "$R/agents.log" </dev/null >/dev/null 2>&1 &
+            KUVO_AGENTS_REMOTE=1 KUVO_AGENTS_HOME="$K/agents" KUVO_HOME="$K" KUVO_AGENTS_PORT="$aport" KUVO_ENGINE_PORT="$port" KUVO_ENGINE_PID="$pid" BUN_BE_BUN=1 BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 setsid sh -c 'n=0; while kill -0 "$1" 2>/dev/null && [ $n -lt 5 ]; do s=$(date +%s); "$2" "$3" >>"$4" 2>&1 </dev/null; e=$?; [ $e -eq 98 ] && exit 98; [ $(($(date +%s) - s)) -ge 600 ] && n=0; n=$((n + 1)); sleep 5; done' kuvo-agents "$pid" "$K/engine/\(OpenCodeEngine.version)/opencode" "$K/bin/kuvo-agents.js" "$R/agents.log" </dev/null >/dev/null 2>&1 &
             apid=$!
             echo "$apid" >"$R/agents.pid"
             i=0; until grep -q '"url"' "$R/agents.log" 2>/dev/null || ! kill -0 "$apid" 2>/dev/null || [ $i -ge 100 ]; do sleep 0.1; i=$((i + 1)); done
@@ -778,12 +779,13 @@ public final class RemoteServer: @unchecked Sendable {
 
     /// Stops the engine on the machine without waiting more than `timeout`, for when the app quits.
     /// With `unlessWaking`, an engine something waits for keeps running: bots' or sessions'
-    /// wake-ups, to send them, or a phone paired with the machine that used it in the last week
+    /// wake-ups, to send them, a group chat there with a meeting coming or talk or work under way
+    /// (its `awake` mark), or a phone paired with the machine that used it in the last week
     /// (its link notes when, in `run/link.seen`), to reach it with this Mac closed. `first` runs
     /// before, either way.
     public static func stopNow(on connection: SSHConnection, timeout: TimeInterval = 3, unlessWaking: Bool = false, first: String = "") {
         let root = "\"$HOME/\(RemoteEngineInstaller.root)\""
-        let waiting = "{ ls \(root)/bots/*/wakes/* || ls -d \(root)/bots/*/watches/*/ || ls \(root)/wakes/*/wakes/* || ls -d \(root)/wakes/*/watches/*/; } >/dev/null 2>&1 && exit 0\n"
+        let waiting = "{ ls \(root)/bots/*/wakes/* || ls -d \(root)/bots/*/watches/*/ || ls \(root)/wakes/*/wakes/* || ls -d \(root)/wakes/*/watches/*/ || ls \(root)/groups/*/awake; } >/dev/null 2>&1 && exit 0\n"
             + "[ -n \"$(find \(root)/run/link.seen -mtime -7 2>/dev/null)\" ] && exit 0\n"
         runNow(first + (unlessWaking ? waiting : "") + stopScript, on: connection, timeout: timeout)
     }
