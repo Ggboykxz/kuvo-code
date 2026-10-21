@@ -220,7 +220,9 @@ export interface AppState {
   toast: { title: string; body: string } | null;
   lineComments?: { file: string; line: number; text: string }[];
   quote?: string;
-  viewing?: { source: string; name: string } | null;
+  /** The picture in view, and the ones of the same message beside it (the Mac's viewer
+   *  steps through them, ImageViewer.swift:128-131, 209-221). */
+  viewing?: { items: { source: string; name: string; detail?: string }[]; index: number } | null;
   sidebarOpen?: boolean;
   /** The widths the panes ask for, before the window has its say (MainView.swift:38-40,
    *  90): the sessions 280, the panel 420, the split 560. The layout sets what fits. */

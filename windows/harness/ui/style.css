@@ -1461,6 +1461,44 @@ body.viewing-image main {
 }
 .image-viewer img { max-width: 100%; max-height: 80vh; border-radius: var(--radius); box-shadow: var(--shadow-lifted); }
 .image-viewer-foot { color: var(--ink-soft); font-size: var(--text-sm); }
+/* The viewer's own header (ImageViewer.swift:164-197): the picture's name, how many there
+   are, and what else can be done with it. */
+.image-viewer-head {
+  position: absolute;
+  top: var(--space-3);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 560px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-glass);
+  backdrop-filter: blur(18px) saturate(1.5);
+  color: var(--ink);
+  font-size: var(--text-sm);
+}
+.image-viewer-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The arrows between the pictures of the same message (ImageViewer.swift:209-221). */
+.image-viewer-step {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-glass);
+  color: var(--ink);
+}
+.image-viewer-step:disabled { opacity: .35; cursor: default; }
+.image-viewer-step.left { left: var(--space-4); }
+.image-viewer-step.right { right: var(--space-4); }
 
 /* A choice, opened: a searchable list over the page, the Mac app's way. */
 .choice { position: relative; display: inline-flex; }

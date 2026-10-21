@@ -568,15 +568,33 @@ test("the page, in a browser, against the real engine", {
   // there to be given a file.
   await viewer.seen("the sessions to be listed", () => document.querySelectorAll("#sessions li").length > 0, null, 30_000);
   await viewer.seen("a session to be in view", () => document.querySelector("#sessions li.current") !== null, null, 30_000);
-  await viewer.page.setInputFiles("#attach-input", picture);
+  const second = path.join(project, "another-picture.png");
+  fs.writeFileSync(second, fs.readFileSync(picture));
+  await viewer.page.setInputFiles("#attach-input", [picture, second]);
   await viewer.seen("the attachment to be picked", () => document.querySelectorAll("#attachments .attachment-chip").length > 0, null, 10_000);
   await viewer.element("composer").evaluate(form => form.requestSubmit());
   await viewer.seen("the picture to show in the conversation", () => document.querySelector("#entries .attachment-image") !== null, null, 30_000);
-  await viewer.page.locator("#entries .attachment-image").click();
+  await viewer.page.locator("#entries .attachment-image").first().click();
   await viewer.seen("the picture to open over the window", () => document.querySelector(".image-viewer") !== null, null, 10_000);
   await viewer.seen("the window under it to dim", () => {
     const header = document.querySelector("header.titlebar");
     return document.body.classList.contains("viewing-image") && Number(getComputedStyle(header).opacity) < 0.5;
+  }, null, 10_000);
+  // The Mac's own header (ImageViewer.swift:164-221): how many pictures there are, and the
+  // arrows that step through them.
+  await viewer.seen("the viewer to say how many pictures there are", () => {
+    const head = document.querySelector(".image-viewer-head");
+    return Boolean(head) && /1 of 2/.test(head.textContent ?? "");
+  }, null, 10_000);
+  await viewer.page.locator(".image-viewer-step.right").click();
+  await viewer.seen("the next picture to be in view", () => {
+    const head = document.querySelector(".image-viewer-head");
+    return Boolean(head) && /2 of 2/.test(head.textContent ?? "");
+  }, null, 10_000);
+  await viewer.page.keyboard.press("ArrowLeft");
+  await viewer.seen("the arrow key to step back", () => {
+    const head = document.querySelector(".image-viewer-head");
+    return Boolean(head) && /1 of 2/.test(head.textContent ?? "");
   }, null, 10_000);
   await viewer.page.keyboard.press("Escape");
   await viewer.seen("the picture to go away", () => document.querySelector(".image-viewer") === null, null, 10_000);
