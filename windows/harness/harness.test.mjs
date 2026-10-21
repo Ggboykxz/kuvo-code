@@ -769,6 +769,34 @@ test("a session can be pinned, and the mark goes out with the session's own meta
   assert.deepEqual(await unpinned.json(), { ok: true, pinned: false });
 });
 
+test("a project has a name of its own, the Mac's way", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+
+  const folder = path.join(home, "a-project");
+  fs.mkdirSync(folder, { recursive: true });
+  const named = await (await fetch(`${url}api/projects/settings`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: folder, name: "The Project" }),
+  })).json();
+  assert.equal(named.ok, true);
+  assert.equal(named.name, "The Project");
+
+  const projects = await (await fetch(`${url}api/projects`)).json();
+  assert.equal(projects.names[folder], "The Project", "the project is named");
+
+  // And the name can be taken away again: the folder's own name stands in.
+  const unnamed = await (await fetch(`${url}api/projects/settings`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: folder, name: "" }),
+  })).json();
+  assert.equal(unnamed.name, null);
+  const after = await (await fetch(`${url}api/projects`)).json();
+  assert.equal(after.names[folder], undefined, "the project is back to its folder's name");
+});
+
 test("a commit can push afterwards, as the Mac's commit form does", async t => {
   const engine = await fakeEngine();
   t.after(engine.close);

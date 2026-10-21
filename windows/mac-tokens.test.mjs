@@ -21,6 +21,7 @@ const sources = {
   css: read("harness", "ui", "style.css"),
   store: read("app", "src", "store.ts"),
   api: read("app", "src", "api.ts"),
+  over: read("app", "src", "Overlays.tsx"),
   settings: read("app", "src", "Settings.tsx"),
   overlays: read("app", "src", "Overlays.tsx"),
   app: read("app", "src", "App.tsx"),
@@ -919,6 +920,19 @@ const checks = [
     assert.ok(store.includes("kuvo-favoriteModels"), "the models the user keeps are kept");
     // The mark is drawn, not a text glyph (the house rule, MAC-UI-MAP.md §7).
     assert.match(symbols, /"star": \["M8 2\.2l1\.76/);
+  }],
+
+  ["a project has a name of its own, as the Mac's has", ({ app, store, over }) => {
+    // The Mac's project (Workspace.swift:179-199): a folder, and a name of its own shown
+    // instead of the folder's — changed in the editor over the window (ProjectEditor.swift:8-13),
+    // from the project's own menu (SidebarView.swift:382).
+    assert.ok(store.includes("projectName"), "the app knows the project's name");
+    assert.ok(store.includes("setProjectName"), "and can set it");
+    assert.ok(app.includes('"Edit Project…"'), "the project's menu offers the editor");
+    assert.match(app, /className="project-name">\{projectName\(folder\)\}/);
+    // The editor is a card over the window, as the Mac's is.
+    assert.ok(over.includes('id="project-editor"'), "the editor is drawn over the window");
+    assert.ok(over.includes('id="project-name"'), "with the project's name in it");
   }],
 
   ["the image viewer's own header and steps", ({ app, symbols }) => {

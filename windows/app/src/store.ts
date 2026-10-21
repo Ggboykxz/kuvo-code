@@ -98,6 +98,8 @@ export const state: AppState = {
   agent: "",
   split: null,
   projects: [],
+  projectNames: {} as Record<string, string>,
+  editingProject: null as string | null,
   sessionsByProject: {} as Record<string, SessionSummary[]>,
   collapsed: {} as Record<string, boolean>,
   showsTabBar: tabBarShown(),
@@ -597,14 +599,33 @@ export async function loadCommands() {
 
 export async function loadProjects() {
   try {
-    const { projects } = await api<{ projects: string[] }>("/api/projects");
+    const { projects, names } = await api<{ projects: string[]; names?: Record<string, string> }>("/api/projects");
     // The project that is open is one of them, as it is on the Mac (Workspace.projects).
     state.projects = Array.from(new Set([...(Array.isArray(projects) ? projects : []), ...(state.project ? [state.project] : [])]));
+    state.projectNames = names && typeof names === "object" ? names : {};
   } catch {
     state.projects = state.project ? [state.project] : [];
   }
   render();
   await loadProjectSessions();
+}
+
+/// A project's own name, shown instead of the folder's (the Mac's Workspace.Project.name,
+/// Workspace.swift:186).
+export function projectName(folder: string): string {
+  const named = state.projectNames[folder];
+  if (named) return named;
+  return folder.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? folder;
+}
+
+/// A project's own name, set or taken away (the Mac's ProjectEditor, ProjectEditor.swift:24).
+export async function setProjectName(folder: string, name: string) {
+  try {
+    await api("/api/projects/settings", { method: "POST", body: { path: folder, name } });
+    await loadProjects();
+  } catch (error) {
+    complain(error);
+  }
 }
 
 /// The sessions of every project, by its folder (SidebarView.swift:194-196): the sidebar

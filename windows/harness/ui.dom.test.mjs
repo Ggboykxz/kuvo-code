@@ -537,6 +537,20 @@ test("the page, in a browser, against the real engine", {
     "the tab's menu is the Mac's, in its order",
   );
 
+  // The project's own name: the Mac's editor over the window (ProjectEditor.swift:8-13),
+  // and the sidebar shows the name instead of the folder's (Workspace.swift:186).
+  // The machine's own list of projects holds the other tests' too: the row of this test's
+  // project is the one named after it.
+  await page.page.locator(".project-row", { hasText: path.basename(project) }).first().click({ button: "right" });
+  await page.seen("the project's menu to open", () => document.querySelector(".context-menu") !== null, null, 10_000);
+  const projectMenu = (await page.page.locator(".context-menu [role='menuitem']").allTextContents()).map(text => text.trim());
+  assert.ok(projectMenu.includes("Edit Project…"), "the project's menu offers the editor");
+  await page.page.locator(".context-menu [role='menuitem']", { hasText: "Edit Project…" }).click();
+  await page.seen("the editor to open over the window", () => document.getElementById("project-editor") !== null, null, 10_000);
+  await page.page.locator("#project-name").fill("The Page Project");
+  await page.page.locator("#project-save").click();
+  await page.seen("the project to be named in the sidebar", () => [...document.querySelectorAll(".project-name")].some(node => node.textContent === "The Page Project"), null, 10_000);
+
   // The mode menu: the Mac's, with the tool permissions in it (ComposerMenus.swift:120-135).
   await page.element("agent").click();
   await page.seen("the mode menu to open", () => document.querySelectorAll(".choice-panel .choice-item").length > 0, null, 10_000);

@@ -182,6 +182,10 @@ export interface AppState {
   agent: string;
   split: string | null;
   projects: string[];
+  /** The projects' own names, by their folder (the Mac's Workspace.Project.name). */
+  projectNames: Record<string, string>;
+  /** The project being named, in the editor over the window. */
+  editingProject: string | null;
   /** The sessions of every project, by its folder (SidebarView.swift:194). */
   sessionsByProject: Record<string, SessionSummary[]>;
   /** What the user folded away: the sections' names and the projects' folders

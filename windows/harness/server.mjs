@@ -84,6 +84,20 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
     saveRecentProjects([folder, ...recentProjects().filter(item => item !== folder)]);
   };
 
+  // A project's own settings: the name shown instead of the folder's, and the folders the
+  // agent works in besides it (the Mac's Workspace.ProjectSettings, stored in its own
+  // defaults — Workspace.swift:191-199, 786-795).
+  const projectSettingsFile = () => path.join(path.dirname(recentFile()), "project-settings.json");
+  const projectSettings = () => {
+    try {
+      const read = JSON.parse(fs.readFileSync(projectSettingsFile(), "utf8"));
+      return read && typeof read === "object" ? read : {};
+    } catch { return {}; }
+  };
+  const saveProjectSettings = (settings) => {
+    try { fs.mkdirSync(path.dirname(projectSettingsFile()), { recursive: true }); fs.writeFileSync(projectSettingsFile(), JSON.stringify(settings, null, 2)); } catch {}
+  };
+
   // The providers' marks, fetched once each and kept (the Mac's LogoCache).
   const logos = new Map();
   const logoFor = async (id) => {
@@ -191,7 +205,25 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
 
     // The project list, kept across runs like the Mac app keeps its own.
     if (url.pathname === "/api/projects" && request.method === "GET") {
-      return json({ projects: recentProjects(), current: currentProject });
+      const settings = projectSettings();
+      const names = {};
+      for (const [folder, own] of Object.entries(settings)) {
+        if (own && typeof own.name === "string" && own.name) names[folder] = own.name;
+      }
+      return json({ projects: recentProjects(), current: currentProject, names });
+    }
+    if (url.pathname === "/api/projects/settings" && request.method === "POST") {
+      const body = await readBody(request);
+      const folder = directoryOf(body.path);
+      if (!folder) throw new HttpError(400, "A project needs a folder.");
+      const settings = projectSettings();
+      const own = { ...(settings[folder] ?? {}) };
+      if (body.name === null || body.name === "") delete own.name;
+      else own.name = String(body.name).trim();
+      if (Object.keys(own).length === 0) delete settings[folder];
+      else settings[folder] = own;
+      saveProjectSettings(settings);
+      return json({ ok: true, name: own.name ?? null });
     }
     if (url.pathname === "/api/projects" && request.method === "DELETE") {
       const body = await readBody(request);
