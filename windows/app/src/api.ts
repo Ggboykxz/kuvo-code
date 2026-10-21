@@ -9,7 +9,9 @@ export interface SessionSummary {
   time?: { created?: number; updated?: number; idle?: number; viewed?: number; archived?: number };
   metadata?: Record<string, unknown> | null;
   tokens?: { input?: number; output?: number; reasoning?: number; total?: number };
-  model?: { providerID?: string; id?: string } | null;
+  /** The session's model: the provider, the id, and the effort it is asked for
+   *  (OpenCodeKit's ModelRef, Models/Common.swift:70-83). */
+  model?: { providerID?: string; id?: string; variant?: string } | null;
   parentID?: string | null;
   cost?: number;
   /** Where the session runs: the folder of its project (Workspace.Project.directory). */
@@ -116,6 +118,8 @@ export interface Model {
   name?: string;
   /** The family the engine knows it by; a model only the settings name has none. */
   family?: string;
+  /** The levels the model has — the effort it can be asked for (ModelPicker.swift:5-14). */
+  variants?: { id: string }[];
   limit?: { context?: number };
 }
 
@@ -164,6 +168,8 @@ export interface AppState {
   session: SessionSummary | null;
   transcript: Transcript | null;
   models: Model[];
+  /** The engine's own default model (Catalog.swift:221-225). */
+  defaultModel: { providerID: string; id: string } | null;
   agents: Agent[];
   commands: Command[];
   drawerTab: "files" | "terminal" | "changes";

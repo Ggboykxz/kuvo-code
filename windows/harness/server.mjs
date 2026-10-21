@@ -474,6 +474,11 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       return json({ session: await client.createSession({ directory, title: body.title, agent: body.agent, model: body.model }) });
     }
 
+    if (url.pathname === "/api/models/default" && request.method === "GET") {
+      const { client } = await ensureEngine();
+      return json({ model: await client.defaultModel(currentProject ?? undefined) });
+    }
+
     if (url.pathname === "/api/models" && request.method === "GET") {
       return json({ models: await client.models(currentProject ?? undefined) });
     }

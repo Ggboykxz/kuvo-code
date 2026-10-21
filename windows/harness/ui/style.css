@@ -1478,6 +1478,10 @@ body.viewing-image main {
   box-shadow: var(--shadow-lifted);
   animation: kuvo-pop var(--motion-fast) var(--ease-spring) both;
 }
+/* The effort the model is asked for, after its name (ModelPicker.swift:338, 573). */
+.choice-suffix { color: var(--ink-soft); margin-left: 4px; }
+.choice-group + .choice-group { margin-top: 4px; }
+
 /* The mark of a model the user keeps (ModelPicker.swift:436-440). */
 .choice-star {
   margin-left: auto;

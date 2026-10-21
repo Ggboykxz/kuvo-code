@@ -7,6 +7,7 @@ import type { Attachment, FormRequest, PermissionRequest, SessionSummary, Transc
 import { brief, compactTokens, errorText, renderMarkdown } from "./lib";
 import { isRecording, keysOf, matchesEvent, shortcutFor } from "./shortcuts";
 import { paneLayout, paneRanges } from "../../harness/layout.mjs";
+import { effortTitle } from "../../harness/models.mjs";
 import { draftKey, readDraft, saveDraft } from "./drafts.mjs";
 import {
   answerPermission,
@@ -46,6 +47,7 @@ import {
   redoNow,
   render,
   rememberFolded,
+  modelInView,
   rememberModel,
   removeProject,
   renameSession,
@@ -1573,6 +1575,12 @@ function Composer() {
   const [text, setText] = useState("");
   // The models the user keeps: the Mac's starred models (ModelPicker.swift:40).
   const [favorites, setFavorites] = useState(favoriteModels);
+  // The model the conversation would use, and the levels it can be asked for: the
+  // engine's own list of them (the Mac's startingModel, Catalog.swift:219-226).
+  const model = modelInView();
+  const effortLevels = model
+    ? (state.models.find(known => known.providerID === model.providerID && known.id === model.id)?.variants ?? [])
+    : [];
   // The approval as it stands: the tools run without asking, or they wait for an OK
   // (the Mac's ToolApproval, ComposerMenus.swift:6-26).
   const [approvalShown, setApprovalShown] = useState<Approval>(approval);
@@ -1916,9 +1924,29 @@ function Composer() {
           id="model"
           title="Model"
           empty="The engine's choice"
-          value={state.session?.model ? `${state.session.model.providerID}/${state.session.model.id}` : ""}
+          value={model ? `${model.providerID}/${model.id}` : ""}
+          suffix={model?.variant ? effortTitle(model.variant) : undefined}
           onPick={async value => {
             if (!state.session) return;
+            // The effort of the model in view: the same model, asked for at another level
+            // (the Mac's card, ModelPicker.swift:567-614).
+            if (value.startsWith("effort:")) {
+              const current = state.session;
+              if (!current.model) return;
+              const level = value.slice("effort:".length);
+              const ref = { ...current.model, variant: level === "default" ? undefined : level };
+              const previous = current.model;
+              current.model = ref;
+              render();
+              try {
+                await api(`/api/sessions/${encodeURIComponent(current.id)}/model`, { method: "POST", body: { model: ref } });
+              } catch (error) {
+                current.model = previous;
+                render();
+                complain(error);
+              }
+              return;
+            }
             // The engine takes a Model.ref, not the picker's shorthand (OpenCodeKit's
             // OpenCodeAPI.swift:473-476): the provider, and the id exactly as the catalog
             // writes it — an id may hold slashes of its own.
@@ -1942,6 +1970,16 @@ function Composer() {
             }
           }}
           groups={[
+            // The effort of the model in view, the Mac's own levels (ModelPicker.swift:5-14,
+            // 567-614): the model asked for at another level, and the level it has now.
+            ...(effortLevels.length ? [{
+              name: "Effort",
+              items: effortLevels.map(level => ({
+                value: `effort:${level.id}`,
+                label: effortTitle(level.id),
+                checked: state.session?.model?.variant === level.id,
+              })),
+            }] : []),
             // The Mac's starred models first, in their own group (ModelPicker.swift:500,
             // 732-755): the models the user keeps, and the mark that keeps them.
             ...(favorites.length ? [{
@@ -2067,13 +2105,14 @@ function AnalyticsNotice() {
 }
 
 /// A choice, the Mac app's way: a button that opens a list you can search in.
-function Choice({ id, title, groups, value, onPick, empty }: {
+function Choice({ id, title, groups, value, onPick, empty, suffix }: {
   id: string;
   title: string;
   groups: { name: string; items: { value: string; label: string; detail?: string; logo?: string; checked?: boolean; star?: { on: boolean; toggle: () => void } }[] }[];
   value: string;
   onPick: (value: string) => void;
   empty: string;
+  suffix?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -2099,6 +2138,7 @@ function Choice({ id, title, groups, value, onPick, empty }: {
     <span className="choice">
       <button id={id} className="choice-button" title={title} onClick={() => { setOpen(value => !value); setQuery(""); }}>
         {current?.label ?? empty}
+        {suffix ? <span className="choice-suffix">{suffix}</span> : null}
         {/* The Mac's menu chevron: 8 pt, bold, in the secondary ink, after the label
             (Pressable.swift:192-198). */}
         <Symbol name="chevron.down" size={8} className="choice-chevron" />

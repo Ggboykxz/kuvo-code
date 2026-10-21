@@ -20,6 +20,7 @@ const read = (...parts) => fs.readFileSync(path.join(here, ...parts), "utf8");
 const sources = {
   css: read("harness", "ui", "style.css"),
   store: read("app", "src", "store.ts"),
+  api: read("app", "src", "api.ts"),
   settings: read("app", "src", "Settings.tsx"),
   overlays: read("app", "src", "Overlays.tsx"),
   app: read("app", "src", "App.tsx"),
@@ -895,6 +896,19 @@ const checks = [
     assert.match(css, /backdrop-filter: none/);
     // The messages take the typeface; the code stays monospaced.
     assert.match(css, /\.entry \.text \{[^}]*font-family: var\(--message-font/);
+  }],
+
+  ["the effort a model is asked for is the Mac's own", ({ app, store, api }) => {
+    // The Mac's levels (ModelPicker.swift:5-14, 567-614): the effort a model is asked
+    // for, in a group of its own, and the model's name with the effort after it.
+    assert.ok(app.includes('"Effort"'), "the effort is a group of its own");
+    assert.match(app, /value: `effort:\$\{level\.id\}`/);
+    assert.ok(app.includes("effortTitle("), "the effort is named as the Mac names it");
+    // The conversation would use the session's model, else the one picked last, else the
+    // engine's default (Catalog.swift:219-226).
+    assert.ok(store.includes("modelInView"), "the app knows the model in view");
+    assert.ok(store.includes("loadDefaultModel"), "the engine's own default is read");
+    assert.match(api, /defaultModel: \{ providerID: string; id: string \} \| null/);
   }],
 
   ["the models the user keeps are the Mac's starred models", ({ app, store, symbols }) => {

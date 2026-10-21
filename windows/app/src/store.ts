@@ -86,6 +86,7 @@ export const state: AppState = {
   session: null,
   transcript: null,
   models: [],
+  defaultModel: null as { providerID: string; id: string } | null,
   agents: [],
   commands: [],
   drawerTab: "files",
@@ -878,6 +879,29 @@ export function rememberModel(model: { providerID: string; id: string }) {
   try { localStorage.setItem("kuvo-lastModel", JSON.stringify(model)); } catch {}
 }
 
+/// The engine's own default model, read once at the start (the Mac's catalog knows it too,
+/// Catalog.swift:221-225).
+export async function loadDefaultModel() {
+  try {
+    const answer = await api<{ model: { providerID?: string; id?: string } | null }>("/api/models/default");
+    const model = answer.model;
+    if (model?.providerID && model?.id) state.defaultModel = { providerID: model.providerID, id: model.id };
+  } catch {}
+  render();
+}
+
+/// The model the conversation would use: the one the session has, else the one picked
+/// last, else the engine's default, else the first of the list (the Mac's startingModel,
+/// Catalog.swift:219-226).
+export function modelInView(): { providerID: string; id: string; variant?: string } | null {
+  const session = state.session?.model;
+  if (session?.providerID && session?.id) return { providerID: session.providerID, id: session.id, variant: session.variant };
+  const last = lastModel();
+  if (last) return last;
+  const fallback = state.defaultModel ?? (state.models[0] ? { providerID: state.models[0].providerID, id: state.models[0].id } : null);
+  return fallback;
+}
+
 /// The models the user keeps — the Mac's starred models (ModelPicker.swift:40, 436-440),
 /// kept whole: a model's id can have slashes in it.
 export function favoriteModels(): { providerID: string; id: string }[] {
@@ -1012,6 +1036,7 @@ export async function boot() {
     if (newest) await openSession(newest.id);
   }
   void loadModels();
+  void loadDefaultModel();
   void loadAgents();
   void loadCommands();
   void loadProjects();

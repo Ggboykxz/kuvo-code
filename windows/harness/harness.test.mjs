@@ -11,6 +11,7 @@ import path from "node:path";
 import { after, test } from "node:test";
 import { EngineClient, EngineError, messageID } from "./engine.mjs";
 import { conversationMarkdown } from "./markdown.mjs";
+import { effortTitle } from "./models.mjs";
 import { paneLayout } from "./layout.mjs";
 import { apply, applyAll, emptyTranscript, fromHistory } from "./transcript.mjs";
 import { startHarness } from "./server.mjs";
@@ -830,6 +831,18 @@ test("a picture sent with a message stays in the conversation", () => {
   assert.ok(entry, "the message is in the conversation");
   assert.equal(entry.files?.length, 1, "the picture is with it");
   assert.equal(entry.files[0].name, "a.png");
+});
+
+test("the effort a model is asked for is named as the Mac names it", () => {
+  // ModelPicker.swift:5-14: "xhigh" is "Extra", "max" is "Max", "off" is "Off", and the
+  // rest is the level's own name with its first letter up.
+  assert.equal(effortTitle("xhigh"), "Extra");
+  assert.equal(effortTitle("x-high"), "Extra");
+  assert.equal(effortTitle("max"), "Max");
+  assert.equal(effortTitle("off"), "Off");
+  assert.equal(effortTitle("low"), "Low");
+  assert.equal(effortTitle("medium"), "Medium");
+  assert.equal(effortTitle("high"), "High");
 });
 
 test("a conversation is written out as Markdown, the Mac's way", () => {
