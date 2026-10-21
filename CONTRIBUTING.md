@@ -133,6 +133,11 @@ is `PhoneLink`; on a machine, `kuvo-link.js` (KuvoLink's resource) runs with the
 runtime in `~/.kuvo-code/bin`, set up by the Mac with the phones you've paired. The Swift and
 JavaScript sides check against the same vectors in `Packages/KuvoLink/Vectors`.
 
+Group chats that live on a machine run in the agents bridge there (`Agents/src/groups`), by the
+same rules as the Mac's `BotGroups`. After changing those rules on either side, run
+`./scripts/group-vectors.sh` (it writes `Agents/test/groups-vectors.json` from the Swift side),
+then `cd Agents && bun test`.
+
 It's off until the iPhone app is out: `defaults write run.kuvo.code phoneLink -bool true` (or
 `KUVO_DEMO_PHONE=1`) turns it on, with Settings › Phone, and `phoneLink.relay` points it at a
 relay other than one on this Mac (`ws://127.0.0.1:8790`).
