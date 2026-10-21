@@ -38,6 +38,7 @@ end-to-end runs' alone, as are those that need a real machine over SSH (F9, L46,
 | D3 A reply with a widget shows as one | | how a reply's steps become rows is the transcript view's own (no seam outside it); the bridge naming coding agents' show_widget is in Agents/test |
 | D4 A chat moved into a project | SessionLifecycleTests | |
 | E, B15 The agent's browser | BrowserToolServerTests | |
+| E2, L31 It fills in a form | BrowserFormTests | |
 | L25 The page saved as a PDF to share | PagePDFTests | |
 | E4, L21 A file downloaded in the browser, to work with | BrowserDownloadsTests | a machine's browser's downloads (its keeper, on the machine) |
 | E6, L37 Browse yourself in the panel: the address field, a page's dialogs | PageDialogsTests, BrowserHistoryTests, AgentTabsTests | tabs, Back and the new tab page (UI) |
