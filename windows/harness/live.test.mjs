@@ -56,16 +56,18 @@ test("a real turn, end to end, on the pinned engine", { skip: live ? false : "se
   // Watch the relay the page watches, feeding every event through the reducer.
   const transcript = emptyTranscript(session.id);
   const types = [];
+  // Every turn that ended, and the session it was in: the free models can refuse for a
+  // while, and the question is asked again — here or on another model.
+  const turns = [];
   const controller = new AbortController();
   t.after(() => controller.abort());
   const response = await fetch(`${url}api/events`, { signal: controller.signal });
   assert.equal(response.status, 200);
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  let turnEnded = null;
   const reading = (async () => {
     let buffer = "";
-    while (turnEnded === null) {
+    while (true) {
       const { value, done } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
@@ -80,7 +82,7 @@ test("a real turn, end to end, on the pinned engine", { skip: live ? false : "se
           if (event.data?.sessionID !== undefined && event.data.sessionID !== session.id) continue;
           types.push(event.type);
           if (event.type === "session.execution.succeeded" || event.type === "session.execution.failed" || event.type === "session.execution.interrupted") {
-            turnEnded = event;
+            turns.push(event);
           }
         }
       }
@@ -88,17 +90,37 @@ test("a real turn, end to end, on the pinned engine", { skip: live ? false : "se
   })().catch(error => t.diagnostic(`the relay ended: ${error.message}`));
 
   const text = "Run the shell tool with `cat hello.txt`, then reply with the file's contents and nothing else.";
-  const { id } = await post(`api/sessions/${encodeURIComponent(session.id)}/prompt`, { text });
-  assert.match(id, /^msg_/, "the prompt's id is one of ours");
 
-  const deadline = Date.now() + minutes;
-  while (turnEnded === null && Date.now() < deadline) {
-    await new Promise(resolve => setTimeout(resolve, 250));
+  // The public free models can refuse for a while: a rate limit, or a day's share used up.
+  // The question is asked again, and another free model is asked, rather than the build
+  // failing on the provider's mood — the page's own test asks again, the same way.
+  const models = (await get("api/models")).models ?? [];
+  const free = models
+    .filter(model => (model.cost ?? []).every(cost => !cost.input && !cost.output))
+    .map(model => ({ providerID: model.providerID, id: model.id }));
+  const refused = model => /rate limit|quota|429|free usage/i.test(JSON.stringify(model?.data?.error ?? ""));
+  let turn = null;
+  let id = null;
+  for (const model of free) {
+    await post(`api/sessions/${encodeURIComponent(session.id)}/model`, { model });
+    const before = turns.length;
+    const asked = await post(`api/sessions/${encodeURIComponent(session.id)}/prompt`, { text });
+    id = asked.id;
+    assert.match(id, /^msg_/, "the prompt's id is one of ours");
+    const deadline = Date.now() + minutes;
+    while (turns.length === before && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    turn = turns[turns.length - 1] ?? null;
+    if (turn === null) break;
+    if (turn.type !== "session.execution.failed") break;
+    if (!refused(turn)) break;
+    t.diagnostic(`the model refused (${model.providerID}/${model.id}); asking another free model`);
   }
   controller.abort();
   await reading;
-  assert.notEqual(turnEnded, null, `the turn never ended; events seen: ${[...new Set(types)].join(", ")}`);
-  assert.notEqual(turnEnded.type, "session.execution.failed", `the model didn't answer here: ${JSON.stringify(turnEnded.data?.error ?? turnEnded.data)}`);
+  assert.notEqual(turn, null, `the turn never ended; events seen: ${[...new Set(types)].join(", ")}`);
+  assert.notEqual(turn.type, "session.execution.failed", `the model didn't answer here: ${JSON.stringify(turn.data?.error ?? turn.data)}`);
   for (const wanted of ["session.inbox.enqueued", "session.inbox.delivered"]) {
     assert.ok(types.includes(wanted), `the prompt passed through ${wanted}`);
   }
@@ -106,7 +128,7 @@ test("a real turn, end to end, on the pinned engine", { skip: live ? false : "se
 
   // As the page would show it: the user's words, the step's parts, a clean ending.
   assert.equal(transcript.running, false);
-  const shown = transcript.entries.find(entry => entry.kind === "user");
+  const shown = transcript.entries.filter(entry => entry.kind === "user").at(-1);
   assert.equal(shown?.id, id, "the user's message is the one we sent");
   assert.equal(shown.text, text);
   const assistant = transcript.entries.filter(entry => entry.kind === "assistant").at(-1);
