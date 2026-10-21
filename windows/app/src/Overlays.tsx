@@ -457,6 +457,28 @@ export function runInTerminal(command: string, folder: string) {
   else terminalWaiting = line;
 }
 
+/// A file, as the Mac shows it: the code, numbered in a ruler beside it
+/// (CodeTextView.swift:4-6, 119-168). The ruler is as wide as the widest number needs,
+/// and 20 more (CodeTextView.swift:142).
+///
+/// The lines that are picked can be sent to the composer, as the Mac's own menu does
+/// (*Add to Message*, `CodeTextView.swift:91-111`, `FilesView.swift:389-392`).
+function FileView({ content }: { content: string }) {
+  const lines = content.split("\n");
+  // A file that ends with a newline has no last line of its own.
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
+  const digits = String(lines.length).length;
+
+  return (
+    <div className="file-view" style={{ "--ruler": `${digits * 7.5 + 20}px` } as React.CSSProperties}>
+      <div className="file-numbers" aria-hidden="true">
+        {lines.map((_, index) => <span key={index}>{index + 1}</span>)}
+      </div>
+      <pre className="file-code">{content}</pre>
+    </div>
+  );
+}
+
 export function Drawer() {
   useStore();
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -586,9 +608,7 @@ export function Drawer() {
             render();
           } catch (error) { complain(error); }
         }} />
-        {state.openFile ? (
-          <pre className="file-view">{state.openFileContent}</pre>
-        ) : null}
+        {state.openFile ? <FileView content={state.openFileContent ?? ""} /> : null}
       </div>
       <div id="drawer-changes" className="drawer-body" hidden={state.drawerTab !== "changes"}>
         <ChangesPanel />

@@ -230,6 +230,16 @@ test("the page, in a browser, against the real engine", {
   const folds = await page.page.locator(".changes-diff .diff-fold").count();
   await secondFile.locator(".diff-fold").first().click();
   await page.seen("the fold to open", ([before]) => document.querySelectorAll(".changes-diff .diff-fold").length < before, [folds], 10_000);
+  // The file view numbers its lines, as the Mac's does (CodeTextView.swift:119-168).
+  await page.page.locator(".drawer-tab", { hasText: "Files" }).click();
+  await page.seen("the files to show", () => document.querySelectorAll(".file-row").length > 0, null, 10_000);
+  await page.page.locator(".file-row", { hasText: "notes.txt" }).first().click();
+  await page.seen("the file to open", () => Boolean(document.querySelector(".file-view")), null, 10_000);
+  assert.deepEqual(
+    await page.page.locator(".file-numbers span").allTextContents(),
+    ["1", "2", "3", "4"],
+    "the lines are numbered, as the Mac's ruler numbers them",
+  );
   await page.element("drawer-close").click();
   await page.seen("the panel to close", () => document.getElementById("drawer")?.hidden === true, null, 10_000);
 

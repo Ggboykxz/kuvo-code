@@ -659,6 +659,21 @@ const checks = [
     assert.match(changes, /file\.tooBig \? null/);
   }],
 
+  ["a file is shown with its lines numbered, as the Mac's ruler numbers them", ({ overlays, css, rule }) => {
+    // The code, numbered in a ruler beside it (CodeTextView.swift:4-6, 119-168).
+    assert.match(overlays, /function FileView\(/);
+    assert.match(overlays, /className="file-numbers"/);
+    assert.match(overlays, /className="file-code"/);
+    // The ruler is as wide as the widest number needs, and 20 more
+    // (CodeTextView.swift:142).
+    assert.match(overlays, /digits \* 7\.5 \+ 20/);
+    // And the numbers sit 8 pt from the code, in the Mac's own ink.
+    assert.match(rule(".file-numbers {"), /padding-right: 8px/);
+    assert.match(rule(".file-numbers {"), /font-size: 11px/);
+    assert.match(rule(".file-view {"), /font-family: var\(--font-mono\)/);
+    assert.match(rule(".file-code {"), /white-space: pre-wrap/);
+  }],
+
   ["a comment in the conversation is the Mac's own card", ({ app, css, review, symbols, rule }) => {
     // The message is taken apart, and the comments shown above the words
     // (AgentReferences.swift:170-179, YourMessage.swift:22, 829-831).

@@ -332,6 +332,12 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     run in the primary folder; the agent can work in the others too" — and the session in
     view is given them: the rules that allow those folders, and the note that tells the
     agent that "in chugs-pinterest" means that folder (`SessionModel.swift:1379-1405`).
+  - **2.87 (this change). A file is shown with its lines numbered.** The Mac shows a file
+    in a read-only text view, with the lines numbered in a ruler beside it
+    (`CodeTextView.swift:4-6`, `119-168`): the ruler is as wide as the widest number
+    needs and 20 more, and the numbers sit 8 pt from the code. The port showed the file
+    as plain text, with no numbers at all. It is the Mac's now — the code in the Mac's own
+    monospaced face, and the numbers in a ruler beside it.
   - **2.86 (this change). The diff folds the long unchanged stretches, as the Mac's does.**
     The Mac asks git for the whole file as context, and shows each change with a few lines
     around it — three on each side — folding the rest into a row that says how many
