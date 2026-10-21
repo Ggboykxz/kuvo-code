@@ -308,6 +308,13 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     viewer showed one picture and its name, and nothing else. It holds the message's
     pictures now, with the Mac's header and its arrows — and the Mac's keys: Escape and
     space put it away, the arrows step, Ctrl+C copies the picture in view.
+  - **2.79 (this change). A project has a name of its own.** A project is a folder on
+    the Mac, with a name of its own shown instead of the folder's
+    (`Workspace.swift:179-199`), changed in the editor over the window
+    (`ProjectEditor.swift:8-13`), from the project's own menu
+    (`SidebarView.swift:379-396`). The port's projects were folders and nothing else: the
+    name is there now — kept with the project, in the shell's own folder, and shown in the
+    sidebar in its place.
   - **2.61 (this change). The provider's marks.** The Mac draws the maker's mark beside
     each model (`ProviderLogo.swift`), monochrome so it follows the ink, or in the maker's
     own colour where it has one. The marks themselves are not published as a package, but
