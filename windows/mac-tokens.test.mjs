@@ -921,6 +921,22 @@ const checks = [
     assert.match(symbols, /"star": \["M8 2\.2l1\.76/);
   }],
 
+  ["the image viewer's own header and steps", ({ app, symbols }) => {
+    // The Mac's viewer (ImageViewer.swift:164-221): the picture's name and how many there
+    // are, the buttons that act on it, and the arrows between the pictures of the same
+    // message — with the keys the Mac takes (Escape and space put it away, the arrows
+    // step, ⌘C copies).
+    assert.match(app, /className="image-viewer-head"/);
+    assert.match(app, /className="image-viewer-step left"/);
+    assert.match(app, /className="image-viewer-step right"/);
+    assert.match(app, /`\$\{index \+ 1\} of \$\{items\.length\}`/);
+    assert.ok(app.includes('"Previous (←)"'), "the arrows say what they do");
+    assert.ok(app.includes('"Next (→)"'));
+    assert.ok(app.includes('"Copy the picture (Ctrl+C)"'));
+    // The marks are drawn, not text glyphs.
+    assert.match(symbols, /"chevron.left": \["M9\.5 3\.5L5\.5 8l4 4\.5"\]/);
+  }],
+
   ["the mode menu keeps the Mac's tool permissions, and the last model is kept", ({ app, store }) => {
     // The Mac's mode menu: the modes, a line, then the tool permissions
     // (ComposerMenus.swift:120-135), with the Mac's own words.

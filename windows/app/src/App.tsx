@@ -496,18 +496,28 @@ function AssistantEntry({ entry }: { entry: TranscriptEntry }) {
   );
 }
 
-function AttachmentNode({ file }: { file: Attachment }) {
+function AttachmentNode({ file, pictures }: { file: Attachment; pictures?: Attachment[] }) {
   const fromData = file.data ? `data:${file.mime};base64,${file.data}` : null;
   const fromUri = file.uri ? `/api/raw?path=${encodeURIComponent(decodeURIComponent(String(file.uri).replace(/^file:\/\//, "")))}` : null;
   const source = fromData ?? fromUri;
   if (!source) return <span className="attachment-chip">{file.name ?? "file"}</span>;
   if ((file.mime ?? "").startsWith("image/")) {
+    // The viewer opens on the picture, with the others of the same message beside it: the
+    // Mac's viewer steps through them (ImageViewer.swift:22-26, 128-131).
+    const items = (pictures ?? [file])
+      .filter(other => (other.mime ?? "").startsWith("image/"))
+      .map(other => ({
+        source: other.data ? `data:${other.mime};base64,${other.data}` : (other.uri ? `/api/raw?path=${encodeURIComponent(decodeURIComponent(String(other.uri).replace(/^file:\/\//, "")))}` : ""),
+        name: other.name ?? "image",
+      }))
+      .filter(other => other.source);
+    const index = Math.max(0, items.findIndex(other => other.source === source));
     return (
       <img
         className="attachment-image"
         src={source}
         alt={file.name ?? "image"}
-        onClick={() => { state.viewing = { source, name: file.name ?? "image" }; render(); }}
+        onClick={() => { state.viewing = { items, index }; render(); }}
       />
     );
   }
@@ -550,7 +560,7 @@ function EntryNodes({ transcript }: { transcript: Transcript }) {
               }}
             >
               <div className="text">{entry.text}</div>
-              {(entry.files ?? []).map((file, i) => <AttachmentNode key={i} file={file} />)}
+              {(entry.files ?? []).map((file, i) => <AttachmentNode key={i} file={file} pictures={entry.files} />)}
               {/* The Mac's actions under your words (YourMessage.swift:41-64): the time it
                   was sent, Copy, a new session from here, and undo — always laid out, and
                   shown under the pointer, so nothing moves when they appear. */}
@@ -628,7 +638,7 @@ function EntryNodes({ transcript }: { transcript: Transcript }) {
         <article key={item.id} className="entry user pending">
           <div className="text">{item.text}</div>
           {/* The picture you just sent is shown at once, as the Mac shows it. */}
-          {(item.files ?? []).map((file, i) => <AttachmentNode key={i} file={file} />)}
+          {(item.files ?? []).map((file, i) => <AttachmentNode key={i} file={file} pictures={item.files} />)}
           {item.delivery === "queue" ? <div className="entry-meta">queued</div> : null}
         </article>
       ))}
@@ -2042,13 +2052,31 @@ function Composer() {
 function ImageViewer() {
   const viewing = state.viewing;
   const [zoomed, setZoomed] = useState(false);
+  const items = viewing?.items ?? [];
+  const index = viewing?.index ?? 0;
+  const picture = items[index];
+  const step = (by: number) => {
+    if (!viewing) return;
+    const next = index + by;
+    if (next < 0 || next >= items.length) return;
+    state.viewing = { items, index: next };
+    setZoomed(false);
+    render();
+  };
   useEffect(() => { if (!viewing) setZoomed(false); }, [viewing]);
   useEffect(() => {
     if (!viewing) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { state.viewing = null; render(); }
+      // The Mac's own keys (ImageViewer.swift:146-158): Escape and space put it away, the
+      // arrows step through the pictures, and ⌘C copies the one in view.
+      if (event.key === "Escape" || event.key === " ") { state.viewing = null; render(); return; }
+      if (event.key === "ArrowLeft") { step(-1); return; }
+      if (event.key === "ArrowRight") { step(1); return; }
       if (event.key === "+" || event.key === "=") setZoomed(true);
       if (event.key === "-") setZoomed(false);
+      if ((event.key === "c" || event.key === "C") && (event.ctrlKey || event.metaKey)) {
+        void navigator.clipboard?.writeText(picture?.source ?? "").catch(() => {});
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -2072,8 +2100,8 @@ function ImageViewer() {
         >
           <motion.img
             className={zoomed ? "zoomed" : ""}
-            src={viewing.source}
-            alt={viewing.name}
+            src={picture?.source}
+            alt={picture?.name}
             // The picture comes in from 0.94 of its size (ImageViewer.swift:88).
             initial={{ scale: 0.94 }}
             animate={{ scale: 1 }}
@@ -2082,7 +2110,53 @@ function ImageViewer() {
             onDoubleClick={event => { event.stopPropagation(); setZoomed(value => !value); }}
             title={zoomed ? "Double-click to bring it back" : "Double-click to zoom in"}
           />
-          <div className="image-viewer-foot">{viewing.name}</div>
+          {/* The Mac's own header (ImageViewer.swift:164-197): the picture's name, how many
+              there are, and what else can be done with it. */}
+          <div className="image-viewer-head">
+            <span className="image-viewer-title">{picture?.name}</span>
+            {items.length > 1 ? <span className="where">{`${index + 1} of ${items.length}`}</span> : null}
+            <span className="spacer" />
+            <button
+              className="card-action icon"
+              title="Copy the picture (Ctrl+C)"
+              aria-label="Copy the picture"
+              onClick={event => { event.stopPropagation(); void navigator.clipboard?.writeText(picture?.source ?? "").catch(() => {}); }}
+            >
+              <Symbol name="doc.on.doc" size={13} />
+            </button>
+            <button
+              className="card-action icon"
+              title="Close (Esc)"
+              aria-label="Close"
+              onClick={event => { event.stopPropagation(); state.viewing = null; render(); }}
+            >
+              <Symbol name="xmark" size={13} />
+            </button>
+          </div>
+          {/* And the arrows between the pictures of the same message (ImageViewer.swift:128-131,
+              209-221). */}
+          {items.length > 1 ? (
+            <>
+              <button
+                className="image-viewer-step left"
+                title="Previous (←)"
+                aria-label="Previous picture"
+                disabled={index <= 0}
+                onClick={event => { event.stopPropagation(); step(-1); }}
+              >
+                <Symbol name="chevron.left" size={15} />
+              </button>
+              <button
+                className="image-viewer-step right"
+                title="Next (→)"
+                aria-label="Next picture"
+                disabled={index >= items.length - 1}
+                onClick={event => { event.stopPropagation(); step(1); }}
+              >
+                <Symbol name="chevron.right" size={15} />
+              </button>
+            </>
+          ) : null}
         </motion.div>
       ) : null}
     </AnimatePresence>

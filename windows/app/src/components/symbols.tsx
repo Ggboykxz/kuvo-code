@@ -15,6 +15,7 @@ export type SymbolName =
   | "xmark"
   | "plus"
   | "chevron.right"
+  | "chevron.left"
   | "chevron.down"
   
   | "chevron.up"
@@ -61,6 +62,7 @@ const PATHS: Record<SymbolName, string[]> = {
   "xmark": ["M4 4l8 8", "M12 4l-8 8"],
   "plus": ["M8 3.4v9.2", "M3.4 8h9.2"],
   "chevron.right": ["M6.5 3.5L10.5 8l-4 4.5"],
+  "chevron.left": ["M9.5 3.5L5.5 8l4 4.5"],
   "chevron.down": ["M3.5 6.5L8 10.5l4.5-4"],
   "chevron.up": ["M3.5 9.5L8 5.5l4.5 4"],
   "arrow.down": ["M8 3v9.5", "M4.5 9L8 12.5 11.5 9"],
