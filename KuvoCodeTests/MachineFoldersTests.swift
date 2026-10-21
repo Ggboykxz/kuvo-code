@@ -58,4 +58,14 @@ import Testing
         #expect(SignInForward.callbackPort(in: URL(string: "https://x.com/a?redirect_uri=https%3A%2F%2Fexample.com%3A8443%2F")!) == nil)
         #expect(SignInForward.callbackPort(in: URL(string: "https://x.com/a?redirect_uri=http%3A%2F%2Flocalhost%3A80%2F")!) == nil)
     }
+
+    /// Why a machine's sign-in can't come back to it, as ssh says: the port taken here, or the
+    /// machine out of reach.
+    @Test func whyASignInCantComeBack() {
+        let taken = SignInForward.problem("bind [127.0.0.1]:1455: Address already in use\nchannel_setup_fwd_listener_tcpip: cannot listen to port: 1455\nCould not request local forwarding.", port: 1455, machine: "box")
+        #expect(taken.contains("using port 1455"))
+        let away = SignInForward.problem("ssh: Could not resolve hostname box: nodename nor servname provided, or not known", port: 1455, machine: "box")
+        #expect(!away.contains("using port"))
+        #expect(away.contains("Could not resolve hostname box"))
+    }
 }

@@ -668,6 +668,16 @@ final class Machines {
     /// Its port couldn't be forwarded (something on this Mac has it): why, to say beside the sign-in.
     private(set) var problem: String?
 
+    /// Why the forward ended, from what ssh said: the port taken on this Mac, or the machine out
+    /// of reach (its own words, last line).
+    nonisolated static func problem(_ said: String, port: Int, machine: String) -> String {
+        if said.range(of: #"(?i)address already in use|cannot listen to port|port forwarding failed|bind \[|bind: "#, options: .regularExpression) != nil {
+            return "Something on this Mac is using port \(port), where the sign-in page comes back, so it can't reach \(machine). Quit what uses it (another sign-in, say), then try again."
+        }
+        let last = said.split(whereSeparator: \.isNewline).last.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+        return "The sign-in page can't come back to \(machine): it couldn't be reached" + (last.isEmpty ? "." : " (\(last)).") + " Check that it's connected, then try again."
+    }
+
     /// Forwards the port that `url`'s `redirect_uri` names on localhost, if it names one.
     func start(for url: URL, on machine: String) {
         guard let port = Self.callbackPort(in: url) else { return }
@@ -681,13 +691,15 @@ final class Machines {
             running: "cat >/dev/null", extra: ["-o", "ExitOnForwardFailure=yes", "-L", "\(port):localhost:\(port)"], shared: false)
         process.standardInput = Pipe.unshared()
         process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+        let errors = Pipe()
+        process.standardError = errors
         process.terminationHandler = { [weak self] ended in
-            // Ended by itself right away: the port was taken here.
+            // Ended by itself right away: the port taken here, or the machine out of reach.
             guard ended.terminationReason == .exit, ended.terminationStatus != 0 else { return }
+            let said = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             Task { @MainActor in
                 guard let self, self.process === ended else { return }
-                self.problem = "Something on this Mac is using port \(port), where the sign-in page comes back, so it can't reach \(machine). Quit what uses it (another sign-in, say), then try again."
+                self.problem = Self.problem(said, port: port, machine: machine)
                 self.process = nil
             }
         }
