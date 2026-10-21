@@ -232,10 +232,14 @@ nonisolated enum Git {
             let old = file.oldPath.flatMap { on(["ls-files", "--error-unmatch", "--", $0]) != nil ? $0 : nil }
             return git(["add", "-A", "--", file.path] + (old.map { [$0] } ?? []))
         case .unstage:
+            if on(["restore", "--staged", "--"] + paths) != nil { return nil }
             // A repository with no commits yet has nothing to go back to (`restore --staged`
-            // fails there): out of what's staged, the file left as it is.
-            if on(["rev-parse", "--verify", "-q", "HEAD"]) == nil { return git(["rm", "--cached", "-f", "-q", "--"] + paths) }
-            return git(["restore", "--staged", "--"] + paths)
+            // fails there): out of what's staged, the file left as it is. Only when git says it
+            // has none, not when it couldn't be asked (a machine's connection dropping).
+            guard on(["rev-parse", "--git-dir"]) != nil, on(["rev-parse", "--verify", "-q", "HEAD"]) == nil else {
+                return "git couldn't restore \(file.path)."
+            }
+            return git(["rm", "--cached", "-f", "-q", "--"] + paths)
         case .discard:
             // Out of git first, and only once that worked: a file still staged would go with the
             // next commit. `-f` for one staged and then changed again.
