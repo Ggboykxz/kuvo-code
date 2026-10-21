@@ -39,7 +39,7 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | F7 Export and import a bot | AgentMessagesTests | |
 | F8 Delete a bot | BotDeletionTests, GroupChatTests | |
 | F10, L39, L40 Agents writing to each other | AgentMessagesTests, AgentReferencesTests | |
-| G1–G3 Group chats | BotsTests, AgentMessagesTests, GroupChatTests | a meeting on a schedule (G4) |
+| G1–G4 Group chats, meetings on a schedule | BotsTests, AgentMessagesTests, GroupChatTests | |
 | H1, H2 MCP servers | MCPCommandTests, ChromeDevToolsUpgradeTests, IntegrationsTests | |
 | H3 An MCP server asks mid-task | AgentAsksTests | |
 | H4 A skill from GitHub | SkillLibraryTests | |

@@ -91,7 +91,7 @@ import Testing
     }
 
     /// Ada (the lead) and Ben in a chat, with the lines they'll say; the app around them.
-    private func start(lines: [String: [String]]) async throws -> (AppModel, BotGroup, Seats) {
+    private func start(lines: [String: [String]], meeting: BotGroup.Meeting? = nil) async throws -> (AppModel, BotGroup, Seats) {
         try FileManager.default.createDirectory(at: botsFile.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONSerialization.data(withJSONObject: [bot("bot_ada", "Ada"), bot("bot_ben", "Ben")]).write(to: botsFile)
         let app = AppModel()
@@ -124,7 +124,7 @@ import Testing
             return StubWeb.json(["data": StubEngine.session(seat, title: "seat", directory: directory)])
         }
         await app.workspace.refresh()
-        let group = app.groups.create(name: "Team", members: ["bot_ada", "bot_ben"])
+        let group = app.groups.create(name: "Team", members: ["bot_ada", "bot_ben"], meeting: meeting)
         return (app, group, seats)
     }
 
@@ -222,6 +222,45 @@ import Testing
         #expect(ada.heard.contains("We need a big database server."))
         #expect(ada.heard.contains("It's a small notes app."))
         #expect(app.groups.group(group.id)?.retracted == nil)
+    }
+
+    /// A meeting you scheduled once (G4): when it comes, its topic is in the chat as the meeting's,
+    /// the bots talk it through, the lead first, and the schedule is clear, after Kuvo Code opens
+    /// again too; it doesn't come twice.
+    @Test func aOneOffMeetingComesOnceAndClears() async throws {
+        defer { done() }
+        let topic = "Standup: what's blocking the release?"
+        let (app, group, seats) = try await start(lines: ["Ada": ["The notarization step.", "PASS"], "Ben": ["Nothing on my side.", "PASS"]],
+                                                  meeting: .init(next: .now.addingTimeInterval(-1), topic: topic))
+        app.groups.meetDue()
+        try await talkedThrough(app, group)
+        let meetings = app.groups.messages(in: group.id).filter { $0.kind == .meeting }
+        #expect(meetings.map(\.text) == [topic])
+        #expect(seats.speakers.first == "Ada", "the lead speaks first")
+        #expect(seats.turns.first?.heard.contains(topic) == true)
+        #expect(app.groups.group(group.id)?.meeting == nil, "a one-off's schedule clears")
+        #expect(BotGroups().group(group.id)?.meeting == nil, "and stays clear when Kuvo Code opens again")
+        app.groups.meetDue()
+        #expect(app.groups.messages(in: group.id).filter { $0.kind == .meeting }.count == 1, "it doesn't come twice")
+    }
+
+    /// A daily meeting missed for days while Kuvo Code was closed (G4): it's held once, and next
+    /// comes at its own time of day; one due again within a few hours of the missed one held now
+    /// is skipped to the day after.
+    @Test(arguments: [-1.0, 1.0])
+    func aDailyMeetingMissedForDaysIsHeldOnce(hoursFromNow: Double) async throws {
+        defer { done() }
+        let calendar = Calendar.current
+        let first = try #require(calendar.date(byAdding: .day, value: -3, to: .now.addingTimeInterval(hoursFromNow * 3600)))
+        let (app, group, _) = try await start(lines: ["Ada": ["PASS"], "Ben": ["PASS"]],
+                                              meeting: .init(next: first, every: "1d", topic: "Daily standup"))
+        app.groups.meetDue()
+        try await talkedThrough(app, group)
+        #expect(app.groups.messages(in: group.id).filter { $0.kind == .meeting }.count == 1, "missed for days, held once")
+        let next = try #require(app.groups.group(group.id)?.meeting?.next)
+        #expect(Wakes.minutes(of: next) == Wakes.minutes(of: first), "at its own time of day")
+        let wait = next.timeIntervalSinceNow / 3600
+        #expect(wait > 3 && wait < 26, "next at its time tomorrow, not a few hours after this one: in \(wait) h")
     }
 
     /// A bot deleted (F8) leaves its chats: its seat there is deleted on the engine, and the chat

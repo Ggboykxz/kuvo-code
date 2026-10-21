@@ -438,7 +438,9 @@ final class BotGroups {
         }
     }
 
-    private func meetDue() {
+    /// Holds the meetings that have come due: once each, then the next time of one that repeats,
+    /// or none for a one-off.
+    func meetDue() {
         for group in list {
             guard var meeting = group.meeting, meeting.next <= .now, let index = list.firstIndex(where: { $0.id == group.id }) else { continue }
             // Its bots on machines still connecting (after launch, or a wake): it waits for them,
