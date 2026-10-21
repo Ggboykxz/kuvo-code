@@ -13,6 +13,8 @@ import {
   applyLook,
   approval,
   boot,
+  favoriteModels,
+  rememberFavorite,
   archiveSession,
   closeSessionTab,
   closeTabs,
@@ -1569,6 +1571,8 @@ type Mention = { kind: "files" | "commands"; name: string; path?: string; relati
 
 function Composer() {
   const [text, setText] = useState("");
+  // The models the user keeps: the Mac's starred models (ModelPicker.swift:40).
+  const [favorites, setFavorites] = useState(favoriteModels);
   // The approval as it stands: the tools run without asking, or they wait for an OK
   // (the Mac's ToolApproval, ComposerMenus.swift:6-26).
   const [approvalShown, setApprovalShown] = useState<Approval>(approval);
@@ -1937,15 +1941,36 @@ function Composer() {
               complain(error);
             }
           }}
-          groups={[...new Set(state.models.map(model => model.providerID))].map(provider => ({
-            name: provider,
-            items: state.models.filter(model => model.providerID === provider).map(model => ({
-              value: `${model.providerID}/${model.id}`,
-              label: model.name ?? model.id,
-              detail: model.limit?.context ? `${Math.round(model.limit.context / 1000)}k` : undefined,
-              logo: model.providerID,
+          groups={[
+            // The Mac's starred models first, in their own group (ModelPicker.swift:500,
+            // 732-755): the models the user keeps, and the mark that keeps them.
+            ...(favorites.length ? [{
+              name: "Starred",
+              items: favorites.map(model => ({
+                value: `${model.providerID}/${model.id}`,
+                label: state.models.find(known => known.providerID === model.providerID && known.id === model.id)?.name ?? model.id,
+                logo: model.providerID,
+                star: { on: true, toggle: () => { rememberFavorite(model, false); setFavorites(favoriteModels()); render(); } },
+              })),
+            }] : []),
+            ...[...new Set(state.models.map(model => model.providerID))].map(provider => ({
+              name: provider,
+              items: state.models.filter(model => model.providerID === provider).map(model => ({
+                value: `${model.providerID}/${model.id}`,
+                label: model.name ?? model.id,
+                detail: model.limit?.context ? `${Math.round(model.limit.context / 1000)}k` : undefined,
+                logo: model.providerID,
+                star: {
+                  on: favorites.some(one => one.providerID === model.providerID && one.id === model.id),
+                  toggle: () => {
+                    rememberFavorite({ providerID: model.providerID, id: model.id }, !favorites.some(one => one.providerID === model.providerID && one.id === model.id));
+                    setFavorites(favoriteModels());
+                    render();
+                  },
+                },
+              })),
             })),
-          }))}
+          ]}
         />
         <div className="spacer" />
         <button id="stop" type="button" className="small" hidden={!state.transcript?.running} onClick={() => void stopRun()}>Stop</button>
@@ -2045,7 +2070,7 @@ function AnalyticsNotice() {
 function Choice({ id, title, groups, value, onPick, empty }: {
   id: string;
   title: string;
-  groups: { name: string; items: { value: string; label: string; detail?: string; logo?: string; checked?: boolean }[] }[];
+  groups: { name: string; items: { value: string; label: string; detail?: string; logo?: string; checked?: boolean; star?: { on: boolean; toggle: () => void } }[] }[];
   value: string;
   onPick: (value: string) => void;
   empty: string;
@@ -2101,6 +2126,17 @@ function Choice({ id, title, groups, value, onPick, empty }: {
                     {item.logo ? <ProviderLogo id={item.logo} size={15} /> : null}
                     <span>{item.label}</span>
                     {item.detail ? <span className="where">{item.detail}</span> : null}
+                    {item.star ? (
+                      <span
+                        className={`choice-star ${item.star.on ? "on" : ""}`}
+                        role="button"
+                        aria-label={item.star.on ? "Unstar this model" : "Star this model"}
+                        title={item.star.on ? "Unstar" : "Star"}
+                        onClick={event => { event.stopPropagation(); item.star?.toggle(); }}
+                      >
+                        <Symbol name="star" size={12} />
+                      </span>
+                    ) : null}
                   </button>
                 ))}
               </span>

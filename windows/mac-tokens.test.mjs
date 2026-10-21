@@ -897,6 +897,16 @@ const checks = [
     assert.match(css, /\.entry \.text \{[^}]*font-family: var\(--message-font/);
   }],
 
+  ["the models the user keeps are the Mac's starred models", ({ app, store, symbols }) => {
+    // The Mac's picker holds the models the user keeps, in their own rail, with the mark
+    // that keeps them (ModelPicker.swift:40, 57, 436-440, 500, 732-755).
+    assert.ok(app.includes('"Starred"'), "the models the user keeps are in a group of their own");
+    assert.match(app, /className=\{`choice-star \$\{item\.star\.on \? "on" : ""\}`\}/);
+    assert.ok(store.includes("kuvo-favoriteModels"), "the models the user keeps are kept");
+    // The mark is drawn, not a text glyph (the house rule, MAC-UI-MAP.md §7).
+    assert.match(symbols, /"star": \["M8 2\.2l1\.76/);
+  }],
+
   ["the mode menu keeps the Mac's tool permissions, and the last model is kept", ({ app, store }) => {
     // The Mac's mode menu: the modes, a line, then the tool permissions
     // (ComposerMenus.swift:120-135), with the Mac's own words.

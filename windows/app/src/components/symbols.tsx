@@ -35,6 +35,7 @@ export type SymbolName =
   | "wrench.and.screwdriver"
   | "chevron.left.forwardslash.chevron.right"
   | "checkmark"
+  | "star"
   | "magnifyingglass"
   | "arrow.triangle.branch"
   | "arrow.uturn.backward"
@@ -69,6 +70,8 @@ const PATHS: Record<SymbolName, string[]> = {
   "list.bullet": ["M6 4.2h7.5", "M6 8h7.5", "M6 11.8h7.5", "M3 4.2h.01", "M3 8h.01", "M3 11.8h.01"],
   "doc.on.doc": ["M5.5 5.5h-3A1.5 1.5 0 0 0 1.5 1.5H7.5", "M3 5.5H2.2A1.3 1.3 0 0 0 1.3 1.3H5.5", "M9 2.2h3.3A1.5 1.5 0 0 1 1.5 1.5v6.8a1.5 1.5 0 0 1-1.5 1.5H8.2a1.5 1.5 0 0 1-1.5-1.5V6.2a1.5 1.5 0 0 1 1.5-1.5", "M6 8.2h5"],
   "checkmark": ["M3.2 8.4l3.1 3.1 6.5-6.5"],
+  // The Mac's star (ModelPicker.swift:57, 436): the mark of a model the user keeps.
+  "star": ["M8 2.2l1.76 3.57 3.94.57-2.85 2.78.67 3.92L8 11.17 4.48 13.04l.67-3.92L2.3 6.34l3.94-.57L8 2.2z"],
   "doc": ["M4 2.6h5l3 3v7.8H4z", "M9 2.6v3h3"],
   "doc.text": ["M4 2.6h5l3 3v7.8H4z", "M9 2.6v3h3", "M5.8 8h4.4M5.8 10.4h3"],
   "doc.badge.plus": ["M4 2.6h4.2l2.8 2.8v7.6H4z", "M8.2 2.6v2.8h2.8", "M11.6 9.4v3.4M9.9 11.1h3.4"],

@@ -155,6 +155,18 @@ test("the page, in a browser, against the real engine", {
   }, null, 30_000);
   await page.element("model").click();
 
+  // The models the user keeps: the star keeps one, and it sits in a group of its own
+  // (ModelPicker.swift:40, 436-440, 500).
+  await page.seen("the model menu to open", () => {
+    const button = document.getElementById("model");
+    if (!button) return false;
+    if (!document.querySelector(".choice-panel .choice-item")) button.click();
+    return document.querySelectorAll(".choice-panel .choice-item").length > 0;
+  }, null, 10_000);
+  await page.page.locator(".choice-panel .choice-star").first().click();
+  await page.seen("the kept models to be in a group of their own", () => [...document.querySelectorAll(".choice-group")].some(node => node.textContent?.trim() === "Starred"), null, 10_000);
+  await page.page.keyboard.press("Escape");
+
   // A prompt: sent, shown at once, answered by the model, and answered through events.
   const asked = "Reply with exactly: hello from the page";
   const ask = async () => {

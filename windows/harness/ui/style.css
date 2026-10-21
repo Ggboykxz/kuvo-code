@@ -1478,6 +1478,17 @@ body.viewing-image main {
   box-shadow: var(--shadow-lifted);
   animation: kuvo-pop var(--motion-fast) var(--ease-spring) both;
 }
+/* The mark of a model the user keeps (ModelPicker.swift:436-440). */
+.choice-star {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 1px;
+  border-radius: 4px;
+  color: var(--ink-faint);
+}
+.choice-star:hover { background: var(--hover); color: var(--ink); }
+.choice-star.on { color: var(--accent); }
 .choice-search {
   padding: var(--space-1) var(--space-2); font-size: var(--text-sm);
   border: 1px solid var(--line); border-radius: var(--radius-xs);

@@ -878,6 +878,25 @@ export function rememberModel(model: { providerID: string; id: string }) {
   try { localStorage.setItem("kuvo-lastModel", JSON.stringify(model)); } catch {}
 }
 
+/// The models the user keeps — the Mac's starred models (ModelPicker.swift:40, 436-440),
+/// kept whole: a model's id can have slashes in it.
+export function favoriteModels(): { providerID: string; id: string }[] {
+  try {
+    const stored = JSON.parse(localStorage.getItem("kuvo-favoriteModels") ?? "[]");
+    if (!Array.isArray(stored)) return [];
+    return stored.filter(model => model && typeof model.providerID === "string" && typeof model.id === "string");
+  } catch {
+    return [];
+  }
+}
+
+/// A model kept, or taken off the list.
+export function rememberFavorite(model: { providerID: string; id: string }, on: boolean) {
+  const kept = favoriteModels().filter(one => !(one.providerID === model.providerID && one.id === model.id));
+  if (on) kept.push(model);
+  try { localStorage.setItem("kuvo-favoriteModels", JSON.stringify(kept)); } catch {}
+}
+
 /// A session pinned to the top of the sidebar, or taken off (the Mac's
 /// Workspace.swift:360-364, the mark "kuvo.pinned").
 export async function pinSession(session: SessionSummary, pinned: boolean) {
