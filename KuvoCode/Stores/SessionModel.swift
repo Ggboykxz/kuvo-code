@@ -597,8 +597,12 @@ final class SessionModel {
             if transcript.isStale { scheduleReload() }
             // A queue left waiting (the app quit mid-run, say) waits for Resume rather than
             // starting on its own. Read again later (a reconnect), it carries on.
-            if !isLoaded, !isRunning, hasQueue {
+            // One for the next step of a run that ended with the app is held too, ahead of the
+            // queue, as Stop holds one: it showed nowhere, and Resume went past it.
+            let leftForNextStep = transcript.pending.contains { $0.delivery == .steer && !$0.isLocal }
+            if !isLoaded, !isRunning, hasQueue || leftForNextStep {
                 isQueuePaused = true
+                if leftForNextStep { await holdWaiting() }
             } else if isLoaded, !isRunning, hasQueue, !isQueuePaused {
                 scheduleDrain()
             }

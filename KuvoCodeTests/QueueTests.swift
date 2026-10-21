@@ -149,4 +149,23 @@ import Testing
         #expect(order == ["PATCH /api/session/\(id)/inbox/\(steering)", "POST /api/session/\(id)/interrupt"])
         #expect(engine.requests("PATCH", "/inbox/\(steering)").first?.body["delivery"] as? String == "queue")
     }
+
+    /// The app quit with a message for the agent's next step still waiting (the run it was for
+    /// ended with the app): on opening, it waits under Paused with the rest, to send with Resume,
+    /// rather than showing as sending for ever.
+    @Test func aMessageForTheNextStepLeftWhenTheAppQuitWaitsForResume() async throws {
+        defer { engine.stop() }
+        let steering: [String: Any] = ["id": "msg_03", "sessionID": id, "type": "user", "delivery": "steer",
+                                       "payload": ["text": "Also run the linter"]]
+        let model = try await open(running: false, inbox: [steering, queued])
+        #expect(model.isQueuePaused)
+        #expect(model.waiting.map(\.text) == ["Also run the linter", "Then update the docs"], "both wait, the one for the next step first")
+        // Held where it is, so the engine doesn't start it on its own either.
+        #expect(engine.requests("PATCH", "/inbox/msg_03").map { $0.body["delivery"] as? String } == ["queue"])
+        model.apply(try engine.event("session.inbox.delivery.changed", session: id, ["inboxID": "msg_03", "delivery": "queue"]))
+        model.resumeQueue()
+        try await eventually { engine.requests("PATCH", "/inbox/msg_03").count > 1 }
+        #expect(engine.requests("PATCH", "/inbox/msg_03").last?.body["delivery"] as? String == "steer", "Resume gives it to the agent first")
+        #expect(deliveries.isEmpty, "what was queued waits its turn")
+    }
 }

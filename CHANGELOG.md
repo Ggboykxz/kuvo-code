@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A message you'd sent for the agent's next step that was still waiting when Kuvo Code quit shows under Paused when you open the session again, first in line, and Resume sends it. It showed as sending for ever, and Resume went past it to the queue.
 - When Grok looks through its tools for one, the step reads "Looked for a tool" with what it looked for, rather than its words run together as a tool's name.
 - Clearing the panel browser's history no longer leaves the icon of a site you'd just visited behind, kept if it was still loading as you cleared.
 - A machine you reach at two addresses, like its name on your local network and over Tailscale, is one machine. Adding it again at its other address, or having added both before, makes the second one of the first's addresses, rather than a second machine that set everything up again, listed every session twice, and on removal would have signed out and stopped what the first still used. Kuvo Code uses whichever address answers. Right-click it in Settings › Machines to stop using an address, or, when one of the two can't be reached to tell, to say they're the same computer.
