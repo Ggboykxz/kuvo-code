@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import WebKit
+import os
 
 /// Over what you select in the conversation: Add to Chat (it goes over the composer as a quote
 /// to answer) or Copy. It shows when a drag or a double click leaves text selected, and goes
@@ -54,7 +55,7 @@ struct SelectionMenu: ViewModifier {
             .onReceive(NotificationCenter.default.publisher(for: Self.selectedNotification)) { note in
                 guard isShown, let window = windowBox.window, note.object as? NSWindow === window, let view = window.contentView else { return }
                 let location = view.convert(window.mouseLocationOutsideOfEventStream, from: nil)
-                offer(at: view.isFlipped ? location : CGPoint(x: location.x, y: view.bounds.height - location.y), in: window)
+                offer(at: view.isFlipped ? location : CGPoint(x: location.x, y: view.bounds.height - location.y), in: window, selected: true)
             }
     }
 
@@ -125,11 +126,21 @@ struct SelectionMenu: ViewModifier {
         }
     }
 
+    private static let log = Logger(subsystem: "run.kuvo.code", category: "selection")
+
     /// Shows the menu at `inWindow` (from the window's top left) once what was let go there left
-    /// text selected.
-    private func offer(at inWindow: CGPoint, in window: NSWindow) {
+    /// text selected. `selected`: the conversation said it is, so it shows at once.
+    private func offer(at inWindow: CGPoint, in window: NSWindow, selected: Bool = false) {
         guard frame.contains(inWindow), point == nil || !menuFrame.contains(inWindow) else { return }
         let at = CGPoint(x: inWindow.x - frame.minX, y: inWindow.y - frame.minY)
+        let asked = ContinuousClock.now
+        if selected, Self.page(in: window) == nil {
+            guard Self.hasSelection(in: window) else { return }
+            pageSelection = nil
+            point = at
+            Self.log.info("Selection menu shown at once")
+            return
+        }
         // Once the text has its selection.
         Task {
             try? await Task.sleep(for: .milliseconds(60))
@@ -145,6 +156,7 @@ struct SelectionMenu: ViewModifier {
                 pageSelection = nil
                 point = at
             }
+            if point != nil { Self.log.info("Selection menu shown \(Int((ContinuousClock.now - asked) / .milliseconds(1)), privacy: .public) ms after the release") }
         }
     }
 
