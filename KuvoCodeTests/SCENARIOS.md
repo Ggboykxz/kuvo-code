@@ -74,5 +74,6 @@ end-to-end runs' alone, as are those that need a real machine over SSH (F9, L46,
 | The panel's terminal | TerminalColorsTests | |
 | The context ring: how full, of what the model takes | ContextRingTests | the coding agents' windows, as each says (Agents/test) |
 | Export a conversation | ConversationExportTests | |
+| Updates: only a release build updates itself | UpdatesTests; the release bundle's feed in CI ("Check the app bundle") | Sparkle's own window and install |
 | Move to Applications (to update itself) | AppLocationTests | the offer, a modal alert, and a disk image's read-only copy |
 | Anonymous usage stays anonymous | AnalyticsPrivacyTests | |
