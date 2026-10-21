@@ -332,6 +332,15 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     run in the primary folder; the agent can work in the others too" — and the session in
     view is given them: the rules that allow those folders, and the note that tells the
     agent that "in chugs-pinterest" means that folder (`SessionModel.swift:1379-1405`).
+  - **2.82 (this change). The Run command's own key, and the palette in the Mac's order.**
+    The Mac's palette holds the usual actions first, and the project's *Run* among them
+    (`MainView.swift:1418-1462`), with the key that does it (⌘R). The port's palette had
+    its own order, and no Run at all. It is the Mac's order now — *New Session*, *Run*,
+    *New Terminal*, *Show Changes*, *Show Files*, *Show Panel*, *Hide Sessions*, *Edit
+    Project…*, *Find in Conversation…*, *Rename this session*, the settings — with the
+    client's own three after them — and the Run has its key (Ctrl+R), which runs the
+    project's command, or opens the editor on the run field when there is none yet
+    (`MainView.swift:1479-1487`).
   - **2.61 (this change). The provider's marks.** The Mac draws the maker's mark beside
     each model (`ProviderLogo.swift`), monochrome so it follows the ink, or in the maker's
     own colour where it has one. The marks themselves are not published as a package, but
