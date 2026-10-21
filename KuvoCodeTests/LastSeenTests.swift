@@ -25,6 +25,9 @@ import Testing
             SessionCopies.remove(id)
             SessionCopies.saveLocalSessions([])
         }
+        // What earlier tests' workspaces keep of this Mac's list, a moment after it changed, kept
+        // first, not over this test's.
+        try await Task.sleep(for: .seconds(2.5))
         // As the app left them when it quit.
         let session = try decoded(StubEngine.session(id, title: "Flaky test", directory: "/tmp/kuvo-tests-lastseen"), as: Session.self)
         SessionCopies.saveLocalSessions([session])
