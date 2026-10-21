@@ -16,6 +16,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Undoing a message that waited in the queue, then sending, keeps the agent's reply from before it for good; in 0.6.3 it still went a moment later, as the engine confirmed the undo.
 - Searching the sidebar for words like "read" or "asked" no longer lists nearly every session: Kuvo Code's own wording for the agent's steps ("Read …", "Asked you a question") isn't searched, only what a step worked on, like its file or command.
 - Removing a machine closes the tabs of its bots, which stayed open waiting for it.
+- A session shows working when Kuvo Code opens while a subagent of one of its subagents is still at work, not only one of its own.
 
 ## 0.6.3
 

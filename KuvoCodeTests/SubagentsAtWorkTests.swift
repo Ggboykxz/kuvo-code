@@ -29,6 +29,20 @@ import Testing
         #expect(workspace.session(child) == nil, "a subagent has no row of its own")
     }
 
+    /// The app opens while a subagent's own subagent works (sent off in the background), the
+    /// one that started it done: the session at the top shows working.
+    @Test func aSubagentsSubagentFoundAtWork() async throws {
+        defer { engine.stop() }
+        let grandchild = "ses_digger"
+        engine.on("GET", "/api/session/\(grandchild)", json: ["data": StubEngine.session(grandchild, title: "Dig through the logs", directory: "/tmp/kuvo-tests-subagents", extra: ["parentID": child])])
+        engine.list([StubEngine.session(parent, title: "Lead", directory: "/tmp/kuvo-tests-subagents")], running: [grandchild])
+        await workspace.refresh()
+        try await eventually { workspace.isWorking(parent) }
+        #expect(workspace.isWorking(parent), "the session at the top should show working")
+        #expect(workspace.helpersAtWork(in: parent) == 1)
+        #expect(workspace.session(child) == nil && workspace.session(grandchild) == nil)
+    }
+
     /// Started while the app runs: working until the subagent's run ends.
     @Test func startedAndEnded() async throws {
         defer { engine.stop() }

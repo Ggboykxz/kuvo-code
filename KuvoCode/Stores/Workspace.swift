@@ -1971,11 +1971,13 @@ final class Workspace {
     /// Sessions read while their machine was away, with what was read, to tell it when it's back.
     @ObservationIgnored private var unsentViews: [String: Milliseconds] = [:]
 
-    private func reload(_ id: String) async {
+    private func reload(_ id: String, depth: Int = 0) async {
         guard let session = try? await api(forSession: id)?.session(id) else { return }
         // Only root sessions get a row; subagent sessions show inside their parent.
         if let parent = session.parentID {
             parents[session.id] = parent
+            // A subagent's subagent: whose that one is, up to the session with a row.
+            if self.session(parent) == nil, parents[parent] == nil, depth < 8 { await reload(parent, depth: depth + 1) }
             return
         }
         upsert(session)
