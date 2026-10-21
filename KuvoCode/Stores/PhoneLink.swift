@@ -774,7 +774,8 @@ final class PhoneLink {
         switch parts.dropFirst().first {
         case nil:
             guard let text = given?.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return (400, Data()) }
-            groups.send(text, to: id)
+            // Moving, or its machine away or saying no: the phone keeps it, and says so.
+            guard await groups.sendNow(text, to: id) else { return (409, Data(#"{"message":"It can't take messages right now. Try again in a moment."}"#.utf8)) }
         case "stop":
             groups.stop(id)
         case "keep-going":

@@ -11324,6 +11324,8 @@ async function groupRoutes(runner, store, method, parts2, body) {
     }
     if (method === "PATCH") {
       const edits2 = await body();
+      if (runner.get(id)?.status === "held" && Object.keys(edits2 ?? {}).some((key) => key !== "viewed"))
+        return error(409, "That chat is moving.");
       if (edits2?.meeting !== undefined && edits2.meeting !== null && !isMeeting(edits2.meeting))
         return error(400, "That isn't a meeting.");
       if (edits2?.members !== undefined && !(Array.isArray(edits2.members) && edits2.members.every((member) => typeof member === "string")))
@@ -12285,7 +12287,7 @@ class GroupRunner {
     this.context.store.trash(id, this.context.trash);
     emit("kuvo.group.deleted", { id });
     for (const bot of kept2.group.members)
-      this.remember(bot, { forgetting: id });
+      this.remember(bot);
     return true;
   }
   async delete(id) {
@@ -13444,4 +13446,4 @@ if (onMachine) {
 }
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
-// Built from Agents/src 6ba85399008c20288c44ebcdb0a5371c96a410966d197d07f5ee6ca7befba706
+// Built from Agents/src 61737f258c74d2e7d3b2c8313bbe933e33b7c07418ce8a0b586aacd8f26c39ee

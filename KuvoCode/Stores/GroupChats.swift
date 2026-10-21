@@ -14,31 +14,40 @@ final class GroupChats {
         self.machines = machines
     }
 
-    var list: [BotGroup] { mac.list + machines.chats.map(\.group) }
-    var speaking: [String: String] { mac.speaking.merging(machines.speaking) { first, _ in first } }
-    var discussing: Set<String> { mac.discussing.union(machines.discussing) }
-    var paused: Set<String> { mac.paused.union(machines.paused) }
+    /// One that lives on a machine: not this Mac's (while both have it, as it moves, this Mac's is the one).
+    private func onMachine(_ id: String) -> Bool { machines.has(id) && mac.group(id) == nil }
+    private var machineChats: [MachineGroups.Chat] { machines.chats.filter { mac.group($0.group.id) == nil } }
+
+    var list: [BotGroup] { mac.list + machineChats.map(\.group) }
+    var speaking: [String: String] { mac.speaking.merging(machines.speaking.filter { onMachine($0.key) }) { first, _ in first } }
+    var discussing: Set<String> { mac.discussing.union(machines.discussing.filter(onMachine)) }
+    var paused: Set<String> { mac.paused.union(machines.paused.filter(onMachine)) }
     var seatIDs: Set<String> { mac.seatIDs.union(machines.seatIDs) }
 
     func group(_ id: String?) -> BotGroup? { mac.group(id) ?? machines.group(id) }
     func group(seat: String) -> BotGroup? { mac.group(seat: seat) ?? machines.group(seat: seat) }
-    func messages(in id: String) -> [GroupMessage] { machines.has(id) ? machines.messages(in: id) : mac.messages(in: id) }
+    func messages(in id: String) -> [GroupMessage] { onMachine(id) ? machines.messages(in: id) : mac.messages(in: id) }
     /// The machine a chat lives on; nil for this Mac.
-    func machine(of id: String?) -> String? { machines.machine(of: id) }
-    func isUnread(_ group: BotGroup) -> Bool { machines.has(group.id) ? machines.isUnread(group) : mac.isUnread(group) }
+    func machine(of id: String?) -> String? { id.flatMap { onMachine($0) ? machines.machine(of: $0) : nil } }
+    func isUnread(_ group: BotGroup) -> Bool { onMachine(group.id) ? machines.isUnread(group) : mac.isUnread(group) }
     func name(of author: String?) -> String { mac.name(of: author) }
 
     /// The machine a chat lives on while you can't reach it there: what you write waits.
-    func unreachable(_ id: String) -> String? { machines.unreachable(id) }
+    func unreachable(_ id: String) -> String? { onMachine(id) ? machines.unreachable(id) : nil }
 
     func markViewed(_ id: String) {
-        if machines.has(id) { machines.markViewed(id) } else { mac.markViewed(id) }
+        if onMachine(id) { machines.markViewed(id) } else { mac.markViewed(id) }
     }
 
-    /// Your message; to a chat on a machine, sent there, and back in the composer (with why) if it
-    /// can't be.
-    func send(_ text: String, to id: String) {
-        guard machines.has(id) else { return mac.send(text, to: id) }
+    /// Your message, unless it's moving (it waits then, where it was written). To a chat on a
+    /// machine it goes there, and back in the composer (with why) if it can't. Whether it went.
+    @discardableResult
+    func send(_ text: String, to id: String) -> Bool {
+        guard !Moves.isFrozen(id) else { return false }
+        guard onMachine(id) else {
+            mac.send(text, to: id)
+            return true
+        }
         Task {
             do {
                 try await machines.send(text, to: id)
@@ -49,23 +58,35 @@ final class GroupChats {
                 Modal.show(error)
             }
         }
+        return true
+    }
+
+    /// The same, once it's there: for the phone, which says what came of it.
+    func sendNow(_ text: String, to id: String) async -> Bool {
+        guard !Moves.isFrozen(id) else { return false }
+        guard onMachine(id) else {
+            mac.send(text, to: id)
+            return true
+        }
+        return (try? await machines.send(text, to: id)) != nil
     }
 
     func stop(_ id: String) {
-        if machines.has(id) { machines.stop(id) } else { mac.stop(id) }
+        if onMachine(id) { machines.stop(id) } else { mac.stop(id) }
     }
 
     func keepGoing(_ id: String) {
-        if machines.has(id) { machines.keepGoing(id) } else { mac.keepGoing(id) }
+        if onMachine(id) { machines.keepGoing(id) } else { mac.keepGoing(id) }
     }
 
     func startWork(_ wrapUpID: String, in id: String) {
-        if machines.has(id) { machines.startWork(wrapUpID, in: id) } else { mac.startWork(wrapUpID, in: id) }
+        if onMachine(id) { machines.startWork(wrapUpID, in: id) } else { mac.startWork(wrapUpID, in: id) }
     }
 
     /// Takes the chat back to before one of your messages; its words, for the composer.
     func undo(from messageID: String, in id: String) async -> String? {
-        machines.has(id) ? await machines.undo(from: messageID, in: id) : mac.undo(from: messageID, in: id)
+        guard !Moves.isFrozen(id) else { return nil }
+        return onMachine(id) ? await machines.undo(from: messageID, in: id) : mac.undo(from: messageID, in: id)
     }
 
     /// A new chat, on this Mac.
@@ -74,12 +95,15 @@ final class GroupChats {
     }
 
     func update(_ edited: BotGroup) async {
-        guard machines.has(edited.id) else { return await mac.update(edited) }
+        // Moving: what you changed would be left behind.
+        guard !Moves.isFrozen(edited.id) else { return Modal.show(Moves.Failure.moving) }
+        guard onMachine(edited.id) else { return await mac.update(edited) }
         do { try await machines.update(edited) } catch { Modal.show(error) }
     }
 
     func delete(_ group: BotGroup) async {
-        guard machines.has(group.id) else { return await mac.delete(group) }
+        guard !Moves.isFrozen(group.id) else { return Modal.show(Moves.Failure.moving) }
+        guard onMachine(group.id) else { return await mac.delete(group) }
         do { try await machines.delete(group) } catch { Modal.show(error) }
     }
 }

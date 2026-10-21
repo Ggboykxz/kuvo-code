@@ -222,6 +222,8 @@ extension AppModel {
                 await engine.catalog.refreshAgents()
                 _ = await self.workspace.refresh(engine)
                 await self.machineGroups.connected(machine)
+                // A move of a group chat to or from it cut short, now it's there to finish.
+                await self.moves.recover()
             }
         }
         engine.onExit = { [weak self] in
@@ -341,6 +343,7 @@ extension AppModel {
         bots.fold(address, into: machine)
         AgentMail.shared.fold(address, into: machine)
         moves.fold(address, into: machine)
+        machineGroups.fold(address, into: machine)
         // Its sessions listed again, now under one name; not connected (its own address doesn't
         // answer): now, at whichever does.
         if let engine = machines.engine(machine) {
@@ -363,6 +366,7 @@ extension AppModel {
         phoneLink.forget(machine: id)
         workspace.machines = Set(machines.list.map(\.id))
         workspace.forget(id, forGood: true)
+        machineGroups.forget(machine: id)
         Task { await moves.machineRemoved(id) }
     }
 

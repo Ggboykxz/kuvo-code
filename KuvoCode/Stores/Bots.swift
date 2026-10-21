@@ -148,7 +148,7 @@ final class Bots {
     func bot(actingAs id: String?) -> Bot? {
         guard let id else { return nil }
         if let bot = bot(forSession: id) { return bot }
-        return bot(app?.groups.group(seat: id)?.seats.first { $0.value == id }?.key)
+        return bot(app?.chats.group(seat: id)?.seats.first { $0.value == id }?.key)
     }
 
     /// What the bot is up to, for how its avatar moves: waiting for you comes first, then working,

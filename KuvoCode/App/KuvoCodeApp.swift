@@ -67,7 +67,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Notifier.shared.answer = { [model] session, request, answer in model.workspace.answer(request, in: session, with: answer) }
         Notifier.shared.reply = { [model] session, text in
             // A group chat's (its meeting's): to the chat.
-            if let group = BotGroups.groupID(fromTab: session) { model.chats.send(text, to: group) } else { Task { await model.workspace.send(text, to: session) } }
+            if let group = BotGroups.groupID(fromTab: session) {
+                // Moving: kept in its composer, to send once it's there.
+                if !model.chats.send(text, to: group) {
+                    let key = BotGroups.tabKey(group)
+                    Drafts.shared[key].text = [Drafts.shared[key].text, text].filter { !$0.isEmpty }.joined(separator: "\n\n")
+                }
+            } else { Task { await model.workspace.send(text, to: session) } }
         }
         Notifier.shared.answerQuestion = { [model] session, form, field, answer in model.workspace.answerQuestion(form, in: session, field: field, with: answer) }
         Notifier.shared.toPhones = { [model] notice, machine in model.phoneLink.push(notice, from: machine) }

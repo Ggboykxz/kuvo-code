@@ -871,6 +871,7 @@ struct MainView: View {
                 } actions: {
                     Button("Edit Group Chat", systemImage: "slider.horizontal.3") { openGroupEditor(group: group) }
                         .help("Edit Group Chat: its name, bots and lead")
+                        .disabled(app.moves.isMoving(group.id))
                     Button("Close Tab", systemImage: "xmark") { closeTab(BotGroups.tabKey(id)) }
                         .help("Close Tab")
                 } content: {

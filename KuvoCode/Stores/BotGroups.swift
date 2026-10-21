@@ -552,7 +552,7 @@ final class BotGroups {
     /// to set it aside. Returns the message's words, for the composer.
     @discardableResult
     func undo(from messageID: String, in id: String) -> String? {
-        guard let index = list.firstIndex(where: { $0.id == id }), var messages = logs[id],
+        guard !Moves.isFrozen(id), let index = list.firstIndex(where: { $0.id == id }), var messages = logs[id],
               let cut = messages.firstIndex(where: { $0.id == messageID }) else { return nil }
         stop(id)
         let taken = messages[cut...]

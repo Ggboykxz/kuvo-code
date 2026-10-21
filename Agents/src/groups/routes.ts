@@ -42,6 +42,8 @@ export async function groupRoutes(runner: GroupRunner | undefined, store: GroupS
     }
     if (method === "PATCH") {
       const edits = await body()
+      // One moving: nothing changes but that you've looked at it (what changed would be left behind).
+      if (runner.get(id)?.status === "held" && Object.keys(edits ?? {}).some((key) => key !== "viewed")) return error(409, "That chat is moving.")
       if (edits?.meeting !== undefined && edits.meeting !== null && !isMeeting(edits.meeting)) return error(400, "That isn't a meeting.")
       if (edits?.members !== undefined && !(Array.isArray(edits.members) && edits.members.every((member: unknown) => typeof member === "string"))) return error(400, "Those aren't bots.")
       return (await runner.update(id, edits ?? {})) ? json({ data: runner.get(id) }) : error(404, "No such chat.")

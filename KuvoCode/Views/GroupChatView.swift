@@ -136,9 +136,8 @@ struct GroupChatView: View {
         let message = Quoting.message(quotes: draft.quotes, text: draft.text)
         // A quote you didn't answer goes only with words of yours.
         guard !Quoting.words(of: message).isEmpty else { return }
-        // Its machine away: it waits in the composer.
-        guard groups.unreachable(group.id) == nil else { return NSSound.beep() }
-        groups.send(message, to: group.id)
+        // Its machine away, or it's moving: it waits in the composer.
+        guard groups.unreachable(group.id) == nil, groups.send(message, to: group.id) else { return NSSound.beep() }
         Drafts.shared[draftKey].text = ""
         Drafts.shared[draftKey].quotes = []
         scroller.toEnd()

@@ -28,6 +28,10 @@ final class MachineGroups {
     @ObservationIgnored weak var app: AppModel?
     /// The settings each machine was last given, so they go again only when they change.
     @ObservationIgnored private var settingsGiven: [String: Data] = [:]
+    /// Chats being read whole now, and what their machine said of them meanwhile, so the read
+    /// (from before) doesn't take it away.
+    @ObservationIgnored private var arriving: [String: [GroupMessage]] = [:]
+    @ObservationIgnored private var updatedWhileListing: Set<String>?
     private let log = Logger(subsystem: "run.kuvo.code", category: "machine-groups")
 
     private static var file: URL { AppInfo.supportDirectory.appending(path: "machine-groups.json") }
@@ -77,6 +81,8 @@ final class MachineGroups {
         guard let api = api(machine) else { return }
         await giveSettings(to: machine)
         let listed: [Listed]
+        updatedWhileListing = []
+        defer { updatedWhileListing = nil }
         do {
             listed = try await api.machineGroups()
         } catch let error as ServerError where error.status == 404 {
@@ -89,14 +95,42 @@ final class MachineGroups {
         }
         running.insert(machine)
         let ids = Set(listed.map(\.group.id))
-        // Gone there (deleted elsewhere, or moved away): gone here too.
-        for gone in chats.filter({ $0.machine == machine && !ids.contains($0.group.id) }) { forget(gone.group.id) }
+        // Gone there (deleted elsewhere, or moved away): gone here too; not one moving there now.
+        for gone in chats.filter({ $0.machine == machine && !ids.contains($0.group.id) && app?.moves.isMoving($0.group.id) != true }) { forget(gone.group.id) }
         for chat in listed {
+            // What it said since the list was read is newer.
+            if updated.contains(chat.group.id) { continue }
+            // One held there for a move that isn't under way, which this Mac has (a move taken back
+            // that couldn't let it go there): let go now, its seats left.
+            if chat.status == "held", app?.groups.group(chat.group.id) != nil, app?.moves.isMoving(chat.group.id) != true, app?.moves.isPending(chat.group.id) != true {
+                _ = try? await api.machineGroupAction(chat.group.id, "release")
+                forget(chat.group.id)
+                continue
+            }
             apply(chat.group, held: chat.status == "held", state: chat.state, on: machine)
             // Its messages, unless the last one is the one here already.
             if logs[chat.group.id]?.last?.id != chat.last?.id || chat.last == nil { await reload(chat.group.id) }
         }
         app?.workspace.seats.formUnion(seatIDs)
+        app?.workspace.runsOnAgents(agentSeatIDs)
+    }
+
+    /// What was said of chats while their list was being read, by ID.
+    private var updated: Set<String> { updatedWhileListing ?? [] }
+
+    /// A machine you removed: its chats go from here (they stay there, for when you add it again).
+    func forget(machine: String) {
+        running.remove(machine)
+        settingsGiven[machine] = nil
+        for chat in chats where chat.machine == machine { forget(chat.group.id) }
+    }
+
+    /// A machine found to be another one's address: its chats are the other's.
+    func fold(_ address: String, into machine: String) {
+        guard chats.contains(where: { $0.machine == address }) else { return }
+        for index in chats.indices where chats[index].machine == address { chats[index].machine = machine }
+        running.remove(address)
+        save()
     }
 
     /// Its machine went away: as last seen, nothing talking.
@@ -119,11 +153,14 @@ final class MachineGroups {
             switch event.type {
             case "kuvo.group.updated":
                 let updated = try decoded(event, as: Updated.self)
+                updatedWhileListing?.insert(updated.id)
                 apply(updated.group, held: updated.status == "held", state: updated.state, on: machine)
                 app?.workspace.seats.formUnion(updated.group.seats.values)
+                if let agentSeats = updated.group.agentSeats { app?.workspace.runsOnAgents(agentSeats) }
             case "kuvo.group.message":
                 let changed = try decoded(event, as: Message.self)
                 guard has(changed.id) else { return }
+                arriving[changed.id]?.append(changed.message)
                 var messages = logs[changed.id] ?? []
                 if let index = messages.firstIndex(where: { $0.id == changed.message.id }) { messages[index] = changed.message } else { messages.append(changed.message) }
                 logs[changed.id] = messages
@@ -174,6 +211,15 @@ final class MachineGroups {
     }
 
     private func apply(_ group: BotGroup, held: Bool, state: State, on machine: String) {
+        var group = group
+        // Looked at here while its machine was away: that stands, and it's said there.
+        if let seen = chat(group.id)?.group.viewed, seen > (group.viewed ?? .distantPast) {
+            group.viewed = seen
+            if let api = api(machine) {
+                let viewed = ISO8601DateFormatter().string(from: seen)
+                Task { try? await api.editMachineGroup(group.id, ["viewed": .string(viewed)]) }
+            }
+        }
         let chat = Chat(machine: machine, group: group, held: held, speaking: state.speaking, discussing: state.discussing, paused: state.paused)
         if let index = chats.firstIndex(where: { $0.group.id == group.id }) {
             guard chats[index] != chat else { return }
@@ -187,9 +233,17 @@ final class MachineGroups {
 
     /// A chat's messages, read again whole.
     func reload(_ id: String) async {
-        guard let machine = machine(of: id), let api = api(machine), let read = try? await api.machineGroup(id) else { return }
+        guard let machine = machine(of: id), let api = api(machine) else { return }
+        arriving[id] = []
+        defer { arriving[id] = nil }
+        guard let read = try? await api.machineGroup(id) else { return }
         apply(read.group, held: read.status == "held", state: read.state, on: machine)
-        logs[id] = read.messages
+        // What came while it was read: kept (the read is from before it).
+        var messages = read.messages
+        for message in arriving[id] ?? [] {
+            if let index = messages.firstIndex(where: { $0.id == message.id }) { messages[index] = message } else { messages.append(message) }
+        }
+        logs[id] = messages
         saveLog(id)
     }
 
@@ -318,11 +372,18 @@ final class MachineGroups {
     }
 
     /// One brought there that didn't get to start (a move taken back): gone there, seats and all
-    /// left as they are (the chat goes on where it was).
-    func takeBack(_ id: String, on machine: String) async {
-        guard let api = api(machine) else { return }
-        _ = try? await api.machineGroupAction(id, "release")
+    /// left as they are (the chat goes on where it was). Whether it is (not if it wasn't there).
+    func takeBack(_ id: String, on machine: String) async -> Bool {
+        guard let api = api(machine) else { return false }
+        do {
+            _ = try await api.machineGroupAction(id, "release")
+        } catch let error as ServerError where error.status == 404 {
+            // Never got there.
+        } catch {
+            return false
+        }
         if self.machine(of: id) == machine { forget(id) }
+        return true
     }
 
     enum Failure: LocalizedError {

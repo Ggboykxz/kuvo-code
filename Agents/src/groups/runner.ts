@@ -252,8 +252,9 @@ export class GroupRunner {
     this.live.delete(id)
     this.context.store.trash(id, this.context.trash)
     emit("kuvo.group.deleted", { id })
-    // Its bots no longer remember it from here (the computer it went to does).
-    for (const bot of kept.group.members) void this.remember(bot, { forgetting: id })
+    // Its bots no longer remember it from here (the computer it went to does, in the same file,
+    // which stays).
+    for (const bot of kept.group.members) void this.remember(bot)
     return true
   }
 

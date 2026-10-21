@@ -192,7 +192,7 @@ import Testing
 
         // And back: held there, here, let go there (its seats stay, as its bots do).
         try await app.moves.move(group: chat.id, to: nil)
-        #expect(held.actions.suffix(2) == ["POST \(chat.id)/hold", "POST \(chat.id)/release"])
+        #expect(held.actions.filter { $0.hasPrefix("POST") }.suffix(2) == ["POST \(chat.id)/hold", "POST \(chat.id)/release"])
         #expect(!held.has(chat.id))
         #expect(app.groups.group(chat.id) != nil && app.chats.machine(of: chat.id) == nil)
         #expect(app.groups.messages(in: chat.id).map(\.text) == ["Morning."])
@@ -229,6 +229,34 @@ import Testing
         #expect(!held.has(chat.id))
         #expect(app.groups.group(chat.id) != nil)
         #expect(UserDefaults.standard.data(forKey: "movesUnderWay") == nil)
+    }
+
+    /// A move taken back that couldn't let go of its copy there: this Mac's is the chat (listed
+    /// once, read and written here), and the copy goes once the machine's there again.
+    @Test func aCopyLeftOnAMachineIsntTheChatAndGoes() async throws {
+        defer { Self.clean(); mac.stop() }
+        try saveBots([("bot_pal", "Pal", "box"), ("bot_lb", "Lokum Builder", "box")])
+        let app = app()
+        let chat = app.groups.create(name: "k", members: ["bot_pal", "bot_lb"])
+        app.groups.adopt(chat, messages: [try JSONDecoder.isoDecoder.decode(GroupMessage.self, from: JSONSerialization.data(withJSONObject: Self.said))])
+        held.add(Self.group(chat.id, members: ["bot_pal", "bot_lb"]), status: "held")
+        await app.machineGroups.connected("box")
+        #expect(app.chats.list.filter { $0.id == chat.id }.count == 1)
+        #expect(app.chats.machine(of: chat.id) == nil && app.chats.messages(in: chat.id).map(\.text) == ["Morning."])
+        #expect(held.actions.contains("POST \(chat.id)/release") && !held.has(chat.id))
+        #expect(!app.machineGroups.has(chat.id))
+    }
+
+    @Test func aRemovedMachinesChatsGoFromHere() async throws {
+        defer { Self.clean(); mac.stop() }
+        try saveBots([("bot_pal", "Pal", "box"), ("bot_lb", "Lokum Builder", "box")])
+        held.add(Self.group("grp_box0000003", members: ["bot_pal", "bot_lb"]), messages: [Self.said])
+        let app = app()
+        await app.machineGroups.connected("box")
+        #expect(app.chats.group("grp_box0000003") != nil)
+        app.machineGroups.forget(machine: "box")
+        #expect(app.chats.group("grp_box0000003") == nil)
+        #expect(MachineGroups().chats.isEmpty, "nor kept for later")
     }
 
     @Test func aDeletedBotLeavesAMachinesChats() async throws {

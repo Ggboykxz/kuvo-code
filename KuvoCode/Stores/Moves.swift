@@ -148,6 +148,13 @@ final class Moves {
     }
 
     func isMoving(_ id: String) -> Bool { underWay[id] != nil }
+    /// A move of it cut short, still to be finished or taken back.
+    func isPending(_ id: String) -> Bool { records.contains { $0.id == id } }
+
+    /// A machine's name, as you see it.
+    private func placeName(_ machine: String?) -> String {
+        machine.map { app?.machines.engine($0)?.machine.name ?? $0 } ?? AppInfo.name
+    }
 
     /// Where something can move: this Mac, and each machine you've added, but where it is.
     func destinations(from machine: String?) -> [String?] {
@@ -166,6 +173,8 @@ final class Moves {
         // As it is now: an earlier move just finished may have taken it there already.
         guard let bot = app.bots.bot(id), bot.machine != machine, underWay[id] == nil else { return }
         if app.workspace.isWorking(bot.sessionID) || app.chats.speaking.values.contains(bot.id) { throw Failure.working(bot.name) }
+        // One in a group chat moving now: once that's where it's going.
+        if let moving = app.chats.list.first(where: { $0.members.contains(bot.id) && underWay[$0.id] != nil }) { throw Failure.working("“\(moving.name)”") }
         // One in a group chat that lives with its bots on a machine stays with it.
         if let chat = app.machineGroups.chats.first(where: { $0.group.members.contains(bot.id) }) {
             throw Failure.inMachineGroup(name: bot.name, chat: chat.group.name, machine: app.machines.engine(chat.machine)?.machine.name ?? chat.machine)
@@ -298,7 +307,8 @@ final class Moves {
         guard let app, underWay[id] == nil, let asked = app.chats.group(id) else { return }
         let name = "“\(asked.name)”"
         try await finishEarlier(id, name: name)
-        let from = app.machineGroups.machine(of: id)
+        // Where it lives: this Mac while it has it (a copy left on a machine isn't the one).
+        let from = app.groups.group(id) == nil ? app.machineGroups.machine(of: id) : nil
         guard from != machine, let group = app.chats.group(id) else { return }
         if app.chats.discussing.contains(id) { throw Failure.working(name) }
         if app.chats.messages(in: id).contains(where: { $0.tasks?.contains { $0.state == .working || $0.state == .waiting } == true }) {
@@ -308,10 +318,10 @@ final class Moves {
             // Its bots all live there, and stay there while it moves.
             guard group.members.allSatisfy({ app.bots.bot($0)?.machine == machine }) else { throw Failure.botsElsewhere(chat: name) }
             if let moving = group.members.first(where: { underWay[$0] != nil }), let bot = app.bots.bot(moving) { throw Failure.working(bot.name) }
-            guard app.machineGroups.reachable(machine) else { throw Failure.notConnected(machine) }
-            guard app.machineGroups.running.contains(machine) else { throw Failure.notYet(machine: machine) }
+            guard app.machineGroups.reachable(machine) else { throw Failure.notConnected(placeName(machine)) }
+            guard app.machineGroups.running.contains(machine) else { throw Failure.notYet(machine: placeName(machine)) }
         } else if let from, !app.machineGroups.reachable(from) {
-            throw Failure.notConnected(from)
+            throw Failure.notConnected(placeName(from))
         }
         var record = Record(kind: .group, id: id, sessions: [], from: from, to: machine, original: nil, copy: nil, wasPaused: true, stage: .copying)
         underWay[id] = .some(machine)
@@ -344,8 +354,7 @@ final class Moves {
     private func takeBackGroup(_ record: Record) async -> Bool {
         guard let app else { return false }
         if let to = record.to {
-            guard app.machineGroups.reachable(to) else { return false }
-            await app.machineGroups.takeBack(record.id, on: to)
+            guard await app.machineGroups.takeBack(record.id, on: to) else { return false }
         } else if let from = record.from {
             guard app.machineGroups.reachable(from) else { return false }
             await app.groups.release(record.id, toTrash: false)
