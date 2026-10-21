@@ -14,6 +14,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Modes, permission rules and other settings you change reach your connected machines too, not only the next time they connect: a machine's engine starts over with them once nothing is running there. A mode you added showed up only on this Mac.
 - Custom Auto's lists are each place's own: this Mac and each machine have their own, made from the models each has, picked at the top of Settings › Custom Auto. A machine's lists were a copy of this Mac's, with models it might not have, and changing them there changed this Mac's.
 - Undoing a message that waited in the queue, then sending, keeps the agent's reply from before it for good; in 0.6.3 it still went a moment later, as the engine confirmed the undo.
+- Searching the sidebar for words like "read" or "asked" no longer lists nearly every session: Kuvo Code's own wording for the agent's steps ("Read …", "Asked you a question") isn't searched, only what a step worked on, like its file or command.
+- Removing a machine closes the tabs of its bots, which stayed open waiting for it.
 
 ## 0.6.3
 
