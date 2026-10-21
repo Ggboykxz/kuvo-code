@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- An MCP server's command keeps a backslash inside double quotes, as a shell does ("a\.b" stays a\.b).
 - Signing in on a machine that can't be reached says so, rather than that something on your Mac is using the sign-in's port.
 - A machine whose engine another Mac of yours started is used with that Mac's accounts, as it says; this Mac's keys no longer go into it (where they'd stay after you removed the machine).
 - Removing a connected machine signs its coding agents out there too, as it said it would; their sign-ins stayed when the machine was connected.

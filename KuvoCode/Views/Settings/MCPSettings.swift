@@ -449,9 +449,16 @@ private struct ServerEditor: View {
         command?.array?.compactMap(\.string).map(quoted).joined(separator: " ") ?? ""
     }
 
+    static func words(_ line: String) -> [String] { CommandWords.split(line) }
+    static func quoted(_ word: String) -> String { CommandWords.quoted(word) }
+}
+
+/// A command line, as the MCP server editor reads and writes it.
+nonisolated enum CommandWords {
     /// A command line's words, as a shell splits them: quotes keep spaces in one word, and a
-    /// backslash takes the next character as it is (except inside single quotes).
-    static func words(_ line: String) -> [String] {
+    /// backslash takes the next character as it is (not inside single quotes; inside double ones,
+    /// only before ", \, $ or `, as in "a\.b", a pattern pasted from a README).
+    static func split(_ line: String) -> [String] {
         var words: [String] = []
         var current = ""
         var quote: Character?
@@ -459,6 +466,7 @@ private struct ServerEditor: View {
         var escaped = false
         for character in line {
             if escaped {
+                if quote == "\"", !"\"\\$`".contains(character) { current.append("\\") }
                 current.append(character)
                 escaped = false
             } else if character == "\\", quote != "'" {
