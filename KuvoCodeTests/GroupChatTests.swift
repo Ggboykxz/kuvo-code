@@ -223,4 +223,23 @@ import Testing
         #expect(ada.heard.contains("It's a small notes app."))
         #expect(app.groups.group(group.id)?.retracted == nil)
     }
+
+    /// A bot deleted (F8) leaves its chats: its seat there is deleted on the engine, and the chat
+    /// goes on with the others, who no longer count it in.
+    @Test func aDeletedBotLeavesItsChats() async throws {
+        defer { done() }
+        let (app, group, _) = try await start(lines: ["Ada": ["Hello.", "PASS"], "Ben": ["Hi.", "PASS"]])
+        engine.on("DELETE", "/api/session/*", json: [:])
+        app.groups.send("Say hello.", to: group.id)
+        try await talkedThrough(app, group)
+        let seat = try #require(app.groups.group(group.id)?.seats["bot_ben"])
+        let ben = try #require(app.bots.bot("bot_ben"))
+
+        try await app.bots.delete(ben)
+        #expect(engine.requests("DELETE", "/api/session/\(seat)").count == 1, "its seat goes")
+        let after = try #require(app.groups.group(group.id))
+        #expect(after.members == ["bot_ada"])
+        #expect(after.seats["bot_ben"] == nil && after.heard["bot_ben"] == nil)
+        #expect(!app.workspace.seats.contains(seat))
+    }
 }

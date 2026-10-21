@@ -34,7 +34,7 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | F2, F6 A bot's job, told or edited | BotsTests | |
 | F3, F4, L15–L19, L26 Wake-ups | WakeUpsTests, StepSummariesTests | |
 | F7 Export and import a bot | AgentMessagesTests | |
-| F8 Delete a bot | BotDeletionTests | its group chats' seats (needs a group chat stub) |
+| F8 Delete a bot | BotDeletionTests, GroupChatTests | |
 | F10, L39, L40 Agents writing to each other | AgentMessagesTests, AgentReferencesTests | |
 | G1–G3 Group chats | BotsTests, AgentMessagesTests, GroupChatTests | a meeting on a schedule (G4) |
 | H1, H2 MCP servers | MCPCommandTests, ChromeDevToolsUpgradeTests, IntegrationsTests | |
