@@ -26,6 +26,11 @@ class Engine {
   /** A seat that asks permission before it answers. */
   asking = new Set<string>()
   private permissions = new Map<string, { id: string }[]>()
+  /** Bots whose seats take a while (at work meanwhile), and ones whose prompts stay queued. */
+  slow = new Map<string, number>()
+  stuck = new Set<string>()
+  private busy = new Set<string>()
+  private queued = new Map<string, { id: string }[]>()
 
   constructor() {
     this.server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (request) => this.answer(request) })
@@ -58,10 +63,14 @@ class Engine {
       this.seats.set(id, String(body.title).split(" ")[0])
       return ok({ id, title: body.title, model: body.model, location: body.location })
     }
-    if (url.pathname === "/api/session/active") return ok({})
+    if (url.pathname === "/api/session/active") return ok(Object.fromEntries([...this.busy].map((id) => [id, { type: "busy" }])))
     const session = parts[2]
     const what = parts[3]
     if (request.method === "GET" && !what) return ok({ id: session, model: { id: "m", providerID: "p" } })
+    if (what === "prompt" && this.stuck.has(this.seats.get(session) ?? "")) {
+      this.queued.set(session, [...(this.queued.get(session) ?? []), { id: body.id }])
+      return ok()
+    }
     if (what === "prompt") {
       const bot = this.seats.get(session)
       const owner = session.startsWith("ses_own_") ? session.slice("ses_own_".length) : undefined
@@ -73,12 +82,32 @@ class Engine {
       if (line) {
         conversation.push({ type: "assistant", id: body.id + "_a", time: { created: at + 1, completed: at + 2 }, agent: "build", model: { id: "m", providerID: "p" }, content: [{ type: "text", text: line }] })
       }
-      conversation.push({ type: "idle", id: body.id + "_i", time: { created: at + 3 }, outcome: "succeeded" })
-      this.conversations.set(session, conversation)
+      const finish = () => {
+        conversation.push({ type: "idle", id: body.id + "_i", time: { created: at + 3 }, outcome: "succeeded" })
+        this.conversations.set(session, conversation)
+        this.busy.delete(session)
+      }
+      const delay = bot ? this.slow.get(bot) : undefined
+      if (delay) {
+        // At work a while, its answer not there yet.
+        const said = conversation.pop()
+        this.conversations.set(session, conversation)
+        this.busy.add(session)
+        setTimeout(() => {
+          if (said?.type === "assistant") conversation.push(said)
+          finish()
+        }, delay)
+      } else {
+        finish()
+      }
       return ok()
     }
     if (what === "message") return ok([...(this.conversations.get(session) ?? [])].reverse())
-    if (what === "inbox") return ok([])
+    if (what === "inbox" && request.method === "GET") return ok(this.queued.get(session) ?? [])
+    if (what === "inbox" && request.method === "DELETE") {
+      this.queued.set(session, (this.queued.get(session) ?? []).filter((item) => item.id !== parts[4]))
+      return ok()
+    }
     if (what === "permission" && request.method === "GET") return ok(this.permissions.get(session) ?? [])
     if (what === "permission") {
       this.permissions.delete(session)
@@ -205,6 +234,42 @@ describe("a group chat on a machine", () => {
     expect(groups.get("grp_team000001")!.messages).toEqual([])
     expect(groups.get("grp_team000001")!.group.retracted?.bot_ada).toBe("Hello")
     expect(events.some((event) => event.type === "kuvo.group.reset")).toBe(true)
+  })
+
+  test("stopped while a bot talks: what it says then doesn't reach the chat", async () => {
+    const { groups } = runner()
+    engine.lines = { Ada: ["A long answer."], Ben: [] }
+    engine.slow.set("Ada", 400)
+    groups.put(group(), [], "active", false)
+    groups.send("grp_team000001", "Go")
+    await until(() => groups.talk("grp_team000001").speaking === "bot_ada" && engine.prompts().length > 0)
+    groups.stop("grp_team000001")
+    await Bun.sleep(700)
+    expect(groups.get("grp_team000001")!.messages.map((message) => message.author ?? "you")).toEqual(["you"])
+    expect(engine.requests.some((request) => request.path.endsWith("/interrupt"))).toBe(true)
+  })
+
+  test("a bot whose message stays queued (held after a stop) is woken, then passes", async () => {
+    const { groups } = runner()
+    engine.lines = { Ada: [], Ben: ["Here."] }
+    engine.stuck.add("Ada")
+    groups.put(group(), [], "active", false)
+    groups.send("grp_team000001", "Anyone?")
+    await until(() => !groups.talk("grp_team000001").discussing && groups.get("grp_team000001")!.messages.length >= 2, 8000)
+    expect(engine.requests.some((request) => request.method === "PATCH" && request.path.includes("/inbox/") && request.body.delivery === "steer")).toBe(true)
+    expect(engine.requests.some((request) => request.method === "DELETE" && request.path.includes("/inbox/"))).toBe(true)
+    expect(groups.get("grp_team000001")!.messages.at(-1)?.author).toBe("bot_ben")
+  }, 15_000)
+
+  test("a meeting in a time zone this machine doesn't know comes once, on its own clock", () => {
+    const { groups, store } = runner()
+    store.writeSettings({ personalities: {}, identityNote: "", askFirst: false, denies: [], timeZone: "GMT+0300" })
+    groups.put(group({ next: stamp(new Date(Date.now() - 1000)), every: "1d", topic: "Standup" }), [], "active", false)
+    groups.meetDue()
+    groups.meetDue()
+    groups.stop("grp_team000001")
+    expect(groups.get("grp_team000001")!.messages.filter((message) => message.kind === "meeting").length).toBe(1)
+    expect(Date.parse(groups.get("grp_team000001")!.group.meeting!.next)).toBeGreaterThan(Date.now())
   })
 
   test("a seat that asks permission is turned down: nobody's there to answer", async () => {

@@ -94,6 +94,15 @@ export class SeatAPI {
     await this.requester.request("POST", at(id) + "/agent", { agent })
   }
 
+  /** Waiting input to the next step (`steer`, which also wakes an idle session) or after the run. */
+  async setDelivery(id: string, item: string, delivery: "steer" | "queue") {
+    await this.requester.request("PATCH", `${at(id)}/inbox/${encodeURIComponent(item)}`, { delivery })
+  }
+
+  async cancelInbox(id: string, item: string) {
+    await this.requester.request("DELETE", `${at(id)}/inbox/${encodeURIComponent(item)}`)
+  }
+
   async inbox(id: string): Promise<{ id: string }[]> {
     return (await this.requester.request("GET", at(id) + "/inbox"))?.data ?? []
   }

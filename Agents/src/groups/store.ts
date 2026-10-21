@@ -38,6 +38,50 @@ export interface Settings {
   locale?: string
 }
 
+const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string")
+const stringMap = (value: unknown): value is Record<string, string> =>
+  value !== null && typeof value === "object" && !Array.isArray(value) && Object.values(value).every((item) => typeof item === "string")
+const isDate = (value: unknown): value is string => typeof value === "string" && !Number.isNaN(Date.parse(value))
+
+/** A chat as the Mac writes one, `id` its own; what the runner reads it by checked (a move brings it whole). */
+export function isGroup(value: any, id: string): value is Group {
+  if (!value || value.id !== id || typeof value.name !== "string" || !strings(value.members) || !isDate(value.created)) return false
+  if (!stringMap(value.seats) || !stringMap(value.heard)) return false
+  if (value.purpose !== undefined && value.purpose !== null && typeof value.purpose !== "string") return false
+  if (value.agentSeats !== undefined && !strings(value.agentSeats)) return false
+  if (value.retracted !== undefined && value.retracted !== null && !stringMap(value.retracted)) return false
+  if (value.viewed !== undefined && !isDate(value.viewed)) return false
+  return value.meeting === undefined || value.meeting === null || isMeeting(value.meeting)
+}
+
+export function isMeeting(value: any): boolean {
+  if (!value || !isDate(value.next) || typeof value.topic !== "string") return false
+  if (value.every !== undefined && value.every !== null && typeof value.every !== "string") return false
+  if (value.at !== undefined && value.at !== null && typeof value.at !== "number") return false
+  return value.weekday === undefined || value.weekday === null || typeof value.weekday === "number"
+}
+
+const kinds = new Set(["message", "wrapUp", "note", "meeting"])
+const states = new Set(["proposed", "waiting", "working", "done", "failed"])
+
+export function isMessages(value: unknown): value is GroupMessage[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (message: any) =>
+        message &&
+        typeof message.id === "string" &&
+        typeof message.text === "string" &&
+        isDate(message.time) &&
+        kinds.has(message.kind) &&
+        (message.author === undefined || message.author === null || typeof message.author === "string") &&
+        (message.tasks === undefined ||
+          (Array.isArray(message.tasks) &&
+            message.tasks.every((task: any) => task && typeof task.id === "string" && typeof task.bot === "string" && typeof task.task === "string" && states.has(task.state)))),
+    )
+  )
+}
+
 /** One of the machine's bots, as its folder has it. */
 export interface MachineBot extends SeatBot {
   sessionID: string
@@ -99,9 +143,11 @@ export class GroupStore {
 
   read(id: string): Kept | undefined {
     const record = read(join(this.folder(id), "group.json"))
-    if (!record?.group || typeof record.kuvo !== "number" || record.kuvo > version) return undefined
-    const messages = read(join(this.folder(id), "messages.json"))
-    return { group: record.group, status: record.status === "held" ? "held" : "active", talking: record.talking === true, messages: Array.isArray(messages) ? messages : [] }
+    if (!record || typeof record.kuvo !== "number" || record.kuvo > version || !isGroup(record.group, id)) return undefined
+    const messages = read(join(this.folder(id), "messages.json")) ?? []
+    // One whose messages won't read is left as it is, for a newer version or a person to look at.
+    if (!isMessages(messages)) return undefined
+    return { group: record.group, status: record.status === "held" ? "held" : "active", talking: record.talking === true, messages }
   }
 
   saveGroup(kept: Kept) {

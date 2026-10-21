@@ -10635,9 +10635,9 @@ var boundary = `(?<=${word})(?!${word})|(?<!${word})(?=${word})`;
 function lines2(text) {
   return text.split(/\r\n|[\n\r\v\f\u0085\u2028\u2029]/).filter((line) => line.length > 0);
 }
-var escape = (text) => text.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
+var escape = (text) => text.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
 var trimSpaces = (text) => text.replace(/^[\p{Zs}\t]+|[\p{Zs}\t]+$/gu, "");
-var trim = (text) => text.replace(/^[\s\p{Zs}\u0085]+|[\s\p{Zs}\u0085]+$/gu, "");
+var trim = (text) => text.replace(/^[\p{Z}\t\n\v\f\r\u0085]+|[\p{Z}\t\n\v\f\r\u0085]+$/gu, "");
 function isPass(text) {
   text = trim(text);
   if (length(text) >= 80)
@@ -10711,8 +10711,9 @@ function mentions(text, among) {
 function fold(text) {
   let out = "";
   for (const { segment } of new Intl.Segmenter().segment(text)) {
-    const base = segment.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
-    out += base.length > 0 ? base[0] + "\x00".repeat(segment.length - 1) : segment;
+    const base = [...segment.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase()];
+    const first = base[0] ?? segment;
+    out += first.length <= segment.length ? first + "\x00".repeat(segment.length - first.length) : segment;
   }
   return out;
 }
@@ -10816,7 +10817,7 @@ function parts(text, names) {
   let go = false;
   const byLength = [...names].sort((a, b) => length(b) - length(a));
   for (const raw of lines2(text)) {
-    const line = trimSpaces(raw.replaceAll("**", "").replace(/^[\s>*\u2022\u00B7-]*(\d+[.)]\s*)?/u, ""));
+    const line = trimSpaces(raw.replaceAll("**", "").replace(/^[\s>*\u2022\u00B7-]*(\p{Nd}+[.)]\s*)?/u, ""));
     if (new RegExp(`^${nonWord}*GO${nonWord}*$`, "u").test(line)) {
       go = true;
       continue;
@@ -10826,7 +10827,7 @@ function parts(text, names) {
       continue;
     }
     for (const name of byLength) {
-      const match = new RegExp(`^@?${escape(name)}\\s*(?:\\(\\s*(?:after|once)\\s+([^)]*)\\))?\\s*[:\u2014\u2013-]\\s*`, "iu").exec(line);
+      const match = new RegExp(`^@?${escape(name)}\\s*(?:\\(\\s*(?:after|once)\\s+([^)]*)\\))?\\s*[:\u2014\u2013\\-]\\s*`, "iu").exec(line);
       if (!match)
         continue;
       const task = trimSpaces(line.slice(match[0].length));
@@ -11087,6 +11088,38 @@ function jobInMemory(text) {
 
 // Agents/src/groups/store.ts
 var version2 = 1;
+var strings = (value) => Array.isArray(value) && value.every((item) => typeof item === "string");
+var stringMap = (value) => value !== null && typeof value === "object" && !Array.isArray(value) && Object.values(value).every((item) => typeof item === "string");
+var isDate = (value) => typeof value === "string" && !Number.isNaN(Date.parse(value));
+function isGroup(value, id) {
+  if (!value || value.id !== id || typeof value.name !== "string" || !strings(value.members) || !isDate(value.created))
+    return false;
+  if (!stringMap(value.seats) || !stringMap(value.heard))
+    return false;
+  if (value.purpose !== undefined && value.purpose !== null && typeof value.purpose !== "string")
+    return false;
+  if (value.agentSeats !== undefined && !strings(value.agentSeats))
+    return false;
+  if (value.retracted !== undefined && value.retracted !== null && !stringMap(value.retracted))
+    return false;
+  if (value.viewed !== undefined && !isDate(value.viewed))
+    return false;
+  return value.meeting === undefined || value.meeting === null || isMeeting(value.meeting);
+}
+function isMeeting(value) {
+  if (!value || !isDate(value.next) || typeof value.topic !== "string")
+    return false;
+  if (value.every !== undefined && value.every !== null && typeof value.every !== "string")
+    return false;
+  if (value.at !== undefined && value.at !== null && typeof value.at !== "number")
+    return false;
+  return value.weekday === undefined || value.weekday === null || typeof value.weekday === "number";
+}
+var kinds2 = new Set(["message", "wrapUp", "note", "meeting"]);
+var states = new Set(["proposed", "waiting", "working", "done", "failed"]);
+function isMessages(value) {
+  return Array.isArray(value) && value.every((message) => message && typeof message.id === "string" && typeof message.text === "string" && isDate(message.time) && kinds2.has(message.kind) && (message.author === undefined || message.author === null || typeof message.author === "string") && (message.tasks === undefined || Array.isArray(message.tasks) && message.tasks.every((task) => task && typeof task.id === "string" && typeof task.bot === "string" && typeof task.task === "string" && states.has(task.state))));
+}
 var read = (file) => {
   try {
     return JSON.parse(readFileSync16(file, "utf8"));
@@ -11134,10 +11167,12 @@ class GroupStore {
   }
   read(id) {
     const record = read(join17(this.folder(id), "group.json"));
-    if (!record?.group || typeof record.kuvo !== "number" || record.kuvo > version2)
+    if (!record || typeof record.kuvo !== "number" || record.kuvo > version2 || !isGroup(record.group, id))
       return;
-    const messages = read(join17(this.folder(id), "messages.json"));
-    return { group: record.group, status: record.status === "held" ? "held" : "active", talking: record.talking === true, messages: Array.isArray(messages) ? messages : [] };
+    const messages = read(join17(this.folder(id), "messages.json")) ?? [];
+    if (!isMessages(messages))
+      return;
+    return { group: record.group, status: record.status === "held" ? "held" : "active", talking: record.talking === true, messages };
   }
   saveGroup(kept2) {
     mkdirSync13(this.folder(kept2.group.id), { recursive: true, mode: 448 });
@@ -11215,8 +11250,6 @@ class GroupStore {
 // Agents/src/groups/routes.ts
 var json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } });
 var error = (status, message) => json({ message }, status);
-var isGroup = (value, id) => value && value.id === id && typeof value.name === "string" && Array.isArray(value.members) && value.members.every((member) => typeof member === "string") && typeof value.created === "string" && value.seats && typeof value.seats === "object" && value.heard && typeof value.heard === "object";
-var isMessages = (value) => Array.isArray(value) && value.every((message) => message && typeof message.id === "string" && typeof message.text === "string" && typeof message.time === "string" && typeof message.kind === "string");
 async function groupRoutes(runner, store, method, parts2, body) {
   if (!runner || !store)
     return error(404, "Group chats run on the Mac here.");
@@ -11253,8 +11286,14 @@ async function groupRoutes(runner, store, method, parts2, body) {
         return error(409, "That chat is here already.");
       return json({ data: runner.get(id) });
     }
-    if (method === "PATCH")
-      return await runner.update(id, await body()) ? json({ data: runner.get(id) }) : error(404, "No such chat.");
+    if (method === "PATCH") {
+      const edits2 = await body();
+      if (edits2?.meeting !== undefined && edits2.meeting !== null && !isMeeting(edits2.meeting))
+        return error(400, "That isn't a meeting.");
+      if (edits2?.members !== undefined && !(Array.isArray(edits2.members) && edits2.members.every((member) => typeof member === "string")))
+        return error(400, "Those aren't bots.");
+      return await runner.update(id, edits2 ?? {}) ? json({ data: runner.get(id) }) : error(404, "No such chat.");
+    }
     if (method === "DELETE")
       return await runner.delete(id) ? json({}) : error(404, "No such chat.");
     return error(405, "Not allowed");
@@ -11918,6 +11957,12 @@ class SeatAPI {
   async selectAgent(id, agent) {
     await this.requester.request("POST", at(id) + "/agent", { agent });
   }
+  async setDelivery(id, item, delivery) {
+    await this.requester.request("PATCH", `${at(id)}/inbox/${encodeURIComponent(item)}`, { delivery });
+  }
+  async cancelInbox(id, item) {
+    await this.requester.request("DELETE", `${at(id)}/inbox/${encodeURIComponent(item)}`);
+  }
   async inbox(id) {
     return (await this.requester.request("GET", at(id) + "/inbox"))?.data ?? [];
   }
@@ -12084,7 +12129,11 @@ class GroupRunner {
         this.state(id).paused = true;
         context.store.saveGroup(kept2);
       }
-      this.keepAwake(id);
+      try {
+        this.keepAwake(id);
+      } catch (error3) {
+        console.error(`${id}:`, reason2(error3));
+      }
     }
   }
   start() {
@@ -12450,42 +12499,53 @@ class GroupRunner {
     const live = this.state(id);
     live.speaking = botID;
     this.told(id);
+    const going = () => {
+      if (signal.aborted)
+        throw new Cancelled;
+    };
     try {
       const kept2 = this.chat(id);
       if (!kept2)
         return "absent";
       const first = await this.seatAPI(bot, kept2.group, kept2.group.seats[botID]);
+      going();
       if (!first) {
         this.note(`${bot.name} couldn\u2019t answer: the coding agents aren\u2019t running.`, id);
         return "absent";
       }
       const seat = await this.seat(bot, id, first);
+      going();
       const current = this.chat(id);
       if (!current)
         return "absent";
       const api = await this.seatAPI(bot, current.group, seat);
+      going();
       if (!api) {
         this.note(`${bot.name} couldn\u2019t answer: the coding agents aren\u2019t running.`, id);
         return "absent";
       }
-      const all = current.messages;
+      const all = [...current.messages];
       const heard = current.group.heard[botID];
       const start = heard ? all.findIndex((message) => message.id === heard) + 1 : 0;
       const unheard = all.slice(start).filter((message) => message.author !== botID && message.kind !== "note");
       const promptID = newID("msg");
+      const retracted = current.group.retracted?.[botID];
       await api.prompt(seat, promptID, turnText(botID, current.group, unheard, wrapUp, (author) => this.name(author), named2(unheard)), "queue");
+      going();
       const last2 = all.at(-1);
       if (last2)
         this.setHeard(last2.id, botID, id);
-      if (current.group.retracted?.[botID] !== undefined) {
-        delete current.group.retracted[botID];
-        if (Object.keys(current.group.retracted).length === 0)
-          current.group.retracted = undefined;
+      const now = this.chat(id)?.group;
+      if (now && retracted !== undefined && now.retracted?.[botID] === retracted) {
+        delete now.retracted[botID];
+        if (Object.keys(now.retracted).length === 0)
+          now.retracted = undefined;
         this.changed(id);
       }
       const sent = Date.now();
       await this.waitForRun(seat, promptID, sent, api, signal);
       const reply = await this.reply(seat, promptID, sent, api);
+      going();
       if (!reply.text) {
         if (reply.error) {
           this.note(`${bot.name} couldn\u2019t answer: ${reply.error}`, id);
@@ -12527,9 +12587,12 @@ class GroupRunner {
     } catch {}
   }
   async waitForRun(seat, promptID, sent, api, signal) {
+    const pace = this.context.pace ?? 1;
     let gone = 0;
+    let idleSince;
+    let woken = false;
     for (;; ) {
-      await sleep(600 * (this.context.pace ?? 1), signal);
+      await sleep(600 * pace, signal);
       await this.decline(seat, api);
       const active = await api.active().catch(() => {
         return;
@@ -12539,11 +12602,30 @@ class GroupRunner {
           return;
         });
         if (inbox && !inbox.some((item) => item.id === promptID)) {
-          const { data } = await api.messages(seat, 60).catch(() => ({ data: [] }));
-          const at2 = data.findIndex((message) => message?.id === promptID);
-          if (at2 >= 0 ? data.slice(at2 + 1).some((message) => message?.type === "idle") : ++gone >= 3)
+          const read2 = await api.messages(seat, 60).catch(() => {
             return;
+          });
+          const at2 = read2 ? read2.data.findIndex((message) => message?.id === promptID) : -1;
+          if (at2 >= 0 ? read2.data.slice(at2 + 1).some((message) => message?.type === "idle") : read2 ? ++gone >= 3 : false)
+            return;
+          if (at2 >= 0)
+            gone = 0;
+          idleSince = undefined;
+        } else if (inbox) {
+          idleSince ??= Date.now();
+          if (Date.now() - idleSince > 8000 * pace) {
+            if (!woken) {
+              woken = true;
+              idleSince = Date.now();
+              await api.setDelivery(seat, promptID, "steer").catch(() => {});
+            } else {
+              await api.cancelInbox(seat, promptID).catch(() => {});
+              return;
+            }
+          }
         }
+      } else {
+        idleSince = undefined;
       }
       if (Date.now() - sent > 600000) {
         await api.interrupt(seat).catch(() => {});
@@ -12869,7 +12951,7 @@ class GroupRunner {
     this.meetings.unref?.();
   }
   meetDue(now = Date.now()) {
-    const zone2 = this.context.store.settings()?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const zone2 = usableZone(this.context.store.settings()?.timeZone);
     for (const [id, kept2] of this.chats) {
       const meeting = kept2.group.meeting;
       if (kept2.status !== "active" || !meeting)
@@ -12877,26 +12959,31 @@ class GroupRunner {
       const due = Date.parse(meeting.next);
       if (!(due <= now))
         continue;
-      const missed = due < now - 300000;
-      this.meet(id, meeting.topic);
-      const every = meeting.every ? parseRepeat(meeting.every) : undefined;
-      if (every) {
-        const updated = { ...meeting };
-        if (keepsTimeOfDay(every) && updated.at === undefined)
-          updated.at = minutesOf(due, zone2);
-        if (keepsWeekday(every) && updated.weekday === undefined)
-          updated.weekday = weekdayOf(due, zone2);
-        const at2 = keepsTimeOfDay(every) ? updated.at : undefined;
-        const weekday = keepsWeekday(every) ? updated.weekday : undefined;
-        let next2 = next(every, due, now, zone2, at2, weekday);
-        if (missed && keepsTimeOfDay(every) && next2 - now < 3 * 3600000)
-          next2 = next(every, next2, next2, zone2, at2, weekday);
-        updated.next = stamp2(new Date(next2));
-        kept2.group.meeting = updated;
-      } else {
+      try {
+        const missed = due < now - 300000;
+        const every = typeof meeting.every === "string" ? parseRepeat(meeting.every) : undefined;
+        if (every) {
+          const updated = { ...meeting };
+          if (keepsTimeOfDay(every) && typeof updated.at !== "number")
+            updated.at = minutesOf(due, zone2);
+          if (keepsWeekday(every) && typeof updated.weekday !== "number")
+            updated.weekday = weekdayOf(due, zone2);
+          const at2 = keepsTimeOfDay(every) ? updated.at : undefined;
+          const weekday = keepsWeekday(every) ? updated.weekday : undefined;
+          let next2 = next(every, due, now, zone2, at2, weekday);
+          if (missed && keepsTimeOfDay(every) && next2 - now < 3 * 3600000)
+            next2 = next(every, next2, next2, zone2, at2, weekday);
+          updated.next = stamp2(new Date(next2));
+          kept2.group.meeting = updated;
+        } else {
+          kept2.group.meeting = undefined;
+        }
+      } catch (error3) {
+        console.error(`${id}'s meeting:`, reason2(error3));
         kept2.group.meeting = undefined;
       }
       this.changed(id);
+      this.meet(id, meeting.topic);
     }
   }
   async seatAPI(bot, group, seat) {
@@ -12922,6 +13009,7 @@ class GroupRunner {
     const kept2 = this.chat(id);
     if (!kept2)
       throw new Cancelled;
+    const same = () => this.chat(id) === kept2;
     const settings = this.context.store.settings();
     const rules = seatRules(bot.folder, settings?.askFirst ?? false, settings?.denies ?? []);
     const text2 = this.seatText(bot, kept2.group);
@@ -12938,9 +13026,9 @@ class GroupRunner {
       if (await this.keepModel(existing, bot, id, api))
         return existing;
     }
-    const current = this.chat(id);
-    if (!current)
+    if (!same())
       throw new Cancelled;
+    const current = kept2;
     const model2 = await this.model(bot);
     const onAgents = runsWithAgents(model2);
     const seatAPI = onAgents ? this.context.bridge() ? new SeatAPI(this.context.bridge()) : undefined : new SeatAPI(this.context.engine);
@@ -12952,8 +13040,8 @@ class GroupRunner {
     await seatAPI.setInstruction(session.id, seatKey, text2);
     this.seatTexts.set(session.id, text2);
     this.seatsChecked.add(session.id);
-    const after = this.chat(id);
-    if (!after || !after.group.members.includes(bot.id)) {
+    const after = kept2;
+    if (!same() || !after.group.members.includes(bot.id)) {
       await seatAPI.delete(session.id).catch(() => {});
       throw new Cancelled;
     }
@@ -13113,7 +13201,7 @@ ${message.text}
     this.syncs.set(id, timer);
   }
   append(message, id) {
-    const kept2 = this.chats.get(id);
+    const kept2 = this.chat(id);
     if (!kept2)
       return message;
     kept2.messages.push(message);
@@ -13127,7 +13215,7 @@ ${message.text}
     this.append({ id: groupMessageID(), text: text2, time: stamp2(), kind: "note" }, id);
   }
   change(messageID2, id, edit) {
-    const kept2 = this.chats.get(id);
+    const kept2 = this.chat(id);
     const message = kept2?.messages.find((each) => each.id === messageID2);
     if (!kept2 || !message)
       return;
@@ -13144,7 +13232,7 @@ ${message.text}
     });
   }
   setHeard(messageID2, botID, id) {
-    const kept2 = this.chats.get(id);
+    const kept2 = this.chat(id);
     if (!kept2)
       return;
     const all = kept2.messages;
@@ -13168,6 +13256,17 @@ function named2(unheard) {
   const head = lines3.filter((line) => !line.startsWith("- "));
   return [...head.slice(0, -1), ...items2, head.at(-1)].join(`
 `);
+}
+function usableZone(zone2) {
+  const own = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (!zone2)
+    return own;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: zone2 });
+    return zone2;
+  } catch {
+    return own;
+  }
 }
 var weekdayOf = (time, zone2) => {
   const name = new Intl.DateTimeFormat("en-US", { timeZone: zone2, weekday: "short" }).format(new Date(time));
@@ -13296,4 +13395,4 @@ if (onMachine) {
 }
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
-// Built from Agents/src 637946711cf344dc9b8baff2f6bf2cd850e2c55a6f70c39f110ff37ed463b711
+// Built from Agents/src 2a45fbff3dc01dfb364822dc688bb0fdb249cb72694fed597d1178e4a08e3d29

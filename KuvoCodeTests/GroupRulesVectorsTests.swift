@@ -11,7 +11,7 @@ import Testing
 /// bridge's tests then say whether the machine's rules still match.
 @MainActor
 struct GroupRulesVectorsTests {
-    static let recorded = "5d26921f69fbc760dea066a7b231da17012f532211b5314a6a79a87d02aced3a"
+    static let recorded = "a39ce7c058d622967ded81f1d0338129802533cbd652ab90e7e2ac8dcce78ca0"
 
     @Test func theMachinesChatsGoByTheseRules() throws {
         let data = try JSONSerialization.data(withJSONObject: Self.vectors(), options: [.sortedKeys, .prettyPrinted, .withoutEscapingSlashes])
@@ -59,6 +59,7 @@ struct GroupRulesVectorsTests {
         "pass n/a", "PASSED the tests", "Şimdilik pass", "PASS " + String(repeating: "x", count: 90), "pass 😀", "PASS\nnothing",
         "pass\n\nI have nothing to add", "Pass: I've nothing", "pass — no comment", "pass — no new points", "PASSİ", "pass🙂",
         "_pass_", "pass_through", "Pass… nothing further", "PASS. Ada covered it.", "",
+        "\u{FEFF}PASS", "\u{FEFF}pass nothing", "PASS\u{FEFF}", "پاس PASS",
     ]
 
     static let partsCases: [(String, [String])] = [
@@ -74,6 +75,9 @@ struct GroupRulesVectorsTests {
         ("• @Ada — one\n· @Ada - two\n3) @Ada – three\n\n> GO", ["Ada"]),
         ("@ada: lower case\n@ADA: upper case", ["Ada"]),
         ("@Ada (after @Benjamin): waits\n@Ben: first", ["Ada", "Ben", "Benjamin"]),
+        ("@Jean-Luc: write it\n@Ana (after @Jean-Luc): check it\n١. @Ana: also this\nGO", ["Jean-Luc", "Ana"]),
+        ("@🐱: meow\n@猫 — 喵\n@😺 (after @🐱): purr", ["🐱", "猫", "😺"]),
+        ("@C++ Bot: compile\n@Dr. Who (after @C++ Bot): travel", ["C++ Bot", "Dr. Who"]),
     ]
 
     static func bot(_ id: String, name: String, job: String = "", instructions: String = "", folder: String? = nil, personality: String? = nil) -> Bot {
@@ -202,6 +206,10 @@ struct GroupRulesVectorsTests {
         ("@İlkay?", ["İlkay"]),
         ("nobody", ["Ada"]),
         ("@Ada2 and @Ada", ["Ada"]),
+        ("@🐶 only", ["🐱"]),
+        ("@Jean-Luc, thoughts? @Jean too", ["Jean-Luc", "Jean"]),
+        ("@猫，你呢？", ["猫"]),
+        ("@C++ Bot please", ["C++ Bot"]),
     ]
 
     static func saidCases() throws -> [[String: Any]] {

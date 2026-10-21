@@ -115,7 +115,11 @@ export class GroupRunner {
         this.state(id).paused = true
         context.store.saveGroup(kept)
       }
-      this.keepAwake(id)
+      try {
+        this.keepAwake(id)
+      } catch (error) {
+        console.error(`${id}:`, reason(error))
+      }
     }
   }
 
@@ -490,39 +494,52 @@ export class GroupRunner {
     const live = this.state(id)
     live.speaking = botID
     this.told(id)
+    // Its discussion stopped meanwhile (Stop, Undo, a move): it stops where it is.
+    const going = () => {
+      if (signal.aborted) throw new Cancelled()
+    }
     try {
       const kept = this.chat(id)
       if (!kept) return "absent"
       const first = await this.seatAPI(bot, kept.group, kept.group.seats[botID])
+      going()
       if (!first) {
         this.note(`${bot.name} couldn’t answer: the coding agents aren’t running.`, id)
         return "absent"
       }
       const seat = await this.seat(bot, id, first)
+      going()
       const current = this.chat(id)
       if (!current) return "absent"
       // Where the seat is now (a new one, on another model, can run elsewhere).
       const api = await this.seatAPI(bot, current.group, seat)
+      going()
       if (!api) {
         this.note(`${bot.name} couldn’t answer: the coding agents aren’t running.`, id)
         return "absent"
       }
-      const all = current.messages
+      // What it's told is what's there now: a message that comes while it's sent wasn't in it.
+      const all = [...current.messages]
       const heard = current.group.heard[botID]
       const start = heard ? all.findIndex((message) => message.id === heard) + 1 : 0
       const unheard = all.slice(start).filter((message) => message.author !== botID && message.kind !== "note")
       const promptID = newID("msg")
+      const retracted = current.group.retracted?.[botID]
       await api.prompt(seat, promptID, turnText(botID, current.group, unheard, wrapUp, (author) => this.name(author), named(unheard)), "queue")
+      going()
       const last = all.at(-1)
       if (last) this.setHeard(last.id, botID, id)
-      if (current.group.retracted?.[botID] !== undefined) {
-        delete current.group.retracted[botID]
-        if (Object.keys(current.group.retracted).length === 0) current.group.retracted = undefined
+      // What it was told to set aside, it has been (unless it was taken back again meanwhile).
+      const now = this.chat(id)?.group
+      if (now && retracted !== undefined && now.retracted?.[botID] === retracted) {
+        delete now.retracted[botID]
+        if (Object.keys(now.retracted).length === 0) now.retracted = undefined
         this.changed(id)
       }
       const sent = Date.now()
       await this.waitForRun(seat, promptID, sent, api, signal)
       const reply = await this.reply(seat, promptID, sent, api)
+      going()
       if (!reply.text) {
         if (reply.error) {
           this.note(`${bot.name} couldn’t answer: ${reply.error}`, id)
@@ -565,19 +582,39 @@ export class GroupRunner {
 
   /** Until the seat's run ends. Questions and requests for permission are turned down on the way, since nobody's there to answer them. */
   private async waitForRun(seat: string, promptID: string, sent: number, api: SeatAPI, signal: AbortSignal) {
+    const pace = this.context.pace ?? 1
     let gone = 0
+    let idleSince: number | undefined
+    let woken = false
     for (;;) {
-      await sleep(600 * (this.context.pace ?? 1), signal)
+      await sleep(600 * pace, signal)
       await this.decline(seat, api)
       const active = await api.active().catch(() => undefined)
       if (active && !active.has(seat)) {
         const inbox = await api.inbox(seat).catch(() => undefined)
         if (inbox && !inbox.some((item) => item.id === promptID)) {
-          const { data } = await api.messages(seat, 60).catch(() => ({ data: [] as any[] }))
-          const at = data.findIndex((message) => message?.id === promptID)
-          // Its run ended (its end marker after the message); or the message is nowhere, a few times running.
-          if (at >= 0 ? data.slice(at + 1).some((message) => message?.type === "idle") : ++gone >= 3) return
+          const read = await api.messages(seat, 60).catch(() => undefined)
+          const at = read ? read.data.findIndex((message) => message?.id === promptID) : -1
+          // Its run ended (its end marker after the message); or the message is nowhere, a few reads running.
+          if (at >= 0 ? read!.data.slice(at + 1).some((message) => message?.type === "idle") : read ? ++gone >= 3 : false) return
+          if (at >= 0) gone = 0
+          idleSince = undefined
+        } else if (inbox) {
+          // Still waiting on a seat that isn't at work (held there after a stop): woken, then let go.
+          idleSince ??= Date.now()
+          if (Date.now() - idleSince > 8_000 * pace) {
+            if (!woken) {
+              woken = true
+              idleSince = Date.now()
+              await api.setDelivery(seat, promptID, "steer").catch(() => {})
+            } else {
+              await api.cancelInbox(seat, promptID).catch(() => {})
+              return
+            }
+          }
         }
+      } else {
+        idleSince = undefined
       }
       if (Date.now() - sent > 600_000) {
         await api.interrupt(seat).catch(() => {})
@@ -901,30 +938,36 @@ export class GroupRunner {
 
   /** Holds the meetings that have come due: once each, then the next time of one that repeats, or none for a one-off. */
   meetDue(now = Date.now()) {
-    const zone = this.context.store.settings()?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
+    const zone = usableZone(this.context.store.settings()?.timeZone)
     for (const [id, kept] of this.chats) {
       const meeting = kept.group.meeting
       if (kept.status !== "active" || !meeting) continue
       const due = Date.parse(meeting.next)
       if (!(due <= now)) continue
-      const missed = due < now - 300_000
-      this.meet(id, meeting.topic)
-      const every = meeting.every ? parseRepeat(meeting.every) : undefined
-      if (every) {
-        const updated: Meeting = { ...meeting }
-        if (keepsTimeOfDay(every) && updated.at === undefined) updated.at = minutesOf(due, zone)
-        if (keepsWeekday(every) && updated.weekday === undefined) updated.weekday = weekdayOf(due, zone)
-        const at = keepsTimeOfDay(every) ? updated.at : undefined
-        const weekday = keepsWeekday(every) ? updated.weekday : undefined
-        let next = nextTime(every, due, now, zone, at, weekday)
-        // A missed one held now isn't followed by the next a few hours later: that one's skipped.
-        if (missed && keepsTimeOfDay(every) && next - now < 3 * 3_600_000) next = nextTime(every, next, next, zone, at, weekday)
-        updated.next = stamp(new Date(next))
-        kept.group.meeting = updated
-      } else {
+      try {
+        // Its next time first, so one that can't be worked out doesn't come again and again.
+        const missed = due < now - 300_000
+        const every = typeof meeting.every === "string" ? parseRepeat(meeting.every) : undefined
+        if (every) {
+          const updated: Meeting = { ...meeting }
+          if (keepsTimeOfDay(every) && typeof updated.at !== "number") updated.at = minutesOf(due, zone)
+          if (keepsWeekday(every) && typeof updated.weekday !== "number") updated.weekday = weekdayOf(due, zone)
+          const at = keepsTimeOfDay(every) ? updated.at : undefined
+          const weekday = keepsWeekday(every) ? updated.weekday : undefined
+          let next = nextTime(every, due, now, zone, at, weekday)
+          // A missed one held now isn't followed by the next a few hours later: that one's skipped.
+          if (missed && keepsTimeOfDay(every) && next - now < 3 * 3_600_000) next = nextTime(every, next, next, zone, at, weekday)
+          updated.next = stamp(new Date(next))
+          kept.group.meeting = updated
+        } else {
+          kept.group.meeting = undefined
+        }
+      } catch (error) {
+        console.error(`${id}'s meeting:`, reason(error))
         kept.group.meeting = undefined
       }
       this.changed(id)
+      this.meet(id, meeting.topic)
     }
   }
 
@@ -951,6 +994,8 @@ export class GroupRunner {
   private async seat(bot: MachineBot, id: string, api: SeatAPI): Promise<string> {
     const kept = this.chat(id)
     if (!kept) throw new Cancelled()
+    // The chat as it is now: one brought here in its place meanwhile isn't this one.
+    const same = () => this.chat(id) === kept
     const settings = this.context.store.settings()
     const rules = seatRules(bot.folder, settings?.askFirst ?? false, settings?.denies ?? [])
     const text = this.seatText(bot, kept.group)
@@ -966,8 +1011,8 @@ export class GroupRunner {
       }
       if (await this.keepModel(existing, bot, id, api)) return existing
     }
-    const current = this.chat(id)
-    if (!current) throw new Cancelled()
+    if (!same()) throw new Cancelled()
+    const current = kept
     const model = await this.model(bot)
     const onAgents = runsWithAgents(model)
     const seatAPI = onAgents ? (this.context.bridge() ? new SeatAPI(this.context.bridge()!) : undefined) : new SeatAPI(this.context.engine)
@@ -978,9 +1023,9 @@ export class GroupRunner {
     await seatAPI.setInstruction(session.id, seatKey, text)
     this.seatTexts.set(session.id, text)
     this.seatsChecked.add(session.id)
-    // The chat deleted meanwhile, or the bot taken out of it: the new seat goes with it.
-    const after = this.chat(id)
-    if (!after || !after.group.members.includes(bot.id)) {
+    // The chat deleted or replaced meanwhile, or the bot taken out of it: the new seat goes with it.
+    const after = kept
+    if (!same() || !after.group.members.includes(bot.id)) {
       await seatAPI.delete(session.id).catch(() => {})
       throw new Cancelled()
     }
@@ -1138,7 +1183,7 @@ export class GroupRunner {
   // MARK: Messages
 
   private append(message: GroupMessage, id: string): GroupMessage {
-    const kept = this.chats.get(id)
+    const kept = this.chat(id)
     if (!kept) return message
     kept.messages.push(message)
     this.context.store.saveMessages(kept)
@@ -1153,7 +1198,7 @@ export class GroupRunner {
   }
 
   private change(messageID: string, id: string, edit: (message: GroupMessage) => void) {
-    const kept = this.chats.get(id)
+    const kept = this.chat(id)
     const message = kept?.messages.find((each) => each.id === messageID)
     if (!kept || !message) return
     edit(message)
@@ -1170,7 +1215,7 @@ export class GroupRunner {
   }
 
   private setHeard(messageID: string, botID: string, id: string) {
-    const kept = this.chats.get(id)
+    const kept = this.chat(id)
     if (!kept) return
     // Only ever forward: a later message may have reached it already.
     const all = kept.messages
@@ -1195,6 +1240,18 @@ function named(unheard: GroupMessage[]): string | undefined {
   const items = [...new Set(blocks.flatMap((block) => block.split("\n").filter((line) => line.startsWith("- "))))]
   const head = lines.filter((line) => !line.startsWith("- "))
   return [...head.slice(0, -1), ...items, head.at(-1)!].join("\n")
+}
+
+/** The user's time zone, if it's one this machine knows; its own otherwise. */
+function usableZone(zone: string | undefined): string {
+  const own = Intl.DateTimeFormat().resolvedOptions().timeZone
+  if (!zone) return own
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: zone })
+    return zone
+  } catch {
+    return own
+  }
 }
 
 const weekdayOf = (time: number, zone: string) => {

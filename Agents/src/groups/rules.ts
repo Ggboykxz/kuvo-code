@@ -78,12 +78,12 @@ export function lines(text: string): string[] {
   return text.split(/\r\n|[\n\r\v\f\u0085\u2028\u2029]/).filter((line) => line.length > 0)
 }
 
-const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&")
+const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")
 
 /** Swift's `trimmingCharacters(in: .whitespaces)`: spaces and tabs, not newlines. */
 const trimSpaces = (text: string) => text.replace(/^[\p{Zs}\t]+|[\p{Zs}\t]+$/gu, "")
 /** Swift's `trimmingCharacters(in: .whitespacesAndNewlines)`. */
-export const trim = (text: string) => text.replace(/^[\s\p{Zs}\u0085]+|[\s\p{Zs}\u0085]+$/gu, "")
+export const trim = (text: string) => text.replace(/^[\p{Z}\t\n\v\f\r\u0085]+|[\p{Z}\t\n\v\f\r\u0085]+$/gu, "")
 
 // MARK: Passing
 
@@ -173,9 +173,10 @@ export function mentions(text: string, among: { id: string; name: string }[]): s
 function fold(text: string): string {
   let out = ""
   for (const { segment } of new Intl.Segmenter().segment(text)) {
-    const base = segment.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase()
-    // One character stays one, so places in it are places in the text.
-    out += base.length > 0 ? base[0] + "\u0000".repeat(segment.length - 1) : segment
+    const base = [...segment.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase()]
+    // One character stays one, as long as it was, so places in it are places in the text.
+    const first = base[0] ?? segment
+    out += first.length <= segment.length ? first + "\u0000".repeat(segment.length - first.length) : segment
   }
   return out
 }
@@ -297,7 +298,7 @@ export function parts(text: string, names: string[]): { parts: Part[]; go: boole
   // The longest name first, so "Sam" doesn't take "Samantha"'s line.
   const byLength = [...names].sort((a, b) => length(b) - length(a))
   for (const raw of lines(text)) {
-    const line = trimSpaces(raw.replaceAll("**", "").replace(/^[\s>*•·-]*(\d+[.)]\s*)?/u, ""))
+    const line = trimSpaces(raw.replaceAll("**", "").replace(/^[\s>*•·-]*(\p{Nd}+[.)]\s*)?/u, ""))
     if (new RegExp(`^${nonWord}*GO${nonWord}*$`, "u").test(line)) {
       go = true
       continue
@@ -307,7 +308,7 @@ export function parts(text: string, names: string[]): { parts: Part[]; go: boole
       continue
     }
     for (const name of byLength) {
-      const match = new RegExp(`^@?${escape(name)}\\s*(?:\\(\\s*(?:after|once)\\s+([^)]*)\\))?\\s*[:—–-]\\s*`, "iu").exec(line)
+      const match = new RegExp(`^@?${escape(name)}\\s*(?:\\(\\s*(?:after|once)\\s+([^)]*)\\))?\\s*[:—–\\-]\\s*`, "iu").exec(line)
       if (!match) continue
       const task = trimSpaces(line.slice(match[0].length))
       if (task.length === 0) break

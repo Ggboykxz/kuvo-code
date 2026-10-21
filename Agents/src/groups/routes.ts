@@ -2,26 +2,11 @@
 // bridge's password): read them, bring one here or let it go (a move), and take part.
 
 import type { GroupRunner } from "./runner"
-import type { Group, GroupMessage } from "./rules"
-import { version, type GroupStore } from "./store"
+import { isGroup, isMeeting, isMessages, version, type GroupStore } from "./store"
 
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { "Content-Type": "application/json" } })
 const error = (status: number, message: string) => json({ message }, status)
 
-const isGroup = (value: any, id: string): value is Group =>
-  value &&
-  value.id === id &&
-  typeof value.name === "string" &&
-  Array.isArray(value.members) &&
-  value.members.every((member: unknown) => typeof member === "string") &&
-  typeof value.created === "string" &&
-  value.seats &&
-  typeof value.seats === "object" &&
-  value.heard &&
-  typeof value.heard === "object"
-
-const isMessages = (value: any): value is GroupMessage[] =>
-  Array.isArray(value) && value.every((message) => message && typeof message.id === "string" && typeof message.text === "string" && typeof message.time === "string" && typeof message.kind === "string")
 
 export async function groupRoutes(runner: GroupRunner | undefined, store: GroupStore | undefined, method: string, parts: string[], body: () => Promise<any>): Promise<Response> {
   if (!runner || !store) return error(404, "Group chats run on the Mac here.")
@@ -55,7 +40,12 @@ export async function groupRoutes(runner: GroupRunner | undefined, store: GroupS
       if (!runner.put(group, messages ?? [], status === "active" ? "active" : "held", replace === true)) return error(409, "That chat is here already.")
       return json({ data: runner.get(id) })
     }
-    if (method === "PATCH") return (await runner.update(id, await body())) ? json({ data: runner.get(id) }) : error(404, "No such chat.")
+    if (method === "PATCH") {
+      const edits = await body()
+      if (edits?.meeting !== undefined && edits.meeting !== null && !isMeeting(edits.meeting)) return error(400, "That isn't a meeting.")
+      if (edits?.members !== undefined && !(Array.isArray(edits.members) && edits.members.every((member: unknown) => typeof member === "string"))) return error(400, "Those aren't bots.")
+      return (await runner.update(id, edits ?? {})) ? json({ data: runner.get(id) }) : error(404, "No such chat.")
+    }
     if (method === "DELETE") return (await runner.delete(id)) ? json({}) : error(404, "No such chat.")
     return error(405, "Not allowed")
   }
