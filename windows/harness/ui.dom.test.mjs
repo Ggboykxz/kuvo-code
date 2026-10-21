@@ -415,7 +415,10 @@ test("the page, in a browser, against the real engine", {
   // The split: another session beside this one, as the Mac draws it — a card with the same
   // header the conversation has (its session's name, Swap, Close), the session's own rows
   // read into it, and no strip of controls that could pass for the title bar.
-  const firstTitle = await page.page.locator("#sessions li .session-title").first().textContent();
+  // The session beside this one, by its id: the engine may rename a session at any time,
+  // so the test names the row it means rather than the words it showed a moment ago.
+  const firstId = await page.page.locator("#sessions li button.session").first().getAttribute("data-id");
+  assert.ok(firstId, "the first session has an id to name it by");
   await page.element("new-session").click();
   await page.seen("the second session to be listed", () => document.querySelectorAll("#sessions li").length === 2, null, 30_000);
   // The new session is the one in view before the split is asked for: Open Beside opens
@@ -428,7 +431,11 @@ test("the page, in a browser, against the real engine", {
     return Boolean(pane) && pane.hidden === false && Boolean(pane.querySelector(".card-header"));
   }, null, 30_000);
   assert.equal(await page.page.locator("#split-pane .split-head").count(), 0, "the split has no strip of its own");
-  assert.equal(await page.page.locator("#split-pane .card-title > span:first-child").textContent(), firstTitle, "its head names the session beside this one");
+  await page.seen("its head to name the session beside this one", ([id]) => {
+    const row = document.querySelector(`#sessions li button.session[data-id="${id}"] .session-title`);
+    const head = document.querySelector("#split-pane .card-title > span:first-child");
+    return Boolean(row?.textContent) && head?.textContent === row?.textContent;
+  }, [firstId], 30_000);
   await page.seen("the session beside this one to read back", ([id, text]) => {
     const node = document.getElementById(id);
     return Boolean(node?.textContent?.match(new RegExp(text, "i")));
