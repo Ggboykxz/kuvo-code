@@ -31,10 +31,13 @@ nonisolated extension Git {
         throw GitFailure(message: failure.isEmpty ? "Couldn't make a branch for the worktree." : failure)
     }
 
-    /// A branch name made from a title: "Trim note titles" is trim-note-titles.
+    /// A branch name made from a title: "Trim note titles" is trim-note-titles, "Giriş düzeltmesi"
+    /// giris-duzeltmesi (in Latin letters, without their marks, rather than without the letters).
     static func slug(_ title: String, limit: Int = 40) -> String {
+        let latin = (title.applyingTransform(.toLatin, reverse: false) ?? title)
+            .applyingTransform(.stripDiacritics, reverse: false)?.replacingOccurrences(of: "ı", with: "i") ?? title
         var name = ""
-        for word in title.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }) {
+        for word in latin.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }) {
             let ascii = word.filter(\.isASCII)
             guard !ascii.isEmpty else { continue }
             let next = name.isEmpty ? String(ascii) : name + "-" + ascii

@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A worktree's branch named after a title in another language keeps its letters ("Giriş düzeltmesi" is giris-duzeltmesi, not giri-dzeltmesi).
 - A model or mode changed elsewhere (a bot's editor, your phone, another Mac) shows in a conversation you have open, and picking the one before works again.
 - Try Again sends a message's files again when they were sent inline (to a machine, or from your phone); they used to be dropped.
 - A session deleted while it worked no longer counts as working, which kept the Mac awake, and its notifications go with it.
