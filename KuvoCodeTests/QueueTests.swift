@@ -168,4 +168,15 @@ import Testing
         #expect(engine.requests("PATCH", "/inbox/msg_03").last?.body["delivery"] as? String == "steer", "Resume gives it to the agent first")
         #expect(deliveries.isEmpty, "what was queued waits its turn")
     }
+
+    /// Opened when the engine couldn't say what it runs (a machine's slow to answer, say): a
+    /// message for the next step stays where it is, for the agent to take if it's at work.
+    @Test func aMessageForTheNextStepStaysWhenItsUnknownWhetherItRuns() async throws {
+        defer { engine.stop() }
+        let steering: [String: Any] = ["id": "msg_03", "sessionID": id, "type": "user", "delivery": "steer",
+                                       "payload": ["text": "Also run the linter"]]
+        engine.on("GET", "/api/session/active", json: ["data": "not an answer"])
+        _ = try await open(running: false, inbox: [steering])
+        #expect(engine.requests("PATCH", "/inbox/msg_03").isEmpty, "not moved to the queue")
+    }
 }

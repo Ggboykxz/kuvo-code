@@ -598,8 +598,10 @@ final class SessionModel {
             // A queue left waiting (the app quit mid-run, say) waits for Resume rather than
             // starting on its own. Read again later (a reconnect), it carries on.
             // One for the next step of a run that ended with the app is held too, ahead of the
-            // queue, as Stop holds one: it showed nowhere, and Resume went past it.
-            let leftForNextStep = transcript.pending.contains { $0.delivery == .steer && !$0.isLocal }
+            // queue, as Stop holds one: it showed nowhere, and Resume went past it. Not one you've
+            // just sent from here (as the session was read), nor while it's unknown whether the
+            // engine runs it, mid-run on a machine say: the agent would miss it at its next step.
+            let leftForNextStep = running != nil && transcript.pending.contains { $0.delivery == .steer && !$0.isLocal && !sentIDs.contains($0.id) }
             if !isLoaded, !isRunning, hasQueue || leftForNextStep {
                 isQueuePaused = true
                 if leftForNextStep { await holdWaiting() }
