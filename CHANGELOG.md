@@ -6,6 +6,10 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Text on the window's cards (conversations, the side panel, Settings) is crisp in light mode: it was drawn see-through over the window's glass, which turned black a washed-out gray. The sidebar keeps the glass look.
+- Buttons and menus in Settings are readable again: 0.6.5 drew them pale behind white labels. Text areas in Settings (commit instructions, an agent's instructions) are the group itself, without a box inside it.
+- Settings › Accounts uses the same quiet gray groups as the other pages, rather than a yellowish one.
+
 ## 0.6.5
 
 - Settings › Permissions says what Default comes to, like "Default (Allow)" or "Default (Ask First)", and an agent's own permissions show what Settings › Permissions has for it.

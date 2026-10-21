@@ -31,6 +31,10 @@ struct Card<Icon: View, Actions: View, Content: View>: View {
         framedContent
             // Opaque fills inside the card (the terminal, pinned rows) match the card's own.
             .environment(\.cardIsFocused, isFocused)
+            // On a solid card, text in its own colors: vibrant (as the window's glass makes it),
+            // black came out a washed-out gray on white. Without a surface it's on the glass,
+            // and stays vibrant, as a sidebar's is.
+            .transformEnvironment(\.backgroundMaterial) { if showsSurface { $0 = nil } }
             .clipShape(shape)
             // The shadow comes from the fill alone, so it's drawn from one shape rather than
             // worked out again from everything in the card each time it scrolls.

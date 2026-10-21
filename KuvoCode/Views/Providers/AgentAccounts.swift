@@ -86,8 +86,7 @@ struct SubscriptionsSection: View {
                             }
                         }
                     }
-                    .background(Surface.cardFill(scheme, focused: false), in: .rect(cornerRadius: Metrics.cardRadius))
-                    .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
+                    .background(SettingsMetrics.groupFill(scheme), in: .rect(cornerRadius: SettingsMetrics.groupRadius))
                 }
                 if !more.isEmpty {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 10)], spacing: 10) {
@@ -420,11 +419,10 @@ private struct SubscriptionTile: View {
             Spacer(minLength: 0)
         }
         .padding(10)
-        .background(Surface.cardFill(scheme, focused: false), in: .rect(cornerRadius: Metrics.cardRadius))
-        .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
+        .background(SettingsMetrics.groupFill(scheme), in: .rect(cornerRadius: SettingsMetrics.groupRadius))
         // Under the pointer, an accent edge: the whole tile signs in.
         .overlay {
-            RoundedRectangle(cornerRadius: Metrics.cardRadius)
+            RoundedRectangle(cornerRadius: SettingsMetrics.groupRadius)
                 .strokeBorder(.tint, lineWidth: 1.5)
                 .opacity(isHovering ? 1 : 0)
         }

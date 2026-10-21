@@ -101,8 +101,7 @@ struct ProvidersView: View {
                                 }
                             }
                         }
-                        .background(Surface.cardFill(scheme, focused: false), in: .rect(cornerRadius: Metrics.cardRadius))
-                        .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
+                        .background(SettingsMetrics.groupFill(scheme), in: .rect(cornerRadius: SettingsMetrics.groupRadius))
                     }
                 }
 
@@ -138,8 +137,7 @@ struct ProvidersView: View {
                             }
                         }
                         .padding(4)
-                        .background(Surface.cardFill(scheme, focused: false), in: .rect(cornerRadius: Metrics.cardRadius))
-                        .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
+                        .background(SettingsMetrics.groupFill(scheme), in: .rect(cornerRadius: SettingsMetrics.groupRadius))
                     }
                 }
             }
@@ -240,11 +238,10 @@ private struct ProviderTile: View {
                 .controlSize(.small)
         }
         .padding(12)
-        .background(Surface.cardFill(scheme, focused: false), in: .rect(cornerRadius: Metrics.cardRadius))
-        .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
+        .background(SettingsMetrics.groupFill(scheme), in: .rect(cornerRadius: SettingsMetrics.groupRadius))
         // Under the pointer, an accent edge: the whole tile connects.
         .overlay {
-            RoundedRectangle(cornerRadius: Metrics.cardRadius)
+            RoundedRectangle(cornerRadius: SettingsMetrics.groupRadius)
                 .strokeBorder(.tint, lineWidth: 1.5)
                 .opacity(isHovering ? 1 : 0)
         }

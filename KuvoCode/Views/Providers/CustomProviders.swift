@@ -62,8 +62,7 @@ struct CustomProvidersSection: View {
                         if id != ids.last { Divider().padding(.leading, 14) }
                     }
                 }
-                .background(Surface.cardFill(scheme, focused: false), in: .rect(cornerRadius: Metrics.cardRadius))
-                .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
+                .background(SettingsMetrics.groupFill(scheme), in: .rect(cornerRadius: SettingsMetrics.groupRadius))
             }
         }
     }

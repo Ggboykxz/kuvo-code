@@ -74,6 +74,9 @@ struct SettingsView: View {
             // Its own width whatever a page asks for: a page wider than the window is cut off
             // rather than pushing the sidebar out of the window.
             .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
+            // On a solid card, not the glass: text in its own colors. Vibrant (as the window's
+            // material makes it), black text came out a washed-out gray on white.
+            .environment(\.backgroundMaterial, nil)
             .background(WindowXReader { tabs.contentX = $0 })
             // Doing something in the page in view keeps its tab (see `SettingsTabs`).
             .background(InteractionWatcher { tabs.keepSelected() })
