@@ -34,6 +34,9 @@ const sources = {
   spinner: read("app", "src", "components", "spinner.tsx"),
   transcript: read("harness", "transcript.mjs"),
   layout: read("harness", "layout.mjs"),
+  engine: read("harness", "engine.mjs"),
+  shell: read("electron", "main.js"),
+  preload: read("electron", "preload.js"),
   toolCall: read("app", "src", "components", "tool-call.tsx"),
   mac: read("..", "Packages", "OpenCodeKit", "Sources", "OpenCodeKit", "Events", "Transcript.swift"),
   tailwind: read("app", "app", "globals.css"),
@@ -822,6 +825,37 @@ const checks = [
     // And the build puts the export where the harness serves it.
     assert.match(build, /ui-build/);
     assert.match(build, /out/);
+  }],
+
+  ["the shell's seams travel by the bridge, and the window pins its page", ({ preload, shell, app, overlays }) => {
+    // The title bar's room for the window's controls, and the terminal's port, are the
+    // shell's: they travel by the bridge, so a reload or a stray Back cannot take them
+    // away (a Back used to take the address's own "?shell=1" with it).
+    assert.match(preload, /isShell: true/);
+    assert.match(preload, /terminalPort: ipcRenderer\.sendSync\("kuvo:terminal-port"\)/);
+    assert.match(shell, /ipcMain\.on\("kuvo:terminal-port"/);
+    assert.match(app, /kuvo\?\.isShell === true/);
+    assert.match(overlays, /kuvo\?\.terminalPort/);
+    // And the shell pins its page: the mouse's own Back and Forward, the keyboard's
+    // Alt+Left and Alt+Right, and any navigation away from the harness.
+    assert.match(shell, /command === 'browser-backward' \|\| command === 'browser-forward'/);
+    assert.match(shell, /before-input-event/);
+    assert.match(shell, /will-navigate/);
+  }],
+
+  ["a model chosen reaches the engine as its Model.ref", ({ engine, app }) => {
+    // The engine takes a Model.ref — an object (OpenCodeKit's Models/Common.swift:70,
+    // OpenCodeAPI.swift:473-476). The picker speaks "provider/id", and an id may hold
+    // slashes of its own (OpenRouter's "anthropic/claude-sonnet-4.5"), so only the first
+    // slash splits. The bare string is what the engine refused with "Expected Model.Ref
+    // at [model]".
+    assert.match(engine, /return \{ providerID: text\.slice\(0, slash\), id: text\.slice\(slash \+ 1\) \};/);
+    assert.match(engine, /body: \{ model: ref \}/);
+    // The page sends the object too, and shows the model it has at once (the Mac's
+    // SessionModel.swift:1333-1341: the model shows, and a refusal puts the old one back).
+    assert.match(app, /body: \{ model: ref \}/);
+    assert.match(app, /current\.model = ref;/);
+    assert.match(app, /current\.model = previous;/);
   }],
 ];
 

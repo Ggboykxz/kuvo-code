@@ -345,7 +345,8 @@ export function Drawer() {
     const container = terminalRef.current;
     if (!container || container.dataset.ready === "1") return;
     container.dataset.ready = "1";
-    const port = new URLSearchParams(window.location.search).get("terminalPort");
+    const port = (window as unknown as { kuvo?: { terminalPort?: number } }).kuvo?.terminalPort
+      || new URLSearchParams(window.location.search).get("terminalPort");
     if (!port) { setTerminalNote("Terminal is available when running inside the Kuvo Code shell."); return; }
     const TerminalClass = (window as unknown as { Terminal?: new (options: unknown) => Xterm }).Terminal;
     if (!TerminalClass) { setTerminalNote("Terminal library failed to load."); return; }
@@ -361,7 +362,7 @@ export function Drawer() {
     const socket = new WebSocket(`ws://127.0.0.1:${port}`);
     socket.onopen = () => { setTerminalNote(""); term.focus(); };
     socket.onmessage = event => term.write(typeof event.data === "string" ? event.data : "");
-    socket.onclose = () => setTerminalNote("Terminal closed.");
+    socket.onclose = event => setTerminalNote(event.reason || "Terminal closed.");
     term.onData(data => { if (socket.readyState === WebSocket.OPEN) socket.send(data); });
     const onResize = () => {
       fitAddon?.fit();

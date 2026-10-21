@@ -31,6 +31,19 @@ export function messageID(now = Date.now()) {
   return `msg_${base62(stamp).padStart(8, "0")}${base62(counter).padStart(2, "0")}`;
 }
 
+/// The engine's ModelRef (OpenCodeKit's Models/Common.swift:70: id, providerID, variant),
+/// an object. The picker speaks "provider/id" — and an id may itself hold slashes
+/// (OpenRouter's "anthropic/claude-sonnet-4.5") — so only the first slash splits. The
+/// engine answers the bare string with 'Expected Model.Ref at ["model"]'.
+function modelRef(model) {
+  if (!model) return null;
+  if (typeof model === "object") return model;
+  const text = String(model);
+  const slash = text.indexOf("/");
+  if (slash < 1) return null;
+  return { providerID: text.slice(0, slash), id: text.slice(slash + 1) };
+}
+
 export class EngineClient {
   constructor({ url, password, fetch: doFetch = fetch }) {
     this.url = url.endsWith("/") ? url : `${url}/`;
@@ -95,7 +108,8 @@ export class EngineClient {
     const body = { location: { directory } };
     if (title) body.title = title;
     if (agent) body.agent = agent;
-    if (model) body.model = model;
+    const ref = model ? modelRef(model) : null;
+    if (ref) body.model = ref;
     return (await this.request("POST", "api/session", { body })).data;
   }
 
@@ -135,7 +149,11 @@ export class EngineClient {
   }
 
   async setModel(session, model) {
-    await this.request("POST", `api/session/${encodeURIComponent(session)}/model`, { body: { model } });
+    // `model` may be the page's "provider/id" or a Model.ref already (OpenCodeKit's
+    // OpenCodeAPI.swift:473-476 sends the object).
+    const ref = modelRef(model);
+    if (!ref) return;
+    await this.request("POST", `api/session/${encodeURIComponent(session)}/model`, { body: { model: ref } });
   }
 
   async renameSession(session, title) {

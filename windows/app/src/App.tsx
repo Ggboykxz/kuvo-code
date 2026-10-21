@@ -1792,22 +1792,35 @@ function Composer() {
           value={state.session?.model ? `${state.session.model.providerID}/${state.session.model.id}` : ""}
           onPick={async value => {
             if (!state.session) return;
+            // The engine takes a Model.ref, not the picker's shorthand (OpenCodeKit's
+            // OpenCodeAPI.swift:473-476): the provider, and the id exactly as the catalog
+            // writes it — an id may hold slashes of its own.
+            const slash = value.indexOf("/");
+            if (slash < 1) return;
+            const ref = { providerID: value.slice(0, slash), id: value.slice(slash + 1) };
+            const current = state.session;
+            const previous = current.model ?? null;
+            // The picker shows the model it now has, as the Mac's does (SessionModel.swift:
+            // 1333-1341); a refusal puts the old one back and says why.
+            current.model = ref;
+            render();
             try {
-              await api(`/api/sessions/${encodeURIComponent(state.session.id)}/model`, { method: "POST", body: { model: value } });
-            } catch (error) { complain(error); }
+              await api(`/api/sessions/${encodeURIComponent(current.id)}/model`, { method: "POST", body: { model: ref } });
+            } catch (error) {
+              current.model = previous;
+              render();
+              complain(error);
+            }
           }}
-          groups={[
-            { name: "", items: [{ value: "", label: "The engine's choice" }] },
-            ...[...new Set(state.models.map(model => model.providerID))].map(provider => ({
-              name: provider,
-              items: state.models.filter(model => model.providerID === provider).map(model => ({
-                value: `${model.providerID}/${model.id}`,
-                label: model.name ?? model.id,
-                detail: model.limit?.context ? `${Math.round(model.limit.context / 1000)}k` : undefined,
-                logo: model.providerID,
-              })),
+          groups={[...new Set(state.models.map(model => model.providerID))].map(provider => ({
+            name: provider,
+            items: state.models.filter(model => model.providerID === provider).map(model => ({
+              value: `${model.providerID}/${model.id}`,
+              label: model.name ?? model.id,
+              detail: model.limit?.context ? `${Math.round(model.limit.context / 1000)}k` : undefined,
+              logo: model.providerID,
             })),
-          ]}
+          }))}
         />
         <div className="spacer" />
         <button id="stop" type="button" className="small" hidden={!state.transcript?.running} onClick={() => void stopRun()}>Stop</button>
@@ -2089,7 +2102,8 @@ export function App() {
 
   const hasSession = state.session !== null;
   const needsFolder = state.project === null;
-  const inShell = new URLSearchParams(window.location.search).get("shell") === "1";
+  const inShell = (window as unknown as { kuvo?: { isShell?: boolean } }).kuvo?.isShell === true
+    || new URLSearchParams(window.location.search).get("shell") === "1";
 
   useEffect(() => {
     document.body.classList.toggle("in-shell", inShell);

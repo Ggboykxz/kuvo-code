@@ -12,6 +12,7 @@
     "smoke": "node smoke.js"
   },
   "dependencies": {
+    "node-pty": "^1.0.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
@@ -57,8 +58,5 @@
       "repo": "kuvo-code",
       "releaseType": "prerelease"
     }
-  },
-  "optionalDependencies": {
-    "node-pty": "^1.0.0"
   }
 }

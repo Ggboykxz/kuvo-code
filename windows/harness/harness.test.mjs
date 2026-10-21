@@ -107,6 +107,14 @@ test("the client talks to the engine the Mac app's way: auth, folder scoping, ro
   assert.equal(made.id, "ses_new");
   assert.deepEqual(engine.asked.at(-1).body, { location: { directory: "C:\\work\\app" }, title: "Fix the tests" });
 
+  // The model the picker chose goes as the engine's Model.ref — the object
+  // (OpenCodeAPI.swift:473-476) — never the picker's "provider/id" shorthand, which the
+  // engine refuses with 'Expected Model.Ref at ["model"]'. An id's own slashes stay in it.
+  await client.setModel("ses_1", "openrouter/anthropic/claude-sonnet-4.5");
+  assert.deepEqual(engine.asked.at(-1).body, { model: { providerID: "openrouter", id: "anthropic/claude-sonnet-4.5" } });
+  await client.setModel("ses_1", { providerID: "prov", id: "big", variant: "high" });
+  assert.deepEqual(engine.asked.at(-1).body, { model: { providerID: "prov", id: "big", variant: "high" } });
+
   const id = await client.prompt({ session: "ses_1", text: "hello" });
   assert.match(id, /^msg_[0-9A-Za-z]{10}$/);
   const prompted = engine.asked.at(-1);

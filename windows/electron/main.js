@@ -83,9 +83,23 @@ function startTerminalServer() {
       resolve(terminalPort);
     });
     terminalServer.on('connection', (ws) => {
-      if (!pty) { try { ws.close(); } catch {} return; }
+      if (!pty) {
+        try { ws.close(1011, 'The terminal needs node-pty, which this build does not carry.'); } catch {}
+        return;
+      }
       const shell = process.platform === 'win32' ? 'powershell.exe' : (process.env.SHELL || '/bin/bash');
-      const term = pty.spawn(shell, [], { name: 'xterm-color', cols: 80, rows: 24, cwd: os.homedir(), env: process.env });
+      let term;
+      try {
+        term = pty.spawn(shell, [], { name: 'xterm-color', cols: 80, rows: 24, cwd: os.homedir(), env: process.env });
+      } catch (error) {
+        // The page shows the reason where the terminal would be, rather than only closing.
+        // A close's reason fits 123 bytes: cut it on a character boundary that does.
+        const said = `The terminal could not start: ${String(error && error.message || error)}`;
+        let reason = said;
+        while (Buffer.byteLength(reason, 'utf8') > 120) reason = reason.slice(0, -1);
+        try { ws.close(1011, reason); } catch {}
+        return;
+      }
       term.onData((data) => { try { ws.send(data); } catch {} });
       ws.on('message', (raw) => {
         const text = raw.toString();
@@ -117,6 +131,20 @@ function createWindow(url) {
   const fullUrl = `${url}${url.includes('?') ? '&' : '?'}terminalPort=${terminalPort}&shell=1`;
   mainWindow.loadURL(fullUrl);
   mainWindow.once('ready-to-show', () => mainWindow.show());
+  // The window shows the harness's page, and only it: the mouse's Back and Forward buttons
+  // (and Alt+Left/Right) have nothing to go back to. The shell's own state — the title bar's
+  // room for the window's controls, and the terminal's port — travels by the bridge
+  // (preload.js), so even a reload keeps it (the Back button once took the query string,
+  // and with it the title bar's room, away).
+  mainWindow.on('app-command', (event, command) => {
+    if (command === 'browser-backward' || command === 'browser-forward') event.preventDefault();
+  });
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.alt && (input.key === 'ArrowLeft' || input.key === 'ArrowRight')) event.preventDefault();
+  });
+  mainWindow.webContents.on('will-navigate', (event, target) => {
+    if (!harnessUrl || !target.startsWith(harnessUrl)) event.preventDefault();
+  });
   // The settings page can change these; the window coming forward is when they are read.
   mainWindow.on('focus', () => applyShellPreferences());
   mainWindow.on('close', (event) => {
@@ -286,6 +314,11 @@ ipcMain.on("kuvo:maximize", () => {
   if (!mainWindow) return;
   if (mainWindow.isMaximized()) mainWindow.unmaximize();
   else mainWindow.maximize();
+});
+
+// The page asks the bridge what only the shell knows (preload.js): the terminal's port.
+ipcMain.on("kuvo:terminal-port", (event) => {
+  event.returnValue = terminalPort;
 });
 
 function shutdown() {

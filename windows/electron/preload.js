@@ -5,6 +5,11 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("kuvo", {
   platform: "windows",
+  // The window is the shell's: the page knows it by the bridge, not by the address it was
+  // opened at, so a reload — or a stray Back — cannot take the title bar's room for the
+  // window's controls, or the terminal's port, away from it.
+  isShell: true,
+  terminalPort: ipcRenderer.sendSync("kuvo:terminal-port"),
   maximize: () => ipcRenderer.send("kuvo:maximize"),
   // The menu bar's items that act on the conversation.
   onMenu: (callback) => ipcRenderer.on("kuvo:menu", (_event, id) => callback(id)),
