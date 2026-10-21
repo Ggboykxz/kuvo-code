@@ -250,26 +250,61 @@ export class ClaudeAgent implements Agent {
     })
     try {
       const init: any = await Promise.race([q.initializationResult(), Bun.sleep(30_000).then(() => undefined)])
-      const list = (init?.models ?? []) as { value: string; displayName: string; description?: string; supportedEffortLevels?: string[] }[]
+      const list = (init?.models ?? []) as ClaudeModelInfo[]
       if (list.length) {
-        this.modelList = {
-          at: Date.now(),
-          models: list.map((info, index) =>
-            model(this.providerID, info.value, modelName(info), {
-              family: family(modelName(info)),
-              variants: info.supportedEffortLevels,
-              images: true,
-              context: /1M/i.test(info.description ?? "") ? 1_000_000 : 200_000,
-              // Listed in Claude Code's order: the first is its default.
-              released: Date.now() - index,
-            }),
-          ),
-        }
-        emit("model.updated", {})
+        this.listModels(list)
+        // How much each holds, which its descriptions don't say (it depends on your plan): asked
+        // one by one, then listed again.
+        if (await this.askWindows(q, list)) this.listModels(list)
       }
     } finally {
       abort.abort()
     }
+  }
+
+  /** How much each model holds, as Claude Code said: by its value. */
+  private windows = new Map<string, number>()
+
+  private listModels(list: ClaudeModelInfo[]) {
+    this.modelList = {
+      at: Date.now(),
+      models: list.map((info, index) =>
+        model(this.providerID, info.value, modelName(info), {
+          family: family(modelName(info)),
+          variants: info.supportedEffortLevels,
+          images: true,
+          context: this.windows.get(info.value) ?? (/1M/i.test(info.description ?? "") ? 1_000_000 : 200_000),
+          // Listed in Claude Code's order: the first is its default.
+          released: Date.now() - index,
+        }),
+      ),
+    }
+    emit("model.updated", {})
+  }
+
+  /** Each model's window, as Claude Code's /context says it, once a model (its aliases share it); true when one changed. An older Claude Code that doesn't say leaves them as they were. */
+  private async askWindows(q: any, list: ClaudeModelInfo[]): Promise<boolean> {
+    const said = new Map<string, number>()
+    let changed = false
+    for (const info of list) {
+      const key = info.resolvedModel ?? info.value
+      let window = said.get(key)
+      if (window === undefined) {
+        try {
+          await withTimeout(q.setModel(info.value), 5_000)
+          window = (await withTimeout(q.getContextUsage({ detail: "summary" }), 5_000) as any)?.maxTokens
+        } catch {
+          return changed
+        }
+        if (typeof window !== "number" || window <= 0) return changed
+        said.set(key, window)
+      }
+      if (this.windows.get(info.value) !== window) {
+        this.windows.set(info.value, window)
+        changed = true
+      }
+    }
+    return changed
   }
 
   forgetModels() {
@@ -318,6 +353,20 @@ export class ClaudeAgent implements Agent {
       } catch {}
     }
   }
+}
+
+/** A model as Claude Code lists it. */
+interface ClaudeModelInfo {
+  value: string
+  /** The model an alias ("default", "opus") stands for now. */
+  resolvedModel?: string
+  displayName: string
+  description?: string
+  supportedEffortLevels?: string[]
+}
+
+function withTimeout<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
+  return Promise.race([promise, Bun.sleep(milliseconds).then(() => Promise.reject(new Error("Claude Code didn't answer in time.")))])
 }
 
 function modelName(info: { value: string; displayName: string; description?: string }): string {

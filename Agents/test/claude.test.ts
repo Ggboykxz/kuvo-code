@@ -28,6 +28,12 @@ class FakeClaude {
 
   options: any
 
+  /** The models it lists, how much each holds (unsaid: an older Claude Code), and the ones it was asked about. */
+  models: any[] = []
+  windows?: Record<string, number>
+  asked: string[] = []
+  private model?: string
+
   query = (options: { prompt: AsyncIterable<any> | string; options?: any }) => {
     if (typeof options.prompt === "string") {
       this.oneOffs.push(options.prompt)
@@ -44,7 +50,15 @@ class FakeClaude {
     return {
       [Symbol.asyncIterator]: () => out[Symbol.asyncIterator](),
       setMcpServers: async () => {},
-      setModel: async () => {},
+      initializationResult: async () => ({ models: this.models }),
+      setModel: async (model?: string) => {
+        this.model = model
+      },
+      getContextUsage: async () => {
+        if (!this.windows) throw new Error("Unknown control request: get_context_usage")
+        this.asked.push(this.model ?? "")
+        return { maxTokens: this.windows[this.model ?? ""] }
+      },
       applyFlagSettings: async () => {},
       setPermissionMode: async () => {},
       getTaskOutput: async (task: string) => ({ output: this.outputs.get(task) ?? "", total_bytes: Buffer.byteLength(this.outputs.get(task) ?? ""), truncated: false }),
@@ -328,5 +342,38 @@ describe("Claude Code, nothing dropped", () => {
       { type: "system", subtype: "post_turn_summary", summary: "Already shown." },
     ])
     expect(notices(id)).toEqual(["Claude Code summarized the conversation to make room.", "Claude's API is overloaded: trying again (2/10).", "Something new to read."])
+  })
+})
+
+describe("Claude Code's models", () => {
+  const listed = [
+    { value: "default", resolvedModel: "claude-opus-5-5", displayName: "Default (recommended)", description: "Opus 5.5 · Best for everyday, complex tasks" },
+    { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus 5.5", description: "Best for everyday, complex tasks" },
+    { value: "claude-haiku-4-5", displayName: "Haiku 4.5", description: "Haiku 4.5 · Fast" },
+    { value: "opus[1m]", displayName: "Opus 4.8 (1M context)", description: "Opus 4.8 with 1M context" },
+  ]
+
+  /** Each model's window, once it's what's expected (Claude Code's usual ones come first), or as it is after a while. */
+  async function windows(claude: ClaudeAgent, expected: Record<string, number>) {
+    let said: Record<string, number> = {}
+    for (const start = Date.now(); Date.now() - start < 3_000; await Bun.sleep(20)) {
+      said = Object.fromEntries((await claude.models()).map((model) => [model.id, model.limit.context]))
+      if (JSON.stringify(said) === JSON.stringify(expected)) break
+    }
+    return said
+  }
+
+  test("each holds what Claude Code says it does on your plan, which its list doesn't say", async () => {
+    fake.models = listed
+    fake.windows = { default: 1_000_000, "claude-haiku-4-5": 200_000, "opus[1m]": 1_000_000 }
+    const want = { default: 1_000_000, opus: 1_000_000, "claude-haiku-4-5": 200_000, "opus[1m]": 1_000_000 }
+    expect(await windows(new TestClaude(fake, root), want)).toEqual(want)
+    expect(fake.asked).toEqual(["default", "claude-haiku-4-5", "opus[1m]"])
+  })
+
+  test("an older Claude Code that doesn't say: as its list says", async () => {
+    fake.models = listed
+    const want = { default: 200_000, opus: 200_000, "claude-haiku-4-5": 200_000, "opus[1m]": 1_000_000 }
+    expect(await windows(new TestClaude(fake, root), want)).toEqual(want)
   })
 })

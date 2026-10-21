@@ -4348,21 +4348,51 @@ class ClaudeAgent {
       })]);
       const list = init?.models ?? [];
       if (list.length) {
-        this.modelList = {
-          at: Date.now(),
-          models: list.map((info, index) => model(this.providerID, info.value, modelName(info), {
-            family: family(modelName(info)),
-            variants: info.supportedEffortLevels,
-            images: true,
-            context: /1M/i.test(info.description ?? "") ? 1e6 : 200000,
-            released: Date.now() - index
-          }))
-        };
-        emit("model.updated", {});
+        this.listModels(list);
+        if (await this.askWindows(q, list))
+          this.listModels(list);
       }
     } finally {
       abort.abort();
     }
+  }
+  windows = new Map;
+  listModels(list) {
+    this.modelList = {
+      at: Date.now(),
+      models: list.map((info, index) => model(this.providerID, info.value, modelName(info), {
+        family: family(modelName(info)),
+        variants: info.supportedEffortLevels,
+        images: true,
+        context: this.windows.get(info.value) ?? (/1M/i.test(info.description ?? "") ? 1e6 : 200000),
+        released: Date.now() - index
+      }))
+    };
+    emit("model.updated", {});
+  }
+  async askWindows(q, list) {
+    const said2 = new Map;
+    let changed = false;
+    for (const info of list) {
+      const key = info.resolvedModel ?? info.value;
+      let window = said2.get(key);
+      if (window === undefined) {
+        try {
+          await withTimeout(q.setModel(info.value), 5000);
+          window = (await withTimeout(q.getContextUsage({ detail: "summary" }), 5000))?.maxTokens;
+        } catch {
+          return changed;
+        }
+        if (typeof window !== "number" || window <= 0)
+          return changed;
+        said2.set(key, window);
+      }
+      if (this.windows.get(info.value) !== window) {
+        this.windows.set(info.value, window);
+        changed = true;
+      }
+    }
+    return changed;
   }
   forgetModels() {
     this.modelList = undefined;
@@ -4408,6 +4438,9 @@ class ClaudeAgent {
       } catch {}
     }
   }
+}
+function withTimeout(promise, milliseconds) {
+  return Promise.race([promise, Bun.sleep(milliseconds).then(() => Promise.reject(new Error("Claude Code didn't answer in time.")))]);
 }
 function modelName(info) {
   const what = info.description?.split(" \xB7 ")[0]?.trim();
@@ -7121,7 +7154,7 @@ class CursorAgent {
       account = { installed: true, signedIn: false, message: "Your Cursor sign-in expired. Sign in again." };
     } else {
       try {
-        const me = await withTimeout(sdk.Cursor.me({ apiKey }), 15000);
+        const me = await withTimeout2(sdk.Cursor.me({ apiKey }), 15000);
         account = { installed: true, signedIn: true, label: me?.userEmail ?? (process.env.CURSOR_API_KEY ? "Cursor API key" : "Cursor account") };
       } catch (error) {
         const rejected = error instanceof sdk.AuthenticationError || error?.status === 401;
@@ -7163,7 +7196,7 @@ class CursorAgent {
   }
   async signInWithKey(key) {
     const sdk = await this.sdk();
-    await withTimeout(sdk.Cursor.me({ apiKey: key }), 15000);
+    await withTimeout2(sdk.Cursor.me({ apiKey: key }), 15000);
     await (await this.store(sdk)).save({ version: 1, backendUrl: "https://api2.cursor.sh", apiKey: key, createdAtMs: Date.now() });
     this.accountCache = undefined;
     this.modelList = undefined;
@@ -7180,7 +7213,7 @@ class CursorAgent {
       return [];
     if (this.modelList && this.modelList.key === apiKey && Date.now() - this.modelList.at < 30 * 60000)
       return this.modelList.models;
-    const list = await withTimeout(sdk.Cursor.models.list({ apiKey }), 15000);
+    const list = await withTimeout2(sdk.Cursor.models.list({ apiKey }), 15000);
     const seen = new Set;
     const models = list.filter((info) => info?.id && !seen.has(info.id) && seen.add(info.id)).map((info, index) => {
       const effort = (info.parameters ?? []).find((parameter) => effortParameters.includes(parameter.id));
@@ -7699,7 +7732,7 @@ var cursorUpdates = new Set([
   "user-message-appended"
 ]);
 var cursorTools = new Set(["shell", "write", "delete", "glob", "grep", "read", "edit", "ls", "readLints", "mcp", "generateImage", "recordScreen", "semSearch", "createPlan", "updateTodos", "task"]);
-function withTimeout(promise, milliseconds) {
+function withTimeout2(promise, milliseconds) {
   return Promise.race([promise, Bun.sleep(milliseconds).then(() => Promise.reject(new Error("Cursor didn't answer in time.")))]);
 }
 
@@ -11195,4 +11228,4 @@ if (onMachine) {
 }
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
-// Built from Agents/src 9105d4c01bb6c3386374a1d26c2abe1cd0ac7a55f806395dfc7a5b91e1678c3e
+// Built from Agents/src 756fcd399d3dc0f8c142baeefd9096c4fb65aeed5fffa8f25fb936adadd3b688
