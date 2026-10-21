@@ -72,6 +72,7 @@ struct MachinesSettings: View {
                     MachineStatus(engine: engine)
                 }
             }
+            .settingsText()
             HStack {
                 switch engine.state {
                 case .ready:

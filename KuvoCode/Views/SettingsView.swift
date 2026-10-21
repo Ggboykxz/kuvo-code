@@ -52,7 +52,6 @@ struct SettingsView: View {
                                     .environment(\.settingsNavigator, navigator)
                             }
                             .frame(maxWidth: SettingsMetrics.columnWidth)
-                            .foregroundStyle(.primary, SettingsMetrics.secondaryInk(scheme), SettingsMetrics.tertiaryInk(scheme))
                             .modifier(SettingsColumnInset())
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .id(page)
@@ -452,6 +451,7 @@ private struct SettingsPageHeader: View {
                     .font(.system(size: 26, weight: .bold))
                 if let subtitle = page.subtitle {
                     Text(subtitle)
+                        .settingsText()
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

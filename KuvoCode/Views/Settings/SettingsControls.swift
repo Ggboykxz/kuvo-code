@@ -53,7 +53,6 @@ struct ConfigTextField: View {
                 text
                     .labelsHidden()
                     .lineLimit(1...10)
-                    .settingsFieldWell(padding: 7)
             }
         } else {
             SettingsTextRow(title: title) { text }
@@ -118,7 +117,7 @@ struct ConfigNumberField: View {
 }
 
 /// Longer text, like an agent's instructions: saved when you leave it. Monospaced, like a
-/// skill's instructions, in a well like the other fields.
+/// skill's instructions, and on the group's own background: the group is the text area.
 struct ConfigTextEditor: View {
     let path: [String]
     var minHeight: CGFloat = 120
@@ -147,7 +146,6 @@ struct ConfigTextEditor: View {
                         .allowsHitTesting(false)
                 }
             }
-            .settingsFieldWell(padding: 7)
             .focused($isFocused)
             .onChange(of: isFocused) { if !isFocused { commit() } }
             .onChange(of: field.text) { if config.isDraft { commit() } }
@@ -440,6 +438,7 @@ struct SettingsGroups<Content: View>: View {
                             section.footer
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
+                                .settingsText()
                                 .fixedSize(horizontal: false, vertical: true)
                                 .padding(.horizontal, SettingsMetrics.rowPadding)
                                 .padding(.top, -2)
@@ -484,6 +483,23 @@ private struct SettingsGroupBox<Content: View>: View {
     }
 }
 
+extension View {
+    /// Text in Settings: its secondary and tertiary levels a step brighter than the system's, so
+    /// descriptions read at 4.5:1 or better on a group in either mode. Only for text: controls
+    /// draw their fills from these levels, and turned pale under it.
+    func settingsText() -> some View {
+        modifier(SettingsTextInk())
+    }
+}
+
+private struct SettingsTextInk: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+
+    func body(content: Content) -> some View {
+        content.foregroundStyle(.primary, SettingsMetrics.secondaryInk(scheme), SettingsMetrics.tertiaryInk(scheme))
+    }
+}
+
 /// A setting's title, and the line under it in secondary text: what a toggle's or a labeled row's
 /// label holds, as its first text and the rest. A disabled one stays readable.
 struct SettingsRowLabel<Label: View>: View {
@@ -505,6 +521,7 @@ struct SettingsRowLabel<Label: View>: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
+            .settingsText()
         }
         .opacity(isEnabled ? 1 : 0.6)
     }
@@ -608,8 +625,8 @@ struct SettingsTextRow<Field: View, Label: View>: View {
 }
 
 extension View {
-    /// A text field or editor in Settings: in a well a step below its group, so it reads as a
-    /// place to type.
+    /// A one-line text field in a row: in a well a step below its group, so it reads as a place
+    /// to type beside the row's title. (A text area is the group itself, with no well.)
     func settingsFieldWell(padding: CGFloat = 5) -> some View {
         modifier(SettingsFieldWell(padding: padding))
     }

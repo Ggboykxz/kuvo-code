@@ -62,6 +62,7 @@ struct SkillsSettings: View {
                                     .help(description)
                             }
                         }
+                        .settingsText()
                         HStack {
                             if isYours(skill) {
                                 // Deleting one you wrote is in its editor, behind a confirmation.

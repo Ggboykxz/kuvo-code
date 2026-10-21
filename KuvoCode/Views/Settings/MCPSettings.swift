@@ -66,6 +66,7 @@ struct MCPSettings: View {
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                         }
+                        .settingsText()
                         Group {
                         if config.value(at: Self.path + [server.id]) != nil, Integrations.service(server.id) != nil {
                             // Added as an integration: kept on that page, not in Servers above.
@@ -357,7 +358,6 @@ private struct ServerEditor: View {
                             .labelsHidden()
                             .font(.body.monospaced())
                             .lineLimit(1...8)
-                            .settingsFieldWell(padding: 7)
                             .onSubmit { saveCommand(path) }
                             .onDisappear { saveCommand(path) }
                     }

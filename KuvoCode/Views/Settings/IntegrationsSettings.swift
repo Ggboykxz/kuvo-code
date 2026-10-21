@@ -128,6 +128,7 @@ struct IntegrationsSettings: View {
                     }
                 }
             }
+            .settingsText()
             HStack {
                 switch service.way {
                 case .browser:

@@ -76,6 +76,7 @@ struct AgentsSettings: View {
                                     .help(description)
                             }
                         }
+                        .settingsText()
                         Button("Edit…") { editing = AgentEdit(agentID: agent.id, isBuiltIn: agent.isBuiltIn) }
                     }
                 }
