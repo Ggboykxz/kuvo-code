@@ -27,6 +27,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Undoing a message that waited in the queue, then sending, no longer takes away the agent's reply from before it (until the conversation was read again); only the message and what came after it go.
 - The Now button on a session's wake-up sends it once: clicked again while it was on its way, the agent got it twice.
 - Wake-ups you paused stay paused when you archive the session and bring it back; bringing it back resumed them.
+- A bot imported from a .kuvobot file says its job once in its first message; the job's line was there twice.
 ## 0.6.2
 
 - A worktree's branch named after a title in another language keeps its letters ("Giriş düzeltmesi" is giris-duzeltmesi, not giri-dzeltmesi).
