@@ -579,6 +579,8 @@ final class WakeUps {
     /// Wake-ups on this Mac that didn't go, by owner and file: when to try again, and how many
     /// times in a row they failed, so one that keeps failing is tried less and less often.
     @ObservationIgnored private var retries: [String: (at: Date, failures: Int)] = [:]
+    /// How long a wake-up that has nowhere to go waits before it's tried again.
+    static let unreachableRetry: TimeInterval = 30
 
     private func wakeDue() async {
         await adoptStrays()
@@ -588,6 +590,13 @@ final class WakeUps {
             if !due.isEmpty, let api = api(for: owner) {
                 if !owner.agents { await api.waitForTools(in: owner.directory) }
                 for wake in due { await send(wake, of: owner, api: api) }
+            } else if !due.isEmpty, app?.api != nil {
+                // Where it runs can't be reached while the engine is up (the coding agents' bridge
+                // is down): tried again in a while, rather than every half second meanwhile.
+                for wake in due {
+                    let key = owner.key + "/" + wake.id
+                    retries[key] = (Date.now.addingTimeInterval(Self.unreachableRetry), retries[key]?.failures ?? 0)
+                }
             }
             let left = Self.localWakes(of: owner)
             if wakes[owner.key] != left { wakes[owner.key] = left }
