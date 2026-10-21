@@ -16,6 +16,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Turning notifications on in System Settings after saying no works without restarting Kuvo Code.
 - A session moved to a coding agent's model takes its wake-ups and watches along; they stayed with the old session in Archived, held there.
 - A wake-up an agent sets after its session was archived waits until you bring the session back, as the ones it had already do.
+- Redo after undoing twice keeps what you typed in the composer between the two undos; it used to put the composer back as it was before the first undo, and what you'd typed was lost.
 ## 0.6.2
 
 - A worktree's branch named after a title in another language keeps its letters ("Giriş düzeltmesi" is giris-duzeltmesi, not giri-dzeltmesi).

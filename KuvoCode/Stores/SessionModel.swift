@@ -1185,8 +1185,9 @@ final class SessionModel {
                 session.revert = try await api.stageRevert(session: id, messageID: copy.id)
                 // Undone further back before Redo: Redo takes them all back, so it puts back the
                 // composer as it was before the first undo (with each undo's text gone, rather
-                // than left to be sent again).
-                let before = undone?.before ?? composerState
+                // than left to be sent again). Written in since the last undo, it's yours: Redo
+                // puts it back as it is now, as it would have left it.
+                let before = undone.flatMap { $0.after == composerState ? $0.before : nil } ?? composerState
                 restoreDraft(CommandMessages.shared.text(of: copy), files: Self.files(of: message, stored: copy))
                 undone = (before, composerState)
             } catch {
