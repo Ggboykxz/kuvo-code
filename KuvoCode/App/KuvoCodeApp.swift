@@ -144,7 +144,7 @@ struct AppCommands: Commands {
     let updates: Updates
     @FocusedValue(\.sessionActions) private var actions
     @AppStorage(Appearance.key) private var appearance = Appearance.system
-    @AppStorage(TabBar.showsKey) private var showsTabBar = true
+    @AppStorage(TabBar.showsKey) private var showsTabBar = TabBar.showsByDefault
 
     var body: some Commands {
         CommandGroup(after: .appInfo) {

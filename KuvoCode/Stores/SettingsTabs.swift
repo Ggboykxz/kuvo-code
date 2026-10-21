@@ -123,8 +123,11 @@ final class SettingsTabs {
     /// Shows `page`: its tab, if it's open; else in the preview tab, unless `isBusy` says it has
     /// something open in its page's place (an editor, with what you typed), which stays; else in
     /// a new preview tab, beside the one in view. `inNewTab` (⌘-click) opens one more, kept.
+    /// Without the tab bar, there's one page at a time: `page` takes the place of the one in view.
     func show(_ page: SettingsPage, inNewTab: Bool = false, isBusy: (String) -> Bool = { _ in false }) {
-        if inNewTab {
+        if !TabBar.isShown {
+            replace(with: page)
+        } else if inNewTab {
             insert(Tab(id: UUID().uuidString, kind: .page(page)))
         } else {
             preview(page, isBusy: isBusy)
@@ -134,7 +137,9 @@ final class SettingsTabs {
 
     /// `page` as `show` has it, without counting it as opened: what searching finds first.
     func preview(_ page: SettingsPage, isBusy: (String) -> Bool = { _ in false }) {
-        if let open = tabs.first(where: { $0.page == page }) {
+        if !TabBar.isShown {
+            replace(with: page)
+        } else if let open = tabs.first(where: { $0.page == page }) {
             select(open.id)
         } else if let id = previewTab, !isBusy(id), let index = tabs.firstIndex(where: { $0.id == id && $0.page != nil }) {
             tabs[index].kind = .page(page)
@@ -143,6 +148,18 @@ final class SettingsTabs {
             insert(Tab(id: UUID().uuidString, kind: .page(page)))
             previewTab = selectedID
             save()
+        }
+    }
+
+    /// `page` in the tab in view, or in the page's tab when a site's is in view.
+    private func replace(with page: SettingsPage) {
+        if let open = tabs.first(where: { $0.page == page }) {
+            select(open.id)
+        } else if let index = tabs.firstIndex(where: { $0.id == (selected?.page != nil ? selectedID : lastPageTab) }) {
+            tabs[index].kind = .page(page)
+            select(tabs[index].id)
+        } else {
+            insert(Tab(id: UUID().uuidString, kind: .page(page)))
         }
     }
 

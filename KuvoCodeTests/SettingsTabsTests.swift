@@ -12,6 +12,23 @@ import Testing
     init() {
         TestEnvironment.prepare()
         for key in ["settings.tabs", "settings.previewTab", SettingsPage.storageKey] { UserDefaults.standard.removeObject(forKey: key) }
+        // Tabs are for the tab bar, which you turn on.
+        UserDefaults.standard.set(true, forKey: TabBar.showsKey)
+    }
+
+    /// Without the tab bar (as it starts), Settings shows one page at a time: each page you open
+    /// takes the place of the one in view, ⌘-click included.
+    @Test func withoutTheTabBarOnePageAtATime() {
+        UserDefaults.standard.removeObject(forKey: TabBar.showsKey)
+        defer { UserDefaults.standard.set(true, forKey: TabBar.showsKey) }
+        let tabs = SettingsTabs()
+        tabs.show(.accounts)
+        tabs.keepSelected()
+        tabs.show(.machines)
+        #expect(pages(tabs) == [.machines], "even after you worked in a page")
+        tabs.show(.git, inNewTab: true)
+        #expect(pages(tabs) == [.git])
+        #expect(tabs.page == .git)
     }
 
     private func pages(_ tabs: SettingsTabs) -> [SettingsPage?] { tabs.tabs.map(\.page) }

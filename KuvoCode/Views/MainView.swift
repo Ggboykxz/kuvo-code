@@ -19,7 +19,7 @@ struct MainView: View {
     @SceneStorage("showsSidebar") private var showsSidebar = true
     /// The row at the top: the project, its branch and the tabs. Hidden, sessions are switched
     /// from the sidebar or ⌘K.
-    @AppStorage(TabBar.showsKey) private var showsTabBar = true
+    @AppStorage(TabBar.showsKey) private var showsTabBar = TabBar.showsByDefault
     /// The window is being resized.
     @State private var window = WindowStateReader.State()
     @SceneStorage("showsPanel") private var showsPanel = false
@@ -368,11 +368,15 @@ struct MainView: View {
         // button stays, so the window's buttons keep a toolbar's height, centered on the cards'
         // header row, and the sidebar is a click away. The panel is still ⌥⌘0, and sessions ⌘K.
         .toolbar {
-            if app.showsSettings {
+            if app.showsSettings && showsTabBar {
                 // In Settings, the title bar has the way back, and the tabs once you sign in to a
                 // site: the page's, then each site's, from where the page's card starts.
                 ToolbarItem(placement: .navigation) { settingsTitleBar }
                 .sharedBackgroundVisibility(.hidden)
+            } else if app.showsSettings {
+                // Without the tab bar, only the way back, beside the window's buttons.
+                ToolbarItem(placement: .navigation) { SettingsBackButton(close: closeSettings) }
+                    .sharedBackgroundVisibility(.hidden)
             } else if showsTabBar {
                 titleBar
             } else {
@@ -1104,10 +1108,10 @@ struct MainView: View {
         })
     }
 
-    /// The title bar keeps its row: with the tab bar, or in Settings, for its tabs (even when
-    /// you hid the tab bar, they need somewhere to be).
+    /// The title bar keeps its row with the tab bar; without it, the cards reach the top, in
+    /// Settings too (one page at a time, then).
     private var keepsTitleBar: Bool {
-        showsTabBar || app.showsSettings
+        showsTabBar
     }
 
     /// In Settings, the title bar has the way back, and Settings' tabs, from where the page's
