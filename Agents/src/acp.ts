@@ -88,6 +88,8 @@ export interface AcpFlavor {
   madeFiles?(call: any, sessionId: string, since: number): { type: "file"; uri: string; mime: string; name?: string }[]
   /** Changes when the agent's program was updated: a process started before starts again. */
   program?(): number
+  /** How much the model holds, as the agent said (a usage update's size). */
+  noteContext?(model: string, size: number): void
 }
 
 export interface AcpContext {
@@ -567,6 +569,7 @@ export class AcpThread implements Thread {
         return this.tool(active, update)
       case "usage_update":
         if (typeof update.used === "number") active.used = update.used
+        if (typeof update.size === "number") this.flavor.noteContext?.(turn.currentModel.id, update.size)
         // What it cost, when it says (in dollars).
         if (typeof update.cost?.amount === "number" && (update.cost.currency ?? "USD") === "USD") turn.addUsage(undefined, update.cost.amount)
         return

@@ -10,7 +10,7 @@ import { pathToFileURL } from "node:url"
 import { providerID, type AgentAccount } from "../accounts"
 import type { Agent, AgentContext, Account, OwnTurn, RunInput, RunResult, SignInAttempt, SubagentRun, Thread, TurnHooks, PromptFile } from "../agent"
 import type { Limit } from "../auto"
-import { accountName, failure, model } from "../agent"
+import { accountName, ContextWindows, failure, model } from "../agent"
 import { fileDiff, fromPatch } from "../diff"
 import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
 import { emit } from "../events"
@@ -263,7 +263,7 @@ export class ClaudeAgent implements Agent {
   }
 
   /** How much each model holds, as Claude Code said: by its value. */
-  private windows = new Map<string, number>()
+  private windows = new ContextWindows()
 
   private listModels(list: ClaudeModelInfo[]) {
     this.modelList = {
@@ -299,10 +299,7 @@ export class ClaudeAgent implements Agent {
         if (typeof window !== "number" || window <= 0) return changed
         said.set(key, window)
       }
-      if (this.windows.get(info.value) !== window) {
-        this.windows.set(info.value, window)
-        changed = true
-      }
+      if (this.windows.note(info.value, window)) changed = true
     }
     return changed
   }

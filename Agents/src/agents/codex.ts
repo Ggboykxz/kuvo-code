@@ -8,7 +8,7 @@ import { join } from "node:path"
 import { providerID, type AgentAccount } from "../accounts"
 import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, SubagentRun, Thread, TurnHooks, PromptFile } from "../agent"
 import type { Limit } from "../auto"
-import { accountName, failure, model } from "../agent"
+import { accountName, ContextWindows, failure, model } from "../agent"
 import { fromPatch } from "../diff"
 import { emit } from "../events"
 import { kuvoTools, toolServerName } from "../kuvotools"
@@ -252,11 +252,10 @@ export class CodexAgent implements Agent {
   }
 
   /** How much each model holds, as Codex said in a turn. */
-  private contexts = new Map<string, number>()
+  private windows = new ContextWindows()
 
-  noteContext(model: string, window: number) {
-    if (this.contexts.get(model) === window) return
-    this.contexts.set(model, window)
+  noteContext(model: string, window: unknown) {
+    if (!this.windows.note(model, window)) return
     this.modelList = undefined
     emit("model.updated", {})
   }
@@ -337,7 +336,7 @@ export class CodexAgent implements Agent {
           model(this.providerID, info.model ?? info.id, info.displayName ?? info.model, {
             variants: (info.supportedReasoningEfforts ?? []).map((effort: any) => effort.reasoningEffort),
             images: (info.inputModalities ?? []).includes("image"),
-            context: this.contexts.get(info.model ?? info.id) ?? 400_000,
+            context: this.windows.get(info.model ?? info.id) ?? 400_000,
             // Listed in Codex's order: its default first.
             released: info.isDefault ? 2000 : order--,
           }),
@@ -740,8 +739,7 @@ class CodexThread implements Thread {
         return
       case "thread/tokenUsage/updated": {
         // How much its model holds, as Codex says: the models list it.
-        const window = params.tokenUsage?.modelContextWindow
-        if (typeof window === "number" && window > 0) this.agent.noteContext(active.model, window)
+        this.agent.noteContext(active.model, params.tokenUsage?.modelContextWindow)
         this.laneNotification(active, method, params)
         return
       }

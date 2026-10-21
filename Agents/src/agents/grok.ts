@@ -6,7 +6,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { providerID, type AgentAccount } from "../accounts"
 import type { Agent, AgentContext, Account, SignInAttempt, Thread } from "../agent"
-import { accountName, model } from "../agent"
+import { accountName, ContextWindows, model } from "../agent"
+import { emit } from "../events"
 import { AcpThread, questionFields } from "../acp"
 import { grokProgram, installGrok, managedNote, onMachine, withOwnFolders } from "../machine"
 import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
@@ -167,13 +168,19 @@ export class GrokAgent implements Agent {
     const status = await this.read(false)
     const efforts = this.efforts()
     // (Before a session has said, the efforts every Grok model has.)
-    return status.models.map((info, index) => model(this.providerID, info.id, info.name, { released: info.isDefault ? 1000 : 500 - index, context: 256_000, variants: efforts[info.id]?.values ?? ["low", "medium", "high"] }))
+    return status.models.map((info, index) => model(this.providerID, info.id, info.name, { released: info.isDefault ? 1000 : 500 - index, context: this.windows.get(info.id) ?? 256_000, variants: efforts[info.id]?.values ?? ["low", "medium", "high"] }))
   }
+
+  /** How much each model holds, as Grok says in a turn. */
+  private windows = new ContextWindows()
 
   thread(session: Session, state: Record<string, unknown>): Thread {
     const agent = this
     return new AcpThread(
       {
+        noteContext(model, size) {
+          if (agent.windows.note(model, size)) emit("model.updated", {})
+        },
         fileSystem: false,
         initializeMeta: { clientType: "extension" },
         authMethod: () => (process.env.XAI_API_KEY ? "xai.api_key" : "cached_token"),

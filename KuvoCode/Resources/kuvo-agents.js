@@ -538,6 +538,18 @@ import { readFileSync as readFileSync5 } from "fs";
 import { join as join5 } from "path";
 
 // Agents/src/agent.ts
+class ContextWindows {
+  sizes = new Map;
+  get(model) {
+    return this.sizes.get(model);
+  }
+  note(model, size) {
+    if (typeof size !== "number" || !(size > 0) || this.sizes.get(model) === size)
+      return false;
+    this.sizes.set(model, size);
+    return true;
+  }
+}
 function model(providerID2, id, name, options = {}) {
   return {
     id,
@@ -2382,6 +2394,8 @@ ${others.map((path) => `- ${path}`).join(`
       case "usage_update":
         if (typeof update.used === "number")
           active.used = update.used;
+        if (typeof update.size === "number")
+          this.flavor.noteContext?.(turn.currentModel.id, update.size);
         if (typeof update.cost?.amount === "number" && (update.cost.currency ?? "USD") === "USD")
           turn.addUsage(undefined, update.cost.amount);
         return;
@@ -3819,15 +3833,20 @@ class AntigravityAgent {
   async models() {
     try {
       const saved = JSON.parse(readFileSync10(this.modelsFile, "utf8"));
-      return saved.models.map((info, index) => model(this.providerID, info.value, info.name, { images: true, released: info.value === saved.current ? 2000 : 1000 - index, context: 1e6 }));
+      return saved.models.map((info, index) => model(this.providerID, info.value, info.name, { images: true, released: info.value === saved.current ? 2000 : 1000 - index, context: this.windows.get(info.value) ?? 1e6 }));
     } catch {
       return [];
     }
   }
+  windows = new ContextWindows;
   thread(session, state) {
     const agent = this;
     const followers = new Map;
     return new AcpThread({
+      noteContext(model2, size) {
+        if (agent.windows.note(model2, size))
+          emit("model.updated", {});
+      },
       fileSystem: true,
       authenticatesFirst: true,
       resumes: true,
@@ -4356,7 +4375,7 @@ class ClaudeAgent {
       abort.abort();
     }
   }
-  windows = new Map;
+  windows = new ContextWindows;
   listModels(list) {
     this.modelList = {
       at: Date.now(),
@@ -4387,10 +4406,8 @@ class ClaudeAgent {
           return changed;
         said2.set(key, window);
       }
-      if (this.windows.get(info.value) !== window) {
-        this.windows.set(info.value, window);
+      if (this.windows.note(info.value, window))
         changed = true;
-      }
     }
     return changed;
   }
@@ -5795,11 +5812,10 @@ class CodexAgent {
         return thread;
     return this.spawned.get(nativeID);
   }
-  contexts = new Map;
+  windows = new ContextWindows;
   noteContext(model2, window) {
-    if (this.contexts.get(model2) === window)
+    if (!this.windows.note(model2, window))
       return;
-    this.contexts.set(model2, window);
     this.modelList = undefined;
     emit("model.updated", {});
   }
@@ -5875,7 +5891,7 @@ class CodexAgent {
         models.push(model(this.providerID, info.model ?? info.id, info.displayName ?? info.model, {
           variants: (info.supportedReasoningEfforts ?? []).map((effort) => effort.reasoningEffort),
           images: (info.inputModalities ?? []).includes("image"),
-          context: this.contexts.get(info.model ?? info.id) ?? 400000,
+          context: this.windows.get(info.model ?? info.id) ?? 400000,
           released: info.isDefault ? 2000 : order--
         }));
       }
@@ -6200,9 +6216,7 @@ ${others.map((path) => `- ${path}`).join(`
         active.turnID ??= params.turn?.id;
         return;
       case "thread/tokenUsage/updated": {
-        const window = params.tokenUsage?.modelContextWindow;
-        if (typeof window === "number" && window > 0)
-          this.agent.noteContext(active.model, window);
+        this.agent.noteContext(active.model, params.tokenUsage?.modelContextWindow);
         this.laneNotification(active, method, params);
         return;
       }
@@ -7874,11 +7888,16 @@ class GrokAgent {
   async models() {
     const status = await this.read(false);
     const efforts = this.efforts();
-    return status.models.map((info, index) => model(this.providerID, info.id, info.name, { released: info.isDefault ? 1000 : 500 - index, context: 256000, variants: efforts[info.id]?.values ?? ["low", "medium", "high"] }));
+    return status.models.map((info, index) => model(this.providerID, info.id, info.name, { released: info.isDefault ? 1000 : 500 - index, context: this.windows.get(info.id) ?? 256000, variants: efforts[info.id]?.values ?? ["low", "medium", "high"] }));
   }
+  windows = new ContextWindows;
   thread(session, state) {
     const agent = this;
     return new AcpThread({
+      noteContext(model2, size) {
+        if (agent.windows.note(model2, size))
+          emit("model.updated", {});
+      },
       fileSystem: false,
       initializeMeta: { clientType: "extension" },
       authMethod: () => process.env.XAI_API_KEY ? "xai.api_key" : "cached_token",
@@ -11228,4 +11247,4 @@ if (onMachine) {
 }
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
-// Built from Agents/src 756fcd399d3dc0f8c142baeefd9096c4fb65aeed5fffa8f25fb936adadd3b688
+// Built from Agents/src a6dd53e140eb252180e5dbf2bbf5bda6ebde40fc0cc318fc4dab7d4489b5df0b

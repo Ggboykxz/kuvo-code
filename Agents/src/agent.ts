@@ -237,6 +237,25 @@ export interface Agent {
   forgetConversation?(state: Record<string, unknown>): Promise<void>
 }
 
+/**
+ * How much each model holds, as its agent says (its model list doesn't): the window its models
+ * list, so the context ring counts against the model's real room.
+ */
+export class ContextWindows {
+  private sizes = new Map<string, number>()
+
+  get(model: string): number | undefined {
+    return this.sizes.get(model)
+  }
+
+  /** What the agent said `model` holds; true when that's news (its models are listed again). */
+  note(model: string, size: unknown): boolean {
+    if (typeof size !== "number" || !(size > 0) || this.sizes.get(model) === size) return false
+    this.sizes.set(model, size)
+    return true
+  }
+}
+
 /** A model as the app lists it, from the little an agent says about one. */
 export function model(providerID: string, id: string, name: string, options: { variants?: string[]; images?: boolean; context?: number; released?: number; family?: string } = {}): Model {
   return {

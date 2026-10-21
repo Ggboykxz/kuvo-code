@@ -25,6 +25,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Selecting in a conversation works as one selection again: it stays when you let go, whichever way you drag, looks the same in every reply and step it takes in, and Add to Chat and Copy show over it, for a double-clicked word or a triple-clicked paragraph too.
 - In a session that asks before reading files outside its folder, the agent's browser no longer attaches such a file to a website's upload without asking first, on this Mac and on machines; it said so for opening one, but uploads went through.
 - The context ring of a Claude Code session counts against the window Claude Code gives the model on your plan, 1M tokens for Opus 5.5, rather than 200K for every model it didn't call 1M, which showed a long session full ("218K / 200K") with most of its room left.
+- The context ring of a Grok or Antigravity session counts against the window the agent says its model has, once it has answered, rather than 256K for every Grok model and 1M for every Antigravity one.
 
 ## 0.6.4
 

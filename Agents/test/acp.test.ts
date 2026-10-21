@@ -24,7 +24,7 @@ beforeEach(() => {
 afterEach(() => sessions?.closeAll())
 
 /** An ACP agent whose prompt sends `updates` (each `[sessionId, update]`), then, after the answer, `later`. */
-function agentSaying(updates: [string, any][], later: [string, any][] = [], request?: any, options: { afterReply?: [string, any][]; fileSystem?: boolean } = {}): Agent {
+function agentSaying(updates: [string, any][], later: [string, any][] = [], request?: any, options: { afterReply?: [string, any][]; fileSystem?: boolean; noteContext?: (model: string, size: number) => void } = {}): Agent {
   const script = join(root, "agent.js")
   writeFileSync(
     script,
@@ -66,7 +66,7 @@ process.stdin.on("data", (chunk) => {
     methods: () => [],
     account: async () => ({ installed: true, signedIn: true }),
     models: async () => [],
-    thread: (session, state) => new AcpThread({ fileSystem: options.fileSystem ?? false, authMethod: () => undefined, command: async () => ({ argv: [process.execPath, script], cwd: root }), selectModel: async () => {} }, session, state, "Agent"),
+    thread: (session, state) => new AcpThread({ fileSystem: options.fileSystem ?? false, authMethod: () => undefined, command: async () => ({ argv: [process.execPath, script], cwd: root }), selectModel: async () => {}, noteContext: options.noteContext }, session, state, "Agent"),
   }
 }
 
@@ -103,6 +103,24 @@ describe("ACP agents, nothing dropped", () => {
     expect(JSON.stringify(failed.state)).toContain("1 test failed")
     expect(words(id)).toContain("[Docs](https://kuvo.run)")
     expect(notices(id)).toContain("Something new to read.")
+  })
+
+  test("how full its context is and how much its model holds, as it says: what the context ring counts", async () => {
+    const said: [string, number][] = []
+    const id = await run(
+      agentSaying(
+        [
+          ["s1", { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Done." } }],
+          ["s1", { sessionUpdate: "usage_update", used: 52_000, size: 372_000 }],
+        ],
+        [],
+        undefined,
+        { noteContext: (model, size) => said.push([model, size]) },
+      ),
+    )
+    expect(said).toEqual([["one", 372_000]])
+    const last = sessions.messages(id).filter((message: any) => message.type === "assistant").at(-1) as any
+    expect(last.tokens.input + last.tokens.output + last.tokens.cache.read + last.tokens.cache.write).toBe(52_000)
   })
 
   test("a file it has Kuvo Code read shows as read then, though it says so only as the turn ends (Antigravity)", async () => {
