@@ -858,6 +858,8 @@ final class Workspace {
     /// agents, in a session of theirs with its conversation (their first agent is handed all of
     /// it), opened in its place; the engine's goes to Archived, its draft comes along.
     func moveToAgents(_ id: String, model: ModelRef) async throws {
+        // Moving to another computer: it goes to the coding agents once it's there.
+        if Moves.isFrozen(id) { throw Moves.Failure.moving }
         guard let moved = try await carryToAgents(id, model: model) else { return }
         Analytics.shared.track("session_moved_to_agents", Analytics.model(provider: model.providerID, model: model.id))
         // The window with its tab (or pane) takes its place, before the old one goes.

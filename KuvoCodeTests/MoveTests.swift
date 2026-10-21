@@ -375,6 +375,13 @@ import Testing
         let app = app()
         box.on("GET", "/api/session/\(session)", json: ["data": StubEngine.session(session, title: "Scout", directory: copy.appending(path: "workspace").path)])
         mac.on("GET", "/api/experimental/session/\(session)/export", json: Self.exported(session, directory: original.appending(path: "workspace").path, bot: id))
+        // The machine away at launch: nothing goes to it where it was meanwhile (it'd be lost there).
+        let boxAPI = app.workspace.machineAPI
+        app.workspace.machineAPI = { _ in nil }
+        await app.moves.recover()
+        #expect(Moves.isFrozen(id) && Moves.isFrozen(session))
+        #expect(app.bots.bot(id)?.machine == nil)
+        app.workspace.machineAPI = boxAPI
 
         await app.moves.recover()
 
@@ -384,6 +391,7 @@ import Testing
         #expect(mac.requests("DELETE", "/api/session/\(session)").count == 1)
         #expect(!FileManager.default.fileExists(atPath: original.path))
         #expect(UserDefaults.standard.data(forKey: "movesUnderWay") == nil)
+        #expect(!Moves.isFrozen(id) && !Moves.isFrozen(session), "it takes messages where it is now")
     }
 
     /// A move taken back whose copy couldn't be taken away (the machine didn't answer): the copy

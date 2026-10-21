@@ -29,8 +29,11 @@ final class Moves {
     /// Conversations moving now (a bot's, a chat's, their subagents') and the bots moving: nothing
     /// goes to them until they're where they're going.
     private(set) static var frozen: Set<String> = []
+    /// A bot whose move was cut short after it switched, before the bot itself went over to its
+    /// copy: nothing goes to it where it was (it would be lost with the original) until it's there.
+    private(set) static var pending: Set<String> = []
 
-    static func isFrozen(_ id: String) -> Bool { frozen.contains(id) }
+    static func isFrozen(_ id: String) -> Bool { frozen.contains(id) || pending.contains(id) }
 
     /// What a move writes in a folder's pause file while it holds the wake-ups there: only a move
     /// takes it away (`MoveTransport.unpause`), never a pause of yours.
@@ -94,6 +97,11 @@ final class Moves {
     }
 
     private func save(_ record: Record) {
+        var record = record
+        if let from = record.from, let now = renamed[from] { record.from = now }
+        if let to = record.to, let now = renamed[to] { record.to = now }
+        // One naming a machine you removed meanwhile ended with it (`machineRemoved`).
+        if [record.from, record.to].contains(where: { $0.map(removed.contains) == true }) { return forget(record) }
         records = records.filter { $0.id != record.id } + [record]
     }
 
@@ -108,6 +116,10 @@ final class Moves {
     /// look again once that's done.
     @ObservationIgnored private var recovers = false
     @ObservationIgnored private var recoverAgain = false
+    /// Machines found to be another's address, and machines you removed, while the app runs: a
+    /// move under way then is noted under the other's name, or not at all.
+    @ObservationIgnored private var renamed: [String: String] = [:]
+    @ObservationIgnored private var removed: Set<String> = []
 
     /// What's listed and heard from where a conversation isn't the one that lives: where it left
     /// (once it switched, until the original's gone, and what's said of it after), and where it's
@@ -119,6 +131,9 @@ final class Moves {
             for session in record.sessions { away[session] = .some(place) }
         }
         app?.workspace.movedAway = away
+        Self.pending = Set(records.filter { record in
+            record.kind == .bot && record.stage == .switched && underWay[record.id] == nil && app?.bots.bot(record.id).map { $0.machine == record.from } == true
+        }.flatMap { [$0.id] + $0.sessions })
     }
 
     func isMoving(_ id: String) -> Bool { underWay[id] != nil }
@@ -133,10 +148,12 @@ final class Moves {
     /// Moves a bot to `machine` (nil: this Mac): its folder and conversation go there, and from
     /// then on it lives there. Its group chats get a seat for it there at its next turn.
     func move(bot id: String, to machine: String?) async throws {
-        guard let app, let bot = app.bots.bot(id), bot.machine != machine, underWay[id] == nil else { return }
-        if bot.project != nil { throw Failure.inProject(bot.name) }
-        if bot.agents == true { throw Failure.withAgents(bot.name) }
-        try await finishEarlier(id, name: bot.name)
+        guard let app, let asked = app.bots.bot(id), asked.machine != machine, underWay[id] == nil else { return }
+        if asked.project != nil { throw Failure.inProject(asked.name) }
+        if asked.agents == true { throw Failure.withAgents(asked.name) }
+        try await finishEarlier(id, name: asked.name)
+        // As it is now: an earlier move just finished may have taken it there already.
+        guard let bot = app.bots.bot(id), bot.machine != machine, underWay[id] == nil else { return }
         if app.workspace.isWorking(bot.sessionID) || app.groups.speaking.values.contains(bot.id) { throw Failure.working(bot.name) }
         guard let source = app.workspace.api(forFolder: bot.directory) else { throw Failure.notConnected(bot.machine ?? AppInfo.name) }
         guard let target = api(on: machine) else { throw Failure.notConnected(machine ?? AppInfo.name) }
@@ -176,6 +193,7 @@ final class Moves {
         // The switch: from here on it lives there.
         switched(&record)
         await switchBot(bot, record: record, sessions: copied.sessions, target: target)
+        noteMovedAway(records)
         // The original goes.
         await finish(record, exports: copied.exports, source: source, leaving: bot)
         app.wakeUps.forget(key: id)
@@ -199,12 +217,14 @@ final class Moves {
     /// Moves a chat to `machine` (nil: this Mac): its conversation and wake-ups go there, into
     /// that computer's chats.
     func move(chat id: String, to machine: String?) async throws {
-        guard let app, let chat = app.workspace.session(id), Workspace.isChat(chat.location.directory) else { return }
+        guard let app, let asked = app.workspace.session(id), Workspace.isChat(asked.location.directory) else { return }
+        let name = (asked.title ?? "").isEmpty ? "This chat" : "“\(asked.title ?? "")”"
+        if OutsideAgents.isAgentSession(asked) { throw Failure.withAgents(name) }
+        try await finishEarlier(id, name: name)
+        // As it is now: an earlier move just finished may have taken it there already.
+        guard let chat = app.workspace.session(id), Workspace.isChat(chat.location.directory) else { return }
         let from = RemoteFolder.machine(of: chat.location.directory)
         guard from != machine, underWay[id] == nil else { return }
-        let name = (chat.title ?? "").isEmpty ? "This chat" : "“\(chat.title ?? "")”"
-        if OutsideAgents.isAgentSession(chat) { throw Failure.withAgents(name) }
-        try await finishEarlier(id, name: name)
         if app.workspace.isWorking(id) { throw Failure.working(name) }
         guard let source = app.workspace.api(forSession: id) else { throw Failure.notConnected(from ?? AppInfo.name) }
         guard let target = api(on: machine) else { throw Failure.notConnected(machine ?? AppInfo.name) }
@@ -259,6 +279,8 @@ final class Moves {
     /// where it is.
     private func finishEarlier(_ id: String, name: String) async throws {
         guard records.contains(where: { $0.id == id }) else { return }
+        // Moves cut short being seen to already (at launch, a machine connecting): once that's through.
+        for _ in 0..<300 where recovers { try await Task.sleep(for: .milliseconds(200)) }
         await recover()
         if records.contains(where: { $0.id == id }) { throw Failure.unfinished(name) }
     }
@@ -457,8 +479,14 @@ final class Moves {
         var leaving: Bot?
         if record.kind == .bot, let bot = app.bots.bot(record.id) {
             if bot.machine == record.from {
-                guard let session = try? await target.session(root) else { return }
-                await switchBot(bot, record: record, sessions: [session], target: target)
+                // Its conversation there, with its subagents', so all of it goes by the copy.
+                var sessions: [Session] = []
+                for id in record.sessions {
+                    if let session = try? await target.session(id) { sessions.append(session) }
+                }
+                guard sessions.first?.id == root else { return }
+                await switchBot(bot, record: record, sessions: sessions, target: target)
+                noteMovedAway(records)
                 leaving = bot
             } else {
                 var original = bot
@@ -479,6 +507,7 @@ final class Moves {
     /// other's. One with that computer at both ends is let go: there's nothing to finish or take
     /// back there that wouldn't touch what lives on.
     func fold(_ address: String, into machine: String) {
+        renamed[address] = machine
         for (session, place) in left where place == address { left[session] = .some(machine) }
         records = records.compactMap { record in
             var record = record
@@ -491,8 +520,10 @@ final class Moves {
     /// A machine you removed: moves to or from it end. What's on this side goes back as it was (an
     /// original's wake-ups go on, a copy made here goes); what's there stays there.
     func machineRemoved(_ machine: String) async {
+        removed.insert(machine)
         left = left.filter { $0.value != .some(machine) }
-        for record in records where record.from == machine || record.to == machine {
+        // A move under way ends by itself (it can't reach the machine), noted no more (`save`).
+        for record in records where (record.from == machine || record.to == machine) && underWay[record.id] == nil {
             if record.stage == .copying, record.to == machine, let original = record.original {
                 try? await transport.unpause(original, on: record.from)
             }

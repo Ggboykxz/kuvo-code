@@ -278,6 +278,8 @@ final class WakeUps {
     /// A wake-up you add: at `due`, `note` arrives in the conversation, and again at each repeat.
     /// One on weekdays starts on a weekday.
     func add(to owner: Owner, at due: Date, every: Wakes.Repeat?, note: String) async throws {
+        // Moving to another computer: its folder here is about to go (`Moves`).
+        if Moves.isFrozen(owner.key) || Moves.isFrozen(owner.session) { throw Moves.Failure.moving }
         let note = note.trimmingCharacters(in: .whitespacesAndNewlines)
         guard due > .now.addingTimeInterval(60) else { throw Failure.tooSoon }
         guard (wakes[owner.key]?.count ?? 0) < Wakes.limit else { throw Failure.tooMany }
@@ -305,6 +307,7 @@ final class WakeUps {
     /// have come back since it was listed). On a machine that can't be reached, it stays, and
     /// this says so.
     func cancel(_ wake: Wakes.Pending, of owner: Owner) async throws {
+        if Moves.isFrozen(owner.key) || Moves.isFrozen(owner.session) { throw Moves.Failure.moving }
         let letters = wake.letters
         // As kuvo-wake names them; anything else isn't one of its wake-ups (or safe in a command).
         guard !letters.isEmpty, letters.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return }
@@ -324,6 +327,7 @@ final class WakeUps {
 
     /// Stops a watch. On a machine that can't be reached, it stays, and this says so.
     func cancel(_ watch: Wakes.Watch, of owner: Owner) async throws {
+        if Moves.isFrozen(owner.key) || Moves.isFrozen(owner.session) { throw Moves.Failure.moving }
         let letters = watch.letters
         guard !letters.isEmpty, letters.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return }
         let folder = Self.path(owner, "watches", letters)
@@ -495,7 +499,9 @@ final class WakeUps {
             let folder = Self.shell(owner.folder), paused = Self.shell(file)
             let script = switch (pause, byArchiving) {
             case (true, false): "[ ! -d \(folder) ] || printf \(Self.ownHold) > \(paused)"
-            case (true, true): "[ ! -d \(folder) ] || [ -e \(paused) ] || printf \(Self.archivedHold) > \(paused)"
+            // A move's hold left by one cut short (`Moves`) becomes archiving's: lifting it then
+            // doesn't let them go.
+            case (true, true): "[ ! -d \(folder) ] || { [ -e \(paused) ] && [ \"$(cat \(paused) 2>/dev/null)\" != \(Moves.hold) ]; } || printf \(Self.archivedHold) > \(paused)"
             case (false, false): "rm -f \(paused)"
             case (false, true): "case \"$(cat \(paused) 2>/dev/null)\" in \(Self.archivedHold)|'') rm -f \(paused);; esac; [ -e \(paused) ] && echo held || true"
             }
@@ -503,7 +509,8 @@ final class WakeUps {
             if !pause, byArchiving { isPaused = String(decoding: output, as: UTF8.self).hasPrefix("held") }
         } else if pause {
             guard owner.isBot || FileManager.default.fileExists(atPath: owner.folder) else { return }
-            if !(byArchiving && FileManager.default.fileExists(atPath: file)) {
+            let held = FileManager.default.contents(atPath: file).map { String(decoding: $0, as: UTF8.self) }
+            if !(byArchiving && held != nil && held != Moves.hold) {
                 FileManager.default.createFile(atPath: file, contents: Data((byArchiving ? Self.archivedHold : Self.ownHold).utf8))
             }
         } else if byArchiving, let held = FileManager.default.contents(atPath: file), !held.isEmpty, String(decoding: held, as: UTF8.self) != Self.archivedHold {
