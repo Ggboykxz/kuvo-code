@@ -37,6 +37,9 @@ struct Bot: Codable, Identifiable, Hashable {
     /// Its conversation runs with the coding agents (on this Mac): a model of theirs, or Auto, and
     /// the engine's models through them. Nil for the engine's.
     var agents: Bool?
+    /// When its name, look, job, personality or model last changed; nil for none since it was
+    /// made, or since an older version changed it.
+    var updated: Date?
 
     /// Where its session runs, the app's way of writing it.
     var directory: String {
@@ -48,6 +51,35 @@ struct Bot: Codable, Identifiable, Hashable {
     /// A path in its folder, the app's way: on its machine, or here.
     func app(_ path: String) -> String {
         machine.map { RemoteFolder.folder(path, on: $0) } ?? path
+    }
+
+    /// What a bot is, kept beside its memory as `bot.json` wherever it lives, so what runs there
+    /// knows it without this Mac (a machine's link answers your phone with it while this Mac is
+    /// closed): its name, look, job and model. This Mac's list (`bots.json`) stays what the app
+    /// goes by; this is written from it when one of these changes, and as its machine connects.
+    struct Descriptor: Codable, Equatable {
+        /// Goes up only when what's here changes in a way an older reader can't follow.
+        static let version = 1
+        static let file = "bot.json"
+
+        var kuvo = Descriptor.version
+        var id: String
+        var name: String
+        /// What it does, in a few words, as last read from its memory.
+        var job: String
+        var look: BotLook
+        var personality: String?
+        var model: ModelRef?
+        /// The project folder it works in, as the computer it lives on writes it; nil for a
+        /// folder of its own.
+        var project: String?
+        var created: Date
+        var updated: Date
+    }
+
+    var descriptor: Descriptor {
+        Descriptor(id: id, name: name, job: job, look: look, personality: personality, model: model,
+                   project: project.map { RemoteFolder.parse($0)?.path ?? $0 }, created: created, updated: updated ?? created)
     }
 }
 
@@ -238,6 +270,7 @@ final class Bots {
         save()
         app.workspace.add(session)
         noteSessions()
+        await describe([bot])
         Analytics.shared.track("bot_created", ["machine": machine != nil, "project": project != nil])
         return bot
     }
@@ -285,8 +318,10 @@ final class Bots {
         bot.look = edited.look
         bot.model = edited.model
         bot.personality = edited.personality
+        if bot != old { bot.updated = .now }
         list[index] = bot
         save()
+        await describe([bot])
         var edits: Set<String> = []
         if old.name != bot.name || old.job != bot.job || old.instructions != bot.instructions || old.personality != bot.personality { edits.insert("instructions") }
         if old.name != bot.name { edits.insert("name") }
@@ -400,6 +435,7 @@ final class Bots {
         }
         await app?.groups.remove(bot)
         list.removeAll { $0.id == bot.id }
+        described[bot.id] = nil
         save()
         app?.wakeUps.forget(key: bot.id)
         app?.utilities.closeTabs(of: bot.id)
@@ -423,9 +459,13 @@ final class Bots {
             // Each as it is by then: one edited while another was being told (renamed, given
             // another personality) keeps that.
             guard let index = list.firstIndex(where: { $0.id == bot }), list[index].personality == id else { continue }
-            if Personalities.shared.personality(id) == nil { list[index].personality = nil }
+            if Personalities.shared.personality(id) == nil {
+                list[index].personality = nil
+                list[index].updated = .now
+            }
             // Saved even when unchanged, so its session hears the new wording.
             save()
+            await describe([list[index]])
             await tell(bot, ["instructions"])
         }
     }
@@ -648,10 +688,12 @@ final class Bots {
         let kept = Self.job(inMemory: text)
         updated.job = kept?.line ?? ""
         updated.instructions = kept?.section ?? ""
+        if updated.job != bot.job { updated.updated = .now }
         if bot.machine == nil { memoryRead[id] = (try? FileManager.default.attributesOfItem(atPath: bot.memoryFile)[.modificationDate]) as? Date }
         guard updated != bot, let index = list.firstIndex(where: { $0.id == id }) else { return }
         list[index] = updated
         save()
+        if updated.job != bot.job { await describe([updated]) }
         guard updated.job != bot.job || updated.instructions != bot.instructions else { return }
         await tell(updated.id, ["instructions"])
     }
@@ -849,6 +891,84 @@ final class Bots {
                     try? await Wakes.install(on: engine.machine.connection)
                 }
             }
+        }
+    }
+
+    // MARK: Descriptions
+
+    /// What this run last wrote to each bot's `bot.json`, so one that hasn't changed isn't
+    /// written again.
+    @ObservationIgnored private var described: [String: Data] = [:]
+
+    static func descriptorData(_ bot: Bot) -> Data? {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try? encoder.encode(bot.descriptor)
+    }
+
+    /// Writes bots' descriptions (`Bot.Descriptor`) in their folders: on this Mac now, on a
+    /// connected machine in one go; one on a machine that's away gets it as the machine connects
+    /// again (`describeAll(on:)`). A bot whose folder has gone gets none: no folder is made.
+    func describe(_ bots: [Bot]) async {
+        let changed = bots.compactMap { bot -> (bot: Bot, data: Data)? in
+            guard let data = Self.descriptorData(bot), described[bot.id] != data else { return nil }
+            return (bot, data)
+        }
+        for (bot, data) in changed where bot.machine == nil {
+            var isFolder: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: bot.folder, isDirectory: &isFolder), isFolder.boolValue else { continue }
+            let file = URL(filePath: bot.folder).appending(path: Bot.Descriptor.file)
+            do {
+                if (try? Data(contentsOf: file)) != data { try data.write(to: file, options: .atomic) }
+                described[bot.id] = data
+            } catch {
+                log.error("A bot's description wasn't written: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        let away = Dictionary(grouping: changed.filter { $0.bot.machine != nil }) { $0.bot.machine ?? "" }
+        for (machine, entries) in away {
+            guard let engine = app?.machines.engine(machine), engine.isReady else { continue }
+            if await Self.write(entries, on: engine.machine.connection) {
+                for (bot, data) in entries { described[bot.id] = data }
+            } else {
+                log.error("Bots' descriptions weren't written on a machine")
+            }
+        }
+    }
+
+    /// The bots of this Mac (nil) or of a machine, written again whatever this run wrote before:
+    /// at the update that brought descriptions, and as a machine connects (where a copy of the
+    /// app before them, or one on another Mac, could have left one out of date or none).
+    func describeAll(on machine: String?) async {
+        let bots = list.filter { $0.machine == machine }
+        for bot in bots { described[bot.id] = nil }
+        await describe(bots)
+    }
+
+    /// Writes descriptions on a machine, through one connection: each folder and description, on
+    /// its input (a command line has a size limit), each written whole, never into a folder
+    /// that isn't there.
+    private static func write(_ entries: [(bot: Bot, data: Data)], on connection: SSHConnection) async -> Bool {
+        let lines = entries.map { Data($0.bot.folder.utf8).base64EncodedString() + "\t" + $0.data.base64EncodedString() }.joined(separator: "\n") + "\n"
+        let folder = FileManager.default.temporaryDirectory.appending(path: AppInfo.bundleID)
+        let input = folder.appending(path: "bot-descriptions-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: input) }
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try Data(lines.utf8).write(to: input)
+            let output = try await connection.run("""
+                t="$(printf '\\t')"
+                while IFS="$t" read -r f j; do
+                  d="$(printf '%s' "$f" | base64 -d)" || exit 1
+                  [ -d "$d" ] || continue
+                  printf '%s' "$j" | base64 -d >"$d/\(Bot.Descriptor.file).new" && mv -f "$d/\(Bot.Descriptor.file).new" "$d/\(Bot.Descriptor.file)" || exit 1
+                done
+                echo written
+                """, input: input)
+            return output.contains("written")
+        } catch {
+            return false
         }
     }
 
