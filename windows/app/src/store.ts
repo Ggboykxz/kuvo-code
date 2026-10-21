@@ -99,6 +99,7 @@ export const state: AppState = {
   split: null,
   projects: [],
   projectNames: {} as Record<string, string>,
+  projectRuns: {} as Record<string, string>,
   editingProject: null as string | null,
   sessionsByProject: {} as Record<string, SessionSummary[]>,
   collapsed: {} as Record<string, boolean>,
@@ -599,10 +600,11 @@ export async function loadCommands() {
 
 export async function loadProjects() {
   try {
-    const { projects, names } = await api<{ projects: string[]; names?: Record<string, string> }>("/api/projects");
+    const { projects, names, runs } = await api<{ projects: string[]; names?: Record<string, string>; runs?: Record<string, string> }>("/api/projects");
     // The project that is open is one of them, as it is on the Mac (Workspace.projects).
     state.projects = Array.from(new Set([...(Array.isArray(projects) ? projects : []), ...(state.project ? [state.project] : [])]));
     state.projectNames = names && typeof names === "object" ? names : {};
+    state.projectRuns = runs && typeof runs === "object" ? runs : {};
   } catch {
     state.projects = state.project ? [state.project] : [];
   }
@@ -618,14 +620,21 @@ export function projectName(folder: string): string {
   return folder.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? folder;
 }
 
-/// A project's own name, set or taken away (the Mac's ProjectEditor, ProjectEditor.swift:24).
-export async function setProjectName(folder: string, name: string) {
+/// A project's own name and its run command, set or taken away (the Mac's ProjectEditor,
+/// ProjectEditor.swift:24).
+export async function setProjectSettings(folder: string, settings: { name?: string; run?: string }) {
   try {
-    await api("/api/projects/settings", { method: "POST", body: { path: folder, name } });
+    await api("/api/projects/settings", { method: "POST", body: { path: folder, ...settings } });
     await loadProjects();
   } catch (error) {
     complain(error);
   }
+}
+
+/// The command a project's run button runs (the Mac's Workspace.ProjectSettings.run,
+/// Workspace.swift:198).
+export function projectRun(folder: string): string {
+  return state.projectRuns[folder] ?? "";
 }
 
 /// The sessions of every project, by its folder (SidebarView.swift:194-196): the sidebar

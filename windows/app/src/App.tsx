@@ -42,6 +42,7 @@ import {
   openProject,
   openProjectFile,
   projectName,
+  projectRun,
   openSession,
   openSplit,
   pinSession,
@@ -66,7 +67,7 @@ import {
   useStore,
 } from "./store";
 import { Settings, settingsPageTitle } from "./Settings";
-import { DiffModal, Drawer, Palette, Picker, ProjectEditor, Toast } from "./Overlays";
+import { DiffModal, Drawer, Palette, Picker, ProjectEditor, runInTerminal, Toast } from "./Overlays";
 import { Shimmer } from "./components/ai-elements/shimmer";
 import { FolderIcon, Symbol } from "./components/symbols";
 import { Spinner } from "./components/spinner";
@@ -851,6 +852,10 @@ function Header() {
   const sidebarOpen = state.sidebarOpen !== false;
   const folder = state.project ? state.project.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "" : "";
   const engineText = running ? `engine ${state.engine?.version ?? ""}`.trim() : state.engine?.status ?? "…";
+  // The project's own run command, and the button that runs it (MainView.swift:562-566,
+  // 601-610).
+  const runFolder = state.project ?? "";
+  const runCommand = runFolder ? projectRun(runFolder) : "";
   return (
     <header
       className={`titlebar ${sidebarOpen ? "" : "sidebar-hidden"} ${showingSettings ? "showing-settings" : ""} ${state.showsTabBar || showingSettings ? "" : "no-tab-bar"}`}
@@ -889,6 +894,17 @@ function Header() {
                 <path d="M6.3 3v10" stroke="currentColor" strokeWidth="1.2" />
               </svg>
             </button>
+            {runCommand ? (
+              <button
+                id="run"
+                className="titlebar-icon"
+                title={`Run ${runCommand}`}
+                aria-label="Run"
+                onClick={() => runInTerminal(runCommand, runFolder)}
+              >
+                <Symbol name="play" size={13} />
+              </button>
+            ) : null}
             <div className="identity" title={state.project ?? "Open Folder…"}>
               <button
                 id="project"

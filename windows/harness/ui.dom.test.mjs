@@ -607,6 +607,18 @@ test("the page, in a browser, against the real engine", {
   await viewer.page.keyboard.press("Escape");
   await viewer.seen("the picture to go away", () => document.querySelector(".image-viewer") === null, null, 10_000);
 
+  // The project's own run command, and the button that runs it in the panel's terminal
+  // (MainView.swift:562-566, 1479-1491). The terminal itself is the shell's, so what the
+  // page shows here is the panel opening on it.
+  await fetch(`${url}api/projects/settings`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: project, run: "npm run dev" }),
+  });
+  await page.page.reload({ waitUntil: "domcontentloaded" });
+  await page.seen("the run button to be in the title bar", () => document.getElementById("run") !== null, null, 30_000);
+  await page.element("run").click();
+  await page.seen("the terminal to open for it", () => document.getElementById("drawer-terminal")?.hidden === false, null, 10_000);
+
   // Nothing in the page complained.
   assert.deepEqual([...page.errors, ...reloaded.errors, ...reread.errors], [], "the page had nothing to complain about");
 

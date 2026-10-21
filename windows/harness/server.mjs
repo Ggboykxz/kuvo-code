@@ -207,10 +207,12 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
     if (url.pathname === "/api/projects" && request.method === "GET") {
       const settings = projectSettings();
       const names = {};
+      const runs = {};
       for (const [folder, own] of Object.entries(settings)) {
         if (own && typeof own.name === "string" && own.name) names[folder] = own.name;
+        if (own && typeof own.run === "string" && own.run) runs[folder] = own.run;
       }
-      return json({ projects: recentProjects(), current: currentProject, names });
+      return json({ projects: recentProjects(), current: currentProject, names, runs });
     }
     if (url.pathname === "/api/projects/settings" && request.method === "POST") {
       const body = await readBody(request);
@@ -218,12 +220,20 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       if (!folder) throw new HttpError(400, "A project needs a folder.");
       const settings = projectSettings();
       const own = { ...(settings[folder] ?? {}) };
-      if (body.name === null || body.name === "") delete own.name;
-      else own.name = String(body.name).trim();
+      // Only what the call carries is touched: the name and the run command are the
+      // project's own, and one is not lost for the other.
+      if (body.name !== undefined) {
+        if (body.name === null || body.name === "") delete own.name;
+        else own.name = String(body.name).trim();
+      }
+      if (body.run !== undefined) {
+        if (body.run === null || body.run === "") delete own.run;
+        else own.run = String(body.run).trim();
+      }
       if (Object.keys(own).length === 0) delete settings[folder];
       else settings[folder] = own;
       saveProjectSettings(settings);
-      return json({ ok: true, name: own.name ?? null });
+      return json({ ok: true, name: own.name ?? null, run: own.run ?? null });
     }
     if (url.pathname === "/api/projects" && request.method === "DELETE") {
       const body = await readBody(request);
