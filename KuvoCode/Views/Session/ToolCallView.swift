@@ -188,6 +188,7 @@ struct ToolCallView: View {
         case "question": return isActive ? "Asking you a question" : "Asked you a question"
         case "subagent": return (string("description") ?? (isActive ? "Starting a subagent…" : "A subagent's task")) + (string("agent").map { " · \($0)" } ?? "")
         case "skill": return "Used a skill"
+        case "tool_search": return (isActive ? "Looking for a tool" : "Looked for a tool") + (string("query").map { ": “\($0)”" } ?? "")
         case "execute":
             // Code Mode: the agent wrote code that calls its tools.
             let calls = call.state.metadata?["toolCalls"]?.array?.count ?? 0

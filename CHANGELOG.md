@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- When Grok looks through its tools for one, the step reads "Looked for a tool" with what it looked for, rather than its words run together as a tool's name.
 - Clearing the panel browser's history no longer leaves the icon of a site you'd just visited behind, kept if it was still loading as you cleared.
 - A machine you reach at two addresses, like its name on your local network and over Tailscale, is one machine. Adding it again at its other address, or having added both before, makes the second one of the first's addresses, rather than a second machine that set everything up again, listed every session twice, and on removal would have signed out and stopped what the first still used. Kuvo Code uses whichever address answers. Right-click it in Settings › Machines to stop using an address, or, when one of the two can't be reached to tell, to say they're the same computer.
 - Signing in on a machine's browser (to connect an integration, or when an agent asks) no longer freezes when a site asks for a passkey: the site, or a frame of another site in its page like a sign-in button, hears there's none here and offers its other ways, such as "Try another way". Chrome's passkey prompt, which the live view couldn't show, held the page still. The panel's browser on your Mac refuses passkeys the same way, however a site asks.

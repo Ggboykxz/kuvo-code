@@ -125,7 +125,7 @@ describe("ACP agents, nothing dropped", () => {
     expect(notes).toMatchObject({ id: "r2", name: "read", state: { status: "completed", content: [{ type: "text", text: "first\nsecond" }] } })
   })
 
-  test("one of Kuvo Code's tools that the agent wraps in its own call (Grok's UseTool) shows with its own arguments", async () => {
+  test("one of Kuvo Code's tools that the agent wraps in its own call (Grok's UseTool) shows with its own arguments, and its tool search as one", async () => {
     const message = { to: "ses_other", text: "Got ping #3." }
     const id = await run(
       agentSaying([
@@ -133,9 +133,12 @@ describe("ACP agents, nothing dropped", () => {
                  rawInput: { variant: "UseTool", tool_name: "kuvo-browser__send_message", tool_input: message } }],
         ["s1", { sessionUpdate: "tool_call", toolCallId: "k2", title: "Use tool", kind: "other", status: "completed",
                  rawInput: { variant: "UseTool", tool_name: "kuvo-browser__show_in_panel", tool_input: { path: "/tmp/a.txt" } } }],
+        ["s1", { sessionUpdate: "tool_call", toolCallId: "k3", title: "Search tools: send_message kuvo session", kind: "other", status: "completed",
+                 rawInput: { variant: "SearchTool", query: "send_message kuvo session", limit: 5 } }],
       ]),
     )
-    const [sent, shown] = tools(id)
+    const [sent, shown, search] = tools(id)
+    expect(search).toMatchObject({ name: "tool_search", state: { input: { query: "send_message kuvo session" } } })
     expect(sent).toMatchObject({ name: "kuvo-browser_send_message", state: { input: message } })
     expect(shown).toMatchObject({ name: "kuvo-browser_show_in_panel", state: { input: { path: "/tmp/a.txt" } } })
   })

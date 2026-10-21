@@ -45,6 +45,7 @@ import Testing
 
     @Test func searches() throws {
         #expect(try words("grep", ["pattern": "TODO", "path": "/Users/me/web/src"]) == "Searched for “TODO” in src")
+        #expect(try words("tool_search", ["query": "send message"]) == "Looked for a tool: “send message”")
         #expect(try words("websearch", ["query": "swift testing"]) == "Searched the web for “swift testing”")
     }
 
