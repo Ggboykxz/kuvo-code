@@ -227,6 +227,16 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     Mac's order, with the Mac's words. The name is written in the tab itself, where the
     title was (`TitleBar.swift:170-200`), as on the Mac, and the tab's rename is the
     session's own name — the same one the sidebar's row writes.
+  - **2.70 (this change). The window remembers its own state.** The Mac keeps the panes'
+    widths, what is folded away and the row at the top (`MainView.swift:38-40, 90`;
+    `SidebarView.swift:32-34`; `TabBar.showsKey`), and the port kept none of it: every
+    window opened with the Mac's default widths, every section unfolded, and the row at the
+    top always there. The port remembers the same things now, under its own names: the
+    sessions' width, the panel's and the split's — kept when the handle is let go, so the
+    next window opens as it was left — what the user folded away, and the row at the top,
+    which the General settings can put away, as the Mac's does (`GeneralSettings.swift:23`,
+    "Show the tab bar"). With the row away, the project, its branch and the sessions as
+    tabs go, and the window's own buttons stay.
   - **2.61 (this change). The provider's marks.** The Mac draws the maker's mark beside
     each model (`ProviderLogo.swift`), monochrome so it follows the ink, or in the maker's
     own colour where it has one. The marks themselves are not published as a package, but
