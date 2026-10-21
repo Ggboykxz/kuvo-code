@@ -1236,12 +1236,16 @@ struct MainView: View {
         }
     }
 
+    /// Where the panel's Add to Message goes: the session you work in, the one beside once you've
+    /// clicked into it (the panel is its), else the tab's.
+    private var messageTarget: String? { workedBesideID ?? selection }
+
     /// Adds a file's lines ("@src/App.swift:12-20") or a terminal's output to what's in the
-    /// composer of the tab in view, and puts the cursor there.
+    /// composer of the session you work in, and puts the cursor there.
     private func addToMessage(_ addition: String) {
         // With no tab open, a new session gets it.
         if selection == nil { newSession(in: nil) }
-        guard let key = selection else { return }
+        guard let key = messageTarget else { return }
         var text = Drafts.shared[key].text
         let isBlock = addition.hasPrefix("```")
         if !text.isEmpty {
@@ -1249,16 +1253,17 @@ struct MainView: View {
         }
         Drafts.shared[key].text = text + addition + (isBlock ? "\n" : " ")
         if SidebarView.draftDirectory(from: key) != nil { draftFocus += 1 } else { workspace.model(for: key)?.focusComposer() }
-        focus = .conversation
+        focus = worksBeside ? .split : .conversation
     }
 
-    /// Attaches files to the message in the composer of the tab in view, and puts the cursor there.
+    /// Attaches files to the message in the composer of the session you work in, and puts the
+    /// cursor there.
     private func attachToMessage(_ files: [URL]) {
         if selection == nil { newSession(in: nil) }
-        guard let key = selection else { return }
+        guard let key = messageTarget else { return }
         Drafts.shared[key].files += files.filter { !Drafts.shared[key].files.contains($0) }
         if SidebarView.draftDirectory(from: key) != nil { draftFocus += 1 } else { workspace.model(for: key)?.focusComposer() }
-        focus = .conversation
+        focus = worksBeside ? .split : .conversation
     }
 
     /// A session that carries on in another: the new one takes its tab (or its place beside

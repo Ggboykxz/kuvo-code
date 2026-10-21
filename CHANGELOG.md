@@ -12,6 +12,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - A bot whose memory writes its job in the heading ("## Job: Keeps CI green") shows that job under its name and knows it; with nothing written under such a heading, it asked you for its job again.
 - A group chat open in the window while you're in another app no longer marks itself read, which took away the notifications of what was said; it waits for you, as a session does.
 - A session you switch to a coding agent's model keeps its side panel: its pages, terminals and files go with it to the new session, and its agent goes on in the page it was using, rather than staying behind the archived one.
+- With two sessions side by side, Add to Message and Add Screenshot to Message from the panel go to the session you're working in, the one beside once you've clicked into it, rather than the other; the panel stays that session's.
 
 ## 0.6.4
 
