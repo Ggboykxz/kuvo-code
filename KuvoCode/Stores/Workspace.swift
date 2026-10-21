@@ -385,7 +385,12 @@ final class Workspace {
             try await api.setMetadata(session: id, .object(metadata))
             return true
         } catch {
-            if let index = sessions.firstIndex(where: { $0.id == id }), sessions[index].metadata?[key] == .bool(value) { sessions[index].metadata = before }
+            // Only this flag goes back: another changed meanwhile (pinned, say) stays.
+            if let index = sessions.firstIndex(where: { $0.id == id }), sessions[index].metadata?[key] == .bool(value) {
+                var current = sessions[index].metadata?.object ?? [:]
+                current[key] = before?[key]
+                sessions[index].metadata = current.isEmpty && before == nil ? nil : .object(current)
+            }
             return false
         }
     }

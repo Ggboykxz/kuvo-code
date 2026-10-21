@@ -13,6 +13,9 @@ nonisolated final class StubWeb: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) private static var answers: [String: Answer] = [:]
     /// Answers by address without its query, worked out from the request (its query, a page).
     nonisolated(unsafe) private static var routes: [String: @Sendable (URLComponents) -> Answer] = [:]
+    /// Answers by address without its query, from the whole request (what it sends), ahead of
+    /// `routes`.
+    nonisolated(unsafe) private static var requestRoutes: [String: @Sendable (URLRequest, Data) -> Answer] = [:]
     /// Answers for every address under a prefix, from the whole request (its method and body).
     nonisolated(unsafe) private static var handlers: [(prefix: String, answer: @Sendable (URLRequest, Data) -> Answer)] = []
     nonisolated(unsafe) private static var hosts: Set<String> = []
@@ -23,6 +26,7 @@ nonisolated final class StubWeb: URLProtocol, @unchecked Sendable {
         lock.withLock {
             answers = [:]
             routes = [:]
+            requestRoutes = [:]
             handlers = []
             asked = []
             Self.hosts = hosts
@@ -49,6 +53,11 @@ nonisolated final class StubWeb: URLProtocol, @unchecked Sendable {
         lock.withLock { routes[url] = answer }
     }
 
+    /// Answers requests to `url` (any query) with what `answer` makes of each and what it sends.
+    static func route(_ url: String, sent answer: @escaping @Sendable (URLRequest, Data) -> Answer) {
+        lock.withLock { requestRoutes[url] = answer }
+    }
+
     /// Answers every request to an address starting with `prefix` with what `answer` makes of it.
     static func handle(_ prefix: String, _ answer: @escaping @Sendable (URLRequest, Data) -> Answer) {
         lock.withLock { handlers.append((prefix, answer)) }
@@ -70,13 +79,13 @@ nonisolated final class StubWeb: URLProtocol, @unchecked Sendable {
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
         var bare = components
         bare.query = nil
-        let route = Self.lock.withLock {
+        let (route, requestRoute) = Self.lock.withLock {
             Self.asked.append(url.absoluteString)
-            return Self.routes[bare.string ?? ""]
+            return (Self.routes[bare.string ?? ""], Self.requestRoutes[bare.string ?? ""])
         }
         let handler = Self.lock.withLock { Self.handlers.first { url.absoluteString.hasPrefix($0.prefix) }?.answer }
-        let answer = Self.lock.withLock { Self.answers[url.absoluteString] } ?? route?(components)
-            ?? handler?(request, Self.body(of: request)) ?? Answer(status: 404)
+        let answer = Self.lock.withLock { Self.answers[url.absoluteString] } ?? requestRoute?(request, Self.body(of: request))
+            ?? route?(components) ?? handler?(request, Self.body(of: request)) ?? Answer(status: 404)
         let response = HTTPURLResponse(url: url, statusCode: answer.status, httpVersion: "HTTP/1.1", headerFields: nil)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: answer.body)

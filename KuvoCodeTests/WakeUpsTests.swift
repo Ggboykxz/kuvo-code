@@ -193,6 +193,27 @@ import Testing
         #expect(told == [true])
     }
 
+    /// Pinned while archiving it was on its way, and the engine then not taking the archive: it's
+    /// back where it was, and still pinned.
+    @Test func aPinMadeWhileAnArchiveWasRefusedStays() async throws {
+        await start()
+        defer { done() }
+        // The archive's request (no pin in it yet) refused; the pin's taken.
+        let answer = StubWeb.json(["data": Self.session(id)])
+        StubWeb.route(Self.engine + "/api/session/\(id)", sent: { _, body in
+            let metadata = (try? JSONSerialization.jsonObject(with: body) as? [String: Any])?["metadata"] as? [String: Any]
+            return metadata?["kuvo.pinned"] == nil ? StubWeb.json(["message": "Session is busy"], status: 500) : answer
+        })
+        let archiving = Task { await app.workspace.setArchived(id, true) }
+        await Task.yield()
+        #expect(Workspace.isArchived(try #require(app.workspace.session(id))), "shown archived at once")
+        await app.workspace.setPinned(id, true)
+        await archiving.value
+        let session = try #require(app.workspace.session(id))
+        #expect(!Workspace.isArchived(session), "the engine didn't archive it")
+        #expect(Workspace.isPinned(session), "the pin made meanwhile stays")
+    }
+
     /// Wake-ups that came due while Kuvo Code was closed (L19): each goes once as it opens, a daily
     /// one once however many days it missed, then waits for its next time; a one-off is done.
     @Test func wakeUpsMissedWhileClosedGoOnceAsItOpens() async throws {
