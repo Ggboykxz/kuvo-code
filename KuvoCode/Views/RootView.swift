@@ -113,7 +113,7 @@ struct EngineSetupView: View {
         switch app.engine {
         case .downloading: "Setting up"
         case .failed: app.engineStoppedWhileRunning ? "The engine stopped" : "The engine couldn't start"
-        default: "Starting"
+        default: app.calibration.isRunning ? "Updating" : "Starting"
         }
     }
 
@@ -124,7 +124,7 @@ struct EngineSetupView: View {
         case .failed(let message):
             message
         default:
-            "Getting the agent engine ready…"
+            app.calibration.isRunning ? "Getting your bots and settings ready for this version…" : "Getting the agent engine ready…"
         }
     }
 }

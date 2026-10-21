@@ -74,6 +74,7 @@ end-to-end runs' alone, as are those that need a real machine over SSH (F9, L46,
 | The panel's terminal | TerminalColorsTests | |
 | The context ring: how full, of what the model takes | ContextRingTests | the coding agents' windows, as each says (Agents/test) |
 | Export a conversation | ConversationExportTests | |
+| Your things after an update: backed up first, then brought up to date once (bots' descriptions in their folders); a list that won't read set aside | CalibrationTests | the window's Updating screen (UI); a machine's bots' descriptions (written over SSH as it connects) |
 | Updates: only a release build updates itself | UpdatesTests; the release bundle's feed in CI ("Check the app bundle") | Sparkle's own window and install |
 | Move to Applications (to update itself) | AppLocationTests | the offer, a modal alert, and a disk image's read-only copy |
 | Anonymous usage stays anonymous | AnalyticsPrivacyTests | |

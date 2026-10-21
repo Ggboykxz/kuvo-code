@@ -37,6 +37,8 @@ final class AppModel {
     /// Bots' and sessions' wake-ups and watches.
     let wakeUps = WakeUps()
     let groups = BotGroups()
+    /// What this Mac keeps, brought up to date with this version once, as it launches.
+    let calibration = Calibration()
     /// Kuvo Code for iPhone's way in (off until it's switched on; see PhoneLink).
     let phoneLink = PhoneLink()
     /// The coding agents you already have (Claude Code, Codex, Cursor, Grok, Antigravity), run by
@@ -180,6 +182,9 @@ final class AppModel {
         case .ready, .starting, .downloading: return
         case .preparing, .failed: break
         }
+        // What you keep here, up to date with this version (once, after an update), before
+        // anything reads it.
+        await calibration.run(self)
         let launch = UUID()
         self.launch = launch
         engineStoppedWhileRunning = false
