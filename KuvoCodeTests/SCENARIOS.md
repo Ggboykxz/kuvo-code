@@ -48,6 +48,7 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | I3 A machine that's away | MachineAwayTests | |
 | I4 What machines share with this Mac, and what's their own | MachineSettingsTests, CustomAutoPlacesTests, SignInSyncTests | a connected machine's engine starting over with new settings (needs SSH) |
 | J1 The network goes away mid-reply | NetworkDropTests | |
+| J4 A huge file, a binary file in the changes | ChangesDiscardTests, ChangesBinaryTests | very large command output (the engine keeps it) |
 | K1 Settings keep what you change | EngineSettingsFileTests | |
 | K3 Notifications | NotificationMaskingTests | |
 | K5 Storage: what takes room | StorageReportTests | |
