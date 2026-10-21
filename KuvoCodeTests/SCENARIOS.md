@@ -34,6 +34,7 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | D4 A chat moved into a project | SessionLifecycleTests | |
 | E, B15 The agent's browser | BrowserToolServerTests | |
 | E5, L33, L34, K6 Sign-ins, codes, passwords | BrowserAsksTests, MachineSignOutTests, PasskeysTests | a machine's Chrome refusing passkeys (checked by hand in Chromium; no Chrome in the tests) |
+| F1 Make a bot from scratch | BotCreationTests | |
 | F2, F6 A bot's job, told or edited | BotsTests | |
 | F3, F4, L15–L19, L26 Wake-ups | WakeUpsTests, StepSummariesTests | |
 | F7 Export and import a bot | AgentMessagesTests | |
