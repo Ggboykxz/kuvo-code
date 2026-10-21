@@ -86,7 +86,8 @@ nonisolated extension Git {
     /// taken back, so the folder is as it was.
     static func merge(_ branch: String, into directory: String, environment: [String: String]) -> MergeResult {
         guard let failure = report(["merge", "--no-edit", branch], in: directory, environment: environment) else { return .merged }
-        let conflicted = (run(["diff", "--name-only", "--diff-filter=U"], in: directory) ?? "").split(separator: "\n").map(String.init)
+        // By their names as they are: not quoted or escaped, whatever letters are in them.
+        let conflicted = (run(["-c", "core.quotepath=off", "diff", "--name-only", "-z", "--diff-filter=U"], in: directory) ?? "").split(separator: "\0").map(String.init)
         // Stopped partway for another reason (a hook, signing the commit): taken back too, or the
         // folder stays in the middle of a merge.
         if run(["rev-parse", "-q", "--verify", "MERGE_HEAD"], in: directory) != nil {

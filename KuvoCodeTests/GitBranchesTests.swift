@@ -53,19 +53,21 @@ import Testing
         #expect(repo.read("b.txt") == "new\n")
     }
 
-    /// A conflict: the files named, and the folder back as it was (not in the middle of a merge).
-    @Test func aConflictLeavesTheFolderAsItWas() throws {
+    /// A conflict: the files named as they are (whatever letters or quotes are in their names),
+    /// and the folder back as it was (not in the middle of a merge).
+    @Test(arguments: ["a.txt", "café ığüş.txt", "say \"hi\".txt"])
+    func aConflictLeavesTheFolderAsItWas(name: String) throws {
         let repo = try TestRepository()
-        try repo.write("a.txt", "one\n")
+        try repo.write(name, "one\n")
         try repo.commitAll()
         try repo.git("checkout", "-q", "-b", "work")
-        try repo.write("a.txt", "theirs\n")
+        try repo.write(name, "theirs\n")
         try repo.commitAll("Work")
         try repo.git("checkout", "-q", "main")
-        try repo.write("a.txt", "ours\n")
+        try repo.write(name, "ours\n")
         try repo.commitAll("Main")
-        #expect(Git.merge("work", into: repo.path, environment: [:]) == .conflict(["a.txt"]))
-        #expect(repo.read("a.txt") == "ours\n")
+        #expect(Git.merge("work", into: repo.path, environment: [:]) == .conflict([name]))
+        #expect(repo.read(name) == "ours\n")
         #expect(try repo.status().isEmpty)
         #expect(!repo.exists(".git/MERGE_HEAD"))
     }
