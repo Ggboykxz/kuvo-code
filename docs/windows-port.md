@@ -186,6 +186,24 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     dragged (`PaneResizer`). The layout itself is a plain module
     (`windows/harness/layout.mjs`), so the harness proves the Mac's order of giving way and
     shrinking without a window.
+  - **2.67 (this change). The shell's seams, and the model the engine takes.** The window
+    knew it was the shell by the address it was opened at — `?shell=1` — and the terminal by
+    `?terminalPort=…`; a Back (the mouse's own button, or Alt+Left) could take both away, and
+    with them the title bar's room for the window's controls, so the page's buttons slid
+    under them. The page knows its window by the bridge now (`preload.js`: `isShell`, and
+    the terminal's port asked of the shell), and the shell pins its page: Back and Forward
+    are ignored, and the window cannot leave the harness (`main.js`). A terminal that cannot
+    start says why where the terminal would be — the close reason the shell sends, whether
+    node-pty is missing or the shell could not be spawned — instead of a bare "Terminal
+    closed."; node-pty is a required dependency now, so a release that cannot build it fails
+    rather than shipping a terminal that never starts. And a model chosen in the composer
+    goes to the engine as its own Model.ref — `{ providerID, id }`
+    (`OpenCodeKit/Models/Common.swift:70`, `OpenCodeAPI.swift:473-476`) — where the port
+    sent the picker's `provider/id` string and the engine answered "Expected Model.Ref at
+    [\"model\"]". The picker shows the new model at once and puts the old one back if the engine
+    refuses, as the Mac's does (`SessionModel.swift:1333-1341`); the "engine's choice" row
+    is gone, since the Mac's picker has no such row and the engine has no call to clear a
+    model.
   - **2.61 (this change). The provider's marks.** The Mac draws the maker's mark beside
     each model (`ProviderLogo.swift`), monochrome so it follows the ink, or in the maker's
     own colour where it has one. The marks themselves are not published as a package, but
