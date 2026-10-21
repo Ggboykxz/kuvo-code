@@ -365,12 +365,16 @@ test("setup keeps the machine's keys and its own phones, starts the bridge, and 
     setup({ relay: "ws://127.0.0.1:9", name: "test", phones: [{ key: "BBBB", name: "B" }] });
     assert.deepEqual(JSON.parse(fs.readFileSync(linkFile, "utf8")).phones.map(p => p.key), ["BBBB", "CCCC"]);
 
-    // Nothing left to answer: the bridge stops, and the machine keeps its keys.
+    // Nothing left to answer: the bridge stops, and the machine keeps its keys; no phone keeps
+    // the engine up any more.
+    const seen = path.join(folder, "run", "link.seen");
+    fs.writeFileSync(seen, "");
     fs.writeFileSync(linkFile, JSON.stringify({ ...saved, phones: [] }));
     assert.deepEqual(setup({ relay: "ws://127.0.0.1:9", phones: [] }), {});
     const kept = JSON.parse(fs.readFileSync(linkFile, "utf8"));
     assert.equal(kept.secret, saved.secret);
     assert.deepEqual(kept.phones, []);
+    assert.equal(fs.existsSync(seen), false);
     let stopped = false;
     for (let i = 0; i < 50 && !stopped; i++) {
       try { process.kill(pid, 0); await new Promise(r => setTimeout(r, 50)); } catch { stopped = true; }

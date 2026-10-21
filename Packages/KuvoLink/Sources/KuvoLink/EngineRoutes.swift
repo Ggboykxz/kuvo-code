@@ -58,7 +58,7 @@ public enum EngineRoutes {
     /// nor a space at either end, which they drop too (".../update " is ".../update" to them).
     static func staysInProject(_ path: String) -> Bool {
         guard !path.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7f }),
-              !path.hasPrefix(" "), !path.hasSuffix(" "),
+              path.unicodeScalars.first != " ", path.unicodeScalars.last != " ",
               let decoded = path.removingPercentEncoding else { return false }
         return !decoded.contains("..") && !decoded.contains("\\") && !path.contains("..") && !path.contains("#")
     }

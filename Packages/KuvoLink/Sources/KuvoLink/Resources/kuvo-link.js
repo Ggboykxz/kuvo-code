@@ -792,6 +792,14 @@ function phoneHere() {
   } catch {}
 }
 
+// No phone is paired any more: none keeps the engine up.
+export function forgetPhones() {
+  seen = 0;
+  try {
+    fs.rmSync(SEEN_FILE, { force: true });
+  } catch {}
+}
+
 export function phoneSeenLately(file = SEEN_FILE, now = Date.now()) {
   try {
     return now - fs.statSync(file).mtimeMs < KEEP_FOR;
@@ -1392,6 +1400,7 @@ async function run() {
     let owner = null;
     try { owner = Number(fs.readFileSync(PID_FILE, "utf8")); } catch {}
     const link = readLink();
+    if (!needed(link)) forgetPhones();
     if (!engine || !alive(engine.pid) || !needed(link) || owner !== process.pid) return cleanUp();
     current?.keepOnly(new Set((link.phones ?? []).map(phone => phone.key)));
     // A phone that used it in the last week counts as the app: the engine stays up for it,
@@ -1411,7 +1420,10 @@ async function run() {
   let attempt = 0;
   while (true) {
     const link = readLink();
-    if (!needed(link)) return cleanUp();
+    if (!needed(link)) {
+      forgetPhones();
+      return cleanUp();
+    }
     let engine = {};
     try { engine = readEngineFile(); } catch {}
     const host = new LinkHost({
@@ -1473,6 +1485,7 @@ async function setup() {
   if (!phones.length && !own.length) {
     if (old) writeLink({ ...old, phones: [] });
     if (running) process.kill(running, "SIGTERM");
+    forgetPhones();
     console.log("{}");
     return;
   }

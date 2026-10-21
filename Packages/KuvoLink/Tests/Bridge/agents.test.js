@@ -2,6 +2,7 @@
 // agents' bridge beside its engine, as a Mac passes them to its own. Run with
 // `node --test Packages/KuvoLink/Tests/Bridge/*.test.js`.
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -41,7 +42,11 @@ async function fakeBridge() {
 test("the coding agents' sessions and accounts go to their bridge with its password; where the engine is, never", async t => {
   const bridge = await fakeBridge();
   t.after(bridge.close);
-  let record = { pid: process.pid, port: bridge.port, password: "agents" };
+  // A process its record names, whose command line says it's the agents' bridge (on Linux, the
+  // bridge checks).
+  const named = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "kuvo-agents"], { stdio: "ignore" });
+  t.after(() => named.kill());
+  let record = { pid: named.pid, port: bridge.port, password: "agents" };
   const handle = link.engineHandler(() => ({ port: 1, password: "engine", version: "2.0.32" }), { name: "my-server" }, () => record);
 
   const info = await ask(handle, "GET", "kuvo/info");
