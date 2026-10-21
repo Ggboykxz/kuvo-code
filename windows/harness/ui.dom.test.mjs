@@ -291,6 +291,15 @@ test("the page, in a browser, against the real engine", {
     );
   }
 
+  // The appearance: the Mac's own choices — the window's material, the typeface of the
+  // messages, and the detail of the agent's steps (Look.swift:42-63).
+  await pressNav("appearance");
+  await page.seen("the appearance to offer the window's material", () => document.getElementById("setting-window") !== null, null, 10_000);
+  await page.page.selectOption("#setting-window", "solid");
+  await page.seen("the window to be solid", () => document.documentElement.dataset.window === "solid", null, 10_000);
+  await page.page.selectOption("#setting-window", "glass");
+  await page.seen("the window to be glass again", () => document.documentElement.dataset.window === "glass", null, 10_000);
+
   // The keyboard page: the recorder writes the keys down, they are kept in the app's own
   // settings, and the app answers to them.
   await pressNav("keyboard");
@@ -530,8 +539,10 @@ test("the page, in a browser, against the real engine", {
     "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR4nGO4Y2ODFTEMLQkAXrdVAdmuFfUAAAAASUVORK5CYII=",
     "base64",
   ));
-  // The page is open and the app is awake: the composer is there to be given a file.
+  // The page is open and the app is awake: a session is in view, and the composer is
+  // there to be given a file.
   await viewer.seen("the sessions to be listed", () => document.querySelectorAll("#sessions li").length > 0, null, 30_000);
+  await viewer.seen("a session to be in view", () => document.querySelector("#sessions li.current") !== null, null, 30_000);
   await viewer.page.setInputFiles("#attach-input", picture);
   await viewer.seen("the attachment to be picked", () => document.querySelectorAll("#attachments .attachment-chip").length > 0, null, 10_000);
   await viewer.element("composer").evaluate(form => form.requestSubmit());

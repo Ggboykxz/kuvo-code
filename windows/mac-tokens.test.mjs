@@ -881,6 +881,22 @@ const checks = [
     assert.match(app, /\(item\.files \?\? \[\]\)\.map/);
   }],
 
+  ["the appearance keeps the Mac's own choices", ({ app, settings, store, css }) => {
+    // The Mac's window material (Look.swift:42-46), its typeface of the messages
+    // (Look.swift:52-63) and the detail of the agent's steps (StepsDetail).
+    assert.ok(settings.includes('"Window"'), "the app offers the window's material");
+    assert.ok(settings.includes('"Typeface"'), "the app offers the typeface");
+    assert.ok(settings.includes("Agent’s steps"), "the app offers the steps' detail");
+    for (const choice of ["system", "rounded", "serif", "monospaced"]) {
+      assert.ok(store.includes(choice), `the app knows the ${choice} typeface`);
+    }
+    // The glass, or a solid ground with nothing showing through.
+    assert.match(css, /:root\[data-window="solid"\]/);
+    assert.match(css, /backdrop-filter: none/);
+    // The messages take the typeface; the code stays monospaced.
+    assert.match(css, /\.entry \.text \{[^}]*font-family: var\(--message-font/);
+  }],
+
   ["the mode menu keeps the Mac's tool permissions, and the last model is kept", ({ app, store }) => {
     // The Mac's mode menu: the modes, a line, then the tool permissions
     // (ComposerMenus.swift:120-135), with the Mac's own words.

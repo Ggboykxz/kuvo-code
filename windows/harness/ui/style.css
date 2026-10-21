@@ -228,6 +228,19 @@ aside {
   -webkit-backdrop-filter: blur(28px) saturate(1.8);
 }
 
+/* The window's own material (Look.swift:42-46): the glass, or a solid ground with
+   nothing showing through. */
+:root[data-window="solid"] { --panel-glass: var(--panel); }
+:root[data-window="solid"] .glass,
+:root[data-window="solid"] header,
+:root[data-window="solid"] aside,
+:root[data-window="solid"] .composer,
+:root[data-window="solid"] .drawer,
+:root[data-window="solid"] .settings-card {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 /* The header floats over the conversation, held by a hairline. */
 header {
   position: sticky; top: 0; z-index: 20;
@@ -1760,7 +1773,7 @@ html[data-theme="dark"] {
 }
 
 /* Your words: accent glass, radius 18, no blur, 14 × 10, 80 pt leading. */
-.entry .text { font-size: var(--message-size, 14px); }
+.entry .text { font-size: var(--message-size, 14px); font-family: var(--message-font, var(--font-body)); }
 .entry.user .text {
   background: var(--bubble-fill);
   border-color: var(--bubble-edge);

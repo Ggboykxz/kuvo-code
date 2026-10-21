@@ -314,6 +314,29 @@ function AppearancePage() {
           <option value="17">Larger</option>
           </select>
         </SettingRow>
+        {/* The Mac's window material (Look.swift:42-46) and its typeface of the
+            messages (Look.swift:52-63), with the Mac's own words. */}
+        <SettingRow label="Window" note={look.window === "glass" ? "Frosted glass that lets your desktop’s colors through." : "A solid background, with nothing showing through."}>
+          <select id="setting-window" value={look.window} onChange={event => { look.window = event.target.value; applyLook(); render(); }}>
+            <option value="glass">Glass</option>
+            <option value="solid">Solid</option>
+          </select>
+        </SettingRow>
+        <SettingRow label="Typeface" note="Code always stays monospaced.">
+          <select id="setting-typeface" value={look.typeface} onChange={event => { look.typeface = event.target.value; applyLook(); render(); }}>
+            <option value="system">System</option>
+            <option value="rounded">Rounded</option>
+            <option value="serif">Serif</option>
+            <option value="monospaced">Monospaced</option>
+          </select>
+        </SettingRow>
+        <SettingRow label="Agent’s steps" note={look.steps === "each" ? "Every step the agent takes, as it takes it." : look.steps === "summary" ? "Its steps between replies in a line, like “Ran 6 commands, read 3 files”, that opens to each." : "Only how many steps it took, to open if you want."}>
+          <select id="setting-steps" value={look.steps} onChange={event => { look.steps = event.target.value; applyLook(); render(); }}>
+            <option value="each">Each Step</option>
+            <option value="summary">Summarized</option>
+            <option value="minimal">Minimal</option>
+          </select>
+        </SettingRow>
         <SettingRow label="Motion" note="How much the app moves when something happens.">
           <select id="setting-motion" value={look.motion} onChange={event => { look.motion = event.target.value; applyLook(); render(); }}>
             <option value="full">Full</option>

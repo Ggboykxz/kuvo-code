@@ -391,7 +391,10 @@ function countOf(text: string, query: string) {
 /// The row itself: the summary, and each step when it is opened.
 function StepsRow({ entry }: { entry: TranscriptEntry }) {
   const [open, setOpen] = useState(false);
-  const summary = stepsSummary(entry);
+  // The Mac's three levels (StepsDetail, StepsRow.swift:6-19, 89-91): the steps each on
+  // their own, the summary in a line, or the count alone.
+  const steps = (entry.parts ?? []).length;
+  const summary = look.steps === "minimal" ? `${steps} ${steps === 1 ? "step" : "steps"}` : stepsSummary(entry);
   if (!summary) return null;
   const calls = (entry.parts ?? []).filter(part => part.type === "tool");
   return (
@@ -1582,10 +1585,17 @@ function Composer() {
   // drafts. A message that could not be sent is back in the box, the same way.
   const sessionKey = draftKey(state.session?.id ?? null, state.project);
   const [draftFor, setDraftFor] = useState<string | null>(null);
+  // The session the files in the box were picked for: a file picked before the session
+  // was in view is the user's, and the draft of another session does not take it away.
+  const pickedFor = useRef<string | null>(null);
   useEffect(() => {
     const draft = readDraft(localStorage, sessionKey);
     setText(draft?.text ?? "");
-    setFiles((draft?.files ?? []) as Attachment[]);
+    setFiles(current => {
+      if (pickedFor.current !== null && pickedFor.current !== sessionKey) return (draft?.files ?? []) as Attachment[];
+      pickedFor.current = sessionKey;
+      return current;
+    });
     setMentions([]);
     setDraftFor(sessionKey);
   }, [sessionKey]);
@@ -1709,7 +1719,10 @@ function Composer() {
           });
           picked.push({ name: file.name, mime: file.type, data });
         }
-        if (picked.length) setFiles(current => [...current, ...picked]);
+        if (picked.length) {
+          pickedFor.current = sessionKey;
+          setFiles(current => [...current, ...picked]);
+        }
       }}
     >
       <button id="redo" className="small" type="button" hidden={!state.revert} title="Redo" onClick={() => void redoNow()}>Redo</button>
@@ -1953,6 +1966,7 @@ function Composer() {
             });
             picked.push({ name: file.name, mime: file.type, data });
           }
+          pickedFor.current = sessionKey;
           setFiles(current => [...current, ...picked]);
         }}
       />

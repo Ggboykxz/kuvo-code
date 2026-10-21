@@ -172,7 +172,16 @@ export const lookAccents: Record<string, { color: string; title: string }> = {
   graphite: { color: "#8e8e93", title: "Graphite" },
 };
 
-export const look = { accent: "system", textSize: "14", motion: "full", theme: "system" };
+export const look = { accent: "system", textSize: "14", motion: "full", theme: "system", window: "glass", typeface: "system", steps: "summary" };
+
+/// The typeface of the messages, as the Mac's four (Look.swift:52-63). Windows has no
+/// SF Pro Rounded: the closest it has is Candara, whose terminals are round.
+const typefaces: Record<string, string> = {
+  system: "",
+  rounded: 'Candara, "Segoe UI", sans-serif',
+  serif: 'Georgia, "Times New Roman", serif',
+  monospaced: 'var(--font-mono)',
+};
 
 export function applyLook() {
   const root = document.documentElement;
@@ -191,6 +200,10 @@ export function applyLook() {
   root.style.setProperty("--message-size", `${look.textSize}px`);
   root.style.setProperty("--motion-base", look.motion === "reduced" ? "1ms" : "320ms");
   root.style.setProperty("--motion-fast", look.motion === "reduced" ? "1ms" : "120ms");
+  // The window's own material (Look.swift:42-46: the glass, or a solid ground).
+  root.dataset.window = look.window;
+  // The typeface of the messages (Look.swift:52-63). The code stays monospaced.
+  root.style.setProperty("--message-font", typefaces[look.typeface] ?? "");
   try { localStorage.setItem("kuvo-look", JSON.stringify(look)); } catch {}
   for (const swatch of document.querySelectorAll("#accent-swatches .swatch")) {
     swatch.classList.toggle("selected", (swatch as HTMLElement).dataset.accent === look.accent);
@@ -204,6 +217,9 @@ export function loadLook() {
     if (["13", "14", "15.5", "17"].includes(stored.textSize)) look.textSize = stored.textSize;
     if (["full", "reduced"].includes(stored.motion)) look.motion = stored.motion;
     if (["system", "light", "dark"].includes(stored.theme)) look.theme = stored.theme;
+    if (["glass", "solid"].includes(stored.window)) look.window = stored.window;
+    if (["system", "rounded", "serif", "monospaced"].includes(stored.typeface)) look.typeface = stored.typeface;
+    if (["each", "summary", "minimal"].includes(stored.steps)) look.steps = stored.steps;
   } catch {}
   applyLook();
 }
@@ -236,6 +252,10 @@ export async function loadSessions() {
   }
   const { sessions } = await api<{ sessions: SessionSummary[] }>(`/api/sessions?directory=${encodeURIComponent(state.project)}`);
   state.sessions = sessions;
+  // The session in view is the list's own: the engine names a session a moment after its
+  // first words, and the conversation's card is to show the name it has now.
+  const current = state.session ? sessions.find(session => session.id === state.session?.id) : null;
+  if (current) state.session = current;
   render();
 }
 

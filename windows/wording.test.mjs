@@ -78,6 +78,18 @@ const SHELL = [
   "Close All Tabs",
   // The row at the top, which can be put away (GeneralSettings.swift:23).
   "Show the tab bar",
+  // The appearance's own choices (Look.swift:42-63, AppearanceSettings.swift:9-77).
+  "Window",
+  "Typeface",
+  "Agent’s steps",
+  "Each Step",
+  "Summarized",
+  "Minimal",
+  "Frosted glass that lets your desktop’s colors through.",
+  "A solid background, with nothing showing through.",
+  "Code always stays monospaced.",
+  "Every step the agent takes, as it takes it.",
+  "Only how many steps it took, to open if you want.",
   // The mode menu's tool permissions (ComposerMenus.swift:6-26, 120-135).
   "Tool Permissions",
   "Approve All",
