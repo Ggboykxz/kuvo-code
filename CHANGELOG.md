@@ -14,6 +14,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Connecting to a machine after an update of Kuvo Code no longer stops a session still working there to update its engine; the update waits until nothing runs.
 - A new password typed in a sign-in card for a saved account is saved in its place; agents allowed to sign in on their own kept using the old one. Allowing them with a password filled in from Passwords asks for Touch ID, as it should.
 - Turning notifications on in System Settings after saying no works without restarting Kuvo Code.
+- Sessions and bots running on Cursor have Kuvo Code's own tools, as the other coding agents do: they can answer another session with send_message, use the panel's browser and show things in the panel. A bot on Cursor asked by another session went looking for send_message in your files.
 - Archiving a session the engine couldn't archive just then leaves it where it was, with its wake-ups running; it looked archived, came back on its own later, and its wake-ups stayed held.
 - A session moved to a coding agent's model takes its wake-ups and watches along; they stayed with the old session in Archived, held there.
 - A wake-up an agent sets after its session was archived waits until you bring the session back, as the ones it had already do.

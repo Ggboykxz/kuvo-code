@@ -11,6 +11,7 @@ import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, 
 import { accountName, failure, model } from "../agent"
 import type { Limit } from "../auto"
 import { fileDiff, fromPatch } from "../diff"
+import { kuvoTools } from "../kuvotools"
 import { pictureData, pictureFile, withPictures } from "../pictures"
 import { skillsFolder, skillsFor, turnedOff, upward } from "../skills"
 import type { Turn } from "../turn"
@@ -246,6 +247,8 @@ class CursorThread implements Thread {
   /** Whether it was started to run its tools without asking. */
   private startedApproving?: boolean
   private startedSkills?: string
+  /** Kuvo Code's tools as it was started with them: other ones (the app started again) start it again. */
+  private startedTools?: string
   private active?: Active
 
   constructor(
@@ -275,6 +278,9 @@ class CursorThread implements Thread {
     // Settings › Skills' skills, in a folder of the workspace's (`.cursor/skills` in it), but those
     // it reads itself.
     const skills = skillsFolder(await skillsFor(cwd, this.owner.ownSkillFolders(cwd), turnedOff(hooks)))
+    // Kuvo Code's own tools (the panel's browser, show_in_panel, messages to other agents), as the
+    // other agents have them: what they do goes to this conversation.
+    const tools = kuvoTools(this.session.id)
     return {
       model: selection,
       name: `Kuvo Code: ${this.session.title ?? "session"}`,
@@ -289,16 +295,24 @@ class CursorThread implements Thread {
         enableAgentRetries: true,
         store: this.owner.agentStore(sdk),
       },
+      ...(tools
+        ? {
+            mcpServers: {
+              [tools.name]: tools.kind === "http" ? { type: "http", url: tools.url, headers: tools.headers } : { type: "stdio", command: tools.command, args: tools.args, env: tools.env },
+            },
+          }
+        : {}),
     }
   }
 
   /** Cursor's agent for this session: the one it had, or a new one (said by `startedOver`). */
   private async ensureAgent(sdk: any, options: any, hooks: TurnHooks) {
     const approvesAll = hooks.approvesAll(false)
-    // Its sandbox, review and folders are set as it starts: another approval mode, or other
-    // skills, start it again.
+    // Its sandbox, review, folders and Kuvo Code's tools are set as it starts: another approval
+    // mode, other skills or other tools start it again.
     const skills = options.local?.dirs?.[0] as string | undefined
-    if (this.agent && (this.startedApproving !== approvesAll || this.startedSkills !== skills)) {
+    const tools = kuvoTools(this.session.id)?.key
+    if (this.agent && (this.startedApproving !== approvesAll || this.startedSkills !== skills || this.startedTools !== tools)) {
       try {
         this.agent.close?.()
       } catch {}
@@ -307,6 +321,7 @@ class CursorThread implements Thread {
     if (this.agent) return
     this.startedApproving = approvesAll
     this.startedSkills = skills
+    this.startedTools = tools
     const id = this.state.cursorAgent as string | undefined
     this.agent = id ? await sdk.Agent.resume(id, options).catch(() => undefined) : undefined
     if (!this.agent && id) {
