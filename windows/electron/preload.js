@@ -10,6 +10,9 @@ contextBridge.exposeInMainWorld("kuvo", {
   // window's controls, or the terminal's port, away from it.
   isShell: true,
   terminalPort: ipcRenderer.sendSync("kuvo:terminal-port"),
+  // The name of the user on this machine, for the avatar the Mac draws beside a comment
+  // (ChangesPanel.swift:1214-1233).
+  userName: ipcRenderer.sendSync("kuvo:user-name"),
   maximize: () => ipcRenderer.send("kuvo:maximize"),
   // The menu bar's items that act on the conversation.
   onMenu: (callback) => ipcRenderer.on("kuvo:menu", (_event, id) => callback(id)),

@@ -9,6 +9,7 @@ import { isRecording, keysOf, matchesEvent, shortcutFor } from "./shortcuts";
 import { paneLayout, paneRanges } from "../../harness/layout.mjs";
 import { effortTitle } from "../../harness/models.mjs";
 import { draftKey, readDraft, saveDraft } from "./drafts.mjs";
+import { commentsText } from "./review-comments.mjs";
 import {
   answerPermission,
   applyLook,
@@ -1717,11 +1718,10 @@ function Composer() {
   const submit = async (event: React.FormEvent, delivery: "steer" | "queue" = "steer") => {
     event.preventDefault();
     if (!text.trim() && !files.length) return;
-    // The notes on the changes go with the message, the way the Mac app sends them.
+    // The notes on the changes go with the message, in the block the Mac sends them in
+    // (ReviewComments.swift:27-39).
     const notes = state.lineComments ?? [];
-    const withNotes = notes.length
-      ? `${text}\n\n${notes.map(note => `On ${note.file} (line ${note.line}): ${note.text}`).join("\n")}`
-      : text;
+    const withNotes = notes.length ? commentsText(text, notes) : text;
     // The quote you are answering goes first, as a block, and your words after it
     // (Quoting.message).
     const sent = quote

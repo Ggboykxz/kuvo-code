@@ -316,6 +316,13 @@ ipcMain.on("kuvo:maximize", () => {
   else mainWindow.maximize();
 });
 
+// The name of the user on this machine: the Mac's own avatar in the changes' comments
+// shows their initials (ChangesPanel.swift:1214-1233), and the shell is the only part that
+// knows who the user is.
+ipcMain.on("kuvo:user-name", (event) => {
+  event.returnValue = (os.userInfo && os.userInfo().username) || "";
+});
+
 // A folder opened where the user can see it: the Mac's "Show in Finder" is the Explorer
 // here (SidebarView.swift:616).
 ipcMain.on("kuvo:show-in-folder", (_event, path) => {

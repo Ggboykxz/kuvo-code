@@ -5,8 +5,9 @@
 import { useEffect, useState } from "react";
 import { Symbol } from "./components/symbols";
 import { api } from "./api";
-import { diffGutterWidth, diffNumber, parsePatch } from "./diff.mjs";
-import { complain, notify, state, useStore } from "./store";
+import { diffGutterWidth, diffNumber, diffSide, parsePatch, type DiffLine } from "./diff.mjs";
+import { commentMatches, type ReviewComment } from "./review-comments.mjs";
+import { complain, notify, render, state, useStore } from "./store";
 
 type ChangeFile = { file: string; patch?: string; additions?: number; deletions?: number; status?: string };
 
@@ -20,6 +21,12 @@ const SCOPES = [
 
 export function ChangesPanel() {
   useStore();
+  // The user's initials in a circle, the Mac's own (ChangesPanel.swift:1214-1233).
+  const initials = (() => {
+    const name = (window as unknown as { kuvo?: { userName?: string } }).kuvo?.userName ?? "";
+    const letters = String(name).split(" ").filter(Boolean).slice(0, 2).map(part => part[0]).join("");
+    return letters ? letters.toUpperCase() : "?";
+  })();
   const [scope, setScope] = useState<string>("uncommitted");
   const [files, setFiles] = useState<ChangeFile[]>([]);
   const [open, setOpen] = useState<string[]>([]);
@@ -35,7 +42,9 @@ export function ChangesPanel() {
     try { return localStorage.getItem("kuvo-pushAfterCommit") === "on"; } catch { return false; }
   });
   const [failure, setFailure] = useState("");
-  const [draft, setDraft] = useState<{ file: string; line: number } | null>(null);
+  // The line a comment is being written on, as it read then
+  // (ChangesPanel.swift:24-33).
+  const [draft, setDraft] = useState<{ file: string; side: "new" | "old"; number: number; text: string } | null>(null);
   const [draftText, setDraftText] = useState("");
   const [instructions, setInstructions] = useState("");
 
@@ -74,16 +83,34 @@ export function ChangesPanel() {
 
   const toggle = (file: string) => setOpen(current => current.includes(file) ? current.filter(name => name !== file) : [...current, file]);
 
-  const comment = (file: string, line: number) => {
-    setDraft({ file, line });
+  // A comment is written on the line it was written on: the line's number, and — once the
+  // file has changed — the line's text, so it doesn't slide onto another line
+  // (ChangesPanel.swift:24-33, 873-880).
+  const comment = (file: string, line: DiffLine) => {
+    setDraft({ file, side: diffSide(line), number: diffNumber(line), text: line.text });
     setDraftText("");
   };
 
   const saveComment = () => {
     if (!draft || !draftText.trim()) { setDraft(null); return; }
-    state.lineComments = [...(state.lineComments ?? []), { file: draft.file, line: draft.line, text: draftText.trim() }];
+    state.lineComments = [
+      ...(state.lineComments ?? []),
+      {
+        id: `${draft.file}:${draft.side}:${draft.number}:${state.lineComments?.length ?? 0}`,
+        file: draft.file,
+        line: draft.number,
+        side: draft.side,
+        snippet: draft.text.trim(),
+        text: draftText.trim(),
+      },
+    ];
     setDraft(null);
     setDraftText("");
+  };
+
+  const deleteComment = (one: ReviewComment) => {
+    state.lineComments = (state.lineComments ?? []).filter(other => other.id !== one.id);
+    render();
   };
 
   const suggest = async () => {
@@ -168,31 +195,77 @@ export function ChangesPanel() {
                     // line, the new one otherwise (ChangesPanel.swift:882-885).
                     const number = diffNumber(line);
                     const kind = line.kind === "added" ? "add" : line.kind === "removed" ? "del" : "ctx";
+                    // The comments written on this line, and the one being written now
+                    // (ChangesPanel.swift:789-799).
+                    const mine = (state.lineComments ?? []).filter(one => one.file === file.file && commentMatches(one, line));
+                    const writing = Boolean(
+                      draft && draft.file === file.file && draft.side === diffSide(line)
+                      && draft.number === number && draft.text === line.text,
+                    );
                     return (
-                      <div className={`diff-line ${kind}`} key={index}>
-                        <span className="diff-number">{number || ""}</span>
-                        <button
-                          className="diff-comment"
-                          title="Comment on This Line"
-                          aria-label="Comment on This Line"
-                          onClick={() => comment(file.file, number)}
-                        >
-                          {/* The Mac's mark in the gutter: a plus, drawn. */}
-                          <Symbol name="plus" size={9} />
-                        </button>
-                        <span className="diff-text">{line.text || " "}</span>
-                        {draft?.file === file.file && draft.line === number ? (
-                          <span className="diff-draft">
-                            <input
-                              type="text"
+                      <div className="diff-row" key={index}>
+                        <div className={`diff-line ${kind}`}>
+                          <span className="diff-number">{number || ""}</span>
+                          <button
+                            className="diff-comment"
+                            title="Comment on This Line"
+                            aria-label="Comment on This Line"
+                            onClick={() => comment(file.file, line)}
+                          >
+                            {/* The Mac's mark in the gutter: a plus, drawn. */}
+                            <Symbol name="plus" size={9} />
+                          </button>
+                          <span className="diff-text">{line.text || " "}</span>
+                        </div>
+                        {mine.map(one => (
+                          <div className="comment-card" key={one.id}>
+                            <div className="comment-head">
+                              <span className="comment-avatar" aria-hidden="true">{initials}</span>
+                              <span className="comment-you">You</span>
+                              <span className="comment-where">
+                                {`Comment on line ${one.side === "old" ? "L" : "R"}${one.line}`}
+                              </span>
+                            </div>
+                            <div className="comment-text">{one.text}</div>
+                            <div className="comment-foot">
+                              <button className="small" onClick={() => deleteComment(one)}>Delete</button>
+                            </div>
+                          </div>
+                        ))}
+                        {writing ? (
+                          <div className="comment-editor">
+                            <div className="comment-head">
+                              <span className="comment-avatar" aria-hidden="true">{initials}</span>
+                              <span className="comment-you">You</span>
+                            </div>
+                            <textarea
                               autoFocus
+                              rows={2}
                               value={draftText}
-                              placeholder="What should the agent know?"
+                              placeholder="Add a comment…"
                               onChange={event => setDraftText(event.target.value)}
-                              onKeyDown={event => { if (event.key === "Enter") saveComment(); if (event.key === "Escape") setDraft(null); }}
+                              onKeyDown={event => {
+                                if (event.key === "Escape") { setDraft(null); setDraftText(""); return; }
+                                // Here, not on the button: a button's Ctrl+Return would take it
+                                // from the composer too (ChangesPanel.swift:1182-1187).
+                                if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+                                  event.preventDefault();
+                                  saveComment();
+                                }
+                              }}
                             />
-                            <button className="small" onClick={saveComment}>Say it</button>
-                          </span>
+                            <div className="comment-foot">
+                              <button className="small" onClick={() => { setDraft(null); setDraftText(""); }}>Cancel</button>
+                              <button
+                                className="primary small"
+                                title="Comment (Ctrl+Return)"
+                                disabled={!draftText.trim()}
+                                onClick={saveComment}
+                              >
+                                Comment
+                              </button>
+                            </div>
+                          </div>
                         ) : null}
                       </div>
                     );

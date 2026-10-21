@@ -184,6 +184,22 @@ test("the page, in a browser, against the real engine", {
     "Comment on This Line",
     "the line's mark is the Mac's",
   );
+  // A comment: written in the Mac's editor, and kept as a card under its line
+  // (ChangesPanel.swift:1088-1212).
+  const row = page.page.locator(".changes-diff .diff-line").last();
+  await row.hover();
+  await row.locator(".diff-comment").click();
+  await page.seen("the comment's editor to open", () => Boolean(document.querySelector(".comment-editor textarea")), null, 10_000);
+  await page.page.locator(".comment-editor textarea").fill("please check this line");
+  await page.page.locator(".comment-editor button", { hasText: "Comment" }).click();
+  await page.seen("the comment to be a card under its line", () => {
+    const card = document.querySelector(".comment-card");
+    return Boolean(card) && Boolean(card.textContent?.includes("please check this line"));
+  }, null, 10_000);
+  const card = (await page.page.locator(".comment-card").first().textContent()) ?? "";
+  assert.match(card, /Comment on line R4/, "the card names the line, as the Mac's does");
+  assert.match(card, /You/, "the card is yours");
+  assert.match(card, /Delete/, "the card can be taken away");
   await page.element("drawer-close").click();
   await page.seen("the panel to close", () => document.getElementById("drawer")?.hidden === true, null, 10_000);
 

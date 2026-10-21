@@ -32,6 +32,7 @@ const sources = {
   lib: read("app", "src", "lib.ts"),
   changes: read("app", "src", "Changes.tsx"),
   diff: read("app", "src", "diff.mjs"),
+  review: read("app", "src", "review-comments.mjs"),
   styles: read("harness", "ui", "style.css"),
   shimmer: read("app", "src", "components", "ai-elements", "shimmer.tsx"),
   logo: read("app", "src", "components", "provider-logo.tsx"),
@@ -614,6 +615,26 @@ const checks = [
     assert.match(rule(".mode-thumb {"), /width: 84px/);
   }],
 
+  ["a comment on a line is the Mac's own: its editor, its card, and its block", ({ changes, app, css, review, rule }) => {
+    // The editor's words and its keys (ChangesPanel.swift:1157-1212): the field says
+    // "Add a comment…", Escape cancels, Ctrl+Return saves, and the button is the Mac's.
+    assert.match(changes, /placeholder="Add a comment…"/);
+    assert.match(changes, /event\.key === "Escape"/);
+    assert.match(changes, /event\.key === "Enter" && \(event\.ctrlKey \|\| event\.metaKey\)/);
+    assert.match(changes, /title="Comment \(Ctrl\+Return\)"/);
+    assert.match(changes, />\s*Comment\s*</);
+    // The card: the user, the line it is on, and the way to take it away
+    // (ChangesPanel.swift:1088-1121).
+    assert.match(changes, /Comment on line \$/);
+    assert.match(changes, /one\.side === "old" \? "L" : "R"/);
+    assert.match(changes, />Delete</);
+    assert.match(changes, /className="comment-avatar"/);
+    // And the comments go to the agent in the Mac's block (ReviewComments.swift:27-39).
+    assert.match(app, /commentsText\(text, notes\)/);
+    assert.match(review, /<review-comments>/);
+    assert.match(review, /Comments on lines of the current changes:/);
+  }],
+
   ["the changes' rows are the Mac's own: a number in a gutter, the text, and an edge", ({ css, changes, diff, rule }) => {
     // The rows are read as lines of their own (ProjectChanges.swift:40-48), and the
     // number in the gutter is the old one for a removed line, the new one otherwise
@@ -1079,6 +1100,10 @@ const checks = [
     assert.match(shell, /command === 'browser-backward' \|\| command === 'browser-forward'/);
     assert.match(shell, /before-input-event/);
     assert.match(shell, /will-navigate/);
+    // And the name of the user on this machine travels by the bridge too: the Mac's
+    // avatar beside a comment shows their initials (ChangesPanel.swift:1214-1233).
+    assert.match(preload, /userName: ipcRenderer\.sendSync\("kuvo:user-name"\)/);
+    assert.match(shell, /ipcMain\.on\("kuvo:user-name"/);
   }],
 
   ["a model chosen reaches the engine as its Model.ref", ({ engine, app }) => {

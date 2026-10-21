@@ -1391,6 +1391,35 @@ li.unread .session { position: relative; padding-left: 16px; }
   border: 1px solid var(--accent); border-radius: var(--radius-xs);
   background: var(--panel); color: var(--ink); font-size: var(--text-xs);
 }
+/* A comment on a line, and the editor it is written in: the Mac's own, in the accent
+   glass, under the line it belongs to (ChangesPanel.swift:1088-1212). */
+.comment-card, .comment-editor {
+  margin: var(--space-1) var(--space-3) var(--space-2);
+  padding: 12px;
+  display: flex; flex-direction: column; gap: 8px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in oklab, var(--accent), transparent 72%);
+}
+.comment-head { display: flex; align-items: center; gap: 8px; }
+.comment-avatar {
+  width: 22px; height: 22px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: color-mix(in oklab, var(--ink), transparent 92%);
+  color: var(--ink-soft);
+  font-size: 10px; font-weight: 600;
+}
+.comment-you { font-size: var(--text-xs); font-weight: 600; }
+.comment-where { margin-left: auto; font-size: 11px; color: var(--ink-soft); }
+.comment-text { font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+.comment-foot { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.comment-editor textarea {
+  width: 100%; resize: vertical; min-height: 44px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line); border-radius: var(--radius-xs);
+  background: var(--panel); color: var(--ink); font-size: 13px;
+  font-family: inherit;
+}
 .changes-foot {
   border-top: 1px solid var(--line-soft);
   padding: var(--space-2) var(--space-3) var(--space-3);

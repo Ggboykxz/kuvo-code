@@ -164,6 +164,22 @@ export interface EngineState {
   version?: string | null;
 }
 
+/** A comment on a line of the changes, the Mac's own (ReviewComments.swift:6-18). */
+export type ReviewComment = {
+  /** The comment's own name, so the panel can tell two apart. */
+  id: string;
+  /** The file the comment is on, as the panel names it. */
+  file: string;
+  /** The line's number, on the side the comment was written on. */
+  line: number;
+  /** Which side of the change the line is on. */
+  side: "new" | "old";
+  /** The line as it read when the comment was written. */
+  snippet: string;
+  /** What the comment says. */
+  text: string;
+};
+
 export interface AppState {
   project: string | null;
   engine: EngineState | null;
@@ -229,7 +245,8 @@ export interface AppState {
   pickerOpen: boolean;
   openFileContent?: string;
   toast: { title: string; body: string } | null;
-  lineComments?: { file: string; line: number; text: string }[];
+  /** A comment on a line of the changes, the Mac's own (ReviewComments.swift:6-18). */
+  lineComments?: ReviewComment[];
   quote?: string;
   /** The picture in view, and the ones of the same message beside it (the Mac's viewer
    *  steps through them, ImageViewer.swift:128-131, 209-221). */
