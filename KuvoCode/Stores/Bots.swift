@@ -270,7 +270,7 @@ final class Bots {
         save()
         app.workspace.add(session)
         noteSessions()
-        await describe([bot])
+        await describe([bot.id])
         Analytics.shared.track("bot_created", ["machine": machine != nil, "project": project != nil])
         return bot
     }
@@ -321,13 +321,13 @@ final class Bots {
         if bot != old { bot.updated = .now }
         list[index] = bot
         save()
-        await describe([bot])
         var edits: Set<String> = []
         if old.name != bot.name || old.job != bot.job || old.instructions != bot.instructions || old.personality != bot.personality { edits.insert("instructions") }
         if old.name != bot.name { edits.insert("name") }
         // A new default model applies to its conversation too; you can still pick another there.
         if old.model != bot.model, bot.model != nil { edits.insert("model") }
         await tell(bot.id, edits)
+        await describe([bot.id])
     }
 
     /// A bot's conversation carried on with the coding agents on `model` (a model of theirs, or
@@ -465,8 +465,8 @@ final class Bots {
             }
             // Saved even when unchanged, so its session hears the new wording.
             save()
-            await describe([list[index]])
             await tell(bot, ["instructions"])
+            await describe([bot])
         }
     }
 
@@ -693,9 +693,9 @@ final class Bots {
         guard updated != bot, let index = list.firstIndex(where: { $0.id == id }) else { return }
         list[index] = updated
         save()
-        if updated.job != bot.job { await describe([updated]) }
         guard updated.job != bot.job || updated.instructions != bot.instructions else { return }
         await tell(updated.id, ["instructions"])
+        if updated.job != bot.job { await describe([id]) }
     }
 
     /// Text compared without its spacing.
@@ -907,12 +907,27 @@ final class Bots {
         return try? encoder.encode(bot.descriptor)
     }
 
-    /// Writes bots' descriptions (`Bot.Descriptor`) in their folders: on this Mac now, on a
-    /// connected machine in one go; one on a machine that's away gets it as the machine connects
-    /// again (`describeAll(on:)`). A bot whose folder has gone gets none: no folder is made.
-    func describe(_ bots: [Bot]) async {
-        let changed = bots.compactMap { bot -> (bot: Bot, data: Data)? in
-            guard let data = Self.descriptorData(bot), described[bot.id] != data else { return nil }
+    /// Writes bots' descriptions (`Bot.Descriptor`) in their folders, as they are by then: on this
+    /// Mac now, on a connected machine in one go; one on a machine that's away gets it as the
+    /// machine connects again (`describeAll(on:)`). A bot whose folder has gone gets none: no
+    /// folder is made. One round at a time, so an older round's never lands after a newer one's.
+    /// `force` writes them even if this run wrote the same before.
+    func describe(_ ids: [String], force: Bool = false) async {
+        let previous = describing
+        let round = Task { [weak self] in
+            await previous?.value
+            await self?.writeDescriptions(of: ids, force: force)
+        }
+        describing = round
+        await round.value
+    }
+
+    /// The round of descriptions being written, which the next one waits for.
+    @ObservationIgnored private var describing: Task<Void, Never>?
+
+    private func writeDescriptions(of ids: [String], force: Bool) async {
+        let changed = ids.compactMap { id -> (bot: Bot, data: Data)? in
+            guard let bot = bot(id), let data = Self.descriptorData(bot), force || described[id] != data else { return nil }
             return (bot, data)
         }
         for (bot, data) in changed where bot.machine == nil {
@@ -941,9 +956,7 @@ final class Bots {
     /// at the update that brought descriptions, and as a machine connects (where a copy of the
     /// app before them, or one on another Mac, could have left one out of date or none).
     func describeAll(on machine: String?) async {
-        let bots = list.filter { $0.machine == machine }
-        for bot in bots { described[bot.id] = nil }
-        await describe(bots)
+        await describe(list.filter { $0.machine == machine }.map(\.id), force: true)
     }
 
     /// Writes descriptions on a machine, through one connection: each folder and description, on
@@ -962,7 +975,7 @@ final class Bots {
                 while IFS="$t" read -r f j; do
                   d="$(printf '%s' "$f" | base64 -d)" || exit 1
                   [ -d "$d" ] || continue
-                  printf '%s' "$j" | base64 -d >"$d/\(Bot.Descriptor.file).new" && mv -f "$d/\(Bot.Descriptor.file).new" "$d/\(Bot.Descriptor.file)" || exit 1
+                  printf '%s' "$j" | base64 -d >"$d/\(Bot.Descriptor.file).new" && mv -f "$d/\(Bot.Descriptor.file).new" "$d/\(Bot.Descriptor.file)" || { rm -f "$d/\(Bot.Descriptor.file).new"; exit 1; }
                 done
                 echo written
                 """, input: input)
