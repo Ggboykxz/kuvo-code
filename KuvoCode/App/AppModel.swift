@@ -71,6 +71,15 @@ final class AppModel {
         openSettings(.accounts)
     }
 
+    /// A conversation carried on with the coding agents (`Workspace.moveToAgents`): a bot's goes on
+    /// as the bot's, which keeps it (true); any other's panel goes with it, its terminals, pages
+    /// and files as they were.
+    func movedToAgents(from old: String, to new: Session) async -> Bool {
+        if await bots.movedToAgents(from: old, to: new) { return true }
+        utilities.handOver(from: old, to: new.id)
+        return false
+    }
+
     /// Settings › Custom Auto, showing `machine`'s lists (nil: this Mac's).
     func openAuto(on machine: String?) {
         autoPlace = machine
@@ -283,7 +292,7 @@ final class AppModel {
             bots.app = self
             wakeUps.app = self
             groups.app = self
-            workspace.onMovedToAgents = { [weak bots] from, to in await bots?.movedToAgents(from: from, to: to) ?? false }
+            workspace.onMovedToAgents = { [weak self] from, to in await self?.movedToAgents(from: from, to: to) ?? false }
             workspace.runsOnAgents(bots.agentSessionIDs)
             workspace.botSessions = bots.sessionIDs
             // Bots' keys of their own, in their folders' settings as integrations are now.

@@ -75,4 +75,34 @@ import Testing
         try await eventually { workspace.requestedTab == "ses_agent" }
         #expect(workspace.requestedTab == "ses_agent", "the new one opens in its place")
     }
+
+    /// Its side panel goes with it: the page it had open (signed in, say) is the new session's,
+    /// the one its agent goes on browsing in, not left running behind the archived one.
+    @Test func itsPanelGoesWithIt() async throws {
+        defer { done() }
+        let app = AppModel()
+        app.workspace.api = engine.api
+        app.workspace.agents = agents
+        // As the app has it (AppModel.start).
+        app.workspace.onMovedToAgents = { [weak app] from, to in await app?.movedToAgents(from: from, to: to) ?? false }
+        engine.list([StubEngine.session(id, title: "Docs", directory: folder)])
+        engine.conversation(id, [text("msg_01", "Check the docs site", created: 1)])
+        engine.on("GET", "/api/session/\(id)", json: ["data": StubEngine.session(id, title: "Docs", directory: folder)])
+        engine.on("GET", "/api/session/\(id)/inbox", json: ["data": []])
+        engine.on("PATCH", "/api/session/\(id)", json: [:])
+        bridge.on("POST", "/api/session/import", json: ["data": StubEngine.session("ses_agent", title: "Docs", directory: folder)])
+        await app.workspace.refresh()
+        let panel = app.utilities
+        panel.sessionInView = id
+        let page = panel.newBrowser("about:blank")
+        panel.agentWorks(id, in: page)
+        let pageID = try #require(panel.id(of: page))
+
+        try await app.workspace.moveToAgents(id, model: ModelRef(id: "sonnet", providerID: "claude-code"))
+        panel.sessionInView = "ses_agent"
+        #expect(panel.visibleTabs.contains { $0.id == pageID }, "the page is in the new session's panel")
+        #expect(panel.agentBrowser(for: "ses_agent") === page, "and its agent goes on in it")
+        panel.sessionInView = id
+        #expect(!panel.visibleTabs.contains { $0.id == pageID }, "not left with the archived one")
+    }
 }
