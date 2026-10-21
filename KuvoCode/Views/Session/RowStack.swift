@@ -725,7 +725,12 @@ final class RowStackView: NSView, NSUserInterfaceValidations {
             clearSelection()
             return click()
         }
-        if orderedSelection != nil { window.makeFirstResponder(self) } else { clearSelection() }
+        if orderedSelection != nil {
+            window.makeFirstResponder(self)
+            SelectionMenu.selected(in: window)
+        } else {
+            clearSelection()
+        }
     }
 
     /// Row `index`'s view, made and laid out where it is if it's not there.

@@ -311,7 +311,9 @@ final class ReplyTextView: NSTextView, NSTextViewDelegate {
                 stack.clearSelection()
                 window?.makeFirstResponder(self)
             }
-            return super.mouseDown(with: event)
+            super.mouseDown(with: event)
+            if selectedRange().length > 0 { SelectionMenu.selected(in: window) }
+            return
         }
         stack.trackSelection(from: event) { [self] in
             // A click: a word double-clicked here before is let go, and a link opens.
@@ -339,10 +341,12 @@ final class ReplyTextView: NSTextView, NSTextViewDelegate {
     }
 
     // Another text taking the keyboard leaves this one's selection behind; clear it, so only
-    // one selection shows at a time, as in Textual.
+    // one selection shows at a time, as in Textual. Not the conversation's selection, which this
+    // shows its part of: the conversation takes the keyboard as a drag ends (the press gave it
+    // here), and that would take the selection away as it's made.
     override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
-        if resigned, selectedRange().length > 0 { setSelectedRange(NSRange(location: selectedRange().location, length: 0)) }
+        if resigned, enclosingRowStack?.selection == nil, selectedRange().length > 0 { setSelectedRange(NSRange(location: selectedRange().location, length: 0)) }
         return resigned
     }
 }
@@ -617,7 +621,9 @@ final class ReplyCodeTextView: NSTextView {
                 stack.clearSelection()
                 window?.makeFirstResponder(self)
             }
-            return super.mouseDown(with: event)
+            super.mouseDown(with: event)
+            if selectedRange().length > 0 { SelectionMenu.selected(in: window) }
+            return
         }
         stack.trackSelection(from: event) { [self] in
             setSelectedRange(NSRange(location: selectedRange().location, length: 0))

@@ -49,6 +49,22 @@ struct SelectionMenu: ViewModifier {
                 if let monitor { NSEvent.removeMonitor(monitor) }
                 monitor = nil
             }
+            // A drag across the conversation, or a double click in a reply, follows the pointer
+            // itself, so the release never reaches the monitor: it says so once text is selected.
+            .onReceive(NotificationCenter.default.publisher(for: Self.selectedNotification)) { note in
+                guard isShown, let window = windowBox.window, note.object as? NSWindow === window, let view = window.contentView else { return }
+                let location = view.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+                offer(at: view.isFlipped ? location : CGPoint(x: location.x, y: view.bounds.height - location.y), in: window)
+            }
+    }
+
+    private static let selectedNotification = Notification.Name("SelectionMenu.selected")
+
+    /// Text was selected in `window`'s conversation, by a drag or a double click that followed the
+    /// pointer to its release: the menu shows where it was let go.
+    static func selected(in window: NSWindow?) {
+        guard let window else { return }
+        NotificationCenter.default.post(name: selectedNotification, object: window)
     }
 
     private var menu: some View {
@@ -102,26 +118,33 @@ struct SelectionMenu: ViewModifier {
             guard frame.contains(inWindow), point == nil || !menuFrame.contains(inWindow) else { return }
             let dragged = downAt.map { hypot($0.x - inWindow.x, $0.y - inWindow.y) > 4 } ?? false
             guard dragged || event.clickCount >= 2 else { return }
-            let at = CGPoint(x: inWindow.x - frame.minX, y: inWindow.y - frame.minY)
-            // Once the text has its selection.
-            Task {
-                try? await Task.sleep(for: .milliseconds(60))
-                // A page says it can copy whether or not anything is selected (a drag in a
-                // widget's drawing selects nothing): it's asked what is.
-                if let page = Self.page(in: window) {
-                    let text = (try? await page.evaluateJavaScript("String(getSelection())", in: nil, contentWorld: .defaultClient) as? String)?
-                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    guard !text.isEmpty else { return }
-                    pageSelection = text
-                    point = at
-                } else if Self.hasSelection(in: window) {
-                    pageSelection = nil
-                    point = at
-                }
-            }
+            offer(at: inWindow, in: window)
         default:
             point = nil
             menuFrame = .zero
+        }
+    }
+
+    /// Shows the menu at `inWindow` (from the window's top left) once what was let go there left
+    /// text selected.
+    private func offer(at inWindow: CGPoint, in window: NSWindow) {
+        guard frame.contains(inWindow), point == nil || !menuFrame.contains(inWindow) else { return }
+        let at = CGPoint(x: inWindow.x - frame.minX, y: inWindow.y - frame.minY)
+        // Once the text has its selection.
+        Task {
+            try? await Task.sleep(for: .milliseconds(60))
+            // A page says it can copy whether or not anything is selected (a drag in a
+            // widget's drawing selects nothing): it's asked what is.
+            if let page = Self.page(in: window) {
+                let text = (try? await page.evaluateJavaScript("String(getSelection())", in: nil, contentWorld: .defaultClient) as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !text.isEmpty else { return }
+                pageSelection = text
+                point = at
+            } else if Self.hasSelection(in: window) {
+                pageSelection = nil
+                point = at
+            }
         }
     }
 
