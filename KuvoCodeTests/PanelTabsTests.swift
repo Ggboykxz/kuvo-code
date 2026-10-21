@@ -49,4 +49,56 @@ import Testing
         panel.close(only.id)
         #expect(panel.visibleTabs.count == 1)
     }
+
+    // MARK: Files
+
+    private let a = URL(filePath: "/tmp/project/a.swift"), b = URL(filePath: "/tmp/project/b.swift")
+
+    /// A file opens in the file tab in view, and one already open is shown, not opened twice.
+    @Test func filesOpenInTheFileTab() {
+        panel.sessionInView = "ses_a"
+        panel.open(a)
+        panel.open(b)
+        #expect(panel.visibleTabs.filter { if case .file = $0.kind { true } else { false } }.count == 1)
+        panel.show(b)
+        #expect(panel.selected?.kind == .file(b))
+        panel.showFiles()
+        panel.show(a, isFolder: false)
+        #expect(panel.visibleTabs.filter { $0.kind == .file(a) }.count == 1)
+        #expect(panel.selected?.kind == .file(a))
+    }
+
+    /// Closing the tab you're on: the one that took its place is selected.
+    @Test func closingTheSelectedTabSelectsItsNeighbor() throws {
+        panel.sessionInView = "ses_a"
+        panel.showFiles()
+        panel.show(a, isFolder: false)
+        let tabs = panel.visibleTabs
+        #expect(tabs.count == 3)
+        panel.choose(tabs[1].id)
+        panel.close(tabs[1].id)
+        #expect(panel.selection == tabs[2].id)
+    }
+
+    /// A conversation deleted: its tabs go, and no other's.
+    @Test func aDeletedConversationsTabsGo() {
+        panel.sessionInView = "ses_a"
+        panel.open(a)
+        panel.sessionInView = "ses_b"
+        panel.open(b)
+        panel.closeTabs(of: panel.panelKey)
+        #expect(!panel.tabs.contains { $0.kind == .file(b) })
+        #expect(panel.tabs.contains { $0.kind == .file(a) })
+    }
+
+    /// The tabs you opened while writing a new session's first message are the session's.
+    @Test func aNewSessionKeepsItsDraftsTabs() {
+        panel.sessionInView = nil
+        panel.open(a)
+        let chosen = panel.selection
+        panel.adoptDraft(as: "ses_new")
+        panel.sessionInView = "ses_new"
+        #expect(panel.visibleTabs.contains { $0.kind == .file(a) })
+        #expect(panel.selection == chosen)
+    }
 }
