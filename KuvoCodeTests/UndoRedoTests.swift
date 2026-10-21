@@ -84,6 +84,7 @@ import Testing
         try await eventually { model.session.revert == nil }
         #expect(model.draftText.contains("half a thought about colors"), "typed text was lost: \(model.draftText)")
         #expect(!model.draftText.contains("Add a settings page"), "the message Redo brought back shouldn't stay in the composer to be sent again")
+        #expect(!model.draftText.contains("Make it dark"), "nor the one the first undo put there: \(model.draftText)")
     }
 
     /// A message that waited in the queue is older than the steps the agent took before it got to

@@ -1153,7 +1153,7 @@ final class SessionModel {
         }
     }
 
-    private var undone: (before: ComposerState, after: ComposerState)?
+    private var undone: (before: ComposerState, after: ComposerState, put: String)?
 
     /// A sent message's attached files that are still on this Mac.
     static func files(of message: Message.User) -> [URL] {
@@ -1196,10 +1196,20 @@ final class SessionModel {
                 // Undone further back before Redo: Redo takes them all back, so it puts back the
                 // composer as it was before the first undo (with each undo's text gone, rather
                 // than left to be sent again). Written in since the last undo, it's yours: Redo
-                // puts it back as it is now, as it would have left it.
-                let before = undone.flatMap { $0.after == composerState ? $0.before : nil } ?? composerState
+                // puts it back as it is now, as it would have left it, less the last undo's text
+                // if that's still at its start as it was put there.
+                let now = composerState
+                var before = now
+                if let undone, undone.after == now {
+                    before = undone.before
+                } else if let undone, !undone.put.isEmpty, now.text == undone.put || now.text.hasPrefix(undone.put + "\n\n") {
+                    before.text = String(now.text.dropFirst(min(now.text.count, undone.put.count + 2)))
+                }
                 restoreDraft(CommandMessages.shared.text(of: copy), files: Self.files(of: message, stored: copy))
-                undone = (before, composerState)
+                let after = composerState
+                // The text this undo put ahead of what was there.
+                let put = after.text == now.text ? "" : now.text.isEmpty ? after.text : String(after.text.dropLast(now.text.count + 2))
+                undone = (before, after, put)
             } catch {
                 fail(error)
             }

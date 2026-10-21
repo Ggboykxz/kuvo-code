@@ -19,6 +19,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - A session shows working when Kuvo Code opens while a subagent of one of its subagents is still at work, not only one of its own.
 - Starting a bot from a shared one whose job and details are on the same line keeps the details in its first message; only the job's own sentence is left out, as it's said first.
 - A session archived with Kuvo Code 0.6.2 or earlier gets its wake-ups back when you bring it back; they stayed paused, as if you'd paused them.
+- Redo after typing between two undos keeps what you typed and nothing else: the message the first undo put in the composer, which Redo brings back to the conversation, no longer stays there to be sent twice.
 
 ## 0.6.3
 
