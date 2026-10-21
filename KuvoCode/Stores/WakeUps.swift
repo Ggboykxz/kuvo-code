@@ -499,9 +499,19 @@ final class WakeUps {
         if !isPaused, paused.contains(key) { paused.remove(key) }
     }
 
+    /// Wake-ups being sent with Wake Up Now, by owner and wake-up.
+    @ObservationIgnored private var wakingNow: Set<String> = []
+
     /// Sends a waiting wake-up now rather than at its time (to see the job run), on this Mac or
     /// its machine; one that doesn't repeat is then done.
     func wakeNow(_ wake: Wakes.Pending, of owner: Owner) async throws {
+        // Once: not again while it's on its way (waiting for the folder's tools can take a
+        // while), nor, for one that doesn't repeat, once it's gone (sent, or cancelled).
+        let key = owner.key + "/" + wake.id
+        guard !wakingNow.contains(key) else { return }
+        if owner.machine == nil, !FileManager.default.fileExists(atPath: Self.path(owner, "wakes", wake.id)) { return }
+        wakingNow.insert(key)
+        defer { wakingNow.remove(key) }
         guard let api = api(for: owner) else {
             if owner.agents { throw OutsideAgents.Failure.notRunning(app?.workspace.agents(forFolder: owner.directory)?.failure) }
             throw Failure.notConnected(owner.machine ?? "This Mac's engine")

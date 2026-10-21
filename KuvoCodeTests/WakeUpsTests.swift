@@ -91,4 +91,56 @@ import Testing
         #expect(!FileManager.default.fileExists(atPath: folder(id, "paused")))
         #expect(!app.wakeUps.paused.contains(id))
     }
+
+    /// The prompts the engine was sent for the session, each a wake-up's.
+    nonisolated final class Prompts: @unchecked Sendable {
+        private let lock = NSLock()
+        private var texts: [String] = []
+        func add(_ text: String) { lock.withLock { texts.append(text) } }
+        var all: [String] { lock.withLock { texts } }
+    }
+
+    private func recordPrompts(holding gate: Gate? = nil) -> Prompts {
+        let prompts = Prompts()
+        StubWeb.handle(Self.engine + "/api/session/\(id)/prompt") { _, body in
+            prompts.add((try? JSONSerialization.jsonObject(with: body) as? [String: Any])?["text"] as? String ?? "")
+            gate?.wait()
+            return StubWeb.json([:])
+        }
+        return prompts
+    }
+
+    /// Wake Up Now, clicked again while the first is on its way (the folder's tools can take a
+    /// while): the agent gets it once (L26). A one-off is then done; a repeating one comes back at
+    /// its time.
+    @Test(arguments: [false, true])
+    func wakeUpNowSendsOnce(repeating: Bool) async throws {
+        await start()
+        defer { done() }
+        let gate = Gate()
+        defer { gate.open() }
+        let prompts = recordPrompts(holding: gate)
+        let owner = WakeUps.owner(of: try #require(app.workspace.session(id)))
+        try await app.wakeUps.add(to: owner, at: .now.addingTimeInterval(86_400), every: repeating ? .days(1) : nil, note: "Check the nightly build")
+        let wake = try #require(app.wakeUps.wakes[owner.key]?.first)
+
+        let first = Task { try await app.wakeUps.wakeNow(wake, of: owner) }
+        try await eventually { prompts.all.count == 1 }
+        var secondDone = false
+        let second = Task {
+            defer { secondDone = true }
+            try await app.wakeUps.wakeNow(wake, of: owner)
+        }
+        // The second click has done what it does: nothing, or sent it again.
+        try await eventually { secondDone || prompts.all.count > 1 }
+        gate.open()
+        try await first.value
+        try await second.value
+        // And once more after it went: a one-off isn't there to send again.
+        if !repeating { try await app.wakeUps.wakeNow(wake, of: owner) }
+
+        #expect(prompts.all == [Wakes.marker + "Check the nightly build"], "sent \(prompts.all.count) times")
+        let left = (try? FileManager.default.contentsOfDirectory(atPath: folder(id, "wakes"))) ?? []
+        #expect(left.count == (repeating ? 1 : 0))
+    }
 }
