@@ -67,6 +67,15 @@ npm run test:live
 `ui.dom.test.mjs` runs `harness/ui/` in a DOM: boot, a session, a prompt, the
 answer arriving, the folder picker, and a reload reading the conversation back.
 
+On a machine with no system fonts of its own (a bare Linux container), give the
+browser the harness's own config — fontconfig reads the path in the browser's
+process, and only an **absolute** one reaches it:
+
+```sh
+FONTCONFIG_FILE=$PWD/windows/tools/fonts.conf KUVO_HARNESS_LIVE=1 \
+  node --test windows/harness/ui.dom.test.mjs
+```
+
 The `.github/workflows/windows-engine.yml` workflow runs all of it on Linux and on
 Windows, and ends by installing and running the real pinned engine — and the live
 loop — on Windows.
