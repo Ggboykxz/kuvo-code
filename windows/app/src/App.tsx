@@ -41,6 +41,7 @@ import {
   notify,
   openProject,
   openProjectFile,
+  projectName,
   openSession,
   openSplit,
   pinSession,
@@ -65,7 +66,7 @@ import {
   useStore,
 } from "./store";
 import { Settings, settingsPageTitle } from "./Settings";
-import { DiffModal, Drawer, Palette, Picker, Toast } from "./Overlays";
+import { DiffModal, Drawer, Palette, Picker, ProjectEditor, Toast } from "./Overlays";
 import { Shimmer } from "./components/ai-elements/shimmer";
 import { FolderIcon, Symbol } from "./components/symbols";
 import { Spinner } from "./components/spinner";
@@ -1389,7 +1390,7 @@ function Sidebar() {
                 aria-expanded={open}
               >
                 <FolderIcon open={open} size={16} className="project-icon" />
-                <span className="project-name">{folderName(folder)}</span>
+                <span className="project-name">{projectName(folder)}</span>
                 <span
                   className="project-compose"
                   title={`New Session in ${folderName(folder)}`}
@@ -1473,6 +1474,8 @@ function Sidebar() {
           onClose={() => setProjectMenu(null)}
           items={[
             { label: "New Session", run: () => void newSession(projectMenu.id) },
+            // The Mac's own menu for a project (SidebarView.swift:379-396).
+            { label: "Edit Project…", run: () => { state.editingProject = projectMenu.id; render(); } },
             { label: "Open Project", run: () => void openProject(projectMenu.id) },
             { label: "Remove from Sidebar", run: () => void removeProject(projectMenu.id) },
           ]}
@@ -2528,6 +2531,7 @@ export function App() {
       <Picker />
       <Settings />
       <DiffModal />
+      <ProjectEditor />
       <Toast />
       <ImageViewer />
       <AnalyticsNotice />

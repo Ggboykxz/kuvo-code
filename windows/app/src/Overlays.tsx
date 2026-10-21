@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import { errorText } from "./lib";
 import { ChangesPanel } from "./Changes";
-import { complain, loadProjectFiles, loadSessions, notify, openProjectFile, openSession, render, state, useStore, newSession, exportConversation, stopRun } from "./store";
+import { complain, loadProjectFiles, loadSessions, notify, openProjectFile, openSession, render, setProjectName, state, useStore, newSession, exportConversation, stopRun } from "./store";
 import { keysOf } from "./shortcuts";
 import { Symbol } from "./components/symbols";
 
@@ -316,6 +316,60 @@ export function Picker() {
       </div>
     </div>
   );
+}
+
+/// A project's own name, changed where the Mac changes it: over the window, in a small
+/// card (the Mac's ProjectEditor, ProjectEditor.swift:8-13 — its name and its folders;
+/// the folders the agent works in besides the first are the engine's own).
+export function ProjectEditor() {
+  useStore();
+  const [name, setName] = useState("");
+  const folder = state.editingProject;
+
+  useEffect(() => {
+    if (!folder) return;
+    setName(state.projectNames[folder] ?? "");
+  }, [folder]);
+
+  if (!folder) return null;
+  return (
+    <div id="project-editor" className="picker-modal shown">
+      <div className="picker-card">
+        <h3>Edit Project…</h3>
+        <div className="settings-row">
+          <span>Name</span>
+          <input
+            id="project-name"
+            value={name}
+            placeholder={folder.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? folder}
+            onChange={event => setName(event.target.value)}
+            onKeyDown={event => { if (event.key === "Enter") { event.preventDefault(); void save(); } }}
+          />
+        </div>
+        <div className="settings-row">
+          <span>Folder</span>
+          <input id="project-folder" value={folder} readOnly />
+        </div>
+        <div className="settings-editor-buttons">
+          <button
+            id="project-save"
+            className="primary"
+            onClick={async () => {
+              await save();
+            }}
+          >Save</button>
+          <button id="project-cancel" className="small" onClick={() => { state.editingProject = null; render(); }}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  async function save() {
+    if (!folder) return;
+    state.editingProject = null;
+    await setProjectName(folder, name);
+    render();
+  }
 }
 
 // ---- The drawer: files and terminal ----
