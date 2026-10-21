@@ -4,8 +4,9 @@ import OpenCodeKit
 /// A conversation as Markdown, to paste into an issue or a chat, or for another agent to read
 /// (read_conversation): your messages, those other agents sent it and its wake-ups, the agent's
 /// replies, and a line for each step it took, as the transcript words them. `you` and `agent` are
-/// who's speaking, as whoever reads it knows them. Without `labels`, only what was said: no title
-/// and no names of who's speaking (for searching what's in it).
+/// who's speaking, as whoever reads it knows them. Without `labels`, only what was said and worked
+/// on: no title, no names of who's speaking, and none of the app's words for steps (for searching
+/// what's in it).
 enum ConversationExport {
     static func markdown(title: String, messages: [Message], directory: String, you: String = "You", agent: String = "Agent", labels: Bool = true) -> String {
         var blocks = labels ? ["# " + title] : []
@@ -43,7 +44,7 @@ enum ConversationExport {
                 var lines = comments.map { "> On \($0.location): \($0.text)" }
                 if !text.isEmpty { lines.append(text) }
                 let attached = (user.files ?? []).compactMap(\.name) + paths.map { ($0 as NSString).lastPathComponent }
-                if !attached.isEmpty { lines.append("Attached: " + attached.joined(separator: ", ")) }
+                if !attached.isEmpty { lines.append((labels ? "Attached: " : "") + attached.joined(separator: ", ")) }
                 if !lines.isEmpty { say(you, lines.joined(separator: "\n\n")) }
             case .assistant(let assistant):
                 for block in assistant.content {
@@ -51,15 +52,20 @@ enum ConversationExport {
                     case .text(let text) where !text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
                         say(agent, text.text.trimmingCharacters(in: .whitespacesAndNewlines))
                     case .tool(let call):
-                        steps.append(ToolCallView.summary(of: call, in: directory))
+                        // Searched, only what it worked on: the app's words for it find nothing.
+                        if labels {
+                            steps.append(ToolCallView.summary(of: call, in: directory))
+                        } else if let subject = ToolCallView.subject(of: call, in: directory) {
+                            steps.append(subject)
+                        }
                     default:
                         break
                     }
                 }
             case .shell(let shell):
                 let output = shell.output?.output.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                say(you, "Ran `\(shell.command)`" + (output.isEmpty ? "" : "\n\n```\n\(output)\n```"))
-            case .compaction:
+                say(you, (labels ? "Ran `\(shell.command)`" : shell.command) + (output.isEmpty ? "" : "\n\n```\n\(output)\n```"))
+            case .compaction where labels:
                 say(agent, "_Summarized the conversation so far._")
             default:
                 break

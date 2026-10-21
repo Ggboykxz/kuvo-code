@@ -5,7 +5,8 @@ import Testing
 
 /// Searching the sidebar for what was said in conversations (B18): sessions whose conversation has
 /// the words, archived ones too, the latest first, with the words around them; not one deleted
-/// since, and not every session for a word only the app's own labels have ("You", "Agent").
+/// since, and not every session for a word only the app's own labels have ("You", "Agent", "Read
+/// …" for a step), though a step's file is found.
 /// The engine is stubbed.
 @MainActor
 @Suite(.serialized) struct SessionSearchTests {
@@ -16,11 +17,19 @@ import Testing
         workspace.api = engine.api
     }
 
+    /// What you said, and the agent's reply after a step or two: it asked you something and read
+    /// a file of the project.
     private func conversation(_ id: String, you: String, agent: String) -> [[String: Any]] {
         [
             ["id": "msg_\(id)_1", "type": "user", "time": ["created": 1], "text": you],
             ["id": "msg_\(id)_2", "type": "assistant", "agent": "build", "time": ["created": 2, "completed": 3],
-             "model": ["id": "m", "providerID": "p"], "content": [["type": "text", "text": agent]]],
+             "model": ["id": "m", "providerID": "p"], "content": [
+                 ["type": "tool", "id": "call_\(id)_q", "name": "question", "executed": true,
+                  "state": ["status": "completed", "input": [:], "output": "ok"]],
+                 ["type": "tool", "id": "call_\(id)_r", "name": "read", "executed": true,
+                  "state": ["status": "completed", "input": ["path": "/tmp/kuvo-tests-search/Sources/\(id).swift"], "output": "…"]],
+                 ["type": "text", "text": agent],
+             ]],
         ]
     }
 
@@ -58,6 +67,11 @@ import Testing
         await start()
         #expect(await found("you").isEmpty)
         #expect(await found("Agent").isEmpty)
+        // Nor its words for the steps: "Asked you a question", "Read …".
+        #expect(await found("asked").isEmpty)
+        #expect(await found("read").isEmpty)
+        // What a step worked on is found.
+        #expect(await found("dark.swift") == ["ses_dark"])
         #expect(await found("Old one").isEmpty, "a title is found by the title search, not in conversations")
     }
 
