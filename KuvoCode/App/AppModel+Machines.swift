@@ -442,8 +442,8 @@ extension AppModel {
         // with the rest: web search, and integrations (below), which the rest and a project's own
         // settings outrank, as here. Only which provider, or none: a choice with more in it (a
         // key, say) stays out of that file. The rest, which can hold secrets, goes in a file only
-        // you can read that goes when the engine stops, never in its environment, where the
-        // agent's commands (`env`) would show it.
+        // you can read, kept there so the machine works on its own after a restart, never in its
+        // environment, where the agent's commands (`env`) would show it.
         var global: [String: JSONValue] = [:]
         if let data = try? Data(contentsOf: engineConfig.file),
            var settings = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {

@@ -227,7 +227,7 @@ final class MachineEngine {
         /// engine running older ones is started over the next time it's idle. (The launch script's
         /// goes up when what it sets up changes: its folders, `kuvo-npx`, the commands' plugin.)
         var fingerprint: String {
-            let text = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n") + "\nlaunch=9\nwatchdog=wakes\nbrowser=\(helper.hash)\nagents=\(agents?.hash ?? "none")"
+            let text = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n") + "\nlaunch=10\nwatchdog=wakes\nbrowser=\(helper.hash)\nagents=\(agents?.hash ?? "none")"
             return SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
         }
     }
@@ -686,6 +686,8 @@ final class Machines {
           KUVO_DB="$K/data/opencode/opencode.db" BUN_BE_BUN=1 "$E" -e 'const { Database } = require("bun:sqlite"); const db = new Database(process.env.KUVO_DB); db.run("DELETE FROM credential"); db.close()' || exit 1
         fi
         rm -rf "$K/integrations" "$K/keys"
+        rm -f "$K/run/launch.env" "$K/run/launch.notes" "$K/bin/kuvo-start" "$K/bin/kuvo-launch"
+        \(RemoteServer.rebootCrontabRemoval)
         \(agentsSignOut)
         """
     }

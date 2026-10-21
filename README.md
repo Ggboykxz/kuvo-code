@@ -107,8 +107,10 @@ side panel and the usage menu.
   task carries on while the Mac is off; it stops when the app quits with
   nothing running, or after a day without the app, unless a bot's wake-up or
   watch is waiting, which it sends or runs when it's due. Your settings and
-  integrations' keys reach it in files only you can read, gone when it stops,
-  never in its environment.
+  integrations' keys reach it in files only you can read, kept there, never in
+  its environment. After the machine restarts, a line in your crontab there
+  starts the engine again as the app last started it, so the machine works on
+  its own.
 - **The agent's browser tools** are served by the app on `127.0.0.1`, with a
   new port and token each launch. They read a page the way
   [browser-use](https://github.com/browser-use/browser-use) does, as numbered

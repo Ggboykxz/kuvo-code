@@ -45,8 +45,10 @@ struct RemoteEngineTests {
         #expect(script.contains("--hostname 127.0.0.1"))
         #expect(script.contains("engine/\(OpenCodeEngine.version)/opencode"))
         // Nothing secret on its command line: those come over the input. (kuvo-wake, in it, only
-        // unsets the engine's password before running a check.)
-        #expect(!script.contains("PASSWORD="))
+        // unsets the engine's password before running a check; kuvo-start, which it writes, makes
+        // its own on the machine and hands them over the same way.)
+        #expect(!script.replacingOccurrences(of: RemoteServer.bootScript, with: "").contains("PASSWORD="))
+        #expect(!RemoteServer.bootLaunchScript.contains("PASSWORD="))
         // Only its user can read how to find it.
         #expect(script.contains("umask 077"))
     }
@@ -194,10 +196,82 @@ struct LiveRemoteEngineTests {
         #expect(text.contains("private-test"))
         server.disconnect()
 
-        // And they go with it.
+        // They stay when it stops, for a start after a restart, still only yours to read; how it
+        // was started is kept without them.
         try await RemoteServer.stop(on: connection)
-        #expect(try await connection.run("[ -e \(file) ] && echo left || true").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        #expect(try await connection.run("stat -c %a \(file)").trimmingCharacters(in: .whitespacesAndNewlines) == "600")
+        let kept = try await connection.run("cat \"$HOME/.kuvo-code-test/run/launch.env\"")
+        #expect(!kept.contains(secret) && !kept.contains(RemoteServer.privateSettingsVariable) && !kept.contains("PASSWORD"))
         _ = try await connection.run("pkill -f '[/]\\.kuvo-code-test/run' || true; rm -rf \"$HOME/.kuvo-code-test\"")
+    }
+
+    /// After a restart (its engine, agents bridge and watchdog gone), `kuvo-start` starts it again
+    /// as the Mac last did, with its settings and keys and new passwords, and the Mac finds it as
+    /// its own; while one runs, it starts none. A test's folder never touches the crontab.
+    @Test func comesBackAfterARestart() async throws {
+        let cache = FileManager.default.temporaryDirectory.appending(path: "opencodekit-remote-cache")
+        defer { try? FileManager.default.removeItem(at: cache) }
+        try await RemoteEngineInstaller(connection: connection, cache: cache).install()
+        try await RemoteServer.stop(on: connection)
+        let before = try await connection.run("crontab -l 2>/dev/null || true")
+
+        let secret = "kuvo-test-secret-" + UUID().uuidString.prefix(8)
+        let settings = #"{"mcp":{"servers":{"private-test":{"type":"local","command":["true"],"disabled":true,"environment":{"TOKEN":"\#(secret)"}}}}}"#
+        let first = try await RemoteServer.launch(on: connection, environment: [RemoteServer.privateSettingsVariable: settings, "KUVO_KEY_TEST_TOKEN": secret, "KUVO_TZ": "Europe/Istanbul"], notes: ["mac": "test-mac", "settings": "abc"])
+        // As a restart leaves it: nothing of it running.
+        _ = try await connection.run("pkill -f '[/]\\.kuvo-code-test/run' || true; kill \(first.pid) 2>/dev/null; sleep 1; true")
+        #expect(try await RemoteServer.running(on: connection) == nil)
+
+        _ = try await connection.run("sh \"$HOME/.kuvo-code-test/bin/kuvo-start\"")
+        let again = try #require(try await RemoteServer.running(on: connection))
+        #expect(again.pid != first.pid && again.password != first.password)
+        #expect(again.notes == ["mac": "test-mac", "settings": "abc"], "the Mac knows it as its own, with the same settings")
+        let server = try await RemoteServer.attach(to: again, on: connection)
+        let client = HTTPClient(endpoint: server.endpoint)
+        let config = try await client.send(client.request("GET", "api/config"), as: JSONValue.self)
+        #expect(String(decoding: try JSONEncoder().encode(config), as: UTF8.self).contains("private-test"))
+        server.disconnect()
+        #expect(try await connection.run("cat \"$HOME/.kuvo-code-test/keys/KUVO_KEY_TEST_TOKEN\"") == secret, "its keys are still there")
+        let environment = try await connection.run("tr '\\0' '\\n' </proc/\(again.pid)/environ")
+        #expect(!environment.contains(secret) && environment.contains("KUVO_TZ=Europe/Istanbul") && !environment.contains("KUVO_BOOT"))
+
+        // One running: it starts none.
+        _ = try await connection.run("sh \"$HOME/.kuvo-code-test/bin/kuvo-start\"")
+        #expect(try await RemoteServer.running(on: connection)?.pid == again.pid)
+        #expect(try await connection.run("crontab -l 2>/dev/null || true") == before, "a test's folder leaves the crontab alone")
+
+        try await RemoteServer.stop(on: connection)
+        _ = try await connection.run("pkill -f '[/]\\.kuvo-code-test/run' || true; rm -rf \"$HOME/.kuvo-code-test\"")
+    }
+
+    /// The crontab line that starts it after a restart: added once, beside what's there; a crontab
+    /// that can't be read is left as it is; taken out with the machine, the rest kept. Against a
+    /// stand-in `crontab` in a folder of the test's own, never the machine's.
+    @Test func theCrontabLineIsAddedOnceAndTakenOut() async throws {
+        let folder = "\"$HOME/.kuvo-code-test/crontab-test\""
+        let stand = """
+            mkdir -p \(folder)/bin && R=\(folder) && cat >\(folder)/bin/crontab <<'EOF'
+            #!/bin/sh
+            f="$HOME/.kuvo-code-test/crontab-test/tab"
+            [ -f "$HOME/.kuvo-code-test/crontab-test/broken" ] && { echo "crontab: cannot read" >&2; exit 1; }
+            if [ "$1" = -l ]; then [ -f "$f" ] || { echo "no crontab for test" >&2; exit 1; }; cat "$f"; else cat >"$f"; fi
+            EOF
+            chmod +x \(folder)/bin/crontab
+            export PATH=\(folder)/bin:$PATH
+            """
+        let tab = "cat \(folder)/tab 2>/dev/null || true"
+        _ = try await connection.run("\(stand)\n\(RemoteServer.rebootCrontabScript)")
+        #expect(try await connection.run(tab) == RemoteServer.rebootLine + "\n", "none yet: just the line")
+        _ = try await connection.run("printf '0 3 * * * backup\\n%s\\n' \(SSHConnection.quoted(RemoteServer.rebootLine)) >\(folder)/tab")
+        _ = try await connection.run("\(stand)\n\(RemoteServer.rebootCrontabScript)")
+        #expect(try await connection.run(tab) == "0 3 * * * backup\n" + RemoteServer.rebootLine + "\n", "once, beside what's there")
+        _ = try await connection.run("printf '0 3 * * * backup\\n' >\(folder)/tab; touch \(folder)/broken")
+        _ = try await connection.run("\(stand)\n\(RemoteServer.rebootCrontabScript)")
+        #expect(try await connection.run(tab) == "0 3 * * * backup\n", "one that can't be read is left as it is")
+        _ = try await connection.run("rm -f \(folder)/broken; printf '0 3 * * * backup\\n%s\\n' \(SSHConnection.quoted(RemoteServer.rebootLine)) >\(folder)/tab")
+        _ = try await connection.run("\(stand)\n\(RemoteServer.rebootCrontabRemoval)")
+        #expect(try await connection.run(tab) == "0 3 * * * backup\n", "taken out, the rest kept")
+        _ = try await connection.run("rm -rf \"$HOME/.kuvo-code-test\"")
     }
 
     /// The commands the agent runs there get the machine's own folders, not the engine's in

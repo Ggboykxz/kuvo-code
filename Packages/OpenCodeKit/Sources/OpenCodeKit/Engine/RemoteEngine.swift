@@ -425,8 +425,9 @@ public final class RemoteServer: @unchecked Sendable {
     ///
     /// Integrations' keys (`KUVO_KEY_…`) go in files only this user can read, in `keys`, which the
     /// settings name with `{file:…}`, never in the engine's environment, where the agent's own
-    /// commands (`env`, say) would print them. They're gone once the engine is: its watchdog takes
-    /// them away, unless an engine started since has put its own there.
+    /// commands (`env`, say) would print them. Each start from the Mac puts its keys there in place
+    /// of what was there; they stay when the engine stops, so the machine works on its own after a
+    /// restart (see `bootScript`), and go when the machine is removed.
     ///
     /// Every minute the watchdog sends bots' and sessions' wake-ups that are due ([Wakes]). Every
     /// ten, it stops the engine if the app hasn't been around for a day and no wake-up is waiting.
@@ -435,9 +436,57 @@ public final class RemoteServer: @unchecked Sendable {
     /// engine once it listens, with the same settings, and stops with it ([agentsScript]). Only it
     /// gets its password, never the engine (whose agent's commands could print it) nor what starts
     /// after it.
-    static var launchScript: String {
+    ///
+    /// Started from the Mac, it also keeps how it was started (`run/launch.env`, everything but its
+    /// port, passwords and keys, and `run/launch.notes`), puts itself in `bin/kuvo-launch` and
+    /// `bootScript` in `bin/kuvo-start`, and on Kuvo Code's own folder (not a test's) makes sure the
+    /// machine's crontab starts that after a restart (`rebootLine`).
+    static var launchScript: String { launch(boot: false) }
+
+    /// `launchScript` as `kuvo-start` runs it after a restart (`KUVO_BOOT` among its settings):
+    /// it keeps the keys there, and puts nothing in place.
+    static var bootLaunchScript: String { launch(boot: true) }
+
+    /// The tag on the machine's crontab line that starts Kuvo Code's engine again after a restart.
+    static let rebootTag = "# kuvo-code: starts its engine again after a restart"
+
+    /// The crontab line itself (for Kuvo Code's own folder, `~/.kuvo-code`).
+    static var rebootLine: String { "@reboot sh \"$HOME/\(RemoteEngineInstaller.root)/bin/kuvo-start\" >/dev/null 2>&1 \(rebootTag)" }
+
+    /// Starts the engine again after the machine restarts (from its crontab, `rebootLine`), as the
+    /// Mac last started it (`run/launch.env`), with a new port and passwords; not while one runs.
+    /// Keys stay as they were. What it started is found by the Mac as it connects, as its own.
+    static var bootScript: String {
         """
-        while IFS= read -r line && [ -n "$line" ]; do export "$line"; done
+        #!/bin/sh
+        # Kuvo Code: starts its engine on this machine again after a restart, as Kuvo Code on your
+        # Mac last started it, unless one runs already. (From the @reboot line in your crontab.)
+        K="$HOME/\(RemoteEngineInstaller.root)"; R="$K/run"
+        [ -f "$R/launch.env" ] && [ -f "$K/bin/kuvo-launch" ] || exit 0
+        pid=$(sed -n 's/^{"pid":\\([0-9]*\\),.*/\\1/p' "$R/engine.json" 2>/dev/null)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && grep -q opencode "/proc/$pid/cmdline" 2>/dev/null; then exit 0; fi
+        notes=$(cat "$R/launch.notes" 2>/dev/null); [ -n "$notes" ] || notes='{}'
+        word() { od -An -N16 -tx1 /dev/urandom | tr -d ' \\n'; }
+        number() { echo $(( $(od -An -N2 -tu2 /dev/urandom | tr -d ' ') % 40000 + 20000 )); }
+        for try in 1 2 3; do
+          port=$(number); password=$(word); record="\\"port\\":$port,\\"password\\":\\"$password\\",\\"version\\":\\"\(OpenCodeEngine.version)\\",\\"notes\\":$notes"
+          agents=
+          if [ -f "$K/bin/kuvo-agents.js" ]; then aport=$(number); apassword=$(word); record="$record,\\"agentsPort\\":$aport,\\"agentsPassword\\":\\"$apassword\\""; agents="KUVO_AGENTS_PORT=$aport
+        KUVO_AGENTS_PASSWORD=$apassword"; fi
+          { cat "$R/launch.env"; printf 'KUVO_BOOT=1\\nOPENCODE_PASSWORD=%s\\nKUVO_PORT=%s\\nKUVO_RECORD=%s}\\n' "$password" "$port" "$record"; [ -z "$agents" ] || printf '%s\\n' "$agents"; printf '\\n'; } | sh "$K/bin/kuvo-launch" >/dev/null 2>&1 && exit 0
+          sleep 2
+        done
+        exit 1
+        """
+    }
+
+    /// Reads the settings from the input, gives the engine its own folders, starts it, and so on
+    /// (see `launchScript`); `boot`, as `kuvo-start` runs it.
+    private static func launch(boot: Bool) -> String {
+        """
+        lines=
+        while IFS= read -r line && [ -n "$line" ]; do export "$line"; lines="$lines$line
+        "; done
         port=$KUVO_PORT; record=$KUVO_RECORD; unset KUVO_PORT KUVO_RECORD
         aport=${KUVO_AGENTS_PORT-}; unset KUVO_AGENTS_PORT
         \(RemoteEngineInstaller.folders)
@@ -446,15 +495,16 @@ public final class RemoteServer: @unchecked Sendable {
           unset KUVO_SETTINGS
         fi
         R="$K/run"; mkdir -p "$R"; chmod 700 "$R"
-        launch="$$.$(date +%s)"
-        rm -rf "$K/keys"; mkdir -p "$K/keys"; chmod 700 "$K/keys"; echo "$launch" >"$K/keys/.launch"
+        \(boot ? "unset KUVO_BOOT" : "rm -rf \"$K/keys\"")
+        mkdir -p "$K/keys"; chmod 700 "$K/keys"
         for v in $(env | sed -n 's/^\\(KUVO_KEY_[A-Za-z0-9_]*\\)=.*/\\1/p'); do
           (umask 077; printf '%s' "$(printenv "$v")" >"$K/keys/$v"); unset "$v"
         done
         if [ -n "${\(privateSettingsVariable)+set}" ]; then
           (umask 077; printenv \(privateSettingsVariable) >"$K/keys/settings.json")
-          export OPENCODE_CONFIG="$K/keys/settings.json"; unset \(privateSettingsVariable)
+          unset \(privateSettingsVariable)
         fi
+        [ -f "$K/keys/settings.json" ] && export OPENCODE_CONFIG="$K/keys/settings.json"
         \(Wakes.installScript)
         \(Launcher.installScript)
         \(CommandEnvironment.installScript)
@@ -467,17 +517,64 @@ public final class RemoteServer: @unchecked Sendable {
         pid=$!
         i=0
         until grep -q "server listening" "$R/engine.log" 2>/dev/null; do
-          if ! kill -0 "$pid" 2>/dev/null || [ $i -ge 900 ]; then tail -n 5 "$R/engine.log" >&2; kill "$pid" 2>/dev/null; rm -rf "$K/keys"; exit 3; fi
+          if ! kill -0 "$pid" 2>/dev/null || [ $i -ge 900 ]; then tail -n 5 "$R/engine.log" >&2; kill "$pid" 2>/dev/null; exit 3; fi
           sleep 0.1; i=$((i + 1))
         done
-        (umask 077; printf '{"pid":%s,%s\n' "$pid" "$record" >"$R/engine.json")
+        (umask 077; printf '{"pid":%s,%s\\n' "$pid" "$record" >"$R/engine.json")
         \(agentsScript)
         # Kuvo Link, for the phones you've paired: beside the engine, once the Mac has set it up.
         if [ -f "$R/link.json" ] && [ -f "$K/bin/kuvo-link.js" ]; then
           KUVO_HOME="$K" BUN_BE_BUN=1 BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 setsid "$K/engine/\(OpenCodeEngine.version)/opencode" "$K/bin/kuvo-link.js" run >"$R/link.log" 2>&1 </dev/null &
         fi
-        setsid sh -c 'i=0; while kill -0 "$1" 2>/dev/null; do sleep 60; grep -q "\\"pid\\":$1," "$2/engine.json" 2>/dev/null || break; "$3/bin/kuvo-wake" fire "$3/bots" "$2/engine.json" 2>/dev/null; i=$((i + 1)); [ $((i % 10)) -eq 0 ] || continue; { ls "$3"/bots/*/wakes/* || ls -d "$3"/bots/*/watches/*/ || ls "$3"/wakes/*/wakes/* || ls -d "$3"/wakes/*/watches/*/; } >/dev/null 2>&1 && continue; [ -n "$(find "$2/attached" -mmin +1440 2>/dev/null)" ] && kill "$1"; done; [ "$(cat "$3/keys/.launch" 2>/dev/null)" = "$4" ] && rm -rf "$3/keys"' watchdog "$pid" "$R" "$K" "$launch" >/dev/null 2>&1 </dev/null &
+        setsid sh -c 'i=0; while kill -0 "$1" 2>/dev/null; do sleep 60; grep -q "\\"pid\\":$1," "$2/engine.json" 2>/dev/null || break; "$3/bin/kuvo-wake" fire "$3/bots" "$2/engine.json" 2>/dev/null; i=$((i + 1)); [ $((i % 10)) -eq 0 ] || continue; { ls "$3"/bots/*/wakes/* || ls -d "$3"/bots/*/watches/*/ || ls "$3"/wakes/*/wakes/* || ls -d "$3"/wakes/*/watches/*/; } >/dev/null 2>&1 && continue; [ -n "$(find "$2/attached" -mmin +1440 2>/dev/null)" ] && kill "$1"; done' watchdog "$pid" "$R" "$K" >/dev/null 2>&1 </dev/null &
+        \(boot ? "" : startAgainScript)
         echo "$pid${aport:+ $aport}"
+        """
+    }
+
+    /// After a start from the Mac: how it started (but its port, passwords and keys), for
+    /// `kuvo-start`; that and the launch it runs, in `bin`; and, for Kuvo Code's own folder on a
+    /// Linux machine, the crontab line that runs it after a restart, added once. A crontab that
+    /// can't be read is left as it is, never written over.
+    private static var startAgainScript: String {
+        """
+        (umask 077; printf '%s' "$lines" | grep -v -E '^(OPENCODE_PASSWORD|KUVO_PORT|KUVO_RECORD|KUVO_AGENTS_PORT|KUVO_AGENTS_PASSWORD|KUVO_BOOT|\(privateSettingsVariable)|KUVO_KEY_[A-Za-z0-9_]*)=' >"$R/launch.env.new"; mv -f "$R/launch.env.new" "$R/launch.env")
+        (umask 077; printf '%s' "$record" | sed -n 's/.*"notes":\\({[^}]*}\\).*/\\1/p' >"$R/launch.notes")
+        mkdir -p "$K/bin"
+        cat >"$K/bin/kuvo-launch.new" <<'KUVO_LAUNCH_END'
+        \(bootLaunchScript)
+        KUVO_LAUNCH_END
+        cat >"$K/bin/kuvo-start.new" <<'KUVO_START_END'
+        \(bootScript)
+        KUVO_START_END
+        chmod 700 "$K/bin/kuvo-launch.new" "$K/bin/kuvo-start.new" && mv -f "$K/bin/kuvo-launch.new" "$K/bin/kuvo-launch" && mv -f "$K/bin/kuvo-start.new" "$K/bin/kuvo-start"
+        \(RemoteEngineInstaller.root == ".kuvo-code" ? rebootCrontabScript : "")
+        """
+    }
+
+    /// Adds `rebootLine` to the machine's crontab, once, keeping what's there; a crontab that
+    /// can't be read (for another reason than there being none) is left alone. Only on Linux.
+    static var rebootCrontabScript: String {
+        """
+        if [ "$(uname -s)" = Linux ] && command -v crontab >/dev/null 2>&1; then
+          cron_now=$(crontab -l 2>"$R/.crontab.err"); cron_read=$?
+          if [ $cron_read -eq 0 ] || grep -qi 'no crontab' "$R/.crontab.err" 2>/dev/null; then
+            case "$cron_now" in
+              *"\(rebootTag)"*) ;;
+              *) { [ -z "$cron_now" ] || printf '%s\\n' "$cron_now"; printf '%s\\n' \(SSHConnection.quoted(rebootLine)); } | crontab - 2>/dev/null ;;
+            esac
+          fi
+          rm -f "$R/.crontab.err"
+        fi
+        """
+    }
+
+    /// Takes `rebootLine` out of the machine's crontab, keeping the rest, as the machine is removed.
+    public static var rebootCrontabRemoval: String {
+        """
+        if command -v crontab >/dev/null 2>&1 && cron_now=$(crontab -l 2>/dev/null); then
+          case "$cron_now" in *"\(rebootTag)"*) printf '%s\\n' "$cron_now" | grep -vF \(SSHConnection.quoted(rebootTag)) | crontab - 2>/dev/null ;; esac
+        fi
         """
     }
 
@@ -592,7 +689,6 @@ public final class RemoteServer: @unchecked Sendable {
     static var stopScript: String {
         """
         R="\(run)"
-        rm -rf "${R%/run}/keys"
         \(stopAgentsScript)
         [ -f "$R/engine.json" ] || exit 0
         pid=$(sed -n 's/^{"pid":\\([0-9]*\\),.*/\\1/p' "$R/engine.json")
