@@ -4,6 +4,8 @@ What changed in each release, for people using Kuvo Code. Add changes people wou
 Unreleased, in plain words about what they'll see, as part of the change itself. Before a
 release, Unreleased is renamed to the version; the release notes come from that section.
 
+## Unreleased
+
 ## 0.6.4
 
 - A message you'd sent for the agent's next step that was still waiting when Kuvo Code quit shows under Paused when you open the session again, first in line, and Resume sends it. It showed as sending for ever, and Resume went past it to the queue.
