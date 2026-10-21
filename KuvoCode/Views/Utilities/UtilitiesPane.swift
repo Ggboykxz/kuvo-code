@@ -191,7 +191,7 @@ struct UtilitiesPane: View {
                 }
             case .browser:
                 if let session = utilities.browsers[tab.id] {
-                    BrowserPane(session: session, attach: { utilities.attachToMessage?($0) }) {
+                    BrowserPane(session: session, attach: attachToMessage) {
                         NewTabPage(utilities: utilities, tabID: tab.id, directory: directory, environment: environment) { address in
                             session.load(address)
                         } openInNewTab: { address in
@@ -204,7 +204,7 @@ struct UtilitiesPane: View {
                 }
             case .machinePage(let machine, let page):
                 if let browser = app.machines.engine(machine)?.browser {
-                    MachineBrowserPane(browser: browser, page: page, attach: { utilities.attachToMessage?($0) }) {
+                    MachineBrowserPane(browser: browser, page: page, attach: attachToMessage) {
                         NewTabPage(utilities: utilities, tabID: tab.id, directory: directory, environment: environment) { address in
                             // A new tab opens its page; a blank page goes there.
                             if page == nil { utilities.open(address, inTab: tab.id) } else { browser.load(address) }
@@ -223,6 +223,12 @@ struct UtilitiesPane: View {
                     .id(tab.id)
             }
         }
+    }
+
+    /// Add Screenshot to Message, for a conversation whose message can carry files: not a group
+    /// chat's, which takes words only.
+    private var attachToMessage: (([URL]) -> Void)? {
+        utilities.groupInView == nil ? { [utilities] files in utilities.attachToMessage?(files) } : nil
     }
 
     private func placeholder(_ title: String, symbol: String, detail: String) -> some View {
