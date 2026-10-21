@@ -685,10 +685,28 @@ final class Machines {
         if [ -x "$E" ] && [ -f "$K/data/opencode/opencode.db" ]; then
           KUVO_DB="$K/data/opencode/opencode.db" BUN_BE_BUN=1 "$E" -e 'const { Database } = require("bun:sqlite"); const db = new Database(process.env.KUVO_DB); db.run("DELETE FROM credential"); db.close()' || exit 1
         fi
-        rm -rf "$K/integrations" "$K/keys"
-        rm -f "$K/run/launch.env" "$K/run/launch.notes" "$K/bin/kuvo-start" "$K/bin/kuvo-launch"
-        \(RemoteServer.rebootCrontabRemoval)
+        rm -rf "$K/integrations"
+        \(leftovers)
         \(agentsSignOut)
+        """
+    }
+
+    /// What a machine keeps to work on its own (`RemoteServer.launchScript`), which goes when you
+    /// remove it: its keys, how its engine starts again after a restart, and the crontab line that
+    /// does it (Kuvo Code's own folder's only).
+    static var leftoversScript: String {
+        """
+        K="$HOME/\(RemoteEngineInstaller.root)"
+        \(leftovers)
+        true
+        """
+    }
+
+    private static var leftovers: String {
+        """
+        rm -rf "$K/keys"
+        rm -f "$K/run/launch.env" "$K/run/launch.notes" "$K/bin/kuvo-start" "$K/bin/kuvo-launch" "$K/bin/.kuvo-boot"
+        \(RemoteServer.rebootCrontabRemoval)
         """
     }
 
@@ -840,9 +858,13 @@ final class Machines {
                     Task { [weak self] in
                         let forgotten = await engine.forgetAccounts()
                         await engine.stopEngine()
+                        // What it kept to work on its own goes too: its keys, how it starts after
+                        // a restart, and the crontab line that does it.
+                        let leftovers = Self.leftoversScript
+                        let tidied = await Task.detached { RemoteShell.run(leftovers, on: id) }.value != nil
                         self?.removing.remove(id)
                         // What didn't go, the next time it answers.
-                        if !forgotten { self?.runLater(Self.removalScript, on: id) }
+                        if !forgotten { self?.runLater(Self.removalScript, on: id) } else if !tidied { self?.runLater(Self.leftoversScript, on: id) }
                     }
                 }
             } else {

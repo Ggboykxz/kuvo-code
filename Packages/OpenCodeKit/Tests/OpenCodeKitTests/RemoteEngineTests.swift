@@ -49,6 +49,8 @@ struct RemoteEngineTests {
         // its own on the machine and hands them over the same way.)
         #expect(!script.replacingOccurrences(of: RemoteServer.bootScript, with: "").contains("PASSWORD="))
         #expect(!RemoteServer.bootLaunchScript.contains("PASSWORD="))
+        // Well within the machine's limit for one argument (128 KB), as base64 on the command line.
+        #expect(SSHConnection.command(running: script).utf8.count < 100_000)
         // Only its user can read how to find it.
         #expect(script.contains("umask 077"))
     }
@@ -240,8 +242,17 @@ struct LiveRemoteEngineTests {
         #expect(try await RemoteServer.running(on: connection)?.pid == again.pid)
         #expect(try await connection.run("crontab -l 2>/dev/null || true") == before, "a test's folder leaves the crontab alone")
 
+        // Two at once after a restart: one engine, not two.
+        _ = try await connection.run("pkill -f '[/]\\.kuvo-code-test/run' || true; kill \(again.pid) 2>/dev/null; sleep 1; true")
+        _ = try await connection.run("sh \"$HOME/.kuvo-code-test/bin/kuvo-start\" & sh \"$HOME/.kuvo-code-test/bin/kuvo-start\"; wait")
+        let engines = try await connection.run("pgrep -fc '[.]kuvo-code-test/engine/.*/opencode serve' || true")
+        #expect(engines.trimmingCharacters(in: .whitespacesAndNewlines) == "1")
+
+        // One stopped on purpose stays stopped.
         try await RemoteServer.stop(on: connection)
-        _ = try await connection.run("pkill -f '[/]\\.kuvo-code-test/run' || true; rm -rf \"$HOME/.kuvo-code-test\"")
+        _ = try await connection.run("sh \"$HOME/.kuvo-code-test/bin/kuvo-start\"")
+        #expect(try await RemoteServer.running(on: connection) == nil)
+        _ = try await connection.run("pkill -f '[/]\\.kuvo-code-test/' || true; rm -rf \"$HOME/.kuvo-code-test\"")
     }
 
     /// The crontab line that starts it after a restart: added once, beside what's there; a crontab
@@ -258,6 +269,8 @@ struct LiveRemoteEngineTests {
             EOF
             chmod +x \(folder)/bin/crontab
             export PATH=\(folder)/bin:$PATH
+            # Never the machine's own.
+            [ "$(command -v crontab)" = "$HOME/.kuvo-code-test/crontab-test/bin/crontab" ] || exit 9
             """
         let tab = "cat \(folder)/tab 2>/dev/null || true"
         _ = try await connection.run("\(stand)\n\(RemoteServer.rebootCrontabScript)")
@@ -269,7 +282,7 @@ struct LiveRemoteEngineTests {
         _ = try await connection.run("\(stand)\n\(RemoteServer.rebootCrontabScript)")
         #expect(try await connection.run(tab) == "0 3 * * * backup\n", "one that can't be read is left as it is")
         _ = try await connection.run("rm -f \(folder)/broken; printf '0 3 * * * backup\\n%s\\n' \(SSHConnection.quoted(RemoteServer.rebootLine)) >\(folder)/tab")
-        _ = try await connection.run("\(stand)\n\(RemoteServer.rebootCrontabRemoval)")
+        _ = try await connection.run("\(stand)\n\(RemoteServer.crontabRemovalScript)")
         #expect(try await connection.run(tab) == "0 3 * * * backup\n", "taken out, the rest kept")
         _ = try await connection.run("rm -rf \"$HOME/.kuvo-code-test\"")
     }
