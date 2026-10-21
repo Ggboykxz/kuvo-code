@@ -425,6 +425,10 @@ public final class RemoteServer: @unchecked Sendable {
                 engine.pid = pid
                 if parts.count > 1, let port = Int(parts[1]) { engine.agents?.port = port }
                 return engine
+            } catch RemoteEngineError.ssh(let status, _) where status == 5 {
+                // One started meanwhile (after a restart, or by another Mac): that one, as it is.
+                if let running = try await running(on: connection) { return running }
+                lastError = RemoteEngineError.timedOut
             } catch RemoteEngineError.ssh(let status, let message) where status == 3 && message.localizedCaseInsensitiveContains("in use") {
                 lastError = RemoteEngineError.exited(status: status, output: message)
             } catch RemoteEngineError.ssh(let status, let message) where status == 3 {
@@ -463,8 +467,8 @@ public final class RemoteServer: @unchecked Sendable {
     /// gets its password, never the engine (whose agent's commands could print it) nor what starts
     /// after it.
     ///
-    /// One launch at a time (`run/.launching`): one from the Mac stops an engine started after a
-    /// restart in the meantime, and one after a restart starts none while one runs. Started from
+    /// One launch at a time (`run/.launching`): one that finds an engine started meanwhile (after a
+    /// restart, or by another Mac) starts none, and the Mac uses that one. Started from
     /// the Mac, it also keeps how it was started for `kuvo-start` (`run/launch.env`: everything but
     /// its port, passwords and keys, with the session's PATH, shell and language; `run/launch.notes`),
     /// and on Kuvo Code's own folder (not a test's) makes sure the machine's crontab runs
@@ -495,7 +499,7 @@ public final class RemoteServer: @unchecked Sendable {
         K="$HOME/\(RemoteEngineInstaller.root)"; R="$K/run"
         [ -f "$R/launch.env" ] && [ -f "$K/bin/kuvo-launch" ] && [ -f "$R/engine.json" ] || exit 0
         pid=$(sed -n 's/^{"pid":\\([0-9]*\\),.*/\\1/p' "$R/engine.json" 2>/dev/null)
-        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && grep -q opencode "/proc/$pid/cmdline" 2>/dev/null; then exit 0; fi
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && grep -q "$K/engine/" "/proc/$pid/cmdline" 2>/dev/null; then exit 0; fi
         notes=$(cat "$R/launch.notes" 2>/dev/null); [ -n "$notes" ] || notes='{}'
         word() { od -An -N16 -tx1 /dev/urandom | tr -d ' \\n'; }
         number() { echo $(( $(od -An -N2 -tu2 /dev/urandom | tr -d ' ') % 40000 + 20000 )); }
@@ -547,16 +551,21 @@ public final class RemoteServer: @unchecked Sendable {
           unset KUVO_SETTINGS
         fi
         R="$K/run"; mkdir -p "$R"; chmod 700 "$R"
+        # One launch at a time; one left by a launch that was cut off goes after five minutes (a
+        # launch takes three at most). Never one without it.
         i=0
         until mkdir "$R/.launching" 2>/dev/null; do
-          [ -z "$(find "$R/.launching" -maxdepth 0 -mmin +2 2>/dev/null)" ] || rmdir "$R/.launching" 2>/dev/null
-          i=$((i + 1)); [ $i -lt 600 ] || break
+          [ -z "$(find "$R/.launching" -maxdepth 0 -mmin +5 2>/dev/null)" ] || rmdir "$R/.launching" 2>/dev/null
+          i=$((i + 1))
+          [ $i -lt 2400 ] || \(boot ? "exit 0" : "{ echo \"Another start of the engine is under way there.\" >&2; exit 4; }")
           sleep 0.1
         done
         trap 'rmdir "$R/.launching" 2>/dev/null' EXIT
+        trap 'exit 1' HUP INT TERM PIPE
+        # One that started meanwhile (after a restart, or for another Mac) is used as it is.
         old=$(sed -n 's/^{"pid":\\([0-9]*\\),.*/\\1/p' "$R/engine.json" 2>/dev/null)
-        if [ -n "$old" ] && kill -0 "$old" 2>/dev/null && grep -q opencode "/proc/$old/cmdline" 2>/dev/null; then
-          \(boot ? "exit 0" : "kill \"$old\" 2>/dev/null; sleep 1")
+        if [ -n "$old" ] && kill -0 "$old" 2>/dev/null && grep -q "$K/engine/" "/proc/$old/cmdline" 2>/dev/null; then
+          \(boot ? "exit 0" : "echo \"An engine runs there now.\" >&2; exit 5")
         fi
         \(boot ? "unset KUVO_BOOT" : "rm -rf \"$K/keys\"")
         mkdir -p "$K/keys"; chmod 700 "$K/keys"

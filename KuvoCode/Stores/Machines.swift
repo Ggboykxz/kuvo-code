@@ -694,9 +694,12 @@ final class Machines {
     /// What a machine keeps to work on its own (`RemoteServer.launchScript`), which goes when you
     /// remove it: its keys, how its engine starts again after a restart, and the crontab line that
     /// does it (Kuvo Code's own folder's only).
+    /// A removal's, as `removalScript` is: one waiting for the machine is dropped if you add it
+    /// again, and leaves another Mac's engine there with what it has.
     static var leftoversScript: String {
-        """
+        removalMark + """
         K="$HOME/\(RemoteEngineInstaller.root)"
+        case "$(cat "$K/run/engine.json" 2>/dev/null)" in *'"mac":"\(MachineEngine.macID)"'*) ;; *'"mac":"'*) exit 0 ;; esac
         \(leftovers)
         true
         """
