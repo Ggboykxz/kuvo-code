@@ -6,6 +6,9 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- Settings › Permissions says what Default comes to, like "Default (Allow)" or "Default (Ask First)", and an agent's own permissions show what Settings › Permissions has for it.
+- Settings reads more easily: brighter descriptions, the first sentence of each skill (all of it on hover) and a search field for skills, text boxes you can see, a site count on Website Data, "Add Another" for a second account, "Added" beside integrations that need nothing, and MCP Servers sends you to Integrations for servers kept there. The sidebar scrolls to the page that's open.
+- Settings fits a narrow window: a row's control goes under its title rather than squeezing it, and no page pushes the sidebar out of the window.
 - The space around the cards moves the window, at the top, sides and bottom, and a double-click there does what a title bar's does. Settings' sidebar can be resized, like the sessions' sidebar, and keeps the same width.
 - The tab bar is off when you start: the window's cards reach the top, and you switch sessions in the sidebar or with ⌘K. Turn it on in View › Show Tab Bar or Settings › General. Without it, Settings shows one page at a time.
 - Settings has a cleaner look: a wider column, even spacing between sections, quieter groups with separators, text fields you can see, and shorter descriptions (the details are in tooltips). Its sidebar is grouped as Application, Models & Providers, Agents & Tools, Projects, Side Panel, and Privacy & Data.

@@ -52,6 +52,7 @@ struct SettingsView: View {
                                     .environment(\.settingsNavigator, navigator)
                             }
                             .frame(maxWidth: SettingsMetrics.columnWidth)
+                            .foregroundStyle(.primary, SettingsMetrics.secondaryInk(scheme), SettingsMetrics.tertiaryInk(scheme))
                             .modifier(SettingsColumnInset())
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .id(page)
@@ -71,7 +72,9 @@ struct SettingsView: View {
                     .accessibilityHidden(!isShown)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Its own width whatever a page asks for: a page wider than the window is cut off
+            // rather than pushing the sidebar out of the window.
+            .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
             .background(WindowXReader { tabs.contentX = $0 })
             // Doing something in the page in view keeps its tab (see `SettingsTabs`).
             .background(InteractionWatcher { tabs.keepSelected() })
@@ -345,60 +348,71 @@ private struct SettingsSidebar: View {
                 .padding(.horizontal, 10)
                 .frame(height: SidebarMetrics.rowHeight)
             SidebarSearchRow(text: $search)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 1) {
-                    let pages = SettingsPage.shown.filter { $0.matches(search) }
-                    if pages.isEmpty {
-                        Text("No Results")
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                    }
-                    ForEach(SettingsPage.Group.allCases, id: \.self) { group in
-                        let members = pages.filter { $0.group == group }
-                        if !members.isEmpty {
-                            Text(group.rawValue)
-                                .font(.system(size: 13, weight: .medium))
+            ScrollViewReader { reader in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 1) {
+                        let pages = SettingsPage.shown.filter { $0.matches(search) }
+                        if pages.isEmpty {
+                            Text("No Results")
+                                .font(.system(size: 13))
                                 .foregroundStyle(.secondary)
-                                .frame(height: 22)
-                                .padding(.leading, 10)
-                                .padding(.top, group == pages.first?.group ? 8 : 16)
-                                .padding(.bottom, 4)
-                            ForEach(members) { page in
-                                Button {
-                                    if NSEvent.modifierFlags.contains(.command) { openInNewTab(page) } else { selection = page }
-                                } label: {
-                                    HStack(spacing: 10) {
-                                        Image(systemName: page.symbol)
-                                            .font(.system(size: 14))
-                                            .foregroundStyle(.secondary)
-                                            .frame(width: SidebarMetrics.iconWidth)
-                                        Text(page.title)
-                                            .font(.system(size: 14))
-                                            .lineLimit(1)
-                                        Spacer(minLength: 0)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                        }
+                        ForEach(SettingsPage.Group.allCases, id: \.self) { group in
+                            let members = pages.filter { $0.group == group }
+                            if !members.isEmpty {
+                                Text(group.rawValue)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(.secondary)
+                                    .frame(height: 22)
+                                    .padding(.leading, 10)
+                                    .padding(.top, group == pages.first?.group ? 8 : 16)
+                                    .padding(.bottom, 4)
+                                ForEach(members) { page in
+                                    Button {
+                                        if NSEvent.modifierFlags.contains(.command) { openInNewTab(page) } else { selection = page }
+                                    } label: {
+                                        HStack(spacing: 10) {
+                                            Image(systemName: page.symbol)
+                                                .font(.system(size: 14))
+                                                .foregroundStyle(.secondary)
+                                                .frame(width: SidebarMetrics.iconWidth)
+                                            Text(page.title)
+                                                .font(.system(size: 14))
+                                                .lineLimit(1)
+                                            Spacer(minLength: 0)
+                                        }
+                                        .padding(.horizontal, 10)
+                                        .frame(height: SidebarMetrics.rowHeight)
+                                        .modifier(RowHighlight(isSelected: page == selection))
                                     }
-                                    .padding(.horizontal, 10)
-                                    .frame(height: SidebarMetrics.rowHeight)
-                                    .modifier(RowHighlight(isSelected: page == selection))
-                                }
-                                .buttonStyle(.plain)
-                                .clickablePointer()
-                                .contextMenu {
-                                    // Without the tab bar, one page at a time.
-                                    if showsTabBar {
-                                        Button("Open in New Tab") { openInNewTab(page) }
+                                    .buttonStyle(.plain)
+                                    .clickablePointer()
+                                    .contextMenu {
+                                        // Without the tab bar, one page at a time.
+                                        if showsTabBar {
+                                            Button("Open in New Tab") { openInNewTab(page) }
+                                        }
                                     }
+                                    .id(page)
                                 }
                             }
                         }
                     }
+                    .padding(.bottom, 12)
                 }
-                .padding(.bottom, 12)
+                .scrollIndicators(.never)
+                .fadingScrollEdges()
+                // The page in view is always in sight: opened from elsewhere (a link, ⌘K), or as
+                // Settings open on it.
+                .onChange(of: selection, initial: true) { _, page in
+                    Task {
+                        await Task.yield()
+                        withAnimation(.ui) { reader.scrollTo(page) }
+                    }
+                }
             }
-            .scrollIndicators(.never)
-            .fadingScrollEdges()
             // Searching opens the first page it finds.
             .onChange(of: search) {
                 let pages = SettingsPage.shown.filter { $0.matches(search) }
@@ -466,6 +480,16 @@ enum SettingsMetrics {
     static let rowVerticalPadding: CGFloat = 10
     static let rowHeight: CGFloat = 44
     static let groupRadius: CGFloat = 8
+
+    /// Secondary and tertiary text in Settings, a step brighter than the system's: descriptions
+    /// read at 4.5:1 or better on a group in either mode.
+    static func secondaryInk(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? .white.opacity(0.64) : .black.opacity(0.6)
+    }
+
+    static func tertiaryInk(_ scheme: ColorScheme) -> Color {
+        scheme == .dark ? .white.opacity(0.44) : .black.opacity(0.42)
+    }
 
     /// A group's fill: a quiet step off the card, not a card of its own.
     static func groupFill(_ scheme: ColorScheme) -> Color {

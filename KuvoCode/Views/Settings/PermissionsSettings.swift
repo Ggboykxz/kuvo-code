@@ -20,15 +20,25 @@ struct PermissionsSettings: View {
 
     /// The kinds of action, with what they cover; each is a rule for every resource ("*").
     static let actions: [(id: String, title: String, detail: String)] = [
-        ("edit", "Edit files", "Changing, creating or deleting files."),
+        ("edit", "Edit files", "Changing, creating or deleting files. Plan mode doesn't, by default."),
         ("shell", "Run commands", "In the terminal."),
         ("read", "Read files", "Files ending in .env ask first unless you allow this."),
-        ("external_directory", "Work outside the project", "In folders that aren't the project's. Asks by default."),
+        ("external_directory", "Work outside the project", "In folders that aren't the project's."),
         ("webfetch", "Open web pages", ""),
         ("websearch", "Search the web", ""),
         ("subagent", "Hand work to subagents", ""),
         ("skill", "Use skills", ""),
     ]
+
+    /// What the engine does with no choice made: everything is allowed but working outside the
+    /// project, which asks; Plan mode doesn't edit (its built-in rules, as the engine lists them).
+    static func engineDefault(_ action: String, agent: String? = nil) -> PermissionRule.Effect {
+        switch (action, agent) {
+        case ("external_directory", _): .ask
+        case ("edit", "plan"): .deny
+        default: .allow
+        }
+    }
 
     var body: some View {
         ScrollingSettingsForm {
@@ -154,6 +164,9 @@ struct PermissionsSettings: View {
 /// commands or files, after it, win.
 struct ActionChoices: View {
     let path: [String]
+    /// The agent these are for, in its editor: Default there is what Settings › Permissions
+    /// chose, else the engine's default for it.
+    var agent: String? = nil
     @Environment(AppModel.self) private var app
     @Environment(\.editedConfig) private var edited
 
@@ -161,16 +174,31 @@ struct ActionChoices: View {
 
     var body: some View {
         ForEach(PermissionsSettings.actions, id: \.id) { action in
-            Picker(selection: effect(for: action.id)) {
-                Text("Default").tag(PermissionRule.Effect?.none)
-                Text("Allow").tag(Optional(PermissionRule.Effect.allow))
-                Text("Ask First").tag(Optional(PermissionRule.Effect.ask))
-                Text("Don't Allow").tag(Optional(PermissionRule.Effect.deny))
+            LabeledContent {
+                Picker(action.title, selection: effect(for: action.id)) {
+                    // What Default comes to, so it says what the agent may do.
+                    Text("Default (\(inherited(action.id).title))").tag(PermissionRule.Effect?.none)
+                    Text("Allow").tag(Optional(PermissionRule.Effect.allow))
+                    Text("Ask First").tag(Optional(PermissionRule.Effect.ask))
+                    Text("Don't Allow").tag(Optional(PermissionRule.Effect.deny))
+                }
+                .labelsHidden()
+                .fixedSize()
             } label: {
                 Text(action.title)
                 if !action.detail.isEmpty { Text(action.detail) }
             }
         }
+    }
+
+    /// What applies with no choice here: Settings › Permissions' choice (for an agent), else the
+    /// engine's default.
+    private func inherited(_ action: String) -> PermissionRule.Effect {
+        if agent != nil || path != ["permissions"],
+           let global = app.engineConfig.items(["permissions"]).compactMap(\.rule).last(where: { $0.action == action && $0.resource == "*" }) {
+            return global.effect
+        }
+        return PermissionsSettings.engineDefault(action, agent: agent)
     }
 
     private func effect(for action: String) -> Binding<PermissionRule.Effect?> {
@@ -181,6 +209,17 @@ struct ActionChoices: View {
             var items = config.items(path).filter { $0.rule.map { !($0.action == action && $0.resource == "*") } ?? true }
             if let effect { items.insert(PermissionRule(action: action, resource: "*", effect: effect).json, at: 0) }
             config.setItems(items, at: path)
+        }
+    }
+}
+
+extension PermissionRule.Effect {
+    /// As the choices name it.
+    var title: String {
+        switch self {
+        case .allow: "Allow"
+        case .ask: "Ask First"
+        case .deny: "Don't Allow"
         }
     }
 }

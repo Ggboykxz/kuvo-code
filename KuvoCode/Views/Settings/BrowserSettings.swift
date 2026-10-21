@@ -102,6 +102,11 @@ struct BrowserSettings: View {
             } header: {
                 HStack {
                     Text("Website Data")
+                    if let records, !records.isEmpty {
+                        Text(records.count == 1 ? "1 site" : "\(records.count) sites")
+                            .font(.system(size: 12, weight: .regular))
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
                     Button("Remove All…") { confirmingClearAll = true }
                         .disabled(records?.isEmpty ?? true)

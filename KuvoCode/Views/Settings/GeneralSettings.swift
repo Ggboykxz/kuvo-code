@@ -25,10 +25,14 @@ struct GeneralSettings: View {
                     Text("Open sessions as tabs at the top of the window.")
                 }
                 .help("The row at the top, with the project, its branch and your sessions as tabs. Without it, switch sessions in the sidebar or with ⌘K.")
-                Picker(selection: $pairStyle) {
-                    Text("One tab in two halves").tag(PairStyle.halves)
-                    Text("One tab with both names").tag(PairStyle.compact)
-                    Text("Two tabs joined").tag(PairStyle.joined)
+                LabeledContent {
+                    Picker("Sessions side by side", selection: $pairStyle) {
+                        Text("One tab in two halves").tag(PairStyle.halves)
+                        Text("One tab with both names").tag(PairStyle.compact)
+                        Text("Two tabs joined").tag(PairStyle.joined)
+                    }
+                    .labelsHidden()
+                    .fixedSize()
                 } label: {
                     Text("Sessions side by side")
                     Text(showsTabBar ? "How a split shows in the tab bar." : "Needs the tab bar.")
@@ -44,12 +48,16 @@ struct GeneralSettings: View {
                 .onChange(of: keepsAwake) { Awake.shared.update() }
             }
             Section("Files") {
-                Picker(selection: $editor) {
-                    Text("Each file’s default app").tag("")
-                    Divider()
-                    ForEach(OpenWith.installedEditors, id: \.id) { editor in
-                        Text(OpenWith.name(of: editor.url)).tag(editor.id)
+                LabeledContent {
+                    Picker("Open code and text in", selection: $editor) {
+                        Text("Each file’s default app").tag("")
+                        Divider()
+                        ForEach(OpenWith.installedEditors, id: \.id) { editor in
+                            Text(OpenWith.name(of: editor.url)).tag(editor.id)
+                        }
                     }
+                    .labelsHidden()
+                    .fixedSize()
                 } label: {
                     Text("Open code and text in")
                     Text("From the panel’s files and from Changes.")

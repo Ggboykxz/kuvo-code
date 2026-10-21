@@ -57,29 +57,32 @@ struct MachinesSettings: View {
     }
 
     private func row(_ engine: MachineEngine) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: "server.rack")
-                .foregroundStyle(.secondary)
-                .frame(width: 20)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(engine.machine.name)
-                if let others = engine.machine.otherAddresses, !others.isEmpty {
-                    Text("Also at \(others.joined(separator: ", "))")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+        SettingsRowLayout {
+            HStack(spacing: 12) {
+                Image(systemName: "server.rack")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(engine.machine.name)
+                    if let others = engine.machine.otherAddresses, !others.isEmpty {
+                        Text("Also at \(others.joined(separator: ", "))")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    MachineStatus(engine: engine)
                 }
-                MachineStatus(engine: engine)
             }
-            Spacer()
-            switch engine.state {
-            case .ready:
-                Button("Disconnect") { app.disconnect(engine) }
-            case .failed, .preparing:
-                Button(engine.isRetrying ? "Connect Now" : "Connect") { app.connect(engine) }
-            default:
-                EmptyView()
+            HStack {
+                switch engine.state {
+                case .ready:
+                    Button("Disconnect") { app.disconnect(engine) }
+                case .failed, .preparing:
+                    Button(engine.isRetrying ? "Connect Now" : "Connect") { app.connect(engine) }
+                default:
+                    EmptyView()
+                }
+                Button("Remove…") { removing = engine.machine }
             }
-            Button("Remove…") { removing = engine.machine }
         }
         .contextMenu {
             ForEach(engine.machine.otherAddresses ?? [], id: \.self) { address in

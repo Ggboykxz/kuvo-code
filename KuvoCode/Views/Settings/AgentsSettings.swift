@@ -57,7 +57,7 @@ struct AgentsSettings: View {
 
             Section {
                 ForEach(agents, id: \.id) { agent in
-                    HStack(alignment: .firstTextBaseline) {
+                    SettingsRowLayout {
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
                                 Text(agent.name)
@@ -73,9 +73,9 @@ struct AgentsSettings: View {
                                     .font(.callout)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(2)
+                                    .help(description)
                             }
                         }
-                        Spacer()
                         Button("Edit…") { editing = AgentEdit(agentID: agent.id, isBuiltIn: agent.isBuiltIn) }
                     }
                 }
@@ -306,7 +306,7 @@ private struct AgentEditor: View {
                 .foregroundStyle(.secondary)
         }
         Section {
-            ActionChoices(path: path + ["permissions"])
+            ActionChoices(path: path + ["permissions"], agent: id)
         } header: {
             Text("What It May Do")
         } footer: {

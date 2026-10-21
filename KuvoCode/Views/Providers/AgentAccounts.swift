@@ -338,8 +338,9 @@ private struct ProductBlock: View {
                 }
             }
             Button(action: addAccount) {
-                Label("Add Account", systemImage: "plus")
+                Label(product.hasAccounts ? "Add Another" : "Add Account", systemImage: "plus")
                     .font(.callout)
+                    .fixedSize()
             }
             .buttonStyle(TextButtonStyle())
             .disabled(isAgent && agents.api == nil)

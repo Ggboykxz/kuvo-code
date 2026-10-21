@@ -59,26 +59,26 @@ struct MCPSettings: View {
 
             Section {
                 ForEach(MCPCatalog.servers) { server in
-                    HStack(alignment: .firstTextBaseline) {
+                    SettingsRowLayout {
                         VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
-                                Text(server.title)
-                                Text(server.access.title)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                            }
+                            Text("\(server.title)  \(Text(server.access.title).font(.subheadline).foregroundStyle(.secondary))")
                             Text(server.summary)
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                         }
-                        Spacer()
-                        if config.value(at: Self.path + [server.id]) != nil {
+                        Group {
+                        if config.value(at: Self.path + [server.id]) != nil, Integrations.service(server.id) != nil {
+                            // Added as an integration: kept on that page, not in Servers above.
+                            Button("In Integrations…") { app.settingsTabs.show(.integrations) }
+                                .help("Added from Integrations, where it's kept with its sign-in")
+                        } else if config.value(at: Self.path + [server.id]) != nil {
                             Label("Added", systemImage: "checkmark")
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                         } else {
                             Button("Add") { add(server) }
                                 .accessibilityLabel("Add \(server.title)")
+                        }
                         }
                     }
                 }
@@ -357,6 +357,7 @@ private struct ServerEditor: View {
                             .labelsHidden()
                             .font(.body.monospaced())
                             .lineLimit(1...8)
+                            .settingsFieldWell(padding: 7)
                             .onSubmit { saveCommand(path) }
                             .onDisappear { saveCommand(path) }
                     }

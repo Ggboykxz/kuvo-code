@@ -11,15 +11,21 @@ struct AppearanceSettings: View {
     @AppStorage(Look.fontKey) private var typeface = Look.Typeface.system
     @AppStorage(StepsDetail.key) private var steps = StepsDetail.summary
 
+    private var modes: some View {
+        ForEach(Appearance.allCases, id: \.self) { option in
+            ModeThumbnail(mode: option, isSelected: mode == option) { mode = option }
+        }
+    }
+
     var body: some View {
         ScrollingSettingsForm {
             Section("Mode") {
-                HStack(spacing: 18) {
-                    ForEach(Appearance.allCases, id: \.self) { option in
-                        ModeThumbnail(mode: option, isSelected: mode == option) { mode = option }
-                    }
-                    Spacer(minLength: 0)
+                // In a narrow window, two to a row.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 18) { modes }
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 112), spacing: 12, alignment: .leading)], alignment: .leading, spacing: 12) { modes }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 6)
             }
 

@@ -51,6 +51,7 @@ private struct InstructionsEditor: View {
         TextField("Instructions", text: $text, prompt: Text(prompt), axis: .vertical)
             .labelsHidden()
             .lineLimit(3...8)
+            .settingsFieldWell(padding: 7)
     }
 }
 

@@ -110,27 +110,24 @@ struct IntegrationsSettings: View {
     private func row(_ service: Integrations.Service) -> some View {
         let added = config.value(at: MCPSettings.path + [service.id]) != nil
         let places = added ? self.places(service) : siteSignIns(service)
-        return HStack(alignment: .center, spacing: 12) {
-            Image(systemName: service.symbol)
-                .font(.system(size: 15))
-                .foregroundStyle(.secondary)
-                .frame(width: 22)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(service.title)
-                    Text(Self.how(service.way))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                Text(service.summary)
-                    .font(.callout)
+        return SettingsRowLayout {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: service.symbol)
+                    .font(.system(size: 15))
                     .foregroundStyle(.secondary)
-                if !places.isEmpty {
-                    PlacesLine(places: places, waitsForCodeHelp: "Ask the agent to use \(service.title): the first time, it gives you a code to enter on Microsoft's page.")
-                        .padding(.top, 2)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 2) {
+                    // The tag flows on after the name, so a narrow row wraps the two as one line.
+                    Text("\(service.title)  \(Text(Self.how(service.way)).font(.subheadline).foregroundStyle(.secondary))")
+                    Text(service.summary)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    if !places.isEmpty {
+                        PlacesLine(places: places, waitsForCodeHelp: "Ask the agent to use \(service.title): the first time, it gives you a code to enter on Microsoft's page.")
+                            .padding(.top, 2)
+                    }
                 }
             }
-            Spacer()
             HStack {
                 switch service.way {
                 case .browser:
@@ -152,6 +149,11 @@ struct IntegrationsSettings: View {
                             Button("Sign In…") { signingIn = IntegrationRef(id: integrationID, service: service) }
                         } else if places.contains(where: { $0.state == .failed }) {
                             Button("Try Again") { reconnect(service, where: places.filter { $0.state == .failed }) }
+                        } else {
+                            // Nothing needs you: say it's set up, beside its menu.
+                            Label("Added", systemImage: "checkmark")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
                         }
                         Menu {
                             if let integrationID = server?.integrationID {

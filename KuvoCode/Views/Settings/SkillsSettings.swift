@@ -16,9 +16,25 @@ struct SkillsSettings: View {
     @State private var failure: String?
     /// The skill being written or changed: a new one has no name yet.
     @State private var writing: SkillDraft?
+    /// What the list is narrowed to.
+    @State private var search = ""
 
     private var config: EngineConfig { app.engineConfig }
     private var folder: URL { app.skillsFolder }
+
+    /// The skills, narrowed to what's searched for.
+    private var shown: [Skill] {
+        let query = search.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return skills ?? [] }
+        return (skills ?? []).filter { "\($0.name) \($0.description ?? "")".localizedCaseInsensitiveContains(query) }
+    }
+
+    /// A description's first sentence.
+    static func summary(_ description: String) -> String {
+        let text = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let end = text.range(of: #"[.!?](\s|$)"#, options: .regularExpression) else { return text }
+        return String(text[..<end.upperBound]).trimmingCharacters(in: .whitespaces)
+    }
 
     var body: some View {
         ScrollingSettingsForm {
@@ -29,38 +45,37 @@ struct SkillsSettings: View {
                 } else if skills?.isEmpty == true {
                     Text("None yet.")
                         .foregroundStyle(.secondary)
+                } else if (skills?.count ?? 0) > 6 {
+                    SettingsSearchRow(text: $search, prompt: "Search skills")
                 }
-                ForEach(skills ?? []) { skill in
-                    HStack(alignment: .firstTextBaseline) {
+                ForEach(shown) { skill in
+                    SettingsRowLayout {
                         VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
-                                Text(skill.name)
-                                if let source = source(of: skill) {
-                                    Text(source)
-                                        .font(.subheadline)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
+                            Text("\(skill.name)  \(Text(source(of: skill) ?? "").font(.subheadline).foregroundStyle(.secondary))")
                             if let description = skill.description {
-                                Text(description)
+                                // Written for the model, often at length: its first sentence,
+                                // and all of it on hover.
+                                Text(Self.summary(description))
                                     .font(.callout)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(2)
+                                    .help(description)
                             }
                         }
-                        Spacer()
-                        if isYours(skill) {
-                            // Deleting one you wrote is in its editor, behind a confirmation.
-                            Button("Edit…") { writing = SkillDraft(name: skill.id) }
+                        HStack {
+                            if isYours(skill) {
+                                // Deleting one you wrote is in its editor, behind a confirmation.
+                                Button("Edit…") { writing = SkillDraft(name: skill.id) }
+                            }
+                            if installed[skill.id] != nil {
+                                // From GitHub, so it can be added back.
+                                Button("Remove") { remove(skill.id) }
+                            }
+                            Toggle("Use \(skill.name)", isOn: isOn(skill.id))
+                                .labelsHidden()
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
                         }
-                        if installed[skill.id] != nil {
-                            // From GitHub, so it can be added back.
-                            Button("Remove") { remove(skill.id) }
-                        }
-                        Toggle("Use \(skill.name)", isOn: isOn(skill.id))
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
                     }
                     // Where it is, for one found in a folder of its own.
                     .help(place(of: skill) ?? "")

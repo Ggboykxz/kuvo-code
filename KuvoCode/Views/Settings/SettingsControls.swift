@@ -53,6 +53,7 @@ struct ConfigTextField: View {
                 text
                     .labelsHidden()
                     .lineLimit(1...10)
+                    .settingsFieldWell(padding: 7)
             }
         } else {
             SettingsTextRow(title: title) { text }
@@ -117,7 +118,7 @@ struct ConfigNumberField: View {
 }
 
 /// Longer text, like an agent's instructions: saved when you leave it. Monospaced, like a
-/// skill's instructions, and on the row's own background rather than a box of its own.
+/// skill's instructions, in a well like the other fields.
 struct ConfigTextEditor: View {
     let path: [String]
     var minHeight: CGFloat = 120
@@ -146,6 +147,7 @@ struct ConfigTextEditor: View {
                         .allowsHitTesting(false)
                 }
             }
+            .settingsFieldWell(padding: 7)
             .focused($isFocused)
             .onChange(of: isFocused) { if !isFocused { commit() } }
             .onChange(of: field.text) { if config.isDraft { commit() } }
@@ -193,6 +195,10 @@ struct ConfigModelPicker: View {
     private var config: EngineConfig { edited ?? app.engineConfig }
 
     var body: some View {
+        LabeledContent(title) { picker.labelsHidden().fixedSize() }
+    }
+
+    private var picker: some View {
         Picker(title, selection: config.string(path)) {
             Text(defaultTitle).tag(String?.none)
             ForEach(catalog.modelsByProvider, id: \.provider) { group in
@@ -500,16 +506,15 @@ struct SettingsRowLabel<Label: View>: View {
                 }
             }
         }
-        .opacity(isEnabled ? 1 : 0.55)
+        .opacity(isEnabled ? 1 : 0.6)
     }
 }
 
 /// A toggle as a settings row: its title on the left, a switch on the right.
 struct SettingsToggleStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
-        HStack(alignment: .center, spacing: 16) {
+        SettingsRowLayout {
             SettingsRowLabel(label: configuration.label)
-                .frame(maxWidth: .infinity, alignment: .leading)
             Toggle("", isOn: configuration.$isOn)
                 .toggleStyle(.switch)
                 .labelsHidden()
@@ -522,11 +527,63 @@ struct SettingsToggleStyle: ToggleStyle {
 /// A labeled row: its title on the left, what it holds (a button, a menu, a value) on the right.
 struct SettingsLabeledStyle: LabeledContentStyle {
     func makeBody(configuration: Configuration) -> some View {
-        HStack(alignment: .center, spacing: 16) {
+        SettingsRowLayout {
             SettingsRowLabel(label: configuration.label)
-                .frame(maxWidth: .infinity, alignment: .leading)
             configuration.content
-                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+/// A row's title and its control: side by side, the control at the trailing edge at its own
+/// width; in a window too narrow to leave the title room beside it, the control goes under the
+/// title instead of squeezing it (or itself) into a column of single words.
+struct SettingsRowLayout: Layout {
+    /// The least the title keeps beside the control before the control goes under it.
+    var titleRoom: CGFloat = 150
+    var spacing: CGFloat = 16
+
+    private func control(_ subviews: Subviews, width: CGFloat) -> CGSize {
+        let ideal = subviews[1].sizeThatFits(.unspecified)
+        return subviews[1].sizeThatFits(ProposedViewSize(width: min(ideal.width, width), height: nil))
+    }
+
+    private func isSideBySide(_ subviews: Subviews, width: CGFloat) -> Bool {
+        width - subviews[1].sizeThatFits(.unspecified).width - spacing >= titleRoom
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        // A title with nothing beside it (a control that's only there sometimes).
+        if subviews.count == 1 {
+            let title = subviews[0].sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+            return CGSize(width: proposal.width ?? title.width, height: title.height)
+        }
+        guard subviews.count == 2 else { return .zero }
+        let width = proposal.width ?? 10_000
+        let control = control(subviews, width: width)
+        if isSideBySide(subviews, width: width) {
+            let title = subviews[0].sizeThatFits(ProposedViewSize(width: width - control.width - spacing, height: nil))
+            return CGSize(width: proposal.width ?? title.width + spacing + control.width, height: max(title.height, control.height))
+        }
+        let title = subviews[0].sizeThatFits(ProposedViewSize(width: width, height: nil))
+        return CGSize(width: proposal.width ?? max(title.width, control.width), height: title.height + 8 + control.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        if subviews.count == 1 {
+            subviews[0].place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
+            return
+        }
+        guard subviews.count == 2 else { return }
+        let control = control(subviews, width: bounds.width)
+        if isSideBySide(subviews, width: bounds.width) {
+            let titleWidth = bounds.width - control.width - spacing
+            let title = subviews[0].sizeThatFits(ProposedViewSize(width: titleWidth, height: nil))
+            subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.midY - title.height / 2), proposal: ProposedViewSize(width: titleWidth, height: title.height))
+            subviews[1].place(at: CGPoint(x: bounds.maxX - control.width, y: bounds.midY - control.height / 2), proposal: ProposedViewSize(control))
+        } else {
+            let title = subviews[0].sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
+            subviews[0].place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: title.height))
+            subviews[1].place(at: CGPoint(x: bounds.minX, y: bounds.minY + title.height + 8), proposal: ProposedViewSize(control))
         }
     }
 }
@@ -542,15 +599,33 @@ struct SettingsTextRow<Field: View, Label: View>: View {
         LabeledContent {
             field
                 .labelsHidden()
-                .textFieldStyle(.plain)
-                .focusEffectDisabled()
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .frame(minWidth: 160, maxWidth: 300)
-                .background(Surface.well(scheme), in: .rect(cornerRadius: 6))
+                .settingsFieldWell()
+                .frame(minWidth: 160, idealWidth: 260, maxWidth: 300)
         } label: {
             label
         }
+    }
+}
+
+extension View {
+    /// A text field or editor in Settings: in a well a step below its group, so it reads as a
+    /// place to type.
+    func settingsFieldWell(padding: CGFloat = 5) -> some View {
+        modifier(SettingsFieldWell(padding: padding))
+    }
+}
+
+private struct SettingsFieldWell: ViewModifier {
+    let padding: CGFloat
+    @Environment(\.colorScheme) private var scheme
+
+    func body(content: Content) -> some View {
+        content
+            .textFieldStyle(.plain)
+            .focusEffectDisabled()
+            .padding(.horizontal, 8)
+            .padding(.vertical, padding)
+            .background(Surface.well(scheme), in: .rect(cornerRadius: 6))
     }
 }
 
