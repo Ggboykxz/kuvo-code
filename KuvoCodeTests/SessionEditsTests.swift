@@ -111,6 +111,52 @@ import Testing
         #expect(file.additions == 2)
     }
 
+    // MARK: The Changes tab (B17)
+
+    /// What the Changes tab lists for a folder outside git: the session's edits, each file's lines
+    /// as they show (added and removed ones, with their marks).
+    @MainActor
+    private func listed(_ steps: [Step]) async throws -> [String: [String]] {
+        let panel = ProjectChanges(directory: path)
+        await panel.refresh(fallback: [], edits: try changes(steps))
+        #expect(!panel.isRepository)
+        return Dictionary(uniqueKeysWithValues: panel.files.map { file in
+            (file.path, file.lines.compactMap { line in
+                switch line.kind {
+                case .added: "+" + line.text
+                case .removed: "-" + line.text
+                case .context: nil
+                }
+            })
+        })
+    }
+
+    /// A folder that isn't a git repository: the Changes tab lists each file the agent changed,
+    /// once, with what changed.
+    @MainActor
+    @Test func outsideGitTheChangesTabListsTheSessionsEdits() async throws {
+        try write("config.txt", "mode = fast\n")
+        try write("notes.md", "# Notes\n")
+        let listed = try await listed([
+            .edit("config.txt", from: ["mode = slow"], to: ["mode = medium"]),
+            .write(path + "/notes.md", "# Notes\n"),
+            .edit("config.txt", from: ["mode = medium"], to: ["mode = fast"]),
+        ])
+        #expect(listed == ["config.txt": ["-mode = slow", "+mode = fast"], "notes.md": ["+# Notes"]])
+    }
+
+    /// Edits that no longer fit the file (you changed it since) show as the agent made them, each
+    /// line once: none of the patches' own headers among them.
+    @MainActor
+    @Test func editsThatNoLongerFitShowOnlyTheirLines() async throws {
+        try write("b.txt", "something else entirely\n")
+        let listed = try await listed([
+            .edit("b.txt", from: ["x"], to: ["y"]),
+            .edit("b.txt", from: ["y"], to: ["z"]),
+        ])
+        #expect(listed["b.txt"] == ["-x", "+y", "-y", "+z"])
+    }
+
     /// Files show in the order the agent first touched them.
     @Test func filesKeepTheAgentsOrder() throws {
         try write("b.txt", "2\n")

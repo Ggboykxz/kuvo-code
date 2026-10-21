@@ -20,6 +20,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - In the Changes tab, files whose names have quotes, a backslash or a tab in them, or a folder named like "Plan b", are listed by their real paths, and Discard and Stage work on them. Some were listed under another file's name, and Discard could act on that file instead.
 - Discarding a deleted file whose folder has since been replaced by a file of the same name moves that file to the Trash. It used to be deleted for good.
 - Unstage works in a repository with no commits yet; it said git couldn't restore the file.
+- In the Changes tab of a folder that isn't a git repository, or of a project on a machine, a file the agent edited more than once no longer shows lines like "--- a/notes.md" among its changes, and its counts match what it shows.
 ## 0.6.2
 
 - A worktree's branch named after a title in another language keeps its letters ("Giriş düzeltmesi" is giris-duzeltmesi, not giri-dzeltmesi).

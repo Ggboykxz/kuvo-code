@@ -21,7 +21,7 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | B12 Queue while it works, Stop, Resume | ComposerReturnsTests, QueueTests | |
 | B14 Switch model mid-conversation, or elsewhere | SessionsTests | |
 | B16 Find in a long conversation | ConversationFindTests | |
-| B17 A folder that isn't a git repository | | the Changes tab lists what the session's edits changed |
+| B17 A folder that isn't a git repository | SessionEditsTests | |
 | B18 Rename, archive, restore, delete | SidebarListsTests, SessionsTests, SessionTitlesTests | search leaves deleted sessions out |
 | B20 Commands and skills | SlashCommandsTests, SkillLibraryTests | |
 | C1–C3 Attach pictures, PDFs, files | AttachmentRoutesTests, AttachmentsTests, SentFilesTests | |
