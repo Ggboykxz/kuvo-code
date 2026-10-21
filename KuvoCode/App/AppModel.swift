@@ -39,6 +39,8 @@ final class AppModel {
     let groups = BotGroups()
     /// What this Mac keeps, brought up to date with this version once, as it launches.
     let calibration = Calibration()
+    /// Bots and chats moving to another computer.
+    let moves = Moves()
     /// Kuvo Code for iPhone's way in (off until it's switched on; see PhoneLink).
     let phoneLink = PhoneLink()
     /// The coding agents you already have (Claude Code, Codex, Cursor, Grok, Antigravity), run by
@@ -297,6 +299,7 @@ final class AppModel {
             bots.app = self
             wakeUps.app = self
             groups.app = self
+            moves.app = self
             workspace.onMovedToAgents = { [weak self] from, to in await self?.movedToAgents(from: from, to: to) ?? false }
             workspace.runsOnAgents(bots.agentSessionIDs)
             workspace.botSessions = bots.sessionIDs

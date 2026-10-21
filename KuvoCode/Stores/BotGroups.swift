@@ -364,6 +364,20 @@ final class BotGroups {
         }
     }
 
+    /// A bot moving to another computer (`Moves`), as it still is where it was: its seats there go,
+    /// and each chat makes it a new one where it lives now at its next turn, which hears the whole
+    /// chat (as a new model's does).
+    func botMoving(_ bot: Bot) async {
+        for group in list {
+            guard let seat = group.seats[bot.id] else { continue }
+            await deleteSeat(seat, of: bot.id, in: group)
+            guard let index = list.firstIndex(where: { $0.id == group.id }) else { continue }
+            list[index].seats[bot.id] = nil
+            list[index].heard[bot.id] = nil
+            save()
+        }
+    }
+
     /// A bot's new name or job: the seats around it hear who they're talking with.
     func botChanged(_ bot: Bot) async {
         for group in list where group.members.contains(bot.id) {

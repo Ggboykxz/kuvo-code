@@ -162,6 +162,7 @@ struct SidebarView: View {
                         }
                         .contextMenu {
                             Button("Edit Bot…") { editBot(bot) }
+                            MoveToComputerMenu(thing: .bot(bot))
                         }
                     }
                     // Group chats, under the bots they're with.
@@ -550,6 +551,15 @@ struct SidebarView: View {
                     .foregroundStyle(.tertiary)
             } else {
                 HStack(spacing: 6) {
+                    if let destination = app.moves.underWay[session.id] {
+                        Spinner(size: 12)
+                            .help("Moving to \(destination ?? "this Mac")…")
+                    } else if Workspace.isChat(session.location.directory), let machine = RemoteFolder.machine(of: session.location.directory) {
+                        Image(systemName: "server.rack")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                            .help("On \(machine)")
+                    }
                     if let tree = workspace.worktrees[session.location.directory] {
                         Image(systemName: "arrow.triangle.branch")
                             .font(.system(size: 11))
@@ -615,6 +625,7 @@ struct SidebarView: View {
         }
         if Workspace.isChat(session.location.directory) {
             MoveToProjectMenu(session: session)
+            MoveToComputerMenu(thing: .chat(session))
         } else if !RemoteFolder.isRemote(session.location.directory) {
             Button("Show in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: session.location.directory) }
         }
@@ -1013,7 +1024,9 @@ private struct BotRow: View {
     /// wakes next, or its job. What it's set to do (wake up, watch) and how it's set (paused)
     /// stand apart from what it said, with their sign.
     @ViewBuilder private var status: some View {
-        if workspace.needsAttention(bot.sessionID) {
+        if let destination = app.moves.underWay[bot.id] {
+            ShimmerText(text: "Moving to \(destination ?? "this Mac")…")
+        } else if workspace.needsAttention(bot.sessionID) {
             Text("Needs you")
                 .foregroundStyle(.orange)
         } else if workspace.running.contains(bot.sessionID) {
@@ -1118,19 +1131,20 @@ private struct SectionHeader<Trailing: View>: View {
     }
 }
 
-/// "Move to Project ›": a chat's way into one of this Mac's projects.
+/// "Move to Project ›": a chat's way into one of the projects on its computer.
 private struct MoveToProjectMenu: View {
     let session: Session
     @Environment(Workspace.self) private var workspace
 
     var body: some View {
-        let projects = workspace.projects.filter { !RemoteFolder.isRemote($0.directory) }
+        let machine = RemoteFolder.machine(of: session.location.directory)
+        let projects = workspace.projects.filter { RemoteFolder.machine(of: $0.directory) == machine }
         Menu("Move to Project") {
             ForEach(projects) { project in
                 Button(project.name) { move(to: project.directory) }
             }
             if projects.isEmpty {
-                Text("No projects on this Mac")
+                Text(machine.map { "No projects on \($0)" } ?? "No projects on this Mac")
             }
         }
     }
@@ -1139,6 +1153,78 @@ private struct MoveToProjectMenu: View {
         Task {
             do {
                 try await workspace.move(session.id, toProject: directory)
+            } catch {
+                Modal.show(error)
+            }
+        }
+    }
+}
+
+/// "Move to Computer ›": a bot's or chat's way to this Mac or another of your machines, where it
+/// carries on (`Moves`). Asked first, as the original goes to the trash where it was.
+private struct MoveToComputerMenu: View {
+    enum Thing {
+        case bot(Bot)
+        case chat(Session)
+    }
+
+    let thing: Thing
+    @Environment(AppModel.self) private var app
+
+    private var id: String {
+        switch thing {
+        case .bot(let bot): bot.id
+        case .chat(let session): session.id
+        }
+    }
+
+    private var here: String? {
+        switch thing {
+        case .bot(let bot): bot.machine
+        case .chat(let session): RemoteFolder.machine(of: session.location.directory)
+        }
+    }
+
+    var body: some View {
+        Menu("Move to Computer") {
+            ForEach(app.moves.destinations(from: here), id: \.self) { place in
+                if let place, app.machines.engine(place)?.isReady != true {
+                    Text("\(place), not connected")
+                } else {
+                    Button(place ?? "This Mac") { move(to: place) }
+                }
+            }
+        }
+        .disabled(app.moves.isMoving(id))
+    }
+
+    private func move(to place: String?) {
+        let name: String
+        let what: String
+        switch thing {
+        case .bot(let bot):
+            name = bot.name
+            what = "Its memory, files, wake-ups and conversation go there, and it carries on there."
+        case .chat(let session):
+            name = (session.title ?? "").isEmpty ? "this chat" : "“\(session.title ?? "")”"
+            what = "Its conversation and wake-ups go there, and it carries on there."
+        }
+        let trash = here.map { "Kuvo Code’s trash folder on \($0)" } ?? "the Trash"
+        Task {
+            let confirmed = await Modal.run {
+                let alert = NSAlert()
+                alert.messageText = "Move \(name) to \(place ?? "this Mac")?"
+                alert.informativeText = "\(what) The original goes to \(trash), with its conversation saved beside it."
+                alert.addButton(withTitle: "Move")
+                alert.addButton(withTitle: "Cancel")
+                return alert.runModal() == .alertFirstButtonReturn
+            }
+            guard confirmed else { return }
+            do {
+                switch thing {
+                case .bot(let bot): try await app.moves.move(bot: bot.id, to: place)
+                case .chat(let session): try await app.moves.move(chat: session.id, to: place)
+                }
             } catch {
                 Modal.show(error)
             }

@@ -894,6 +894,33 @@ final class Bots {
         }
     }
 
+    // MARK: Moving
+
+    /// A bot that moved to another computer (`Moves`): it lives on `machine` (nil: this Mac) from
+    /// now on, in `folder`, with its conversation carried there (`session`, the same ID, on `api`).
+    /// Its session there gets its rules for its folder there, and instructions that say where it
+    /// runs; its folder, what kuvo-wake reads there; its description.
+    func moved(_ id: String, to machine: String?, folder: String, session: Session, api: OpenCodeAPI) async {
+        guard let index = list.firstIndex(where: { $0.id == id }) else { return }
+        let old = list[index]
+        var bot = old
+        bot.machine = machine
+        bot.folder = folder
+        list[index] = bot
+        save()
+        app?.workspace.add(session)
+        noteSessions()
+        let rules = (session.permissions ?? []).filter { !Self.isOwnRule($0, of: old) && !Self.isOwnRule($0, of: bot) }
+        try? await api.setPermissions(session: bot.sessionID, rules: ToolApproval.refreshed(rules, settings: app?.engineConfig.permissionRules ?? []) + Self.ownRules(for: bot))
+        try? await sendInstructions(of: bot, api: api)
+        try? await writeSession(of: bot)
+        if let machine, wakeInstalled.insert(machine).inserted, let engine = app?.machines.engine(machine) {
+            try? await Wakes.install(on: engine.machine.connection)
+        }
+        described[id] = nil
+        await describe([id])
+    }
+
     // MARK: Descriptions
 
     /// What this run last wrote to each bot's `bot.json`, so one that hasn't changed isn't

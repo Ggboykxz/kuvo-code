@@ -273,8 +273,9 @@ final class Workspace {
         return url.path
     }()
 
+    /// This Mac's chats, and those moved to a machine, in Kuvo Code's folder there (`Moves`).
     static func isChat(_ directory: String) -> Bool {
-        directory == chatsFolder
+        directory == chatsFolder || (RemoteFolder.parse(directory)?.path.hasSuffix("/\(RemoteEngineInstaller.root)/chats") ?? false)
     }
 
     /// A bot's own folder, on this Mac or a machine: what's there is the bot's, even before the
