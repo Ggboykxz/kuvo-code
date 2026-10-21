@@ -224,10 +224,15 @@ itself. A host serves:
     `…/session/<id>/fork {before}` makes a new session from a message.
 - On a Mac, `kuvo/hosts`: the machines this phone may reach directly, with their addresses
   and static keys, so pairing once with the Mac reaches them all.
-- On a Mac, `kuvo/bots`: your bots by their session, wherever they live, with their name,
-  look and job, and what only the Mac knows: paused, the next wake-up, how many things each
-  watches, and `agents`: its conversation is with the coding agents, so it's read and written
-  through `kuvo/agents/api/…` (a group chat's members carry the same flag).
+- `kuvo/bots`: bots by their session, with their name, look and job, whether their wake-ups
+  are paused, the next one (`wakes`, left out when none waits), how many things each watches,
+  `machine` (the machine it lives on, left out for the Mac), and `agents`: its conversation is
+  with the coding agents, so it's read and written through `kuvo/agents/api/…` (a group chat's
+  members carry the same flag). A Mac lists all of yours, wherever they live. A machine's bridge
+  (from 0.6.0) lists the bots that live on that machine, as their folders are now, with the Mac
+  closed too: their name, look and job as the Mac last wrote them there (`bot.json`, which the
+  Mac writes when they change and each time it connects; one it hasn't written yet isn't
+  listed). For a machine's bot, its machine's list is the newer while it answers.
 - On a Mac, `kuvo/named`: who you can name with `&` in a message, as the Mac's composer
   offers them: `{"agents": [{session, name, kind, machine, project, about}]}`, every bot
   (`kind: "bot"`, `about` its job) then the latest sessions with a title (`kind: "session"`,
@@ -239,15 +244,17 @@ itself. A host serves:
   `- &<name> (<session>): <what it is>` lines) to a line `</named-agents>`, before the
   `<review-comments>` and `<attached-files>` blocks. Show each `&<name>` it lists in bold
   (a bot's in its color), opening that session.
-- On a Mac, `kuvo/wakes/<session>`: a session's (or chat's) wake-ups and watches, which its
+- `kuvo/wakes/<session>`: a session's (or chat's) wake-ups and watches, which its
   agent sets with `kuvo-wake`, as the bar over the Mac's composer shows them: `{"wakes": [{id,
   due, note, every}], "watches": [{letters, every, check, note}], "paused"}` (`due` in seconds
   since 1970, `every` like `1d` or null; paused while it's archived). `POST
   kuvo/wakes/<session>/cancel` with `{"wake": "<id>"}` or `{"watch": "<letters>"}` cancels one;
   `POST kuvo/wakes/<session>/now` with `{"wake": "<id>"}` sends it now (one that repeats still
-  comes back at its time).
-  A bot's are in `kuvo/bots`. A wake-up reaches the conversation as a message starting with
-  `[Wake-up] `.
+  comes back at its time). Both answer `200 {}`, `404 {}` when there's no such one, or `503
+  {"message"}` when it couldn't go. A Mac answers for its sessions and its machines'; a
+  machine's bridge (from 0.6.0) for its own sessions and bots, with the Mac closed too (a
+  session that keeps none answers an empty list). A wake-up reaches the conversation as a
+  message starting with `[Wake-up] `.
 - On a Mac, `kuvo/asks`: what agents ask you for while they browse, on the Mac or a machine: a
   sign-in (the fields the page has, and the accounts Passwords keeps for the site, never
   their passwords), a one-time code, or a step only you can do. `kuvo/asks/events` is the same

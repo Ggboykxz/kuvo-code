@@ -22,7 +22,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 // Goes up with every change, so `setup` replaces a running bridge that's older.
-export const BRIDGE_VERSION = "0.5.2";
+export const BRIDGE_VERSION = "0.6.0";
 const K = process.env.KUVO_HOME || path.join(os.homedir(), ".kuvo-code");
 const RUN = path.join(K, "run");
 export const LINK_FILE = path.join(RUN, "link.json");
@@ -556,6 +556,23 @@ export function engineHandler(readEngine = readEngineFile, info = {}) {
       yield { body: Buffer.from(JSON.stringify({ kind: "machine", bridge: BRIDGE_VERSION, engine: engine.version ?? null, ...info })) };
       return;
     }
+    // This machine's bots and wake-ups, from their folders.
+    if (request.path.split("?")[0] === "kuvo/bots") {
+      if (!["GET", "HEAD"].includes(request.method.toUpperCase())) return yield* text(405, "Read them with GET.");
+      yield { head: { status: 200, headers: { "content-type": "application/json" } } };
+      yield { body: Buffer.from(JSON.stringify({ bots: listBots(info.name) })) };
+      return;
+    }
+    const wakes = request.path.split("?")[0].match(/^kuvo\/wakes\/([^/]+)(?:\/(cancel|now))?$/);
+    if (wakes) {
+      let session;
+      try {
+        session = decodeURIComponent(wakes[1]);
+      } catch {
+        return yield* text(404, "No such session.");
+      }
+      return yield* answerWakes(session, wakes[2], request, readEngine, signal);
+    }
     const stop = request.path.match(/^kuvo\/shell\/([^/?]+)\/stop$/);
     if (!stop && !allowed(request.path, request.method)) return yield* text(403, "That isn't available over the link.");
     let engine;
@@ -674,6 +691,236 @@ function touchAttached() {
     const now = new Date();
     fs.utimesSync(path.join(RUN, "attached"), now, now);
   } catch {}
+}
+
+// ---- This machine's bots and wake-ups, from their folders ----
+
+// What the Mac answers for them (PROTOCOL.md, `kuvo/bots` and `kuvo/wakes`), answered here from
+// the folders the app keeps on the machine, so a phone has them with the Mac closed: a bot's
+// description (`bot.json`, which the app writes from its list), its session, and the wake-ups,
+// watches and pause that `kuvo-wake` keeps beside them.
+const BOTS = path.join(K, "bots");
+const SESSION_WAKES = path.join(K, "wakes");
+const BRIDGE_FILE = path.join(RUN, "bridge.json");
+// The version of `bot.json` this reads (the app's `Bot.Descriptor`).
+const DESCRIPTION = 1;
+const WAKE_MARKER = "[Wake-up] ";
+
+const textOf = file => {
+  try {
+    return fs.readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+};
+const listOf = folder => {
+  try {
+    return fs.readdirSync(folder);
+  } catch {
+    return [];
+  }
+};
+// On one line, cut to `limit` characters, as the Mac lists a machine's.
+const oneLine = (text, limit) => Array.from(String(text).replace(/[\t\r\n]/g, " ")).slice(0, limit).join("");
+
+// How often a wake-up comes back, as its name says (the app's Wakes.Repeat): 30m, 2h, 1d, 1w or
+// weekdays, within a year; null for anything else.
+export function repeatText(text) {
+  if (text === "weekdays") return text;
+  const match = /^([1-9][0-9]{0,5})([mhdw])$/.exec(text ?? "");
+  if (!match) return null;
+  const count = Number(match[1]);
+  const fits = { m: count >= 5 && count <= 525_600, h: count <= 8_760, d: count <= 366, w: count <= 52 }[match[2]];
+  return fits ? text : null;
+}
+
+// A wake-up from its file's name (the app's Wakes.Pending): when it's due, in seconds since 1970,
+// the letters that name it for good, and how often it comes back; null for another file.
+export function wakeOf(name, note = "") {
+  const [due, letters = "", ...more] = name.split("-");
+  if (!/^[0-9]+(\.[0-9]+)?$/.test(due ?? "")) return null;
+  const repeating = more.join("-");
+  return { id: name, due: Number(due), note, every: repeating ? repeatText(repeating.split("@")[0]) : null, letters };
+}
+
+// The folder keeping a session's wake-ups: its bot's, or its own in `wakes`; null for none.
+export function wakeFolder(session) {
+  if (!/^[A-Za-z0-9_-]{1,100}$/.test(session)) return null;
+  for (const id of listOf(BOTS)) {
+    if ((textOf(path.join(BOTS, id, "session")) ?? "").trim() === session) return path.join(BOTS, id);
+  }
+  const own = path.join(SESSION_WAKES, session);
+  return textOf(path.join(own, "session")) === null ? null : own;
+}
+
+// A folder's waiting wake-ups (soonest first), its watches, and whether you paused them.
+export function readWakes(folder) {
+  const wakes = listOf(path.join(folder, "wakes"))
+    .map(name => wakeOf(name, oneLine(textOf(path.join(folder, "wakes", name)) ?? "", 400)))
+    .filter(Boolean)
+    .sort((a, b) => a.due - b.due);
+  const watches = listOf(path.join(folder, "watches")).sort().map(letters => {
+    const at = path.join(folder, "watches", letters);
+    const check = textOf(path.join(at, "check")) ?? "";
+    if (!check) return null;
+    return { letters, every: (textOf(path.join(at, "every")) ?? "").trim(), check: oneLine(check, 300), note: oneLine(textOf(path.join(at, "note")) ?? "", 400) };
+  }).filter(Boolean);
+  return { wakes, watches, paused: fs.existsSync(path.join(folder, "paused")) };
+}
+
+// This machine's bots, as the Mac lists them in `kuvo/bots`: each by its session, with its name,
+// look and job as the app last described it, and what its folder says now (paused, its next
+// wake-up, how many things it watches, whether it runs with the coding agents). One without a
+// description (made before them, until the Mac connects) or a session isn't listed.
+export function listBots(machine) {
+  const bots = [];
+  for (const id of listOf(BOTS)) {
+    if (!id.startsWith("bot_")) continue;
+    const folder = path.join(BOTS, id);
+    let described;
+    try {
+      described = JSON.parse(textOf(path.join(folder, "bot.json")) ?? "");
+    } catch {
+      continue;
+    }
+    const session = (textOf(path.join(folder, "session")) ?? "").trim();
+    if (described?.kuvo !== DESCRIPTION || described.id !== id || typeof described.name !== "string" || !session) continue;
+    const { wakes, watches, paused } = readWakes(folder);
+    bots.push({
+      created: String(described.created ?? ""),
+      bot: {
+        session,
+        name: described.name,
+        look: described.look,
+        machine: machine || undefined,
+        job: typeof described.job === "string" ? described.job : "",
+        paused,
+        wakes: wakes.length ? Math.min(...wakes.map(wake => wake.due)) : undefined,
+        watching: watches.length,
+        agents: (textOf(path.join(folder, "via")) ?? "").trim() === "bridge",
+      },
+    });
+  }
+  // In the order they were made, as the Mac's list is.
+  return bots.sort((a, b) => a.created.localeCompare(b.created)).map(entry => entry.bot);
+}
+
+const LETTERS = /^[A-Za-z0-9]+$/;
+
+// Takes a wake-up off the schedule by its letters, which a repeating one keeps as its time moves on.
+function cancelWake(folder, letters) {
+  if (!LETTERS.test(letters)) return;
+  for (const name of listOf(path.join(folder, "wakes"))) {
+    if (wakeOf(name)?.letters === letters) fs.rmSync(path.join(folder, "wakes", name), { force: true });
+  }
+}
+
+// A message ID that sorts after earlier ones, as the engine's own do.
+let lastMessage = { time: 0, counter: 0 };
+export function messageID(now = Date.now()) {
+  lastMessage = lastMessage.time === now ? { time: now, counter: lastMessage.counter + 1 } : { time: now, counter: 1 };
+  const time = ((BigInt(now) * 0x1000n + BigInt(lastMessage.counter)) & 0xFFFFFFFFFFFFn).toString(16).padStart(12, "0");
+  const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+  return `msg_${time}${Array.from(crypto.randomBytes(14), byte => alphabet[byte % alphabet.length]).join("")}`;
+}
+
+// Until the MCP servers of the folder a conversation works in are connected, twenty seconds at
+// most, as the app and the engine's watchdog wait before a wake-up: one sent sooner reaches a
+// model without their tools.
+async function waitForTools(port, authorization, directory, signal) {
+  const started = Date.now();
+  let waited = false;
+  while (Date.now() - started < 20_000) {
+    let listed;
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/api/mcp`, { headers: { authorization, "x-opencode-directory": encodeURIComponent(directory) }, signal });
+      if (!response.ok) return;
+      listed = await response.text();
+    } catch {
+      return;
+    }
+    // A folder it has only just opened lists none for a moment before they're pending.
+    const none = !listed.includes('"status"');
+    if (!listed.includes('"pending"') && !(none && Date.now() - started < 3_000)) {
+      if (waited && !none) await sleep(1_500);
+      return;
+    }
+    waited = true;
+    await sleep(none ? 100 : 250);
+  }
+}
+
+// Wake-ups being sent with Wake Up Now, so a second tap doesn't send one twice.
+const wakingNow = new Set();
+
+// `kuvo/wakes/<session>`: its wake-ups, watches and pause; `…/cancel` with {"wake"} or {"watch"};
+// `…/now` with {"wake"}, sent at once (one that repeats still comes back at its time).
+async function* answerWakes(session, action, request, readEngine, signal) {
+  const json = (status, value) => [{ head: { status, headers: { "content-type": "application/json" } } }, { body: Buffer.from(JSON.stringify(value)) }];
+  const method = request.method.toUpperCase();
+  const folder = wakeFolder(session);
+  if (!action) {
+    if (method !== "GET" && method !== "HEAD") return yield* json(405, {});
+    if (!folder) return yield* json(200, { wakes: [], watches: [], paused: false });
+    const { wakes, watches, paused } = readWakes(folder);
+    return yield* json(200, { wakes: wakes.map(({ id, due, note, every }) => ({ id, due, note, every: every ?? undefined })), watches, paused });
+  }
+  if (method !== "POST") return yield* json(405, {});
+  if (!folder) return yield* json(404, {});
+  let given = {};
+  try {
+    given = JSON.parse(Buffer.from(request.body ?? []).toString("utf8") || "{}") ?? {};
+  } catch {}
+  const { wakes, watches } = readWakes(folder);
+  const wake = typeof given.wake === "string" ? wakes.find(each => each.id === given.wake || each.letters === given.wake) : undefined;
+  if (action === "cancel") {
+    if (wake && LETTERS.test(wake.letters)) {
+      cancelWake(folder, wake.letters);
+      return yield* json(200, {});
+    }
+    const watch = typeof given.watch === "string" ? watches.find(each => each.letters === given.watch) : undefined;
+    if (watch && LETTERS.test(watch.letters)) {
+      fs.rmSync(path.join(folder, "watches", watch.letters), { recursive: true, force: true });
+      return yield* json(200, {});
+    }
+    return yield* json(404, {});
+  }
+  if (!wake) return yield* json(404, {});
+  const key = `${folder}/${wake.id}`;
+  if (wakingNow.has(key)) return yield* json(200, {});
+  wakingNow.add(key);
+  try {
+    // The whole note, as its time would send it, not the line it's listed by.
+    const note = textOf(path.join(folder, "wakes", wake.id));
+    if (note === null) return yield* json(404, {});
+    const agents = (textOf(path.join(folder, "via")) ?? "").trim() === "bridge";
+    let target;
+    try {
+      target = agents ? JSON.parse(fs.readFileSync(BRIDGE_FILE, "utf8")) : readEngine();
+    } catch {
+      return yield* json(503, { message: agents ? "The coding agents aren't running on this machine." : "The engine isn't running." });
+    }
+    touchAttached();
+    const authorization = `Basic ${Buffer.from(`opencode:${target.password}`).toString("base64")}`;
+    const directory = textOf(path.join(folder, "directory"));
+    if (!agents && directory) await waitForTools(target.port, authorization, directory, signal);
+    let response;
+    try {
+      response = await fetch(`http://127.0.0.1:${target.port}/api/session/${encodeURIComponent(session)}/prompt`, {
+        method: "POST",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({ id: messageID(), text: WAKE_MARKER + note, delivery: "queue" }),
+        signal,
+      });
+    } catch {
+      return yield* json(503, { message: "The wake-up couldn't be sent." });
+    }
+    if (!response.ok) return yield* json(503, { message: `The wake-up couldn't be sent (${response.status}).` });
+    if (!wake.every) cancelWake(folder, wake.letters);
+    return yield* json(200, {});
+  } finally {
+    wakingNow.delete(key);
+  }
 }
 
 // ---- Notifications ----
