@@ -41,11 +41,12 @@ end-to-end runs' alone, as are those that need a real machine over SSH (F9, L46,
 | E4, L21 A file downloaded in the browser, to work with | BrowserDownloadsTests | a machine's browser's downloads (its keeper, on the machine) |
 | E6, L37 Browse yourself in the panel: the address field, a page's dialogs | PageDialogsTests, BrowserHistoryTests, AgentTabsTests | tabs, Back and the new tab page (UI) |
 | E5, L33, L34, K6 Sign-ins, codes, passwords | BrowserAsksTests, MachineSignOutTests, PasskeysTests | a machine's Chrome refusing passkeys (checked by hand in Chromium; no Chrome in the tests) |
-| F1, L44 Make a bot from scratch; its job, as it grows, under its name | BotCreationTests | |
+| F1, L44 Make a bot from scratch or a template; its job, as it grows, under its name | BotCreationTests, BotTemplatesTests | the template's tiles in New Bot (UI) |
 | F2, F6 A bot's job, told or edited | BotsTests | |
 | F3–F5, L15–L19, L26, L43 Wake-ups and watches | WakeUpsTests, StepSummariesTests; OpenCodeKit's WakesTests (a watch wakes only on a change, keeping its last value) | |
 | F7 Export and import a bot | AgentMessagesTests | |
 | F8 Delete a bot | BotDeletionTests, GroupChatTests | |
+| A bot's own keys for integrations stay its own | BotKeysTests | a bot on a machine (its keys' files there, over SSH) |
 | F10, L39, L40 Agents writing to each other | AgentMessagesTests, AgentReferencesTests | |
 | G1–G4 Group chats, meetings on a schedule | BotsTests, AgentMessagesTests, GroupChatTests | |
 | H1, H2, H5 MCP servers and integrations, before and after their keys | MCPCommandTests, ChromeDevToolsUpgradeTests, IntegrationsTests | an integration's card in Settings (UI) |
@@ -66,4 +67,5 @@ end-to-end runs' alone, as are those that need a real machine over SSH (F9, L46,
 | L50 Quit mid-job, open again | InterruptedRunTests | |
 | The panel's terminal | TerminalColorsTests | |
 | Export a conversation | ConversationExportTests | |
+| Move to Applications (to update itself) | AppLocationTests | the offer, a modal alert, and a disk image's read-only copy |
 | Anonymous usage stays anonymous | AnalyticsPrivacyTests | |
