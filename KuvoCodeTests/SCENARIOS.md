@@ -42,6 +42,7 @@ end-to-end runs' alone, as are those that need a real machine over SSH (F9, L46,
 | E3, E7, L22 It uploads a file to a site | BrowserUploadTests | a machine's browser's upload (its Chrome, on the machine) |
 | L25 The page saved as a PDF to share | PagePDFTests | |
 | E4, L21 A file downloaded in the browser, to work with | BrowserDownloadsTests | a machine's browser's downloads (its keeper, on the machine) |
+| L32, L35, L48 Pages that don't sit still: a new window or a sign-in popup, a long table or one that loads as you scroll, a site that's down | BrowserPagesTests | a cookie banner (what a model makes of it) |
 | E6, L37 Browse yourself in the panel: the address field, a page's dialogs | PageDialogsTests, BrowserHistoryTests, AgentTabsTests | tabs, Back and the new tab page (UI) |
 | E5, L33, L34, K6 Sign-ins, codes, passwords | BrowserAsksTests, MachineSignOutTests, PasskeysTests | a machine's Chrome refusing passkeys (checked by hand in Chromium; no Chrome in the tests) |
 | F1, L44 Make a bot from scratch or a template; its job, as it grows, under its name | BotCreationTests, BotTemplatesTests | the template's tiles in New Bot (UI) |
