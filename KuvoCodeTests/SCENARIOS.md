@@ -21,6 +21,7 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | B12 Queue while it works, Stop, Resume | ComposerReturnsTests, QueueTests | |
 | B14 Switch model mid-conversation, or elsewhere | SessionsTests | |
 | B16 Find in a long conversation | ConversationFindTests | |
+| B19 A subagent at work, in the background too | SubagentsAtWorkTests | |
 | B17 A folder that isn't a git repository | SessionEditsTests | |
 | B18 Rename, archive, restore, delete, search | SidebarListsTests, SessionsTests, SessionTitlesTests, SessionSearchTests, SessionLifecycleTests | |
 | B20 Commands and skills | SlashCommandsTests, SkillLibraryTests | |
@@ -29,7 +30,7 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | C5, C6 Files in the panel; the agent shows one | FileLinksTests, PanelTabsTests, ProjectFilesTests | |
 | D4 A chat moved into a project | SessionLifecycleTests | |
 | E, B15 The agent's browser | BrowserToolServerTests | |
-| E5, L33, L34, K6 Sign-ins, codes, passwords | BrowserAsksTests, MachineSignOutTests | |
+| E5, L33, L34, K6 Sign-ins, codes, passwords | BrowserAsksTests, MachineSignOutTests, PasskeysTests | a machine's Chrome refusing passkeys (checked by hand in Chromium; no Chrome in the tests) |
 | F2, F6 A bot's job, told or edited | BotsTests | |
 | F3, F4, L15–L19, L26 Wake-ups | WakeUpsTests, StepSummariesTests | |
 | F7 Export and import a bot | AgentMessagesTests | |
@@ -37,8 +38,9 @@ Each suite's comment says what it tries; this is where each scenario stands.
 | G1–G3 Group chats | BotsTests, AgentMessagesTests | |
 | H1, H2 MCP servers | MCPCommandTests, ChromeDevToolsUpgradeTests, IntegrationsTests | |
 | H4 A skill from GitHub | SkillLibraryTests | |
-| I1 Add a machine | AddMachineTests | |
+| I1 Add a machine, at one or more addresses | AddMachineTests, MachineAddressesTests | choosing the address that answers (needs SSH) |
 | I2 A project on a machine | MachineFoldersTests, AttachmentRoutesTests, SignInSyncTests, MachineSignOutTests | |
+| I3 A machine that's away | MachineAwayTests | |
 | K1 Settings keep what you change | EngineSettingsFileTests | |
 | K3 Notifications | NotificationMaskingTests | |
 | L50 Quit mid-job, open again | | the interrupted run says where it stopped |
