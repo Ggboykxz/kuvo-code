@@ -39,6 +39,7 @@ end-to-end runs' alone, as are those that need a real machine over SSH (F9, L46,
 | D4 A chat moved into a project | SessionLifecycleTests | |
 | E, B15 The agent's browser | BrowserToolServerTests | |
 | E2, L31 It fills in a form | BrowserFormTests | |
+| E3, E7, L22 It uploads a file to a site | BrowserUploadTests | a machine's browser's upload (its Chrome, on the machine) |
 | L25 The page saved as a PDF to share | PagePDFTests | |
 | E4, L21 A file downloaded in the browser, to work with | BrowserDownloadsTests | a machine's browser's downloads (its keeper, on the machine) |
 | E6, L37 Browse yourself in the panel: the address field, a page's dialogs | PageDialogsTests, BrowserHistoryTests, AgentTabsTests | tabs, Back and the new tab page (UI) |

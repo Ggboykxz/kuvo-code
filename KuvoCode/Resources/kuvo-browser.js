@@ -18,7 +18,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const CONFIG = /*KUVO_CONFIG*/ { scripts: {}, tools: [], instructions: "", version: "dev" };
 
@@ -2267,6 +2267,11 @@ async function tool(name, args) {
       }
     });
     if (unreadable) return text(`Can't read ${unreadable} on this machine. Give its full path.`);
+    // Attached, a file goes to the site: one outside the conversation's folder only as a command
+    // could read it, after asking (as on the Mac).
+    const access = await fileAccess(caller);
+    const outside = paths.find((f) => outsideFile(pathToFileURL(f).href, access));
+    if (outside) return text(`Not attached: ${outside} is outside this conversation's folder, and this session asks before reading files elsewhere. Ask the user first; if they agree, copy it into the folder (a command, which asks them) and attach it from there.`, true);
     const p = await page();
     // The file input the element stands for, as an object to hand the files to.
     const found = await link.send("Runtime.evaluate", {

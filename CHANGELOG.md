@@ -20,6 +20,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 - Setting up the coding agents no longer leaves a few hundred megabytes of downloads behind on your Mac (on first launch, a build of Claude's that isn't used); what an earlier version kept goes the next time Kuvo Code starts.
 - Settings › Commands lists Claude Code's commands kept in folders of ~/.claude/commands too (/frontend:component there comes over as frontend-component); only those at its top showed.
 - Text you select in a conversation stays selected when you let go, whichever way you drag, and Add to Chat and Copy show over it again, for a double-clicked word too.
+- In a session that asks before reading files outside its folder, the agent's browser no longer attaches such a file to a website's upload without asking first, on this Mac and on machines; it said so for opening one, but uploads went through.
 
 ## 0.6.4
 
