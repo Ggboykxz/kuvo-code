@@ -282,6 +282,18 @@
       "allowed": false
     },
     {
+      "path": "api/session/ses_1/prompt ",
+      "allowed": false
+    },
+    {
+      "path": " api/session",
+      "allowed": false
+    },
+    {
+      "path": "api/fs/read/a%20b.txt",
+      "allowed": true
+    },
+    {
       "path": "api/fs/read/..%5c..%5csecret",
       "allowed": false
     },
@@ -562,6 +574,21 @@
       "path": "api/shell",
       "allowed": false,
       "method": "POST"
+    },
+    {
+      "path": "api/integration/claude-code/update ",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": " api/kuvo/engine",
+      "allowed": false,
+      "method": "PUT"
+    },
+    {
+      "path": "api/kuvo/engine  ",
+      "allowed": false,
+      "method": "PUT"
     }
   ]
 }

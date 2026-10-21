@@ -524,10 +524,10 @@ const RESPONSE_HEADERS = ["content-type", "cache-control"];
 // No way out of the project, written plainly or percent-encoded ("%2E%2E"): the engine decodes
 // it, and lists a folder above the project if asked. Nor tabs, line breaks or other control
 // characters, which the URL parser drops (".\t." is ".." to it), nor a fragment ("#…"), which
-// isn't sent.
+// isn't sent, nor a space at either end, which it drops too (".../update " is ".../update").
 const leavesProject = path => {
   try {
-    if (/[\u0000-\u001f\u007f#]/.test(path)) return true;
+    if (/[\u0000-\u001f\u007f#]/.test(path) || path.startsWith(" ") || path.endsWith(" ")) return true;
     const decoded = decodeURIComponent(path);
     return path.includes("..") || decoded.includes("..") || decoded.includes("\\");
   } catch {
@@ -579,13 +579,25 @@ const readBridgeFile = () => JSON.parse(fs.readFileSync(BRIDGE_FILE, "utf8"));
 const AGENTS = "kuvo/agents/";
 
 // Passes `path` to the engine or the agents' bridge on this machine, with its password, and
-// streams back what it answers.
-async function* forward(target, path, request, signal) {
+// streams back what it answers. What's sent is checked with `allows` as the URL parser leaves it
+// too, so nothing it tidies up reaches what the path as written wouldn't.
+async function* forward(target, path, request, signal, allows) {
+  const method = request.method.toUpperCase();
+  let url;
+  try {
+    url = new URL(`http://127.0.0.1:${target.port}/${path}`);
+  } catch {
+    url = null;
+  }
+  if (!url || !allows(url.pathname.slice(1) + url.search, method)) {
+    yield { head: { status: 403, headers: { "content-type": "text/plain" } } };
+    yield { body: Buffer.from("That isn't available over the link.") };
+    return;
+  }
   const headers = { authorization: `Basic ${Buffer.from(`opencode:${target.password}`).toString("base64")}` };
   const given = Object.fromEntries(Object.entries(request.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v]));
   for (const name of REQUEST_HEADERS) if (given[name]) headers[name] = given[name];
-  const method = request.method.toUpperCase();
-  const response = await fetch(`http://127.0.0.1:${target.port}/${path}`, {
+  const response = await fetch(url, {
     method,
     headers,
     body: method === "GET" || method === "HEAD" ? undefined : request.body,
@@ -612,17 +624,19 @@ async function* forward(target, path, request, signal) {
 
 // The handler LinkHost runs for each request.
 export function engineHandler(readEngine = readEngineFile, info = {}, readBridge = readBridgeFile) {
-  // The agents' bridge, while it runs.
+  // The agents' bridge, while it runs: its record, while the process it names is still it.
   const bridge = () => {
     try {
       const found = readBridge();
-      return found?.port && found?.password && (!found.pid || alive(found.pid)) ? found : null;
+      return found?.port && found?.password && runs(found.pid, "kuvo-agents") ? found : null;
     } catch {
       return null;
     }
   };
   return async function* (request, phone, signal) {
     const text = (status, words) => [{ head: { status, headers: { "content-type": "text/plain" } } }, { body: Buffer.from(words) }];
+    // A phone using this machine, whatever it asks.
+    phoneHere();
     if (request.path === "kuvo/info") {
       let engine = {};
       try { engine = readEngine(); } catch {}
@@ -641,8 +655,7 @@ export function engineHandler(readEngine = readEngineFile, info = {}, readBridge
         yield { body: Buffer.from(JSON.stringify({ message: "The coding agents aren't running on this machine." })) };
         return;
       }
-      touchAttached();
-      return yield* forward(target, path, request, signal);
+      return yield* forward(target, path, request, signal, agentsAllowed);
     }
     // This machine's bots and wake-ups, from their folders.
     if (request.path.split("?")[0] === "kuvo/bots") {
@@ -669,7 +682,6 @@ export function engineHandler(readEngine = readEngineFile, info = {}, readBridge
     } catch {
       return yield* text(503, "The engine isn't running.");
     }
-    touchAttached();
     if (stop) {
       if (request.method.toUpperCase() !== "POST") return yield* text(405, "Stop it with POST.");
       const headers = { authorization: `Basic ${Buffer.from(`opencode:${engine.password}`).toString("base64")}` };
@@ -677,7 +689,7 @@ export function engineHandler(readEngine = readEngineFile, info = {}, readBridge
       for (const name of REQUEST_HEADERS) if (given[name]) headers[name] = given[name];
       return yield* stopShell(decodeURIComponent(stop[1]), engine, headers, signal);
     }
-    return yield* forward(engine, request.path, request, signal);
+    return yield* forward(engine, request.path, request, signal, allowed);
   };
 }
 
@@ -727,7 +739,7 @@ export function engineConnect(readEngine = readEngineFile) {
     } catch {
       return refuse("The engine isn't running.");
     }
-    touchAttached();
+    phoneHere();
     const headers = { authorization: `Basic ${Buffer.from(`opencode:${engine.password}`).toString("base64")}` };
     const directory = Object.entries(request.headers ?? {}).find(([name]) => name.toLowerCase() === "x-opencode-directory")?.[1];
     if (directory) headers["x-opencode-directory"] = directory;
@@ -756,6 +768,36 @@ function touchAttached() {
     const now = new Date();
     fs.utimesSync(path.join(RUN, "attached"), now, now);
   } catch {}
+}
+
+// When a phone last used this machine, in `run/link.seen`: while one has in the last week, the
+// engine stays up for it (the bridge's timer, and the Mac leaving it running as it quits), so the
+// machine's sessions and bots are there whenever it asks; a phone lost or unpaired elsewhere
+// stops keeping it after that.
+export const SEEN_FILE = path.join(RUN, "link.seen");
+export const KEEP_FOR = 7 * 24 * 60 * 60_000;
+let seen = 0;
+function phoneHere() {
+  touchAttached();
+  if (Date.now() - seen < 5 * 60_000) return;
+  seen = Date.now();
+  try {
+    const now = new Date();
+    if (fs.existsSync(SEEN_FILE)) {
+      fs.utimesSync(SEEN_FILE, now, now);
+    } else {
+      fs.mkdirSync(RUN, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(SEEN_FILE, "", { mode: 0o600 });
+    }
+  } catch {}
+}
+
+export function phoneSeenLately(file = SEEN_FILE, now = Date.now()) {
+  try {
+    return now - fs.statSync(file).mtimeMs < KEEP_FOR;
+  } catch {
+    return false;
+  }
 }
 
 // ---- This machine's bots and wake-ups, from their folders ----
@@ -963,7 +1005,6 @@ async function* answerWakes(session, action, request, readEngine, bridge, signal
       target = agents ? bridge() : readEngine();
     } catch {}
     if (!target) return yield* json(503, { message: agents ? "The coding agents aren't running on this machine." : "The engine isn't running." });
-    touchAttached();
     const authorization = `Basic ${Buffer.from(`opencode:${target.password}`).toString("base64")}`;
     const directory = textOf(path.join(folder, "directory"));
     if (!agents && directory) await waitForTools(target.port, authorization, directory, signal);
@@ -1309,15 +1350,19 @@ function alive(pid) {
   }
 }
 
-// A bridge, not whatever took its number after a crash: on Linux its command line says so.
-function isBridge(pid) {
-  if (!pid || pid === process.pid || !alive(pid)) return false;
+// Whether `pid` runs `name`, not whatever took its number after a crash: on Linux its command
+// line says so (elsewhere, where there's no /proc, that it's alive).
+function runs(pid, name) {
+  if (!Number.isInteger(pid) || pid <= 1 || !alive(pid)) return false;
   try {
-    return fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").includes("kuvo-link.js");
+    return fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").includes(name);
   } catch {
     return !fs.existsSync("/proc");
   }
 }
+
+// Another bridge.
+const isBridge = pid => pid !== process.pid && runs(pid, "kuvo-link.js");
 
 // Something to answer: a paired phone, or a pairing code waiting.
 const needed = link => Boolean(link && ((link.phones ?? []).length || (link.pairing && Date.now() < link.pairing.expires)));
@@ -1349,9 +1394,9 @@ async function run() {
     const link = readLink();
     if (!engine || !alive(engine.pid) || !needed(link) || owner !== process.pid) return cleanUp();
     current?.keepOnly(new Set((link.phones ?? []).map(phone => phone.key)));
-    // A paired phone counts as the app: the engine stays up for it, rather than stopping after a
-    // day without the Mac, so the machine's sessions and bots are there whenever it asks.
-    touchAttached();
+    // A phone that used it in the last week counts as the app: the engine stays up for it,
+    // rather than stopping after a day without the Mac.
+    if (phoneSeenLately()) touchAttached();
   }, 30_000);
 
   // Your phones' notifications, on whichever relay connection is up.

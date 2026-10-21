@@ -54,9 +54,11 @@ public enum EngineRoutes {
     /// No way out of the project, written plainly or percent-encoded ("%2E%2E"): the engine
     /// decodes it, and lists a folder above the project if asked. Nor a fragment ("#…"), which
     /// isn't sent: ".../update#x" would be checked as itself and reach ".../update". Nor tabs,
-    /// line breaks or other control characters, which URL parsers drop (".\t." is ".." to them).
+    /// line breaks or other control characters, which URL parsers drop (".\t." is ".." to them),
+    /// nor a space at either end, which they drop too (".../update " is ".../update" to them).
     static func staysInProject(_ path: String) -> Bool {
         guard !path.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7f }),
+              !path.hasPrefix(" "), !path.hasSuffix(" "),
               let decoded = path.removingPercentEncoding else { return false }
         return !decoded.contains("..") && !decoded.contains("\\") && !path.contains("..") && !path.contains("#")
     }

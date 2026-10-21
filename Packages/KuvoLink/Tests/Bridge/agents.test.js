@@ -58,7 +58,9 @@ test("the coding agents' sessions and accounts go to their bridge with its passw
   assert.equal((await ask(handle, "PUT", "kuvo/agents/api/kuvo/auto", { body: "{}" })).status, 200);
 
   const before = bridge.asked.length;
-  for (const [method, p] of [["PUT", "kuvo/agents/api/kuvo/engine"], ["POST", "kuvo/agents/api/integration/claude-code/%75pdate"], ["GET", "kuvo/agents/api/credential"]]) {
+  for (const [method, p] of [["PUT", "kuvo/agents/api/kuvo/engine"], ["POST", "kuvo/agents/api/integration/claude-code/%75pdate"], ["GET", "kuvo/agents/api/credential"],
+    // A space at the end, which fetch would drop on the way.
+    ["POST", "kuvo/agents/api/integration/claude-code/update "], ["PUT", "kuvo/agents/api/kuvo/engine "]]) {
     assert.equal((await ask(handle, method, p)).status, 403, p);
   }
   assert.equal(bridge.asked.length, before, "none of those reached it");
@@ -72,4 +74,14 @@ test("the coding agents' sessions and accounts go to their bridge with its passw
   // One left by a bridge that stopped (its process gone) counts as not running.
   record = { pid: 2 ** 22 + 12345, port: bridge.port, password: "agents" };
   assert.equal((await ask(handle, "GET", "kuvo/agents/api/session")).status, 503);
+});
+
+test("a phone using the machine is noted, and keeps its engine up for a week after", async () => {
+  assert.equal(link.phoneSeenLately(path.join(home, "run", "never-written")), false, "no phone yet");
+  const handle = link.engineHandler(() => ({ port: 1, password: "engine" }), {}, () => null);
+  await ask(handle, "GET", "kuvo/info");
+  assert.equal(link.phoneSeenLately(), true);
+  const stat = fs.statSync(link.SEEN_FILE);
+  assert.equal(stat.mode & 0o777, 0o600);
+  assert.equal(link.phoneSeenLately(link.SEEN_FILE, stat.mtimeMs + link.KEEP_FOR + 1), false, "a week on, not any more");
 });

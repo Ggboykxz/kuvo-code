@@ -256,7 +256,9 @@ public struct RemoteEngineInstaller: Sendable {
 /// engine's own store, in `~/.kuvo-code/data`, readable by that user only, and signed out when the
 /// machine is removed. What's needed to find it again (its process, port and password) is kept in
 /// `~/.kuvo-code/run/engine.json`, readable by that user only, who could read it from the engine's
-/// process anyway. If the app hasn't been connected for a day, the engine stops by itself.
+/// process anyway. If the app hasn't been connected for a day, the engine stops by itself, unless
+/// wake-ups wait there or a phone paired with the machine used it in the last week (its link
+/// keeps the engine up for it, KuvoLink's `kuvo-link.js`).
 public final class RemoteServer: @unchecked Sendable {
     /// The engine running on a machine.
     public struct Engine: Codable, Sendable, Equatable {
@@ -609,11 +611,14 @@ public final class RemoteServer: @unchecked Sendable {
     }
 
     /// Stops the engine on the machine without waiting more than `timeout`, for when the app quits.
-    /// With `unlessWaking`, an engine with bots' or sessions' wake-ups waiting keeps running, to
-    /// send them. `first` runs before, either way.
+    /// With `unlessWaking`, an engine something waits for keeps running: bots' or sessions'
+    /// wake-ups, to send them, or a phone paired with the machine that used it in the last week
+    /// (its link notes when, in `run/link.seen`), to reach it with this Mac closed. `first` runs
+    /// before, either way.
     public static func stopNow(on connection: SSHConnection, timeout: TimeInterval = 3, unlessWaking: Bool = false, first: String = "") {
         let root = "\"$HOME/\(RemoteEngineInstaller.root)\""
         let waiting = "{ ls \(root)/bots/*/wakes/* || ls -d \(root)/bots/*/watches/*/ || ls \(root)/wakes/*/wakes/* || ls -d \(root)/wakes/*/watches/*/; } >/dev/null 2>&1 && exit 0\n"
+            + "[ -n \"$(find \(root)/run/link.seen -mtime -7 2>/dev/null)\" ] && exit 0\n"
         runNow(first + (unlessWaking ? waiting : "") + stopScript, on: connection, timeout: timeout)
     }
 
