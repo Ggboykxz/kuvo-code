@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A machine whose engine another Mac of yours started is used with that Mac's accounts, as it says; this Mac's keys no longer go into it (where they'd stay after you removed the machine).
 - Removing a connected machine signs its coding agents out there too, as it said it would; their sign-ins stayed when the machine was connected.
 - Connecting to a machine after an update of Kuvo Code no longer stops a session still working there to update its engine; the update waits until nothing runs.
 - A new password typed in a sign-in card for a saved account is saved in its place; agents allowed to sign in on their own kept using the old one. Allowing them with a password filled in from Passwords asks for Touch ID, as it should.

@@ -23,7 +23,9 @@ extension AppModel {
     }
 
     private func copySignIns(with engine: MachineEngine) async {
-        guard let mac = api, let remote = engine.api else { return }
+        // Another Mac's engine there is used as it is, with that Mac's accounts: this Mac's don't
+        // go in (they'd stay when you remove the machine, which leaves that engine running).
+        guard let mac = api, let remote = engine.api, !engine.isAnotherMacsEngine else { return }
         await copySignIns(mac: mac, remote: remote, machine: engine.machine.id)
     }
 
