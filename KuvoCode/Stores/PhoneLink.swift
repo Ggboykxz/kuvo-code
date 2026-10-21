@@ -66,6 +66,8 @@ final class PhoneLink {
     /// Disconnect as Settings › Accounts does it (here and on your machines); set by AppModel.
     @ObservationIgnored var endedSignIns: () -> [String] = { [] }
     @ObservationIgnored var forgetSignIn: (String) -> Void = { _ in }
+    /// Whether a group chat is on its way to another computer; set by AppModel.
+    @ObservationIgnored var isMoving: (String) -> Bool = { Moves.isFrozen($0) }
 
     struct MachineHost: Codable, Hashable {
         var name: String
@@ -740,6 +742,10 @@ final class PhoneLink {
                 var unread: Bool
                 var last: GroupMessage?
                 var meeting: BotGroup.Meeting?
+                /// The machine it lives on (its bots' too), by id as bots name theirs; none for this Mac.
+                var machine: String?
+                /// On its way to another computer: what would change it waits until it's there.
+                var moving: Bool
             }
             var groups: [Group]
         }
@@ -749,7 +755,8 @@ final class PhoneLink {
             last?.steps = nil
             return Listed.Group(id: group.id, name: group.name, purpose: group.purpose, members: members(of: group),
                                 speaking: groups.speaking[group.id], discussing: groups.discussing.contains(group.id),
-                                paused: groups.paused.contains(group.id), unread: groups.isUnread(group), last: last, meeting: group.meeting)
+                                paused: groups.paused.contains(group.id), unread: groups.isUnread(group), last: last, meeting: group.meeting,
+                                machine: groups.machine(of: group.id), moving: isMoving(group.id))
         }
         return (try? Self.groupEncoder.encode(Listed(groups: listed))) ?? Data()
     }
@@ -762,10 +769,11 @@ final class PhoneLink {
             var speaking: String?
             var discussing: Bool
             var paused: Bool
+            var moving: Bool
         }
         guard let groups, groups.group(id) != nil else { return nil }
         let chat = Chat(messages: Array(groups.messages(in: id).suffix(300)), speaking: groups.speaking[id],
-                        discussing: groups.discussing.contains(id), paused: groups.paused.contains(id))
+                        discussing: groups.discussing.contains(id), paused: groups.paused.contains(id), moving: isMoving(id))
         return try? Self.groupEncoder.encode(chat)
     }
 

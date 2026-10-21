@@ -311,7 +311,10 @@ itself. A host serves:
   A bot's message with `report` (a task's id) is it reporting back on its part. Times are
   seconds since 1970.
   A Mac lists all of yours: its own, and those that live on your machines (whose bots all live
-  there), which it follows from there. A machine's bridge (from 0.7.0) answers the same routes,
+  there), which it follows from there; each with `machine`, the machine it lives on (by id, as a
+  bot's `machine`; none for the Mac), and `moving` while it's on its way to another computer
+  (one chat's events say it too): what you'd write waits until it's there, and `POST
+  kuvo/groups/<id>` answers 409 meanwhile. A machine's bridge (from 0.7.0) answers the same routes,
   in the same shapes, for the chats that live on it, with the Mac closed too: the coding agents'
   bridge there runs them (503 while it isn't up). One moving between computers isn't listed
   where it's going until it's there. Moving one is on the Mac (Move to Computer), not the phone.

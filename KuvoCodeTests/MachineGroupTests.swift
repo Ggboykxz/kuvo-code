@@ -1,4 +1,5 @@
 import Foundation
+import KuvoLink
 import OpenCodeKit
 import Testing
 @testable import KuvoCode
@@ -143,6 +144,16 @@ import Testing
         #expect(app.chats.messages(in: "grp_box0000001").map(\.text) == ["Morning."])
         #expect(app.chats.isUnread(app.chats.group("grp_box0000001")!), "a bot's message you haven't seen")
         #expect(app.workspace.seats.contains("ses_seatP"), "its seats stay out of the lists")
+        // A phone sees both, and where each lives.
+        let link = PhoneLink()
+        link.groups = app.chats
+        var listed = Data()
+        for try await part in PhoneLink.respond(to: LinkRequest(path: "kuvo/groups"), link: link, engine: URL(string: mac.url + "/")!, password: nil, agents: nil) {
+            if case .body(let data) = part { listed += data }
+        }
+        let phone = try #require((try JSONSerialization.jsonObject(with: listed) as? [String: Any])?["groups"] as? [[String: Any]])
+        #expect(Dictionary(uniqueKeysWithValues: phone.map { ($0["id"] as! String, $0["machine"] as? String ?? "this Mac") }) == [mine.id: "this Mac", "grp_box0000001": "box"])
+        #expect(phone.allSatisfy { $0["moving"] as? Bool == false })
         // What it says as it goes: a bot talking, a new message.
         let group = Self.group("grp_box0000001", members: ["bot_pal", "bot_lb"], seats: ["bot_pal": "ses_seatP"])
         app.machineGroups.handle(try bridge.event("kuvo.group.updated", ["id": "grp_box0000001", "group": group, "status": "active",
