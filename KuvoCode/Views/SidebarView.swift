@@ -162,6 +162,7 @@ struct SidebarView: View {
                         }
                         .contextMenu {
                             Button("Edit Bot…") { editBot(bot) }
+                                .disabled(app.moves.isMoving(bot.id))
                             MoveToComputerMenu(thing: .bot(bot))
                         }
                     }
@@ -1187,11 +1188,17 @@ private struct MoveToComputerMenu: View {
 
     var body: some View {
         Menu("Move to Computer") {
-            ForEach(app.moves.destinations(from: here), id: \.self) { place in
-                if let place, app.machines.engine(place)?.isReady != true {
-                    Text("\(place), not connected")
-                } else {
-                    Button(place ?? "This Mac") { move(to: place) }
+            if case .bot(let bot) = thing, bot.project != nil {
+                Text("It works in one of your projects, which stays where it is")
+            } else if case .bot(let bot) = thing, bot.agents == true {
+                Text("It talks with a coding agent, which can’t move yet")
+            } else {
+                ForEach(app.moves.destinations(from: here), id: \.self) { place in
+                    if let place, app.machines.engine(place)?.isReady != true {
+                        Text("\(place), not connected")
+                    } else {
+                        Button(place ?? "This Mac") { move(to: place) }
+                    }
                 }
             }
         }
@@ -1204,7 +1211,7 @@ private struct MoveToComputerMenu: View {
         switch thing {
         case .bot(let bot):
             name = bot.name
-            what = "Its memory, files, wake-ups and conversation go there, and it carries on there."
+            what = "Its memory, files, wake-ups and conversation go there, and it carries on there; its seats in group chats start afresh there."
         case .chat(let session):
             name = (session.title ?? "").isEmpty ? "this chat" : "“\(session.title ?? "")”"
             what = "Its conversation and wake-ups go there, and it carries on there."
@@ -1214,7 +1221,7 @@ private struct MoveToComputerMenu: View {
             let confirmed = await Modal.run {
                 let alert = NSAlert()
                 alert.messageText = "Move \(name) to \(place ?? "this Mac")?"
-                alert.informativeText = "\(what) The original goes to \(trash), with its conversation saved beside it."
+                alert.informativeText = "\(what) Nothing goes to it while it moves. Its folder here goes to \(trash), with a copy of its conversation in it."
                 alert.addButton(withTitle: "Move")
                 alert.addButton(withTitle: "Cancel")
                 return alert.runModal() == .alertFirstButtonReturn

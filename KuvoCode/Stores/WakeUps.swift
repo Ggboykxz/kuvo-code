@@ -485,6 +485,8 @@ final class WakeUps {
     /// with none has nothing to hold. `byArchiving`: held while the session is archived, which
     /// leaves a hold of yours as it is, and lets go of only its own.
     func setPaused(_ pause: Bool, _ owner: Owner, byArchiving: Bool = false) async throws {
+        // Held by a move under way (`Moves`), which lets them go once it's there.
+        if Moves.isFrozen(owner.key) || Moves.isFrozen(owner.session) { throw Moves.Failure.moving }
         let file = Self.pauseFile(of: owner)
         var isPaused = pause
         if let machine = owner.machine {
@@ -524,6 +526,7 @@ final class WakeUps {
     /// Sends a waiting wake-up now rather than at its time (to see the job run), on this Mac or
     /// its machine; one that doesn't repeat is then done.
     func wakeNow(_ wake: Wakes.Pending, of owner: Owner) async throws {
+        if Moves.isFrozen(owner.key) || Moves.isFrozen(owner.session) { throw Moves.Failure.moving }
         // Once: not again while it's on its way (waiting for the folder's tools can take a
         // while), nor, for one that doesn't repeat, once it's gone (sent, or cancelled).
         let key = owner.key + "/" + wake.id
@@ -662,6 +665,8 @@ final class WakeUps {
     }
 
     private func send(_ wake: Wakes.Pending, of owner: Owner, api: OpenCodeAPI) async {
+        // Moving to another computer: it comes there, at its time.
+        guard !Moves.isFrozen(owner.session), !Moves.isFrozen(owner.key) else { return }
         let key = owner.key + "/" + wake.id
         do {
             // One that repeats and still waits from last time (busy, or waiting on you) isn't
@@ -712,6 +717,8 @@ final class WakeUps {
                 for letters in Wakes.changedWatches(in: await run([owner.folder, "check"], stopAfter: 300)) {
                     guard let message = Wakes.watchMessage(letters, inBot: owner.folder) else { continue }
                     if !owner.agents { await api.waitForTools(in: owner.directory) }
+                    // Moving to another computer: what it saw goes there, with its watch.
+                    guard !Moves.isFrozen(owner.session), !Moves.isFrozen(owner.key) else { continue }
                     do {
                         try await api.prompt(session: owner.session, id: Identifier.message(), text: Wakes.marker + message, delivery: .queue)
                         Wakes.watchDelivered(letters, inBot: owner.folder)

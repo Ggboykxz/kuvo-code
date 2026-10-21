@@ -811,6 +811,8 @@ final class SessionModel {
                     holdOnArrival.remove(id)
                     return
                 }
+                // Moving to another computer: back in the composer, to send once it's there.
+                if Moves.isFrozen(self.id) { throw Moves.Failure.moving }
                 // Held while it was on its way: to the queue, not the next step.
                 let held = holdOnArrival.remove(id) != nil
                 let steering = !held && delivery == .steer

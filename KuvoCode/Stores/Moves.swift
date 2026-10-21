@@ -4,12 +4,18 @@ import os
 
 /// Moving a bot or a chat to another computer: this Mac, or one of your machines, say a new one
 /// you've set up. It goes whole (a bot with its memory, workspace, wake-ups and watches; a chat
-/// with its wake-ups), with its conversation, which carries on there under the same ID. Nothing of
-/// the original is touched until the copy is set up where it's going; then the original stops
-/// (its wake-ups too) and goes to the trash where it was (the Mac's Trash, or Kuvo Code's trash
-/// folder on its machine), with its conversation saved beside it as `conversation.json`, so
-/// nothing runs twice and it can still be brought back. A move that fails part way takes back
-/// what it made and leaves the original as it was.
+/// with its wake-ups), with its conversation and its subagents', which carry on there under the
+/// same IDs.
+///
+/// While it moves, nothing goes to it (`isFrozen`): what you send stays in the composer, agents'
+/// messages wait, its wake-ups are held. Its conversation is copied once it's settled, and read
+/// again right before it switches: what reached it meanwhile (a wake-up on its way) goes along.
+/// Nothing of the original is touched until the copy is set up where it's going. Then the app
+/// switches to the copy, and the original goes: its conversation from its engine, its folder to
+/// the trash where it was (the Mac's Trash, or Kuvo Code's trash folder on its machine), with
+/// its conversation saved in it as `conversation.json`. A move is noted as it goes (`Record`), so
+/// one cut short (the app quit, a machine away) is taken back, or finished once it had switched,
+/// the next time both computers are there (`recover`).
 @MainActor @Observable
 final class Moves {
     /// What's moving now, a bot's ID or a chat's session ID, and where to (nil: this Mac): its
@@ -20,21 +26,81 @@ final class Moves {
     @ObservationIgnored var transport: any MoveTransport = SSHMoveTransport()
     private let log = Logger(subsystem: "run.kuvo.code", category: "moves")
 
+    /// Conversations moving now (a bot's, a chat's, their subagents') and the bots moving: nothing
+    /// goes to them until they're where they're going.
+    private(set) static var frozen: Set<String> = []
+
+    static func isFrozen(_ id: String) -> Bool { frozen.contains(id) }
+
     enum Failure: LocalizedError {
         case notConnected(String)
         case working(String)
         case inProject(String)
         case withAgents(String)
         case waiting(String)
+        case busy(String)
+        /// Something sent to one that's moving.
+        case moving
         var errorDescription: String? {
             switch self {
             case .notConnected(let place): "\(place) isn’t connected. Connect to it, then try again."
             case .working(let name): "\(name) is working. Move it once it’s done."
             case .inProject(let name): "\(name) works in one of your projects, which stays where it is. Only a bot with a folder of its own can move."
             case .withAgents(let name): "\(name) talks with a coding agent, which keeps its conversation on this computer, so it can’t move yet."
-            case .waiting(let name): "Messages are waiting to go to \(name). Send or remove them first."
+            case .waiting(let name): "\(name) still has messages on their way. Try again in a moment."
+            case .busy(let name): "\(name) kept getting messages while it moved, so it stayed where it is. Try again in a moment."
+            case .moving: "It’s moving to another computer. Try again once it’s there."
             }
         }
+    }
+
+    /// A move as it goes, kept in the app's settings until it's done.
+    struct Record: Codable, Equatable {
+        enum Kind: String, Codable { case bot, chat }
+        /// Copying, with the original as it was: taken back if cut short. Switched: the app goes
+        /// by the copy; the original is to go.
+        enum Stage: String, Codable { case copying, switched }
+        var kind: Kind
+        /// The bot's ID, or the chat's session.
+        var id: String
+        /// Its conversation, and its subagents', root first.
+        var sessions: [String]
+        var from: String?
+        var to: String?
+        /// Its folder where it was, and where it's going: a bot's own, a chat's wake-ups' (nil
+        /// for a chat that keeps none).
+        var original: String?
+        var copy: String?
+        var wasPaused: Bool
+        var stage: Stage
+    }
+
+    private static let key = "movesUnderWay"
+
+    private var records: [Record] {
+        get { UserDefaults.standard.data(forKey: Self.key).flatMap { try? JSONDecoder().decode([Record].self, from: $0) } ?? [] }
+        set {
+            UserDefaults.standard.set(newValue.isEmpty ? nil : try? JSONEncoder().encode(newValue), forKey: Self.key)
+            noteMovedAway(newValue)
+        }
+    }
+
+    private func save(_ record: Record) {
+        records = records.filter { $0.id != record.id } + [record]
+    }
+
+    private func forget(_ record: Record) {
+        records = records.filter { $0.id != record.id }
+    }
+
+    /// What's listed from where a conversation was leaves out its original once it switched, until
+    /// it's gone.
+    private func noteMovedAway(_ records: [Record]) {
+        var away: [String: String?] = [:]
+        for record in records where record.stage == .switched {
+            for session in record.sessions { away[session] = .some(record.from) }
+        }
+        app?.workspace.movedAway = away
     }
 
     func isMoving(_ id: String) -> Bool { underWay[id] != nil }
@@ -55,53 +121,51 @@ final class Moves {
         if app.workspace.isWorking(bot.sessionID) || app.groups.speaking.values.contains(bot.id) { throw Failure.working(bot.name) }
         guard let source = app.workspace.api(forFolder: bot.directory) else { throw Failure.notConnected(bot.machine ?? AppInfo.name) }
         guard let target = api(on: machine) else { throw Failure.notConnected(machine ?? AppInfo.name) }
+        var record = Record(kind: .bot, id: id, sessions: [bot.sessionID], from: bot.machine, to: machine, original: bot.folder, copy: nil, wasPaused: true, stage: .copying)
         underWay[id] = .some(machine)
-        defer { underWay[id] = nil }
-
-        let home = try await transport.home(on: machine)
-        let folder = home.bots + "/" + bot.id
-        // Its wake-ups wait while it moves (as Pause does), so none goes on the way, and none twice.
-        let pause = bot.folder + "/paused"
-        let wasPaused = try await transport.exists(pause, on: bot.machine)
-        if !wasPaused { try await transport.write(Data("paused".utf8), to: pause, on: bot.machine) }
-        var made: (folder: Bool, session: Bool) = (false, false)
-        let exported: JSONValue
-        let session: Session
+        Self.frozen.formUnion([bot.id, bot.sessionID])
+        defer {
+            underWay[id] = nil
+            Self.frozen.subtract(record.sessions + [bot.id, bot.sessionID])
+        }
+        let copied: (exports: [JSONValue], sessions: [Session])
+        let folder: String
         do {
-            exported = try await source.exportSession(bot.sessionID)
-            // One left there by a move that didn't finish is put away first.
-            if try await transport.exists(folder, on: machine) { try await transport.trash(folder, on: machine) }
-            try await copy(bot.folder, from: bot.machine, into: home.bots, on: machine)
-            made.folder = true
+            let home = try await transport.home(on: machine)
             var moved = bot
             moved.machine = machine
-            moved.folder = folder
-            session = try await target.importSession(exported: exported, directory: moved.directory)
-            made.session = true
-            if !wasPaused { try await transport.remove(folder + "/paused", on: machine) }
+            moved.folder = home.bots + "/" + bot.id
+            folder = moved.folder
+            record.copy = folder
+            record.wasPaused = try await transport.exists(bot.folder + "/paused", on: bot.machine)
+            save(record)
+            // Its wake-ups wait while it moves (as Pause does), so none goes on the way, and none twice.
+            if !record.wasPaused { try await transport.write(Data("paused".utf8), to: bot.folder + "/paused", on: bot.machine) }
+            try await settle(bot.sessionID, on: source, name: bot.name)
+            copied = try await carry(bot.sessionID, from: source, to: target, directory: moved.directory, name: bot.name, record: &record) {
+                // One left there by a move cut short goes first.
+                if try await self.transport.exists(folder, on: machine) { try await self.transport.trash(folder, on: machine) }
+                try await self.copy(bot.folder, from: bot.machine, into: home.bots, on: machine)
+            }
         } catch {
-            if made.session { try? await target.deleteSession(bot.sessionID) }
-            if made.folder { try? await transport.trash(folder, on: machine) }
-            if !wasPaused { try? await transport.remove(pause, on: bot.machine) }
+            await takeBack(record, target: target)
             log.error("A bot didn't move: \(error.localizedDescription, privacy: .public)")
             throw error
         }
 
-        // It's there: the original stops. Its seats in group chats go (new ones are made where it
-        // is now), its conversation goes from its engine, and its folder, with the conversation
-        // saved in it, to the trash where it was.
+        // The switch: from here on it lives there.
+        record.stage = .switched
+        save(record)
         await app.groups.botMoving(bot)
-        if let data = Self.data(exported) { try? await transport.write(data, to: bot.folder + "/conversation.json", on: bot.machine) }
-        do { try await source.deleteSession(bot.sessionID) } catch { log.error("A moved bot's conversation stayed where it was: \(error.localizedDescription, privacy: .public)") }
-        do { try await transport.trash(bot.folder, on: bot.machine) } catch { log.error("A moved bot's folder stayed where it was: \(error.localizedDescription, privacy: .public)") }
-        await BotKeys.leave(bot, app: app)
+        app.workspace.moved(copied.sessions, api: target)
+        await app.bots.moved(id, to: machine, folder: folder, session: copied.sessions[0], api: target)
+        if !record.wasPaused { try? await transport.remove(folder + "/paused", on: machine) }
+        if let now = app.bots.bot(id) { await BotKeys.apply(to: now, app: app) }
         if bot.machine == nil { app.utilities.closeTabs(of: bot.id) }
-        app.wakeUps.forget(key: bot.id)
-        await app.bots.moved(id, to: machine, folder: folder, session: session, api: target)
-        if let moved = app.bots.bot(id) {
-            await BotKeys.apply(to: moved, app: app)
-            await app.wakeUps.read(moved.wakeOwner)
-        }
+        // The original goes.
+        await finish(record, exports: copied.exports, source: source, leaving: bot)
+        app.wakeUps.forget(key: id)
+        if let now = app.bots.bot(id) { await app.wakeUps.read(now.wakeOwner) }
         Analytics.shared.track("bot_moved", ["to": machine == nil ? "mac" : "machine"])
     }
 
@@ -118,53 +182,185 @@ final class Moves {
         if app.workspace.isWorking(id) { throw Failure.working(name) }
         guard let source = app.workspace.api(forSession: id) else { throw Failure.notConnected(from ?? AppInfo.name) }
         guard let target = api(on: machine) else { throw Failure.notConnected(machine ?? AppInfo.name) }
-        if let waiting = try? await source.inbox(session: id), !waiting.isEmpty { throw Failure.waiting(name) }
+        var record = Record(kind: .chat, id: id, sessions: [id], from: from, to: machine, original: nil, copy: nil, wasPaused: true, stage: .copying)
         underWay[id] = .some(machine)
-        defer { underWay[id] = nil }
-
-        let there = try await transport.home(on: machine)
-        let here = try await transport.home(on: from)
-        let directory = machine.map { RemoteFolder.folder(there.chats, on: $0) } ?? there.chats
-        let wakes = here.wakes + "/" + id
-        let hasWakes = try await transport.exists(wakes, on: from)
-        let pause = wakes + "/paused"
-        let wasPaused = hasWakes ? try await transport.exists(pause, on: from) : false
-        if hasWakes, !wasPaused { try await transport.write(Data("paused".utf8), to: pause, on: from) }
-        var made: (wakes: Bool, session: Bool) = (false, false)
-        let exported: JSONValue
-        let session: Session
+        Self.frozen.insert(id)
+        defer {
+            underWay[id] = nil
+            Self.frozen.subtract(record.sessions + [id])
+        }
+        let copied: (exports: [JSONValue], sessions: [Session])
+        let hasWakes: Bool
         do {
-            exported = try await source.exportSession(id)
+            let there = try await transport.home(on: machine)
+            let here = try await transport.home(on: from)
+            let directory = machine.map { RemoteFolder.folder(there.chats, on: $0) } ?? there.chats
+            let wakes = here.wakes + "/" + id
+            let copy = there.wakes + "/" + id
+            hasWakes = try await transport.exists(wakes, on: from)
             if hasWakes {
-                let moved = there.wakes + "/" + id
-                if try await transport.exists(moved, on: machine) { try await transport.trash(moved, on: machine) }
-                try await copy(wakes, from: from, into: there.wakes, on: machine)
-                made.wakes = true
-                // Where its watches' checks run there.
-                try await transport.write(Data(there.chats.utf8), to: moved + "/directory", on: machine)
-                if !wasPaused { try await transport.remove(moved + "/paused", on: machine) }
+                record.original = wakes
+                record.copy = copy
+                record.wasPaused = try await transport.exists(wakes + "/paused", on: from)
             }
-            session = try await target.importSession(exported: exported, directory: directory)
-            made.session = true
+            save(record)
+            if hasWakes, !record.wasPaused { try await transport.write(Data("paused".utf8), to: wakes + "/paused", on: from) }
+            try await settle(id, on: source, name: name)
+            copied = try await carry(id, from: source, to: target, directory: directory, name: name, record: &record) {
+                guard hasWakes else { return }
+                if try await self.transport.exists(copy, on: machine) { try await self.transport.trash(copy, on: machine) }
+                try await self.copy(wakes, from: from, into: there.wakes, on: machine)
+                // Where its watches' checks run there.
+                try await self.transport.write(Data(there.chats.utf8), to: copy + "/directory", on: machine)
+            }
         } catch {
-            if made.session { try? await target.deleteSession(id) }
-            if made.wakes { try? await transport.trash(there.wakes + "/" + id, on: machine) }
-            if hasWakes, !wasPaused { try? await transport.remove(pause, on: from) }
+            await takeBack(record, target: target)
             log.error("A chat didn't move: \(error.localizedDescription, privacy: .public)")
             throw error
         }
 
-        // It's there: the original goes, its conversation saved in the trash where it was.
-        if let data = Self.data(exported) {
-            let kept = hasWakes ? wakes : here.root + "/moved-" + id
-            try? await transport.write(data, to: kept + "/conversation.json", on: from)
-            try? await transport.trash(kept, on: from)
-        }
-        do { try await source.deleteSession(id) } catch { log.error("A moved chat stayed where it was too: \(error.localizedDescription, privacy: .public)") }
+        record.stage = .switched
+        save(record)
+        app.workspace.moved(copied.sessions, api: target)
+        if hasWakes, !record.wasPaused, let copy = record.copy { try? await transport.remove(copy + "/paused", on: machine) }
+        await finish(record, exports: copied.exports, source: source, leaving: nil)
         app.wakeUps.forget(key: id)
-        app.workspace.add(session)
-        await app.wakeUps.read(WakeUps.owner(of: session))
+        if let now = app.workspace.session(id) { await app.wakeUps.read(WakeUps.owner(of: now)) }
         Analytics.shared.track("chat_moved_computer", ["to": machine == nil ? "mac" : "machine"])
+    }
+
+    // MARK: The conversation
+
+    /// Until the conversation has nothing at work or waiting to go (a wake-up on its way, a
+    /// message that went just before it froze): a minute at most.
+    private func settle(_ session: String, on api: OpenCodeAPI, name: String) async throws {
+        for _ in 0..<60 {
+            let working = app?.workspace.isWorking(session) ?? false
+            let waiting = try await !api.inbox(session: session).isEmpty
+            if !working, !waiting { return }
+            try await Task.sleep(for: .seconds(1))
+        }
+        throw Failure.waiting(name)
+    }
+
+    /// Copies the conversation (and its subagents') to `target`, at `directory`, once `files` (its
+    /// folder) are there; then, right before it switches, reads the original again: what reached
+    /// it meanwhile goes along, by copying it again. One there already (an earlier copy, from a
+    /// move cut short) gives way.
+    private func carry(_ session: String, from source: OpenCodeAPI, to target: OpenCodeAPI, directory: String, name: String, record: inout Record,
+                       files: () async throws -> Void) async throws -> (exports: [JSONValue], sessions: [Session]) {
+        var exports = try await exportAll(session, from: source)
+        record.sessions = Self.ids(exports)
+        save(record)
+        Self.frozen.formUnion(record.sessions)
+        try await files()
+        var sessions = try await importAll(exports, into: target, directory: directory)
+        for attempt in 0..<3 {
+            let again = try await exportAll(session, from: source)
+            if Self.same(again, exports) { return (exports, sessions) }
+            guard attempt < 2 else { break }
+            for id in record.sessions.reversed() { try? await target.deleteSession(id) }
+            exports = again
+            record.sessions = Self.ids(exports)
+            save(record)
+            Self.frozen.formUnion(record.sessions)
+            sessions = try await importAll(exports, into: target, directory: directory)
+        }
+        throw Failure.busy(name)
+    }
+
+    /// The conversation and every subagent's under it, root first, as the engine exports them.
+    private func exportAll(_ session: String, from api: OpenCodeAPI) async throws -> [JSONValue] {
+        var exports = [try await api.exportSession(session)]
+        var next = [session]
+        while let parent = next.popLast() {
+            for child in try await api.children(of: parent, limit: 200) {
+                exports.append(try await api.exportSession(child.id))
+                next.append(child.id)
+            }
+        }
+        return exports
+    }
+
+    /// Each into `api` at `directory`, under its own ID; one there already (an earlier copy, from
+    /// a move cut short, while the original is still where it was) gives way.
+    private func importAll(_ exports: [JSONValue], into api: OpenCodeAPI, directory: String) async throws -> [Session] {
+        var sessions: [Session] = []
+        for exported in exports {
+            do {
+                sessions.append(try await api.importSession(exported: exported, directory: directory))
+            } catch let error as ServerError where error.status == 409 {
+                guard let id = exported["info"]?["id"]?.string else { throw error }
+                try await api.deleteSession(id)
+                sessions.append(try await api.importSession(exported: exported, directory: directory))
+            }
+        }
+        return sessions
+    }
+
+    private static func ids(_ exports: [JSONValue]) -> [String] {
+        exports.compactMap { $0["info"]?["id"]?.string }
+    }
+
+    /// Whether two reads of a conversation hold the same sessions and messages.
+    private static func same(_ one: [JSONValue], _ other: [JSONValue]) -> Bool {
+        func messages(_ exports: [JSONValue]) -> [String] {
+            exports.flatMap { export in [export["info"]?["id"]?.string ?? ""] + (export["messages"]?.array ?? []).map { $0["id"]?.string ?? "" } }
+        }
+        return messages(one) == messages(other)
+    }
+
+    // MARK: Ending
+
+    /// A move that didn't get as far as switching: what it made where it was going goes, and the
+    /// original's wake-ups go on, as it was.
+    private func takeBack(_ record: Record, target: OpenCodeAPI?) async {
+        if let target { for id in record.sessions.reversed() { try? await target.deleteSession(id) } }
+        if let copy = record.copy { try? await transport.trash(copy, on: record.to) }
+        if !record.wasPaused, let original = record.original { try? await transport.remove(original + "/paused", on: record.from) }
+        forget(record)
+    }
+
+    /// After it switched: the original goes, its conversation saved in its folder (or one of its
+    /// own, for a chat that kept none), which goes to the trash where it was. Kept to try again
+    /// (`recover`) if its engine couldn't be told.
+    private func finish(_ record: Record, exports: [JSONValue]?, source: OpenCodeAPI, leaving bot: Bot?) async {
+        var place = record.original
+        if place == nil, let home = try? await transport.home(on: record.from) { place = home.root + "/moved-" + record.id }
+        if let place, let exports, let data = Self.data(.array(exports)) {
+            try? await transport.write(data, to: place + "/conversation.json", on: record.from)
+        }
+        var gone = true
+        for id in record.sessions.reversed() {
+            do {
+                try await source.deleteSession(id)
+            } catch let error as ServerError where error.status == 404 {
+                // Gone already.
+            } catch {
+                gone = false
+                log.error("A moved conversation's original stayed where it was: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        guard gone else { return }
+        if let place { try? await transport.trash(place, on: record.from) }
+        if let bot { await BotKeys.leave(bot, app: app) }
+        forget(record)
+    }
+
+    /// Moves cut short (the app quit, a computer away): those that switched finish, the rest are
+    /// taken back, once both computers are there. At launch, and as a machine connects.
+    func recover() async {
+        noteMovedAway(records)
+        for record in records where underWay[record.id] == nil {
+            guard let source = api(on: record.from), let target = api(on: record.to) else { continue }
+            switch record.stage {
+            case .copying:
+                await takeBack(record, target: target)
+            case .switched:
+                let exports = try? await exportAll(record.sessions[0], from: source)
+                await finish(record, exports: exports, source: source, leaving: nil)
+            }
+        }
     }
 
     // MARK: Plumbing

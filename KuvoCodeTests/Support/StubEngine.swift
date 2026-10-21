@@ -107,7 +107,14 @@ nonisolated final class StubEngine: @unchecked Sendable {
         return lock.withLock {
             switch (method, path) {
             case ("GET", "/api/session"):
-                return StubWeb.json(["data": sessions])
+                // As the engine lists them: a session's subagents' for `parentID`, the root ones
+                // for "null".
+                let parent = query["parentID"]
+                return StubWeb.json(["data": sessions.filter { session in
+                    guard let parent else { return true }
+                    let own = session["parentID"] as? String
+                    return parent == "null" ? own == nil : own == parent
+                }])
             case ("GET", "/api/session/active"):
                 return StubWeb.json(["data": Dictionary(uniqueKeysWithValues: running.map { ($0, ["type": "busy"]) })])
             default:

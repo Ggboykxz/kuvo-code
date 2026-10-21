@@ -697,6 +697,10 @@ final class BotGroups {
         guard let app, let bot = app.bots.bot(botID) else { return .absent }
         speaking[id] = botID
         defer { if speaking[id] == botID { speaking[id] = nil } }
+        if Moves.isFrozen(botID) {
+            note("\(bot.name) is moving to another computer, so it sat this out.", in: id)
+            return .absent
+        }
         if let machine = bot.machine, app.machines.engine(machine)?.isReady != true {
             note("\(bot.name) is on \(machine), which isn’t connected, so it sat this out.", in: id)
             return .absent
@@ -1053,6 +1057,10 @@ final class BotGroups {
 
     /// One part, to its bot's conversation; then it's followed until the bot reports.
     private func hand(_ taskID: String, of wrapUpID: String, in id: String) async {
+        // A bot moving to another computer gets its part there, once it is.
+        if let bot = group(id).flatMap({ group in messages(in: id).first { $0.id == wrapUpID }?.tasks?.first { $0.id == taskID }?.bot }) {
+            while Moves.isFrozen(bot) { try? await Task.sleep(for: .seconds(2)) }
+        }
         guard let app, let group = group(id), let wrapUp = messages(in: id).first(where: { $0.id == wrapUpID }),
               let task = wrapUp.tasks?.first(where: { $0.id == taskID }) else { return }
         guard let bot = app.bots.bot(task.bot) else { return fail(taskID, of: wrapUpID, in: id, "the bot is gone") }

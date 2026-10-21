@@ -311,6 +311,8 @@ final class Bots {
     /// about a new name, personality or model; its group chats hear about them too. The rest is
     /// kept as it is now: its job may have changed in its memory while Edit Bot was open.
     func update(_ edited: Bot) async {
+        // Moving to another computer: the edit comes once it's there.
+        while Moves.isFrozen(edited.id) { try? await Task.sleep(for: .seconds(1)) }
         guard let index = list.firstIndex(where: { $0.id == edited.id }) else { return }
         let old = list[index]
         var bot = old
@@ -418,6 +420,7 @@ final class Bots {
     /// machine you removed from Kuvo Code leaves the list, and its folder goes the next time that
     /// machine answers, so adding it again doesn't bring the bot back.)
     func delete(_ bot: Bot) async throws {
+        if Moves.isFrozen(bot.id) { throw Moves.Failure.moving }
         if let machine = bot.machine {
             let folder = SSHConnection.quoted(bot.folder)
             let script = """
@@ -911,9 +914,11 @@ final class Bots {
         app?.workspace.add(session)
         noteSessions()
         let rules = (session.permissions ?? []).filter { !Self.isOwnRule($0, of: old) && !Self.isOwnRule($0, of: bot) }
-        try? await api.setPermissions(session: bot.sessionID, rules: ToolApproval.refreshed(rules, settings: app?.engineConfig.permissionRules ?? []) + Self.ownRules(for: bot))
-        try? await sendInstructions(of: bot, api: api)
-        try? await writeSession(of: bot)
+        var done = (try? await api.setPermissions(session: bot.sessionID, rules: ToolApproval.refreshed(rules, settings: app?.engineConfig.permissionRules ?? []) + Self.ownRules(for: bot))) != nil
+        done = (try? await sendInstructions(of: bot, api: api)) != nil && done
+        done = (try? await writeSession(of: bot)) != nil && done
+        // What didn't get there is tried again with the next check of bots' instructions.
+        if !done { synced.remove(id) }
         if let machine, wakeInstalled.insert(machine).inserted, let engine = app?.machines.engine(machine) {
             try? await Wakes.install(on: engine.machine.connection)
         }

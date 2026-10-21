@@ -300,6 +300,8 @@ final class AppModel {
             wakeUps.app = self
             groups.app = self
             moves.app = self
+            // A move cut short (the app quit) is finished or taken back.
+            Task { await moves.recover() }
             workspace.onMovedToAgents = { [weak self] from, to in await self?.movedToAgents(from: from, to: to) ?? false }
             workspace.runsOnAgents(bots.agentSessionIDs)
             workspace.botSessions = bots.sessionIDs

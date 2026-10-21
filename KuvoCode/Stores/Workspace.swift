@@ -974,7 +974,7 @@ final class Workspace {
     func refresh() async {
         guard let api else { return }
         do {
-            let local = try await api.allSessions().filter { !isHidden($0) }
+            let local = try await api.allSessions().filter { !isHidden($0) && movedAway[$0.id] != .some(nil) }
             // (This Mac's: a machine's agents' are its own, with its engine's.)
             let theAgents = sessions.filter { OutsideAgents.isAgentSession($0) && !RemoteFolder.isRemote($0.location.directory) }
             sessions = local + theAgents + sessions.filter { RemoteFolder.isRemote($0.location.directory) }
@@ -1217,7 +1217,8 @@ final class Workspace {
             engine.isReady && engine.api?.client.endpoint == api.client.endpoint && self?.machines.contains(machine) == true
         }
         do {
-            let listed = try await api.allSessions()
+            // (Not one that moved away from it: it lives elsewhere now.)
+            let listed = try await api.allSessions().filter { movedAway[$0.id] != .some(machine) }
             // Its coding agents' too, from the agents bridge beside its engine; not read (it's
             // starting), those known stay as they were.
             let bridge = engine.agents.api
@@ -1616,6 +1617,9 @@ final class Workspace {
         case "session.created", "session.renamed", "session.moved", "session.metadata.updated", "session.revert.staged", "session.revert.cleared", "session.revert.committed":
             Task { await reload(id) }
         case "session.deleted":
+            // Its original, left where it was as it moved to another computer (`Moves`): the
+            // conversation lives on there, as it is.
+            if let found = session(id), RemoteFolder.machine(of: found.location.directory) != machine { break }
             // Deleted elsewhere (another Mac, the phone): its panel's tabs go too, a terminal's
             // connection with them.
             onDeleted?(id)
@@ -1874,7 +1878,9 @@ final class Workspace {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         let failure: String
-        if let api = api(forSession: id) {
+        if Moves.isFrozen(id) {
+            failure = Moves.Failure.moving.localizedDescription
+        } else if let api = api(forSession: id) {
             do {
                 try await api.prompt(session: id, id: Identifier.message(), text: text, delivery: .queue)
                 Analytics.shared.track("notification_replied")
@@ -2126,6 +2132,24 @@ final class Workspace {
     /// A session made elsewhere (a bot's), so it can be opened right away.
     func add(_ session: Session) {
         upsert(session)
+    }
+
+    /// Conversations that moved to another computer (`Moves`), by the computer they left (nil:
+    /// this Mac), until their original there is gone: what's listed from there leaves them out.
+    @ObservationIgnored var movedAway: [String: String?] = [:]
+
+    /// Conversations carried on on another computer (`Moves`), under the same IDs, on `api`: their
+    /// rows, and an open one's conversation, go there from now on, whatever's sent from it too.
+    func moved(_ moved: [Session], api: OpenCodeAPI) {
+        for session in moved {
+            upsert(session)
+            if let machine = RemoteFolder.machine(of: session.location.directory) { sessionMachines[session.id] = machine } else { sessionMachines[session.id] = nil }
+            guard let model = models[session.id] else { continue }
+            model.reconnect(api)
+            model.session = session
+            model.isReachable = reachable(session.location.directory)
+            Task { await model.load() }
+        }
     }
 
     /// Asks for an agent's new session to show beside the one that started it, or in a tab, the

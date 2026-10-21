@@ -44,7 +44,7 @@ final class AgentMail {
     /// session is gone. It was counted against its sender's messages when it was sent.
     func deliverWaiting(to engine: MachineEngine) async {
         let machine = engine.machine.id
-        for letter in waiting where letter.machine == machine {
+        for letter in waiting where letter.machine == machine && !Moves.isFrozen(letter.to) {
             guard engine.api != nil else { return }
             // Where its session is: known, or its engine's, else its coding agents' (their bridge
             // there); gone only when both say so.
@@ -261,6 +261,8 @@ final class AgentMail {
         case .missing(let outcome): return outcome
         }
         guard target.session != caller else { return .refused("That's you.") }
+        // Moving to another computer: it can't take messages until it's there.
+        guard !Moves.isFrozen(target.session) else { return .failed("\(target.name) is moving to another computer. Try again in a minute.") }
         // A few at a time: two agents shouldn't keep writing to each other unattended. Counted as
         // it starts, before anything's awaited, so messages sent at once count each other; taken
         // back if it doesn't go, so one tried again isn't counted twice.

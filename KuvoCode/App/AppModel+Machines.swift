@@ -271,6 +271,8 @@ extension AppModel {
         if live(engine) { await BotKeys.applyAll(on: engine.machine.id, app: self) }
         // What its bots are, in their folders there, for what runs there without this Mac.
         if live(engine) { await bots.describeAll(on: engine.machine.id) }
+        // A move to or from it cut short (the app quit, it went away) is finished or taken back.
+        if live(engine) { await moves.recover() }
         // What you signed in to here works there too, kept in step while it's connected.
         engine.signInSync?.cancel()
         if live(engine) {

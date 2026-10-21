@@ -1992,6 +1992,21 @@ struct MainView: View {
             try? await Task.sleep(for: .seconds(1))
             model.submit(prompt, files: [], for: nil, queue: false, commands: [])
         }
+        // KUVO_DEMO_MOVE_BOT=<machine, or nothing for this Mac>: once it's done, it moves there.
+        if let place = environment["KUVO_DEMO_MOVE_BOT"] {
+            let machine = place.isEmpty ? nil : place
+            if let machine, let engine = app.machines.engine(machine) {
+                while !engine.isReady { try? await Task.sleep(for: .seconds(1)) }
+            }
+            try? await Task.sleep(for: .seconds(3))
+            while workspace.isWorking(bot.sessionID) { try? await Task.sleep(for: .seconds(2)) }
+            do {
+                try await app.moves.move(bot: bot.id, to: machine)
+                print("KUVO_DEMO_MOVE_BOT moved \(bot.name)")
+            } catch {
+                print("KUVO_DEMO_MOVE_BOT failed: \(error.localizedDescription)")
+            }
+        }
     }
 
     private func runDemoSession(_ environment: [String: String]) async {
@@ -2224,13 +2239,15 @@ private struct MoveToProjectButton: View {
     var body: some View {
         NativeMenuButton(opensBelow: true) {
             let menu = NSMenu()
-            let projects = workspace.projects.filter { !RemoteFolder.isRemote($0.directory) }
+            // The projects on its computer (a chat moved to a machine, that machine's).
+            let machine = workspace.session(sessionID).flatMap { RemoteFolder.machine(of: $0.location.directory) }
+            let projects = workspace.projects.filter { RemoteFolder.machine(of: $0.directory) == machine }
             menu.addItem(.sectionHeader(title: "Move to Project"))
             for project in projects {
                 menu.addItem(ActionItem(project.name, image: NSImage(systemSymbolName: "folder", accessibilityDescription: nil)) { move(to: project.directory) })
             }
             if projects.isEmpty {
-                let none = NSMenuItem(title: "No projects on this Mac", action: nil, keyEquivalent: "")
+                let none = NSMenuItem(title: machine.map { "No projects on \($0)" } ?? "No projects on this Mac", action: nil, keyEquivalent: "")
                 none.isEnabled = false
                 menu.addItem(none)
             }
