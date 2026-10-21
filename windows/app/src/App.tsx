@@ -376,9 +376,36 @@ export function sentAt(created?: number) {
 }
 
 /// The words of a message, as the find reads them.
-function entryText(entry: { text?: string; parts?: { type: string; text?: string }[] }) {
-  if (entry.text) return entry.text;
+function entryText(entry: { kind?: string; text?: string; parts?: { type: string; text?: string }[] }) {
+  // A message you sent carries the blocks the app adds; the words are what the Mac shows,
+  // and what the find reads (AgentReferences.swift:170-183).
+  if (entry.text) return entry.kind === "user" ? splitComments(entry.text).text : entry.text;
   return (entry.parts ?? []).map(part => (part.type === "text" || part.type === "reasoning" ? part.text ?? "" : "")).join("\n");
+}
+
+/// A message you sent: the words, and the comments on the changes that went with them
+/// (AgentReferences.swift:170-179, YourMessage.swift:22, 829-831).
+function UserWords({ text }: { text: string }) {
+  const { text: words, comments } = splitComments(text);
+  return (
+    <>
+      {comments.map((one, index) => (
+        <div className="comment-reference" key={index}>
+          <div className="comment-reference-place">
+            <Symbol name="text.bubble" size={11} />
+            <span>{commentLocation(one)}</span>
+          </div>
+          {one.snippet ? (
+            <div className={`comment-reference-snippet ${one.side === "old" ? "removed" : "added"}`}>
+              {one.snippet}
+            </div>
+          ) : null}
+          <div className="comment-reference-text">{one.text}</div>
+        </div>
+      ))}
+      <div className="text">{words}</div>
+    </>
+  );
 }
 
 /// How many times a phrase is in a text.
@@ -553,9 +580,6 @@ function EntryNodes({ transcript }: { transcript: Transcript }) {
       {transcript.entries.map((entry, index) => {
         const key = entry.id ?? `${entry.kind}-${index}`;
         if (entry.kind === "user") {
-          // The words, and the comments on the changes that went with them
-          // (AgentReferences.swift:170-179, YourMessage.swift:22).
-          const { text: words, comments } = splitComments(entry.text ?? "");
           return (
             <article
               key={key}
@@ -565,34 +589,20 @@ function EntryNodes({ transcript }: { transcript: Transcript }) {
                 setMenu({ id: entry.id ?? key, x: event.clientX, y: event.clientY });
               }}
             >
-              {comments.map((one, index) => (
-                <div className="comment-reference" key={index}>
-                  <div className="comment-reference-place">
-                    <Symbol name="text.bubble" size={11} />
-                    <span>{commentLocation(one)}</span>
-                  </div>
-                  {one.snippet ? (
-                    <div className={`comment-reference-snippet ${one.side === "old" ? "removed" : "added"}`}>
-                      {one.snippet}
-                    </div>
-                  ) : null}
-                  <div className="comment-reference-text">{one.text}</div>
-                </div>
-              ))}
-              <div className="text">{words}</div>
+              <UserWords text={entry.text ?? ""} />
               {(entry.files ?? []).map((file, i) => <AttachmentNode key={i} file={file} pictures={entry.files} />)}
               {/* The Mac's actions under your words (YourMessage.swift:41-64): the time it
                   was sent, Copy, a new session from here, and undo — always laid out, and
                   shown under the pointer, so nothing moves when they appear. */}
               <div className="entry-actions">
                 <span className="entry-time">{sentAt(entry.created)}</span>
-                {words ? (
+                {entry.text ? (
                   <button
                     className="entry-action"
                     title="Copy"
                     aria-label="Copy"
                     onClick={async () => {
-                      await navigator.clipboard?.writeText(words).catch(() => {});
+                      await navigator.clipboard?.writeText(entryText(entry)).catch(() => {});
                     }}
                   >
                     <Symbol name="doc" size={12} />
@@ -656,7 +666,7 @@ function EntryNodes({ transcript }: { transcript: Transcript }) {
       })}
       {transcript.pending.map(item => (
         <article key={item.id} className="entry user pending">
-          <div className="text">{item.text}</div>
+          <UserWords text={item.text ?? ""} />
           {/* The picture you just sent is shown at once, as the Mac shows it. */}
           {(item.files ?? []).map((file, i) => <AttachmentNode key={i} file={file} pictures={item.files} />)}
           {item.delivery === "queue" ? <div className="entry-meta">queued</div> : null}
