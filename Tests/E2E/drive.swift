@@ -183,6 +183,28 @@ case "click":
     for type in [CGEventType.mouseMoved, .leftMouseDown, .leftMouseUp] {
         post(CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: p, mouseButton: .left)!, window: w)
     }
+case "box":
+    // box <query> [n]: where the element is in the main window (x y width height, from its top
+    // left) and what's selected in it, if it's text.
+    let e = nth(all().filter { matches($0, args[3]) }, args.count > 4 ? Int(args[4]) ?? 0 : 0, args[3])
+    var origin = CGPoint.zero, size = CGSize.zero
+    if let v = attr(e, kAXPositionAttribute) { AXValueGetValue(v as! AXValue, .cgPoint, &origin) }
+    if let v = attr(e, kAXSizeAttribute) { AXValueGetValue(v as! AXValue, .cgSize, &size) }
+    let w = mainWindow()?.bounds ?? .zero
+    print("\(Int(origin.x - w.minX)) \(Int(origin.y - w.minY)) \(Int(size.width)) \(Int(size.height)) selected=\(str(e, kAXSelectedTextAttribute).debugDescription)")
+case "drag":
+    // drag <x1> <y1> <x2> <y2>: pressed at the first point, moved in steps to the second, let go
+    // there, as a hand selects text.
+    let (from, w) = point(args[3], args[4])
+    let (to, _) = point(args[5], args[6])
+    post(CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: from, mouseButton: .left)!, window: w)
+    post(CGEvent(mouseEventSource: source, mouseType: .leftMouseDown, mouseCursorPosition: from, mouseButton: .left)!, window: w)
+    for step in 1...12 {
+        let t = CGFloat(step) / 12
+        let at = CGPoint(x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t)
+        post(CGEvent(mouseEventSource: source, mouseType: .leftMouseDragged, mouseCursorPosition: at, mouseButton: .left)!, window: w)
+    }
+    post(CGEvent(mouseEventSource: source, mouseType: .leftMouseUp, mouseCursorPosition: to, mouseButton: .left)!, window: w)
 case "type":
     for unit in args[3].utf16 {
         var c = unit
