@@ -186,4 +186,29 @@ import Testing
         #expect(Workspace.isArchived(try #require(app.workspace.session(id))))
         #expect(told == [true])
     }
+
+    /// Wake-ups that came due while Kuvo Code was closed (L19): each goes once as it opens, a daily
+    /// one once however many days it missed, then waits for its next time; a one-off is done.
+    @Test func wakeUpsMissedWhileClosedGoOnceAsItOpens() async throws {
+        await start()
+        defer { done() }
+        let prompts = recordPrompts()
+        let owner = WakeUps.owner(of: try #require(app.workspace.session(id)))
+        let wakes = folder(id, "wakes")
+        try FileManager.default.createDirectory(atPath: wakes, withIntermediateDirectories: true)
+        try Data(id.utf8).write(to: URL(filePath: folder(id, "session")))
+        try Data(owner.directory.utf8).write(to: URL(filePath: folder(id, "directory")))
+        let daily = Wakes.name(due: .now.addingTimeInterval(-3 * 86_400), every: .days(1))
+        let once = Wakes.name(due: .now.addingTimeInterval(-3600), every: nil)
+        try Data("Check the nightly build".utf8).write(to: URL(filePath: wakes + "/" + daily))
+        try Data("Stand up and stretch".utf8).write(to: URL(filePath: wakes + "/" + once))
+
+        app.wakeUps.start()
+        try await eventually { prompts.all.count >= 2 && ((try? FileManager.default.contentsOfDirectory(atPath: wakes))?.count ?? 0) == 1 }
+        #expect(prompts.all.sorted() == [Wakes.marker + "Check the nightly build", Wakes.marker + "Stand up and stretch"])
+        let left = try FileManager.default.contentsOfDirectory(atPath: wakes)
+        #expect(left.count == 1, "the one-off is done: \(left)")
+        let next = try #require(left.first.flatMap { Wakes.Pending(id: $0, note: "") })
+        #expect(next.due > .now && next.due < .now.addingTimeInterval(86_400 + 60), "the daily one waits for its next time")
+    }
 }
