@@ -48,6 +48,8 @@ const PAGES = [
   ["usage", "Usage"],
   ["git", "Git"],
   ["worktrees", "Worktrees"],
+  ["storage", "Storage"],
+  ["integrations", "Integrations"],
   ["archived", "Archived Sessions"],
   ["permissions", "Permissions"],
   ["system", "Engine & Storage"],
@@ -62,6 +64,7 @@ const PAGE_GROUPS = [
   ["Agent", ["mcp", "agents", "skills", "commands", "permissions", "system"]],
   ["Projects", ["projects", "git", "worktrees", "archived"]],
   ["Side Panel", ["panel"]],
+  ["Engine", ["system", "storage", "integrations"]],
 ] as const;
 
 /// The Mac's three modes, in its order (Look.Mode).
@@ -82,6 +85,8 @@ const PAGE_SUBTITLES: Record<string, string> = {
   providers: "Sign in with a subscription you already have, or add an API key. Credentials stay on this machine.",
   git: "Branches, commits and pull requests made from Kuvo Code.",
   worktrees: "Where they go, and the ones sessions have, with what each takes.",
+  storage: "Where this machine keeps things, and what the engine is running.",
+  integrations: "Services that give the agent more tools.",
   archived: "Sessions you put away: still searchable, out of the sidebar.",
   permissions: "What the agent may do without asking you first.",
   notifications: "When Kuvo Code tells you about a session, and how.",
@@ -193,6 +198,8 @@ export function Settings() {
       case "usage": return <UsagePage />;
       case "git": return <GitPage />;
       case "worktrees": return <WorktreesPage />;
+      case "storage": return <StoragePage />;
+      case "integrations": return <IntegrationsPage />;
       case "archived": return <ArchivedPage />;
       case "permissions": return <PermissionsPage permissions={savedPermissions} onChange={setSavedPermissions} />;
       case "notifications": return <NotificationsPage />;
@@ -277,6 +284,8 @@ const PAGE_SYMBOLS: Record<string, SymbolName> = {
   usage: "gauge.with.dots.needle.50percent",
   git: "arrow.triangle.branch",
   worktrees: "arrow.triangle.branch",
+  storage: "server.rack",
+  integrations: "puzzlepiece.extension",
   archived: "archivebox",
   permissions: "checkmark.shield",
   system: "cpu",
@@ -914,6 +923,51 @@ function WorktreesPage() {
         <SettingRow label="New worktree" note="A copy of the project on a branch of its own, for a session to work in apart from the rest.">
           <button className="small" disabled={creating || !state.project} onClick={() => void create()}>{creating ? "Creating…" : "Create"}</button>
         </SettingRow>
+      </SettingGroup>
+    </>
+  );
+}
+
+/// Storage: where this machine keeps things, and what the engine is running (StorageSettings.swift).
+function StoragePage() {
+  const [info, setInfo] = useState<{ logPath?: string; logSize?: number; attachments?: { path: string; files: number; bytes: number } | null; engine?: { status: string; version?: string } }>({});
+  useEffect(() => {
+    void api<typeof info>("/api/storage").then(answer => setInfo(answer)).catch(() => {});
+  }, []);
+  return (
+    <>
+      <SettingGroup title="Engine">
+        <div className="gauge-line big">{info.engine ? `${info.engine.status}${info.engine.version ? ` · ${info.engine.version}` : ""}` : "—"}</div>
+      </SettingGroup>
+      <SettingGroup title="Storage">
+        <SettingRow label="Log" note={info.logPath ?? ""}>
+          <button className="small" onClick={() => (window as unknown as { kuvo?: { showInFolder?: (path: string) => void } }).kuvo?.showInFolder?.(info.logPath ?? "")}>Show in Folder</button>
+        </SettingRow>
+        <SettingRow label="Attachments" note={info.attachments ? `${info.attachments.files} files · ${info.attachments.bytes} bytes` : "None yet."} />
+        <div className="settings-note">Where this machine keeps things, and what the engine is running — what the Mac app's Engine and Storage settings show.</div>
+      </SettingGroup>
+    </>
+  );
+}
+
+/// Integrations: services that give the agent more tools.
+function IntegrationsPage() {
+  const [integrations, setIntegrations] = useState<{ id: string; name?: string; connections?: unknown[] }[]>([]);
+  useEffect(() => {
+    void api<{ integrations: { id: string; name?: string; connections?: unknown[] }[] }>("/api/integrations")
+      .then(answer => setIntegrations(answer.integrations ?? []))
+      .catch(() => setIntegrations([]));
+  }, []);
+  return (
+    <>
+      <SettingGroup title="Integrations">
+        {integrations.length === 0 ? (
+          <div className="settings-note">None yet.</div>
+        ) : integrations.map(one => (
+          <SettingRow key={one.id} label={one.name ?? one.id} note={(one.connections ?? []).length ? "Connected" : "Not connected"}>
+            <span className="where">{(one.connections ?? []).length ? "Connected" : "Not connected"}</span>
+          </SettingRow>
+        ))}
       </SettingGroup>
     </>
   );
