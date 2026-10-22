@@ -798,7 +798,10 @@ final class PhoneLink {
         case "viewed":
             groups.markViewed(id)
         case "undo":
-            guard let message = given?.message, let taken = await groups.undo(from: message, in: id) else { return (404, Data()) }
+            guard let message = given?.message else { return (404, Data()) }
+            // Moving, or its machine away: as for what you write.
+            guard !isMoving(id), groups.unreachable(id) == nil else { return (409, Data()) }
+            guard let taken = await groups.undo(from: message, in: id) else { return (404, Data()) }
             return (200, (try? JSONEncoder().encode(["text": taken])) ?? Data())
         case "start":
             guard let message = given?.message, groups.messages(in: id).contains(where: { $0.id == message && $0.tasks != nil }) else { return (404, Data()) }
