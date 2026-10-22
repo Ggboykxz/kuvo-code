@@ -11,7 +11,7 @@ import Testing
 /// bridge's tests then say whether the machine's rules still match.
 @MainActor
 struct GroupRulesVectorsTests {
-    static let recorded = "5fa68ffe3e9e8c114b6e3f82bac753dc55b777c5f74959857bdb7d298d410037"
+    static let recorded = "101b2f5c7cdba23a1f87a511665fc4166b2b21b7184d9a348792e608366113c1"
 
     @Test func theMachinesChatsGoByTheseRules() throws {
         let data = try JSONSerialization.data(withJSONObject: Self.vectors(), options: [.sortedKeys, .prettyPrinted, .withoutEscapingSlashes])

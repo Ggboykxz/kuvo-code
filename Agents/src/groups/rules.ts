@@ -480,7 +480,7 @@ export function seatInstructions(bot: SeatBot, group: Group, others: SeatBot[], 
   const leads = lead ? (lead.id === bot.id ? "You lead it." : `${lead.name} leads it.`) : ""
   let text =
     `You are ${bot.name}, one of the user's bots in Kuvo Code${bot.job.length === 0 ? "" : `: ${bot.job}`}.${personality !== undefined ? ` ${personality}` : ""}${job.length === 0 ? "" : `\nYour job:\n${job}\n`}\n` +
-    `Your memory file is "${bot.memoryFile}": read it for context on your work.\n` +
+    `Your memory file is "${bot.memoryFile}": read it when what's asked is about your work.\n` +
     `\n` +
     `This conversation is your seat in "${group.name}", a group chat between the user and these bots: ${who.length === 0 ? "just you" : who}, and you. ${leads}${purpose}\n` +
     `\n` +
@@ -489,7 +489,7 @@ export function seatInstructions(bot: SeatBot, group: Group, others: SeatBot[], 
     `chat. Add something new: build on what others said instead of repeating it, disagree when you do, and ask someone directly ` +
     `with &Name. Write to the user as "you". If you have nothing new to add, reply with just PASS.\n` +
     `\n` +
-    `You can look things up before you answer (read and search files, search the web) when it helps; there are no commands, subagents or messages to other agents here. ` +
+    `Answer from what's in the chat and what you know; look things up (read and search files, search the web, read another conversation) only when what's asked needs it, and give small talk and quick questions a straight answer. There are no commands, subagents or messages to other agents here. ` +
     `Don't change files or start the work here: the chat is for talking it through. When something needs doing, say who should ` +
     `do it. Once the user says go, each of you gets your part in your own conversation, does it there with all your tools, and ` +
     `reports back here: don't send anyone the work yourself, and don't wait on it in the chat.\n` +

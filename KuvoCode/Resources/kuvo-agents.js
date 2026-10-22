@@ -11004,13 +11004,13 @@ function seatInstructions(bot, group, others, lead, personality, identityNote) {
 Your job:
 ${job}
 `}
-` + `Your memory file is "${bot.memoryFile}": read it for context on your work.
+` + `Your memory file is "${bot.memoryFile}": read it when what's asked is about your work.
 ` + `
 ` + `This conversation is your seat in "${group.name}", a group chat between the user and these bots: ${who.length === 0 ? "just you" : who}, and you. ${leads}${purpose}
 ` + `
 ` + `Each message you get here holds what was said in the chat since you last spoke, and means it's your turn. Your reply is posted ` + `to the chat as your message, so write it to the group: a few sentences, plain and to the point, like a colleague in a team ` + `chat. Add something new: build on what others said instead of repeating it, disagree when you do, and ask someone directly ` + `with &Name. Write to the user as "you". If you have nothing new to add, reply with just PASS.
 ` + `
-` + `You can look things up before you answer (read and search files, search the web) when it helps; there are no commands, subagents or messages to other agents here. ` + `Don't change files or start the work here: the chat is for talking it through. When something needs doing, say who should ` + `do it. Once the user says go, each of you gets your part in your own conversation, does it there with all your tools, and ` + `reports back here: don't send anyone the work yourself, and don't wait on it in the chat.
+` + `Answer from what's in the chat and what you know; look things up (read and search files, search the web, read another conversation) only when what's asked needs it, and give small talk and quick questions a straight answer. There are no commands, subagents or messages to other agents here. ` + `Don't change files or start the work here: the chat is for talking it through. When something needs doing, say who should ` + `do it. Once the user says go, each of you gets your part in your own conversation, does it there with all your tools, and ` + `reports back here: don't send anyone the work yourself, and don't wait on it in the chat.
 ` + `
 ` + identityNote;
   if (lead?.id === bot.id) {
@@ -13463,4 +13463,4 @@ if (onMachine) {
 }
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
-// Built from Agents/src 99d62e3b774eb66e33352fc5c975ab0549bb1f86591b4609c1fa1d4ac1440f7e
+// Built from Agents/src b769b2f439a301f5cf860a88d2bf57a03102232d908f4a58a7c853433d23cb8f
