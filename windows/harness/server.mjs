@@ -278,6 +278,29 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       return json({ credentials });
     }
 
+    // Coding agents on this machine: the Mac's OutsideAgents detects them by their CLI.
+    // We do the same, so the user sees which ones are available.
+    if (url.pathname === "/api/agents/detect" && request.method === "GET") {
+      const { execFileSync } = await import("node:child_process");
+      const agents = [
+        { id: "claude-code", name: "Claude Code", binary: process.platform === "win32" ? "claude.exe" : "claude", logo: "anthropic" },
+        { id: "codex-cli", name: "Codex", binary: process.platform === "win32" ? "codex.exe" : "codex", logo: "openai" },
+        { id: "cursor", name: "Cursor", binary: process.platform === "win32" ? "cursor.exe" : "cursor", logo: "cursor" },
+        { id: "grok-cli", name: "Grok", binary: process.platform === "win32" ? "grok.exe" : "grok", logo: "xai" },
+        { id: "antigravity", name: "Antigravity", binary: process.platform === "win32" ? "antigravity.exe" : "antigravity", logo: "google" },
+      ];
+      const found = agents.map(agent => {
+        let installed = false;
+        try {
+          const cmd = process.platform === "win32" ? "where" : "which";
+          execFileSync(cmd, [agent.binary], { stdio: ["ignore", "pipe", "pipe"] });
+          installed = true;
+        } catch { installed = false; }
+        return { ...agent, installed };
+      });
+      return json({ agents: found });
+    }
+
     // Plan usage: what each connected provider's own plan says (limits, pace, spend).
     // The Mac reads these through UsageKit; here we ask the providers directly, with the
     // credentials the engine holds, and keep the secrets on this machine.
@@ -1544,3 +1567,4 @@ export function run() {
 // binary has no source file to compare with, and the entry calls `run()` itself.
 const main = process.env.KUVO_BUNDLED !== "1" && process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
 if (main) run();
+

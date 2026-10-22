@@ -1089,10 +1089,24 @@ function PhonePage() {
 
 /// Auto: your lists of models, one for bugfixes and one for features (AutoSettings.swift).
 function AutoPage() {
+  const [agents, setAgents] = useState<{ id: string; name: string; installed: boolean }[]>([]);
+  useEffect(() => {
+    void api<{ agents: { id: string; name: string; installed: boolean }[] }>("/api/agents/detect")
+      .then(answer => setAgents(answer.agents ?? []))
+      .catch(() => setAgents([]));
+  }, []);
   return (
     <>
+      <SettingGroup title="Coding Agents on This Machine">
+        {agents.length === 0 ? <div className="settings-note">Detecting…</div> : agents.map(agent => (
+          <SettingRow key={agent.id} label={agent.name} note={agent.installed ? "Installed" : "Not found"}>
+            <span className="where">{agent.installed ? "Installed" : "Not found"}</span>
+          </SettingRow>
+        ))}
+        <div className="settings-note">Custom Auto runs with these coding agents, each on its own account. A session on Auto tries the models in your list in order, and moves on when one reaches a limit.</div>
+      </SettingGroup>
       <SettingGroup title="Custom Auto">
-        <div className="settings-note">Custom Auto runs with the coding agents, which aren't available on this client yet. When they are, your lists of models — one for bugfixes, one for features — go here, each tried in order when one reaches a limit.</div>
+        <div className="settings-note">Your lists of models — one for bugfixes, one for features — go here, each tried in order when one reaches a limit. Editing the lists needs the coding agents above.</div>
       </SettingGroup>
     </>
   );
