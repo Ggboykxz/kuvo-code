@@ -332,6 +332,13 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     run in the primary folder; the agent can work in the others too" — and the session in
     view is given them: the rules that allow those folders, and the note that tells the
     agent that "in chugs-pinterest" means that folder (`SessionModel.swift:1379-1405`).
+  - **2.97 (this change). Browser, Passwords, Phone, Auto and Machines settings
+    pages.** The Mac's Settings has five more pages the port did not draw
+    (`BrowserSettings.swift`, `PasswordsSettings.swift`, `PhoneSettings.swift`,
+    `AutoSettings.swift`, `MachinesSettings.swift`). They are drawn now, with the Mac's
+    words: the browser's search engine, history and website data; offering to save
+    passwords; pairing a phone; Custom Auto (which runs with the coding agents, not
+    available on this client yet); and machines reached over SSH.
   - **2.96 (this change). Storage and Integrations settings pages.** The Mac's Settings
     has Storage and Integrations pages (`StorageSettings.swift`, the integrations list) that
     the port did not draw. They are drawn now, with the engine's status and version, the
