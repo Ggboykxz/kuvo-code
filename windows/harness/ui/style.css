@@ -2738,6 +2738,9 @@ main.changes-hidden .drawer.utility-pane { display: none; }
   overflow: auto;
 }
 .drawer .terminal { border-radius: 10px; }
+/* A tab that comes into view fades in, so the switch between Files, Changes and
+   Terminal reads as a change of place rather than a snap. Reduced motion stops it. */
+.drawer-body:not([hidden]) { animation: kuvo-fade var(--motion-fast) var(--ease-standard) both; }
 .terminal-note {
   display: flex;
   align-items: center;

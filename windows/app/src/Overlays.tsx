@@ -869,10 +869,14 @@ export function Drawer() {
   // Coming back to a hidden terminal: fit it to the space it now has and put the caret
   // back, without touching its shell.
   useEffect(() => {
-    if (!state.drawerOpen || state.drawerTab !== "terminal") return;
+    if (!state.drawerOpen) return;
     const frame = requestAnimationFrame(() => {
-      fitTerminal();
-      terminal.current?.term.focus();
+      if (state.drawerTab === "terminal") {
+        fitTerminal();
+        terminal.current?.term.focus();
+      } else if (state.drawerTab === "files") {
+        document.getElementById("files-search")?.focus();
+      }
     });
     return () => cancelAnimationFrame(frame);
   }, [state.drawerOpen, state.drawerTab, terminalAttempt]);
