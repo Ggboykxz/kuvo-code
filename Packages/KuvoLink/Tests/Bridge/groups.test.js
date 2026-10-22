@@ -65,6 +65,7 @@ async function fakeRunner() {
       }
       if (request.url === "/api/kuvo/groups/grp_box0000001" && request.method === "GET") return send(200, { data: { group, status: "active", state, messages } });
       if (request.url === "/api/kuvo/groups/grp_box0000001/undo") return send(200, { data: { text: "Ship it?" } });
+      if (request.url.startsWith("/api/kuvo/groups/grp_moving0001/")) return send(409, { message: "That chat is moving." });
       if (request.url.startsWith("/api/kuvo/groups/grp_box0000001")) return send(200, { data: {} });
       send(404, { message: "No such chat." });
     });
@@ -115,6 +116,25 @@ test("a machine's group chats, as a Mac lists and sends its own", async t => {
   assert.deepEqual(runner.asked.at(-5).body, { text: "Go" });
   assert.deepEqual(runner.asked.at(-1).body, { wrapUp: "gm_3" });
   assert.equal((await ask(handle, "POST", "kuvo/groups/../x")).status, 403);
+  // One moving: what you'd do waits, as on a Mac.
+  assert.equal((await ask(handle, "POST", "kuvo/groups/grp_moving0001/undo", { body: '{"message":"gm_1"}' })).status, 409);
+  assert.equal((await ask(handle, "POST", "kuvo/groups/grp_moving0001", { body: '{"text":"Go"}' })).status, 409);
+});
+
+test("a bridge there but not answering now is asked again, not taken as having no group chats", async t => {
+  const server = http.createServer((request, response) => {
+    request.resume();
+    response.writeHead(500, { "content-type": "application/json" });
+    response.end("{}");
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const named = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "kuvo-agents"], { stdio: "ignore" });
+  t.after(() => named.kill());
+  const handle = link.engineHandler(() => ({ port: 1, password: "engine", version: "2.0.32" }), { name: "box" }, () => ({ pid: named.pid, port: server.address().port, password: "agents" }));
+  for (const route of ["kuvo/groups", "kuvo/groups/events", "kuvo/groups/grp_box0000001/events"]) {
+    assert.equal((await ask(handle, "GET", route)).status, 503, route);
+  }
 });
 
 test("without the coding agents' bridge, a machine's group chats say why", async () => {

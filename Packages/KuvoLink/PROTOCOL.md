@@ -298,7 +298,7 @@ itself. A host serves:
   kuvo/groups/<id>` and `…/undo` answer 409 meanwhile, as they do while its machine is away.
   A machine's bridge (from 0.7.1) answers the same routes, in the same shapes, for the chats that
   live on it, with the Mac closed too: the coding agents' bridge there runs them (503 while it
-  isn't up). One moving between computers isn't listed
+  isn't up or isn't answering: ask again; 404 only when none run there). One moving between computers isn't listed
   where it's going until it's there. Moving one is on the Mac (Move to Computer), not the phone.
 - On a Mac, `kuvo/usage`: the menu bar's usage panel as its Bars view lists it (each provider's
   name, plan, brand color, mark as a PNG to tint, notice, whether it's outdated, and its lines as

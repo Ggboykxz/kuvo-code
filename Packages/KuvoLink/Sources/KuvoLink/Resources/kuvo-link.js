@@ -22,7 +22,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 // Goes up with every change, so `setup` replaces a running bridge that's older.
-export const BRIDGE_VERSION = "0.7.2";
+export const BRIDGE_VERSION = "0.7.3";
 const K = process.env.KUVO_HOME || path.join(os.homedir(), ".kuvo-code");
 const RUN = path.join(K, "run");
 export const LINK_FILE = path.join(RUN, "link.json");
@@ -948,10 +948,12 @@ async function askGroups(target, method, route, body, signal) {
   return { status: response.status, value };
 }
 
-// The list, as the Mac's `kuvo/groups` has it; null when the bridge can't be asked.
+// The list, as the Mac's `kuvo/groups` has it; null when none run here. Throws when the bridge
+// couldn't be asked (it's there, but not answering now).
 export async function groupsList(target, signal) {
   const { status, value } = await askGroups(target, "GET", "", undefined, signal);
-  if (status !== 200) return null;
+  if (status === 404) return null;
+  if (status !== 200) throw new Error(`The coding agents' bridge answered ${status}.`);
   const groups = (value.data ?? []).filter(chat => chat.status === "active").map(({ group, state, said, fromBot }) => {
     const meeting = group.meeting ? { ...group.meeting, next: seconds(group.meeting.next) } : undefined;
     return {
@@ -965,9 +967,12 @@ export async function groupsList(target, signal) {
 }
 
 // One chat, as the Mac's `kuvo/groups/<id>/events` sends it; null once it's gone (or moving).
+// Throws when the bridge couldn't be asked.
 export async function groupChat(target, id, signal) {
   const { status, value } = await askGroups(target, "GET", `/${id}`, undefined, signal);
-  if (status !== 200 || value.data?.status !== "active") return null;
+  if (status === 404) return null;
+  if (status !== 200) throw new Error(`The coding agents' bridge answered ${status}.`);
+  if (value.data?.status !== "active") return null;
   const { messages, state } = value.data;
   return { messages: messages.slice(-300).map(message => phoneMessage(message)), speaking: state?.speaking, discussing: Boolean(state?.discussing), paused: Boolean(state?.paused) };
 }
@@ -978,7 +983,13 @@ async function* answerGroups(target, id, action, request, signal) {
   // Read, or followed: a line of JSON each time it changes, as a Mac's.
   if (method === "GET" && (!action || action === "events")) {
     const read = () => (id ? groupChat(target, id, signal) : groupsList(target, signal));
-    let now = await read().catch(() => null);
+    let now;
+    try {
+      now = await read();
+    } catch {
+      // There, but not answering now: asked again later, not taken as having none.
+      return yield* json(503, {});
+    }
     if (!now) return yield* json(404, {});
     if (!action) return yield* json(200, now);
     yield { head: { status: 200, headers: { "content-type": "application/x-ndjson" } } };
@@ -1016,7 +1027,9 @@ async function* answerGroups(target, id, action, request, signal) {
     case "undo": {
       if (typeof given.message !== "string") return yield* json(404, {});
       asked = await askGroups(target, "POST", `/${id}/undo`, { message: given.message }, signal);
-      return yield* json(asked.status === 200 ? 200 : 404, asked.status === 200 ? { text: asked.value.data?.text ?? "" } : {});
+      // Moving: 409, as for what you write.
+      if (asked.status !== 200) return yield* json(asked.status === 409 ? 409 : 404, {});
+      return yield* json(200, { text: asked.value.data?.text ?? "" });
     }
     case "start":
       if (typeof given.message !== "string") return yield* json(404, {});
