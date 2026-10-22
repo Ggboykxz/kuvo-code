@@ -153,7 +153,7 @@ when it is visible, says why it ended and can be restarted, interrupts what is r
 before *Run*, and carries the Mac's *Add to Message*, *Copy* and *Paste* menu. In 0.5.96
 three of the settings pages the port was missing are drawn: Notifications, Privacy and
 Panel (`GeneralSettings.swift:166-230`, `BrowserSettings.swift:5-30`), with the Mac's words
-and toggles. In 0.5.97 the worktrees are drawn (`GitSettings.swift:60-136`): the engine
+and toggles. In 0.5.98 New Project and New Chat are in the menu. In 0.5.99 the terminal takes the card's colour, light or dark, instead of a black box. In 0.5.97 the worktrees are drawn (`GitSettings.swift:60-136`): the engine
 makes them, and the port tracks, lists and removes them, with their branch, folder and
 Show in Folder. The port's own
 list of what is left is now: the two structures that are the Mac's alone — the Auto rail of

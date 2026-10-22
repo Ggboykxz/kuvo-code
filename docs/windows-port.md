@@ -332,6 +332,12 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     run in the primary folder; the agent can work in the others too" — and the session in
     view is given them: the rules that allow those folders, and the note that tells the
     agent that "in chugs-pinterest" means that folder (`SessionModel.swift:1379-1405`).
+  - **2.95 (this change). The terminal takes the card's colour.** The Mac's terminal
+    is on the card itself: the card's own background, edge to edge, with the text inset,
+    and an ANSI palette that stays readable on it, in light or in dark
+    (`TerminalSession.swift:108-124`). The port's terminal was a black box in every theme.
+    It is the card's fill now, and its colours follow the appearance picker and the system
+    theme, the way the Mac's does.
   - **2.94 (this change). New Project and New Chat, in the menu.** The Mac's File
     menu carries *New Project…* (⇧⌘N) and *New Chat* (⌥⌘N); the port drew neither. They
     are drawn now, and ask the page to do them: *New Project…* opens the folder picker,
