@@ -163,17 +163,23 @@ import Testing
         #expect(seats.turns.first { $0.bot == "Ben" }?.heard.contains("SQLite: one file") == true)
     }
 
-    /// Named with @, a bot speaks first, the lead after it.
+    /// Named with &, a bot speaks first, the lead after it; being in the chat, it's asked there,
+    /// not described to the others as an agent to go and write to.
     @Test func aBotYouNameSpeaksFirst() async throws {
         defer { done() }
         let (app, group, seats) = try await start(lines: [
             "Ada": ["I'd go with Postgres.", "PASS"],
             "Ben": ["SQLite, it's a notes app.", "PASS"],
         ])
+        // Bots are agents "&" names, as in the app.
+        let before = AgentMail.shared.app
+        AgentMail.shared.app = app
+        defer { AgentMail.shared.app = before }
         app.groups.send("&Ben which database?", to: group.id)
         try await talkedThrough(app, group)
         #expect(seats.speakers.first == "Ben")
         #expect(said(app, group) == [nil, "bot_ben", "bot_ada"])
+        #expect(seats.turns.allSatisfy { !$0.heard.contains("<named-agents>") })
     }
 
     /// A debate that goes on (G3): it pauses after its turns (three a bot, at least four), the lead

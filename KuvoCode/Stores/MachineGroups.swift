@@ -98,14 +98,15 @@ final class MachineGroups {
         }
         running.insert(machine)
         let ids = Set(listed.map(\.group.id))
-        // What it said of a chat since the list was read is newer than the list.
-        let touched = touchedWhileListing[machine] ?? []
+        // What it said of a chat since the list was read is newer than the list (asked again for
+        // each, as reading their messages takes a while).
+        let touched = { self.touchedWhileListing[machine]?.contains($0) == true }
         // Gone there (deleted elsewhere, or moved away): gone here too; not one moving there now.
-        for gone in chats.filter({ $0.machine == machine && !ids.contains($0.group.id) && !touched.contains($0.group.id) && app?.moves.isMoving($0.group.id) != true }) {
+        for gone in chats.filter({ $0.machine == machine && !ids.contains($0.group.id) && !touched($0.group.id) && app?.moves.isMoving($0.group.id) != true }) {
             forget(gone.group.id)
         }
         for chat in listed {
-            if touched.contains(chat.group.id) {
+            if touched(chat.group.id) {
                 // Gone meanwhile: stays gone.
                 guard has(chat.group.id) else { continue }
             } else {
@@ -174,6 +175,8 @@ final class MachineGroups {
                 saveLog(changed.id)
             case "kuvo.group.reset":
                 let id = try decoded(event, as: Named.self).id
+                // What arrived before it was taken back isn't kept by a read under way.
+                if arriving[id] != nil { arriving[id] = [] }
                 Task { await reload(id) }
             case "kuvo.group.deleted":
                 let id = try decoded(event, as: Named.self).id
@@ -278,7 +281,8 @@ final class MachineGroups {
     /// out here (the machine doesn't know them).
     func send(_ text: String, to id: String) async throws {
         guard let machine = machine(of: id), let api = api(machine) else { throw Failure.away(machine(of: id) ?? "Its machine") }
-        let named = AgentReferences.note(naming: AgentReferences.named(in: [text]), here: machine)
+        let members = Set((chat(id)?.group.members ?? []).compactMap { app?.bots.bot($0)?.sessionID })
+        let named = AgentReferences.note(naming: AgentReferences.named(in: [text], excluding: members), here: machine)
         let message = try await api.machineGroupAction(id, "send", ["text": .string(text)].merging(named.map { ["named": .string($0)] } ?? [:]) { $1 })
         Analytics.shared.track("group_message", ["discussing": discussing.contains(id), "place": "machine"])
         if let message = message.flatMap({ try? Self.message(from: $0) }), !(logs[id] ?? []).contains(where: { $0.id == message.id }) {

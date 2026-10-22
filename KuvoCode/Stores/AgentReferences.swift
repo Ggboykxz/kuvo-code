@@ -126,8 +126,13 @@ nonisolated enum AgentReferences {
     /// `text` with the block that says who each agent it names with "&" is, as the agent in a
     /// conversation `here` (nil: on this Mac) reads it; not naming the conversation `excluding`.
     @MainActor static func text(_ text: String, excluding session: String?, here machine: String?) -> String {
+        Self.text(text, excludingAll: Set([session].compactMap { $0 }), here: machine)
+    }
+
+    /// The same, leaving out each of `sessions` (a group chat's own bots, already there).
+    @MainActor static func text(_ text: String, excludingAll sessions: Set<String>, here machine: String?) -> String {
         let text = block.escaping(text)
-        guard let note = note(naming: named(in: [text], excluding: Set([session].compactMap { $0 })), here: machine) else { return text }
+        guard let note = note(naming: named(in: [text], excluding: sessions), here: machine) else { return text }
         return (text.isEmpty ? "" : text + "\n\n") + note
     }
 
@@ -139,7 +144,8 @@ nonisolated enum AgentReferences {
         let (words, _) = ReviewComments.split(withComments)
         // Sent again (Retry, Edit) with the block it had: that goes, and its agents are named afresh.
         let bare = split(words).text
-        guard bare.contains(trigger) else { return message }
+        // (One edited to name nobody now still loses the block it had.)
+        guard bare.contains(trigger) || bare != words else { return message }
         let named = text(bare, excluding: session, here: machine)
         guard named != words, let range = message.range(of: words) else { return message }
         return message.replacingCharacters(in: range, with: named)

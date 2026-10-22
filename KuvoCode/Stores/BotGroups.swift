@@ -190,7 +190,7 @@ enum GroupWork {
 /// under way.
 ///
 /// A discussion starts with each message of yours. The lead speaks first, unless you named
-/// someone with @; then whoever the last message named, then the others in turn. A bot with
+/// someone with &; then whoever the last message named, then the others in turn. A bot with
 /// nothing new to add passes. It ends when everyone else has passed, or at a limit of turns
 /// (Keep Going carries on), and the lead sums up one that went back and forth, listing who does
 /// what. A message you send while a bot is talking goes to that bot straight away, and to the
@@ -683,7 +683,7 @@ final class BotGroups {
         return epoch
     }
 
-    /// Who talks next: someone the last message named with @, after one of yours the lead,
+    /// Who talks next: someone the last message named with &, after one of yours the lead,
     /// otherwise the next in line after whoever spoke last. Nobody twice in a row, and nobody
     /// who passed since the last thing said. Nil once there's nobody left with something to add.
     private func nextSpeaker(in group: BotGroup, members: [String], quiet: Set<String>) -> String? {
@@ -789,7 +789,8 @@ final class BotGroups {
         // Only into a run: one that hasn't started yet gets it with the rest at its turn.
         guard let bot = app?.bots.bot(botID), let seat = group(id)?.seats[botID], app?.workspace.running.contains(seat) == true,
               let api = seatAPI(of: bot, in: group(id)) else { return }
-        let text = AgentReferences.text("The user, just now: \(message.text)", excluding: nil, here: bot.machine)
+        // The chat's own bots are there already: only others named with "&" are described.
+        let text = AgentReferences.text("The user, just now: \(message.text)", excludingAll: memberSessions(of: group(id)), here: bot.machine)
         if (try? await api.prompt(session: seat, id: Identifier.message(), text: text, delivery: .steer)) != nil {
             setHeard(message.id, by: botID, in: id)
         }
@@ -903,11 +904,16 @@ final class BotGroups {
         return rest.isEmpty || rest.range(of: #"(?i)^(nothing|no (new|more|comment|further)|i('| ha)ve nothing|skip|n/a)"#, options: .regularExpression) != nil
     }
 
+    /// A chat's own bots' conversations: named with "&", they're asked in the chat, not described.
+    func memberSessions(of group: BotGroup?) -> Set<String> {
+        Set((group?.members ?? []).compactMap { app?.bots.bot($0)?.sessionID })
+    }
+
     /// What a bot is told at its turn: what was said since it last spoke.
     private func turnText(for bot: Bot, in group: BotGroup, unheard: [GroupMessage], wrapUp: Bool) -> String {
         // Who the user named with "&", as a session's message says.
         let yours = unheard.suffix(40).filter { $0.author == nil }.map(\.text)
-        let named = AgentReferences.note(naming: AgentReferences.named(in: yours), here: bot.machine)
+        let named = AgentReferences.note(naming: AgentReferences.named(in: yours, excluding: memberSessions(of: group)), here: bot.machine)
         return Self.turnText(bot: bot.id, name: bot.name, in: group, unheard: unheard, wrapUp: wrapUp, named: named) { self.name(of: $0) }
     }
 
