@@ -45,34 +45,25 @@ final class FakeEngine: URLProtocol, @unchecked Sendable {
         return (status, headers, pieces)
     }
 
-    @Test func theAgentsBridgeAlsoTakesTheirAccountsAndAuto() {
-        #expect(EngineRoutes.allowsAgents("api/session/ses_1/prompt", method: "POST"))
-        #expect(EngineRoutes.allowsAgents("api/integration"))
-        #expect(EngineRoutes.allowsAgents("api/integration/claude-code@1f2e/connect/oauth", method: "POST"))
+    /// A paired phone is yours: the engine's whole API, accounts and keys, settings and commands
+    /// included, and the agents' bridge's but for the routes only the app wires things with.
+    @Test func aPhoneHasTheWholeAPI() {
+        for path in ["api/session/ses_1/prompt", "api/credential", "api/credential/cred_1", "api/config", "api/mcp", "api/shell",
+                     "api/integration/anthropic/connect/key", "api/integration/anthropic/update", "api/fs/read/a.txt"] {
+            #expect(EngineRoutes.allows(path, method: "POST"), "\(path)")
+        }
+        #expect(EngineRoutes.allowsAgents("api/integration/claude-code/update", method: "POST"))
         #expect(EngineRoutes.allowsAgents("api/kuvo/auto", method: "PUT"))
-        #expect(EngineRoutes.allowsAgents("api/kuvo/auto/limits", method: "DELETE"))
-        // Not by percent-encoding what's never allowed: the bridge decodes it.
-        #expect(!EngineRoutes.allowsAgents("api/integration/claude-code/%75pdate", method: "POST"))
-        #expect(!EngineRoutes.allowsAgents("api/kuvo/%65ngine"))
-        // Nor with parts the bridge drops: empty ones and "." ones.
-        for path in ["api/integration/claude-code//update", "api/integration/claude-code/./update", "api/integration/claude-code/%2e/update",
-                     "api/integration//claude-code/update", "api/integration/claude-code/update/", "api/kuvo//engine",
-                     "api/integration/claude-code/update#x", "api/kuvo/engine#"] {
-            #expect(!EngineRoutes.allowsAgents(path, method: "POST"), "\(path)")
+        // Where the engine is, and the group chats' own steps: not however it's written, as the
+        // bridge decodes it and drops empty and "." parts.
+        for path in ["api/kuvo/engine", "api/kuvo/%65ngine", "api/kuvo//engine", "api/kuvo/./engine", "api/kuvo/engine?x=1", "api/kuvo/groups/grp_x/release"] {
+            #expect(!EngineRoutes.allowsAgents(path, method: "PUT"), "\(path)")
         }
         #expect(EngineRoutes.routed("api//integration/x/./%75pdate?y=1") == "api/integration/x/update?y=1")
-        #expect(EngineRoutes.allowsAgents("api/kuvo/accounts/codex-cli@9a8b", method: "PATCH"))
-        #expect(!EngineRoutes.allowsAgents("api/kuvo/engine", method: "PUT"))
-        #expect(!EngineRoutes.allowsAgents("api/integration/claude-code/update", method: "POST"))
-        #expect(!EngineRoutes.allowsAgents("api/fs/read/../../etc/passwd"))
-        // The engine's own accounts: signed in to and switched, never read (no credential list,
-        // which carries keys and tokens), nor its program updated; nor Auto, the agents' own.
-        #expect(EngineRoutes.allows("api/integration"))
-        #expect(EngineRoutes.allows("api/integration/anthropic/connect/key", method: "POST"))
-        #expect(!EngineRoutes.allows("api/credential"))
-        #expect(!EngineRoutes.allows("api/credential/cred_1"))
-        #expect(!EngineRoutes.allows("api/integration/anthropic/update", method: "POST"))
-        #expect(!EngineRoutes.allows("api/kuvo/auto"))
+        // Nothing but the API, and no path that isn't what it seems.
+        for path in ["kuvo/info", "", "api/fs/read/../../etc/passwd", "api/session/%2e%2e/credential", "api/kuvo/engine#", "api/session/x\u{7f}"] {
+            #expect(!EngineRoutes.allows(path) && !EngineRoutes.allowsAgents(path), "\(path)")
+        }
     }
 
     @Test func passesRequestsWithTheEnginesPassword() async throws {
@@ -91,7 +82,7 @@ final class FakeEngine: URLProtocol, @unchecked Sendable {
 
     @Test func refusesWhatIsNotOnTheList() async throws {
         FakeEngine.asked = []
-        let (status, _, _) = try await collect(EngineRoutes.forward(LinkRequest(path: "api/credential"), to: base, password: "s", session: session))
+        let (status, _, _) = try await collect(EngineRoutes.forward(LinkRequest(path: "api/session/../credential"), to: base, password: "s", session: session))
         #expect(status == 403)
         #expect(FakeEngine.asked.isEmpty)
     }

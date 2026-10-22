@@ -172,12 +172,14 @@ like HTTP:
 `h` holds `x-opencode-directory` and `content-type`; the host adds the engine's password
 itself. A host serves:
 
-- `api/…`: passed to its engine, if the path is on the host's list (sessions, messages,
-  prompts, permissions, questions, events, providers, agents, commands, a project's files,
-  terminals, plan accounts as below). Never what anything is signed in with. The commands the engine runs for agents are read only:
-  `GET api/shell` (those running in the folder `x-opencode-directory` names), `GET
-  api/shell/<id>` and `GET api/shell/<id>/output?cursor=&limit=`; running one or removing it is
-  refused. Their `shell.created`, `shell.exited` and `shell.deleted` come with `api/event`.
+- `api/…`: passed to its engine, all of its API. A paired phone is yours, with the reach the app
+  has on that computer: sessions, files, terminals and commands, accounts and their keys, the
+  engine's settings, MCP servers. Only a path that isn't what it seems is refused (403): one with
+  `..` (plain or percent-encoded), a backslash, a fragment, control characters, a space at
+  either end, or a sign joined into one character with a mark after it. The commands the engine
+  runs for agents: `GET api/shell` (those running in the folder `x-opencode-directory` names),
+  `GET api/shell/<id>` and `GET api/shell/<id>/output?cursor=&limit=`; their `shell.created`,
+  `shell.exited` and `shell.deleted` come with `api/event`.
   A subagent's session (`metadata.sessionID` of the `subagent` step that started it) is a session
   like any other, which is how the phone watches and talks to one, as the Mac's subagent tab does:
   read its messages, prompt it (`steer` while it works: it reads it at its next step; once it's
@@ -203,8 +205,9 @@ itself. A host serves:
   made there, never on the engine. A Mac answers for its own; a machine's bridge (from 0.6.0) for
   the machine's, with the Mac closed too: each machine signs in to them on its own, and has its
   own Custom Auto lists. `kuvo/info` has `agents: true` while the bridge is up; otherwise these
-  answer 503. What a phone may ask for is the same on both (`Vectors/link.json`,
-  `agentRoutes`).
+  answer 503. All of its API, but for the two routes only the app wires things with:
+  `api/kuvo/engine` (where the engine is) and `api/kuvo/groups` (group chats' own steps, which a
+  phone takes through `kuvo/groups`). The same on both (`Vectors/link.json`, `agentRoutes`).
   - Accounts: besides each agent's own sign-in, ones you added, each its own provider
     `<agent's provider>@<id>` (`claude-code@1f2e3d4c`), named `Claude Code · Work` in
     `kuvo/agents/api/integration` (`metadata.accountID`, `metadata.accountLabel`). Their models
@@ -241,7 +244,7 @@ itself. A host serves:
     `…/session/<id>/fork {before}` makes a new session from a message.
 - Plan accounts (Copilot, OpenCode, GitLab, Poe, a provider's API key), on a Mac and (from
   bridge 0.7.5) a machine, as Settings › Accounts has them: the phone sees and signs in to them,
-  never what they're signed in with. Secrets only ever go in. A machine's plans that its Mac
+  and (from bridge 0.8.0) reads them as the app does. A machine's plans that its Mac
   also has a key or a sign-in for that stays the same (Copilot's) follow the Mac's: each time
   the Mac connects, its own replaces what's in use there. Change those on the Mac, or with the
   Mac's own routes; a change made on the machine lasts for plans the Mac has none of, and for
@@ -255,9 +258,9 @@ itself. A host serves:
     …/connect/oauth/<attempt>` to give up. A page that sends the browser back to `localhost` on
     the computer (GitLab's, Poe's, ChatGPT's) can't finish from a phone on a machine: offer it on
     the Mac. Device codes (Copilot, OpenCode Console, SuperGrok) and keys work from anywhere.
-  - Its sign-ins: `GET kuvo/accounts/credentials` → `{credentials: [{id, integrationID, label,
-    active}]}` (never the engine's `api/credential`, which carries keys and tokens, nor one of
-    them); `POST api/credential/<id>/activate` uses one; `DELETE api/credential/<id>` removes one.
+  - Its sign-ins: `GET api/credential` (with what each is signed in with), or `GET
+    kuvo/accounts/credentials` → `{credentials: [{id, integrationID, label, active}]}`, the list
+    alone; `POST api/credential/<id>/activate` uses one; `DELETE api/credential/<id>` removes one.
   - On a Mac only: `GET kuvo/accounts/ended` → `{providers: [id]}`, the plans whose sign-in in use
     ended (the service refused it; the Mac says "Sign-in ended"); `POST
     kuvo/accounts/<provider>/forget` is Disconnect, as Settings › Accounts does it: its sign-ins

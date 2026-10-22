@@ -205,7 +205,7 @@ async function fakeEngine() {
   return { asked, port: server.address().port, close: () => { server.closeAllConnections(); server.close(); } };
 }
 
-test("requests go to the engine with its password; other routes don't", async t => {
+test("requests go to the engine with its password, all of its API; paths that aren't what they seem don't", async t => {
   const engine = await fakeEngine();
   t.after(engine.close);
   const hostKey = link.newKey();
@@ -225,12 +225,16 @@ test("requests go to the engine with its password; other routes don't", async t 
   assert.equal(call.auth, `Basic ${Buffer.from("opencode:s3cret").toString("base64")}`);
   assert.equal(call.directory, "/home/me/p");
 
-  for (const [id, p] of [[2, "api/credential"], [3, "api/integration/github/connect/key"], [4, "api/config"], [5, "api/session/../credential"]]) {
+  // The phone is yours: the engine's settings and sign-ins too.
+  for (const [id, p] of [[2, "api/credential"], [3, "api/config"]]) {
     phone.send({ t: "req", id, m: "GET", p, h: {} });
-    const refused = await phone.response();
-    assert.equal(refused.head.s, 403, p);
+    assert.equal((await phone.response()).head.s, 200, p);
   }
-  assert.ok(!engine.asked.some(a => a.url?.includes("credential") || a.url?.includes("config")));
+  for (const [id, p] of [[4, "api/session/../credential"], [5, "kuvo/nothing"], [6, "api/session#x"]]) {
+    phone.send({ t: "req", id, m: "GET", p, h: {} });
+    assert.equal((await phone.response()).head.s, 403, p);
+  }
+  assert.ok(!engine.asked.some(a => a.url?.includes("..") || a.url?.includes("nothing")));
 
   // An event stream runs until the phone cancels it, and then the engine sees it close.
   phone.send({ t: "req", id: 9, m: "GET", p: "api/event", h: { Accept: "text/event-stream" } });
@@ -243,7 +247,7 @@ test("requests go to the engine with its password; other routes don't", async t 
   assert.ok(engine.asked.some(a => a.closed === "/api/event"));
 });
 
-test("plan accounts: signed in to and switched from a phone, never read", async t => {
+test("plan accounts: listed, signed in to and switched from a phone", async t => {
   const engine = await fakeEngine();
   t.after(engine.close);
   const hostKey = link.newKey();
@@ -273,10 +277,6 @@ test("plan accounts: signed in to and switched from a phone, never read", async 
   const started = await phone.response();
   assert.equal(started.head.s, 200);
   assert.equal(JSON.parse(started.body).body, start);
-  for (const [id, m, p] of [[4, "GET", "api/credential"], [5, "GET", "api/credential/cred_1"], [6, "POST", "api/integration/anthropic/update"]]) {
-    phone.send({ t: "req", id, m, p, h: {} });
-    assert.equal((await phone.response()).head.s, 403, p);
-  }
   assert.deepEqual(engine.asked.filter(a => a.url?.startsWith("/api/")).map(a => `${a.method} ${a.url}`),
     ["GET /api/credential", "POST /api/integration/anthropic/connect/key", "POST /api/credential/cred_2/activate", "POST /api/integration/opencode/connect/oauth"]);
 });

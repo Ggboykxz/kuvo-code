@@ -3,65 +3,18 @@ import Foundation
 /// What a phone may ask an engine for, and passing it on: the Mac's side of what a machine's
 /// bridge does in `kuvo-link.js` (the two lists are checked against `Vectors/link.json`).
 public enum EngineRoutes {
-    /// Sessions and what's in them, live events, what the phone needs to show them, a project's
-    /// files to read, terminals, and plan accounts (`allowsAccount`). Never what's signed in with
-    /// (keys, tokens), integrations' programs, the engine's settings, MCP servers or plugins.
+    /// A paired phone is yours: the engine's whole API, as the app has it (sessions, files,
+    /// terminals, commands, accounts and keys, settings, MCP servers). Only a path that isn't what
+    /// it seems (`staysInProject`) is refused.
     public static func allows(_ path: String, method: String = "GET") -> Bool {
-        guard staysInProject(path) else { return false }
-        if allowsAccount(path, method: method) { return true }
-        // Commands the engine runs for agents: read only (the list, one, its output); never run
-        // one or remove it.
-        if path.prefixMatch(of: #/api/shell(/|\?|$)/#) != nil {
-            return ["GET", "HEAD"].contains(method.uppercased()) && path.wholeMatch(of: #/api/shell(/[^/?]+(/output)?)?(\?.*)?/#) != nil
-        }
-        return path.prefixMatch(of: #/api/session(/|\?|$)/#) != nil
-            || path.prefixMatch(of: #/api/experimental/session/[^/]+/wait(\?|$)/#) != nil
-            || path.prefixMatch(of: #/api/event(\?|$)/#) != nil
-            || path.prefixMatch(of: #/api/(info|agent|command|model|provider|project|location|skill|vcs|worktree|permission|form)(/|\?|$)/#) != nil
-            || path.prefixMatch(of: #/api/fs/(list|find)(\?|$)/#) != nil
-            || path.prefixMatch(of: #/api/fs/read//#) != nil
-            || path.prefixMatch(of: #/api/pty(/|\?|$)/#) != nil
+        staysInProject(path) && path.prefixMatch(of: #/api(/|\?|$)/#) != nil
     }
 
-    /// Plan accounts (Copilot, OpenCode, keyed providers…): a phone lists them and what each is
-    /// signed in as, signs in (a key, written only; a sign-in page and its code), switches to
-    /// another of an account's sign-ins or removes one. Never reads what's signed in with: the
-    /// credential list (`api/credential`) carries keys and tokens, so it isn't reachable at all,
-    /// nor one credential, nor an integration's program or other ways in.
-    static func allowsAccount(_ path: String, method: String) -> Bool {
-        let rules: [Regex<AnyRegexOutput>] = switch method.uppercased() {
-        case "GET": accountReads
-        case "POST": accountWrites
-        case "DELETE": accountRemovals
-        default: []
-        }
-        return rules.contains { path.wholeMatch(of: $0) != nil }
-    }
-
-    /// An integration's, a sign-in's or a credential's ID: what the engine names them with.
-    nonisolated(unsafe) private static let id = "[A-Za-z0-9_@-][A-Za-z0-9_.@-]*"
-    nonisolated(unsafe) private static let accountReads = [try! Regex("api/integration(/\(id)(/connect/oauth/\(id))?)?(\\?[^#]*)?")]
-    nonisolated(unsafe) private static let accountWrites = [
-        try! Regex("api/integration/\(id)/connect/(key|oauth)"),
-        try! Regex("api/integration/\(id)/connect/oauth/\(id)/complete"),
-        try! Regex("api/credential/\(id)/activate"),
-    ]
-    nonisolated(unsafe) private static let accountRemovals = [
-        try! Regex("api/integration/\(id)/connect/oauth/\(id)"),
-        try! Regex("api/credential/\(id)"),
-    ]
-
-    /// What a phone may ask a Mac's coding agents' bridge for: what it may ask an engine for, and
-    /// their accounts (adding, naming, removing and signing in to them) and Auto's list. Never
-    /// where the engine is, nor updating an agent's program (that runs an installer on the Mac).
+    /// The same of a coding agents' bridge, but for the two routes only the app wires things with:
+    /// where the engine is, and its group chats' own steps (moves), which a phone does through
+    /// `kuvo/groups`.
     public static func allowsAgents(_ path: String, method: String = "GET") -> Bool {
-        guard staysInProject(path) else { return false }
-        let routed = routed(path)
-        if routed.prefixMatch(of: #/api/kuvo/engine(/|\?|$)/#) != nil { return false }
-        if routed.prefixMatch(of: #/api/integration/[^/?]+/update(/|\?|$)/#) != nil { return false }
-        return allows(path, method: method)
-            || path.prefixMatch(of: #/api/integration(/|\?|$)/#) != nil
-            || path.prefixMatch(of: #/api/kuvo/(auto|accounts)(/|\?|$)/#) != nil
+        allows(path, method: method) && routed(path).prefixMatch(of: #/api/kuvo/(engine|groups)(/|\?|$)/#) == nil
     }
 
     /// `path` as the agents bridge routes it: split into parts, without empty ones or "." ones

@@ -4,10 +4,10 @@ import OpenCodeKit
 import Testing
 @testable import KuvoCode
 
-/// Your plan accounts from a phone, as this Mac answers it: the sign-ins it has, by name and which
-/// is in use, never what they're signed in with; the plans whose sign-in ended; Disconnect, as
-/// Settings › Accounts does it. A sign-in page started there reaches the engine with what its
-/// method's form fills in, and the engine's own list of sign-ins never goes. The engine is faked.
+/// Your plan accounts from a phone, as this Mac answers it: the sign-ins it has, listed by name and
+/// which is in use, or as the engine keeps them; the plans whose sign-in ended; Disconnect, as
+/// Settings › Accounts does it, only for your plans. A sign-in page started there reaches the
+/// engine with what its method's form fills in. The engine is faked.
 @MainActor
 @Suite(.serialized) struct PhoneAccountsTests {
     let engine: FakeEngine
@@ -50,7 +50,7 @@ import Testing
         return (status, data)
     }
 
-    @Test func aPhoneSeesThisMacsSignInsNeverTheirSecrets() async throws {
+    @Test func aPhoneSeesThisMacsSignIns() async throws {
         defer { StubWeb.stop() }
         engine.store("anthropic", label: "Work", value: ["type": "key", "key": "sk-ant-secret"])
         engine.store("openai", label: "me", value: ["type": "oauth", "access": "a", "refresh": "rt_secret", "expires": 1], active: false)
@@ -58,9 +58,10 @@ import Testing
         #expect(listed.status == 200)
         let credentials = try #require((try JSONSerialization.jsonObject(with: listed.body) as? [String: Any])?["credentials"] as? [[String: Any]])
         #expect(credentials.map { "\($0["integrationID"]!) \($0["label"]!) \($0["active"]!)" } == ["anthropic Work 1", "openai me 0"])
-        #expect(!String(decoding: listed.body, as: UTF8.self).contains("secret"))
-        // The engine's own list, with them, isn't reachable.
-        #expect(try await ask("api/credential").status == 403)
+        #expect(!String(decoding: listed.body, as: UTF8.self).contains("secret"), "the list alone")
+        // The engine's own, with what each is signed in with: the phone is yours.
+        let kept = try await ask("api/credential")
+        #expect(kept.status == 200 && String(decoding: kept.body, as: UTF8.self).contains("sk-ant-secret"))
     }
 
     @Test func endedAndDisconnect() async throws {

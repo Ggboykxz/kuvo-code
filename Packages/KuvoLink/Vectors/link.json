@@ -183,19 +183,19 @@
     },
     {
       "path": "api/experimental/session/ses_1/instructions/entries/k",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/credential",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/credential/anthropic",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/integration/github/connect/key",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/integration",
@@ -207,19 +207,19 @@
     },
     {
       "path": "api/config",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/config/shell",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/mcp",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/plugin",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/fs/list",
@@ -239,11 +239,11 @@
     },
     {
       "path": "api/fs/read",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/fs/write/x",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/fs/read/../../etc/hosts",
@@ -335,11 +335,11 @@
     },
     {
       "path": "api/sessions",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/eventual",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/session/../credential",
@@ -371,7 +371,7 @@
     },
     {
       "path": "api/ptys",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/pty/%2e%2e/x",
@@ -379,7 +379,7 @@
     },
     {
       "path": "api/experimental/persistent-pty/pty_1",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/shell",
@@ -399,20 +399,20 @@
     },
     {
       "path": "api/shell/sh_1/x",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/shells",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/shell",
-      "allowed": false,
+      "allowed": true,
       "method": "POST"
     },
     {
       "path": "api/shell/sh_1",
-      "allowed": false,
+      "allowed": true,
       "method": "DELETE"
     },
     {
@@ -477,87 +477,87 @@
     },
     {
       "path": "api/credential",
-      "allowed": false,
+      "allowed": true,
       "method": "GET"
     },
     {
       "path": "api/credential/cred_1",
-      "allowed": false,
+      "allowed": true,
       "method": "GET"
     },
     {
       "path": "api/credential",
-      "allowed": false,
+      "allowed": true,
       "method": "POST"
     },
     {
       "path": "api/credential?x=1",
-      "allowed": false,
+      "allowed": true,
       "method": "GET"
     },
     {
       "path": "api/credential/cred_1/activate",
-      "allowed": false,
+      "allowed": true,
       "method": "GET"
     },
     {
       "path": "api/credential/cred_1/x",
-      "allowed": false,
+      "allowed": true,
       "method": "DELETE"
     },
     {
       "path": "api/integration/anthropic/update",
-      "allowed": false,
+      "allowed": true,
       "method": "POST"
     },
     {
       "path": "api/integration/anthropic/connect/external",
-      "allowed": false,
+      "allowed": true,
       "method": "POST"
     },
     {
       "path": "api/integration/anthropic/connect/%6bey",
-      "allowed": false,
+      "allowed": true,
       "method": "POST"
     },
     {
       "path": "api/integration/anthropic//connect/key",
-      "allowed": false,
+      "allowed": true,
       "method": "POST"
     },
     {
       "path": "api/integration/./connect/key",
-      "allowed": false,
+      "allowed": true,
       "method": "POST"
     },
     {
       "path": "api/integration/anthropic/connect/key/x",
-      "allowed": false,
+      "allowed": true,
       "method": "POST"
     },
     {
       "path": "api/integration/anthropic/connect/key?x=1",
-      "allowed": false,
+      "allowed": true,
       "method": "POST"
     },
     {
       "path": "api/integration/anthropic",
-      "allowed": false,
+      "allowed": true,
       "method": "DELETE"
     },
     {
       "path": "api/integration/anthropic",
-      "allowed": false,
+      "allowed": true,
       "method": "PATCH"
     },
     {
       "path": "api/integration/anthropic/connect/key",
-      "allowed": false,
+      "allowed": true,
       "method": "GET"
     },
     {
       "path": "api/integration/anthropic/connect/key",
-      "allowed": false,
+      "allowed": true,
       "method": "PUT"
     },
     {
@@ -582,7 +582,7 @@
     },
     {
       "path": "api/credential/.hidden",
-      "allowed": false,
+      "allowed": true,
       "method": "DELETE"
     }
   ],
@@ -704,37 +704,37 @@
     },
     {
       "path": "api/integration/claude-code/update",
-      "allowed": false,
+      "allowed": true,
       "method": "POST"
     },
     {
       "path": "api/integration/claude-code/%75pdate",
-      "allowed": false,
+      "allowed": true,
       "method": "POST"
     },
     {
       "path": "api/integration/claude-code//update",
-      "allowed": false,
+      "allowed": true,
       "method": "POST"
     },
     {
       "path": "api/integration/claude-code/./update",
-      "allowed": false,
+      "allowed": true,
       "method": "POST"
     },
     {
       "path": "api/integration/claude-code/%2e/update",
-      "allowed": false,
+      "allowed": true,
       "method": "POST"
     },
     {
       "path": "api/integration//claude-code/update",
-      "allowed": false,
+      "allowed": true,
       "method": "POST"
     },
     {
       "path": "api/integration/claude-code/update/",
-      "allowed": false,
+      "allowed": true,
       "method": "POST"
     },
     {
@@ -754,22 +754,22 @@
     },
     {
       "path": "api/credential",
-      "allowed": false,
+      "allowed": true,
       "method": "GET"
     },
     {
       "path": "api/config",
-      "allowed": false,
+      "allowed": true,
       "method": "GET"
     },
     {
       "path": "api/kuvo/other",
-      "allowed": false,
+      "allowed": true,
       "method": "GET"
     },
     {
       "path": "api/shell",
-      "allowed": false,
+      "allowed": true,
       "method": "POST"
     },
     {
@@ -811,6 +811,21 @@
       "path": "api/integration/claude-code/update%3F\u0301",
       "allowed": false,
       "method": "POST"
+    },
+    {
+      "path": "api/kuvo/groups",
+      "allowed": false,
+      "method": "GET"
+    },
+    {
+      "path": "api/kuvo/groups/grp_x/release",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/kuvo/%67roups",
+      "allowed": false,
+      "method": "GET"
     }
   ]
 }

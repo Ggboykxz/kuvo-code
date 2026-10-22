@@ -349,7 +349,7 @@ final class PhoneLink {
                 }
             }
         }
-        // This Mac's accounts, without what they're signed in with.
+        // This Mac's sign-ins, listed (`api/credential` has what each is signed in with too).
         if request.path.split(separator: "?").first == "kuvo/accounts/credentials" {
             return AsyncThrowingStream { continuation in
                 Task { @MainActor in
@@ -582,8 +582,8 @@ final class PhoneLink {
     // MARK: Accounts
 
     /// `kuvo/accounts/credentials`: each sign-in this Mac's engine keeps, by its ID, with the plan
-    /// it's for, its name and whether it's the one in use; never what it's signed in with (the
-    /// engine's list has that, which a phone can't reach).
+    /// it's for, its name and whether it's the one in use: the list alone (the engine's
+    /// `api/credential` has what each is signed in with too).
     private func credentialsJSON() async -> (Int, Data) {
         guard let api = workspace?.api else { return (503, Data()) }
         guard let credentials = try? await api.credentials() else { return (502, Data()) }

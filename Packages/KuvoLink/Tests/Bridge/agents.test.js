@@ -39,7 +39,7 @@ async function fakeBridge() {
   return { asked, port: server.address().port, close: () => { server.closeAllConnections(); server.close(); } };
 }
 
-test("the coding agents' sessions and accounts go to their bridge with its password; where the engine is, never", async t => {
+test("the coding agents' bridge gets what a phone asks, with its password; where the engine is, never", async t => {
   const bridge = await fakeBridge();
   t.after(bridge.close);
   // A process its record names, whose command line says it's the agents' bridge (on Linux, the
@@ -62,10 +62,13 @@ test("the coding agents' sessions and accounts go to their bridge with its passw
   assert.equal(sent.body, '{"text":"hi"}');
   assert.equal((await ask(handle, "PUT", "kuvo/agents/api/kuvo/auto", { body: "{}" })).status, 200);
 
+  // An agent's update too: the phone is yours.
+  assert.equal((await ask(handle, "POST", "kuvo/agents/api/integration/claude-code/update", { body: "{}" })).status, 200);
+
   const before = bridge.asked.length;
-  for (const [method, p] of [["PUT", "kuvo/agents/api/kuvo/engine"], ["POST", "kuvo/agents/api/integration/claude-code/%75pdate"], ["GET", "kuvo/agents/api/credential"],
+  for (const [method, p] of [["PUT", "kuvo/agents/api/kuvo/engine"], ["PUT", "kuvo/agents/api/kuvo/%65ngine"], ["POST", "kuvo/agents/api/kuvo/groups/grp_x/release"],
     // A space at the end, which fetch would drop on the way.
-    ["POST", "kuvo/agents/api/integration/claude-code/update "], ["PUT", "kuvo/agents/api/kuvo/engine "]]) {
+    ["PUT", "kuvo/agents/api/kuvo/engine "]]) {
     assert.equal((await ask(handle, method, p)).status, 403, p);
   }
   assert.equal(bridge.asked.length, before, "none of those reached it");

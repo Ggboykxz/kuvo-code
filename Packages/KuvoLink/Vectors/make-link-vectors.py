@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Writes link.json: addresses, relay messages, link frames and session messages, worked out
 here independently of the Swift and JavaScript implementations, which both check against it."""
-import hashlib, json, struct
+import hashlib, json, re, struct, unicodedata, urllib.parse
 
 def address(secret):
     return hashlib.sha256(b"kuvo-link address v1" + secret).digest()[:16]
@@ -36,7 +36,7 @@ messages = [
     message({"t": "ping"}, b""),
 ]
 
-# What a phone may ask an engine for, through a Mac or a machine: the same on both.
+# Paths a phone may send an engine, through a Mac or a machine (what each gets: below).
 routes = [{"path": p, "allowed": a} for p, a in [
     ("api/session", True), ("api/session?limit=50&order=desc", True), ("api/session/ses_1/prompt", True),
     ("api/session/active", True), ("api/event", True), ("api/event?x=1", True), ("api/info", True),
@@ -65,13 +65,12 @@ routes = [{"path": p, "allowed": a} for p, a in [
     ("api/shell", True), ("api/shell/sh_1", True), ("api/shell/sh_1/output?cursor=0&limit=1", True),
     ("api/shell/../config", False), ("api/shell/sh_1/x", False), ("api/shells", False),
 ]]
-# Read only: a phone lists and reads commands running for agents, but never runs or removes one.
+# Commands the engine runs for agents, by method.
 routes += [{"path": p, "allowed": a, "method": m} for p, a, m in [
     ("api/shell", False, "POST"), ("api/shell/sh_1", False, "DELETE"), ("api/shell/sh_1/output", True, "GET"),
 ]]
 
-# Plan accounts (PROTOCOL.md, "Accounts"): signed in to, switched and removed, never read: no
-# credential list or credential, which carry keys and tokens, nor other ways in.
+# Plan accounts and their keys, by method.
 routes += [{"path": p, "allowed": a, "method": m} for p, a, m in [
     ("api/integration", True, "GET"), ("api/integration?fresh=1", True, "GET"), ("api/integration/github-copilot", True, "GET"),
     ("api/integration/anthropic/connect/key", True, "POST"), ("api/integration/github-copilot/connect/oauth", True, "POST"),
@@ -99,9 +98,8 @@ sockets = [{"path": p, "allowed": a} for p, a in [
     ("api/pty/%2e%2e\u200d/connect", False),
 ]]
 
-# What a phone may ask the coding agents' bridge for, on a Mac or a machine (`kuvo/agents/api/…`,
-# without the prefix): the engine's routes, their accounts and Auto; never where the engine is,
-# nor an agent's update, however the path is written.
+# Paths a phone may send the coding agents' bridge, on a Mac or a machine (`kuvo/agents/api/…`,
+# without the prefix), however where the engine is is written.
 agent_routes = [{"path": p, "allowed": a, "method": m} for p, a, m in [
     ("api/session/ses_1/prompt", True, "POST"), ("api/session", True, "GET"), ("api/event", True, "GET"),
     ("api/integration", True, "GET"), ("api/integration/claude-code@1f2e/connect/oauth", True, "POST"),
@@ -120,6 +118,55 @@ agent_routes = [{"path": p, "allowed": a, "method": m} for p, a, m in [
     ("api/integration/claude-code/update/\u0301", False, "POST"), ("api/kuvo/engine#\u200d", False, "PUT"),
     ("api/integration/claude-code/update%3F\u0301", False, "POST"),
 ]]
+
+# A paired phone is yours: the engine's whole API, as the app has it (accounts and keys, settings,
+# MCP servers, commands included), with only a path that isn't what it seems refused; and the
+# same of the coding agents' bridge, but for where the engine is and its group chats' own steps.
+# The paths above are kept; what each should get is worked out here, by that rule.
+def percent_decoded(path):
+    if re.search(r"%(?![0-9A-Fa-f]{2})", path):
+        return None
+    try:
+        return urllib.parse.unquote_to_bytes(path).decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+def joins_a_sign(text):
+    # A sign other than a letter or digit, then a mark that joins it into one character.
+    extends = lambda c: unicodedata.category(c) in ("Mn", "Me", "Mc") or c == "\u200d" or 0xFE00 <= ord(c) <= 0xFE0F
+    return any(ord(x) < 0x80 and not x.isalnum() and extends(y) for x, y in zip(text, text[1:]))
+
+def is_what_it_seems(path):
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in path) or path.startswith(" ") or path.endswith(" ") or "#" in path:
+        return False
+    decoded = percent_decoded(path)
+    return decoded is not None and ".." not in path and ".." not in decoded and "\\" not in decoded \
+        and not joins_a_sign(path) and not joins_a_sign(decoded)
+
+def routed(path):
+    at = path.find("?")
+    head, query = (path, "") if at < 0 else (path[:at], path[at:])
+    parts = [part for part in head.split("/") if part not in ("", ".") and part.lower() != "%2e"]
+    return "/".join(percent_decoded(part) or part for part in parts) + query
+
+def phone_may(path):
+    return is_what_it_seems(path) and re.match(r"api(/|\?|$)", path) is not None
+
+def agents_may(path):
+    return phone_may(path) and re.match(r"api/kuvo/(engine|groups)(/|\?|$)", routed(path)) is None
+
+agent_routes += [{"path": p, "allowed": False, "method": m} for p, m in [
+    ("api/kuvo/groups", "GET"), ("api/kuvo/groups/grp_x/release", "POST"), ("api/kuvo/%67roups", "GET"),
+]]
+for item in routes:
+    item["allowed"] = phone_may(item["path"])
+for item in agent_routes:
+    item["allowed"] = agents_may(item["path"])
+# What that rule says of a few, as meant.
+assert phone_may("api/credential") and phone_may("api/config") and phone_may("api/shell") and phone_may("api/integration/x/update")
+assert not phone_may("api/session/../credential") and not phone_may("kuvo/info") and not phone_may("api/session/%2e%2e\u200d/x")
+assert not agents_may("api/kuvo/engine") and not agents_may("api/kuvo/%65ngine") and not agents_may("api/kuvo/groups/x")
+assert agents_may("api/integration/claude-code/update") and agents_may("api/kuvo/auto")
 
 json.dump({"addresses": addresses, "relay": relay, "frames": frames, "messages": messages, "routes": routes, "sockets": sockets,
            "agentRoutes": agent_routes}, open("link.json", "w"), indent=2)

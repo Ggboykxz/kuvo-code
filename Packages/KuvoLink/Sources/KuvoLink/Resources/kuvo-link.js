@@ -22,7 +22,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 // Goes up with every change, so `setup` replaces a running bridge that's older.
-export const BRIDGE_VERSION = "0.7.6";
+export const BRIDGE_VERSION = "0.8.0";
 const K = process.env.KUVO_HOME || path.join(os.homedir(), ".kuvo-code");
 const RUN = path.join(K, "run");
 export const LINK_FILE = path.join(RUN, "link.json");
@@ -504,32 +504,6 @@ export class LinkHost {
 
 // ---- Forwarding to the engine ----
 
-// What a phone may ask the engine for: sessions and what's in them, live events, what it needs
-// to show them, a project's files to read, and plan accounts (ACCOUNTS). Never what's signed in
-// with (keys, tokens), integrations' programs, the engine's settings, MCP servers or plugins.
-const ALLOWED = [
-  /^api\/session(\/|\?|$)/,
-  /^api\/experimental\/session\/[^/]+\/wait(\?|$)/,
-  /^api\/event(\?|$)/,
-  /^api\/(info|agent|command|model|provider|project|location|skill|vcs|worktree|permission|form)(\/|\?|$)/,
-  /^api\/fs\/(list|find)(\?|$)/,
-  /^api\/fs\/read\//,
-  /^api\/pty(\/|\?|$)/,
-];
-// Plan accounts: a phone lists them and what each is signed in as, signs in (a key, written
-// only; a sign-in page and its code), switches to another of an account's sign-ins or removes
-// one. Never reads what's signed in with: the credential list carries keys and tokens.
-const ID = "[A-Za-z0-9_@-][A-Za-z0-9_.@-]*";
-const ACCOUNTS = {
-  GET: [new RegExp(`^api/integration(/${ID}(/connect/oauth/${ID})?)?(\\?[^#]*)?$`)],
-  POST: [
-    new RegExp(`^api/integration/${ID}/connect/(key|oauth)$`),
-    new RegExp(`^api/integration/${ID}/connect/oauth/${ID}/complete$`),
-    new RegExp(`^api/credential/${ID}/activate$`),
-  ],
-  DELETE: [new RegExp(`^api/integration/${ID}/connect/oauth/${ID}$`), new RegExp(`^api/credential/${ID}$`)],
-};
-const accountAllowed = (path, method) => (ACCOUNTS[method.toUpperCase()] ?? []).some(pattern => pattern.test(path));
 // The sockets a phone may open: a terminal's.
 const SOCKETS = [/^api\/pty\/[^/?]+\/connect(\?|$)/];
 const REQUEST_HEADERS = ["content-type", "accept", "x-opencode-directory", "last-event-id"];
@@ -543,21 +517,24 @@ const leavesProject = path => {
   try {
     if (/[\u0000-\u001f\u007f#]/.test(path) || path.startsWith(" ") || path.endsWith(" ")) return true;
     const decoded = decodeURIComponent(path);
-    return path.includes("..") || decoded.includes("..") || decoded.includes("\\");
+    return path.includes("..") || decoded.includes("..") || decoded.includes("\\") || joinsASign(path) || joinsASign(decoded);
   } catch {
     return true;
   }
 };
-// Commands the engine runs for agents: read only (the list, one, its output); never run one or
-// remove it.
-const SHELL = /^api\/shell(\/|\?|$)/;
-const SHELL_READ = /^api\/shell(\/[^/?]+(\/output)?)?(\?.*)?$/;
-export const allowed = (path, method = "GET") => {
-  if (leavesProject(path)) return false;
-  if (accountAllowed(path, method)) return true;
-  if (SHELL.test(path)) return ["GET", "HEAD"].includes(method.toUpperCase()) && SHELL_READ.test(path);
-  return ALLOWED.some(pattern => pattern.test(path));
+// A sign other than a letter or digit joined into one character with a mark after it, as the Mac
+// refuses it (its checks are made on characters, where "?\u0301" isn't "?").
+const characters = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const joinsASign = text => {
+  for (const { segment } of characters.segment(text)) {
+    if ([...segment].length > 1 && /[\u0000-\u002f\u003a-\u0040\u005b-\u0060\u007b-\u007f]/.test(segment)) return true;
+  }
+  return false;
 };
+// A paired phone is yours: the engine's whole API, as the app has it (sessions, files, terminals,
+// commands, accounts and keys, settings, MCP servers). Only a path that isn't what it seems
+// (`leavesProject`) is refused. As the Mac allows them (KuvoLink's EngineRoutes.allows).
+export const allowed = (path, method = "GET") => !leavesProject(path) && /^api(\/|\?|$)/.test(path);
 export const socketAllowed = path => !leavesProject(path) && SOCKETS.some(pattern => pattern.test(path));
 
 // `path` as the coding agents' bridge routes it: split into parts, without empty ones or "."
@@ -576,17 +553,12 @@ export const routedPath = path => {
   return parts.join("/") + (at < 0 ? "" : path.slice(at));
 };
 
-// What a phone may ask the coding agents' bridge for (`kuvo/agents/api/…`): what it may ask the
-// engine for, and their accounts (adding, naming, removing and signing in to them) and Auto's
-// lists. Never where the engine is, nor updating an agent's program. As the Mac allows them
-// (KuvoLink's EngineRoutes.allowsAgents; both are checked against Vectors/link.json).
-export const agentsAllowed = (path, method = "GET") => {
-  if (leavesProject(path)) return false;
-  const routed = routedPath(path);
-  if (/^api\/kuvo\/engine(\/|\?|$)/.test(routed)) return false;
-  if (/^api\/integration\/[^/?]+\/update(\/|\?|$)/.test(routed)) return false;
-  return allowed(path, method) || /^api\/integration(\/|\?|$)/.test(path) || /^api\/kuvo\/(auto|accounts)(\/|\?|$)/.test(path);
-};
+// The same of the coding agents' bridge (`kuvo/agents/api/…`), but for the two routes only the
+// app wires things with: where the engine is, and its group chats' own steps (moves), which a
+// phone does through `kuvo/groups`. As the Mac allows them (EngineRoutes.allowsAgents; both are
+// checked against Vectors/link.json).
+export const agentsAllowed = (path, method = "GET") =>
+  allowed(path, method) && !/^api\/kuvo\/(engine|groups)(\/|\?|$)/.test(routedPath(path));
 
 const readEngineFile = () => JSON.parse(fs.readFileSync(ENGINE_FILE, "utf8"));
 // The coding agents' bridge beside the engine, when it runs: its port and password.
@@ -672,8 +644,7 @@ export function engineHandler(readEngine = readEngineFile, info = {}, readBridge
       }
       return yield* forward(target, path, request, signal, agentsAllowed);
     }
-    // This machine's plan accounts, without what they're signed in with: the engine's list has
-    // that, which a phone can't reach.
+    // This machine's sign-ins, listed (`api/credential` has what each is signed in with too).
     if (request.path.split("?")[0] === "kuvo/accounts/credentials") {
       if (!["GET", "HEAD"].includes(request.method.toUpperCase())) return yield* text(405, "Read them with GET.");
       let engine;
