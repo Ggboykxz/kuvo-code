@@ -337,6 +337,11 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     run in the primary folder; the agent can work in the others too" — and the session in
     view is given them: the rules that allow those folders, and the note that tells the
     agent that "in chugs-pinterest" means that folder (`SessionModel.swift:1379-1405`).
+  - **2.102 (this change). Machines settings page.** The Mac's Settings has a Machines
+    page (`MachinesSettings.swift`) that the port did not draw. It is drawn now, with a
+    name, an SSH destination, a Test button that runs ssh with a timeout, and Remove.
+    Reachability is checked on this machine; installing the engine on the remote and
+    running sessions there comes next.
   - **2.101 (this change). Bots settings page.** The Mac's Settings has a Bots page
     (`BotEditor.swift`) that the port did not draw. It is drawn now, with a name, a job and
     the model that does it, added, edited and removed on this machine.
