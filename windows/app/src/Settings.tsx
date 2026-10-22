@@ -41,6 +41,7 @@ const PAGES = [
   ["keyboard", "Keyboard Shortcuts"],
   ["mcp", "MCP Servers"],
   ["agents", "Agents"],
+  ["bots", "Bots"],
   ["skills", "Skills"],
   ["commands", "Commands"],
   ["projects", "Projects"],
@@ -67,7 +68,7 @@ const PAGES = [
 const PAGE_GROUPS = [
   ["Kuvo Code", ["appearance", "general", "keyboard", "notifications", "privacy"]],
   ["Models", ["providers", "accounts", "usage", "auto"]],
-  ["Agent", ["mcp", "agents", "skills", "commands", "permissions", "system"]],
+  ["Agent", ["mcp", "agents", "bots", "skills", "commands", "permissions", "system"]],
   ["Projects", ["projects", "git", "worktrees", "machines", "archived"]],
   ["Side Panel", ["panel", "browser", "passwords"]],
   ["Engine", ["system", "storage", "integrations"]],
@@ -86,6 +87,7 @@ const PAGE_SUBTITLES: Record<string, string> = {
   keyboard: "Every keyboard shortcut in Kuvo Code.",
   mcp: "Programs and services that give the agent more tools.",
   agents: "The agents you pick in the composer, and the subagents they hand work to.",
+  bots: "Your own bots: a name, a job, and the model that does it.",
   skills: "Instructions and scripts the agent loads when a task calls for them.",
   commands: "Prompts you use often, run by typing / and their name.",
   projects: "The folders and sessions you work in.",
@@ -204,6 +206,7 @@ export function Settings() {
       case "keyboard": return <KeyboardPage />;
       case "mcp": return <McpPage />;
       case "agents": return <AgentsPage />;
+      case "bots": return <BotsPage />;
       case "skills": return <SkillsPage />;
       case "commands": return <CommandsPage />;
       case "projects": return <ProjectsPage />;
@@ -296,6 +299,7 @@ const PAGE_SYMBOLS: Record<string, SymbolName> = {
   keyboard: "command",
   mcp: "puzzlepiece.extension",
   agents: "person.2",
+  bots: "bubble.left.and.text.bubble.right",
   skills: "graduationcap",
   commands: "slash.circle",
   projects: "folder",
@@ -1165,6 +1169,50 @@ function AccountsPage() {
         ))}
       </SettingGroup>
       <div className="settings-note">Sign in with a subscription you already have, or add an API key. Credentials stay on this machine. The Providers page is where you add your own.</div>
+    </>
+  );
+}
+
+/// Bots: your own, a name, a job, and the model that does it (BotEditor.swift).
+function BotsPage() {
+  const [bots, setBots] = useState<{ id: string; name: string; personality: string; model: string }[]>(() => {
+    try { return JSON.parse(localStorage.getItem("kuvo-bots") ?? "[]"); } catch { return []; }
+  });
+  const [editing, setEditing] = useState<{ id: string; name: string; personality: string; model: string } | null>(null);
+  const save = (list: { id: string; name: string; personality: string; model: string }[]) => { setBots(list); localStorage.setItem("kuvo-bots", JSON.stringify(list)); };
+  const remove = (id: string) => save(bots.filter(bot => bot.id !== id));
+  const upsert = (bot: { id: string; name: string; personality: string; model: string }) => {
+    const list = bots.some(item => item.id === bot.id) ? bots.map(item => item.id === bot.id ? bot : item) : [...bots, bot];
+    save(list);
+    setEditing(null);
+  };
+  return (
+    <>
+      <SettingGroup title="Bots">
+        {bots.length === 0 ? <div className="settings-note">None yet. A bot is an agent of your own: a name, a job, and the model that does it.</div> : bots.map(bot => (
+          <SettingRow key={bot.id} label={bot.name} note={bot.personality || bot.model}>
+            <button className="small" onClick={() => setEditing(bot)}>Edit</button>
+            <button className="small" onClick={() => remove(bot.id)}>Remove</button>
+          </SettingRow>
+        ))}
+        <SettingRow label="New Bot">
+          <button className="small" onClick={() => setEditing({ id: `bot-${Date.now()}`, name: "", personality: "", model: "" })}>New Bot…</button>
+        </SettingRow>
+      </SettingGroup>
+      {editing ? (
+        <div className="settings-row column">
+          <span>Name</span>
+          <input type="text" value={editing.name} onChange={event => setEditing({ ...editing, name: event.target.value })} />
+          <span>Personality</span>
+          <textarea value={editing.personality} onChange={event => setEditing({ ...editing, personality: event.target.value })} />
+          <span>Model</span>
+          <input type="text" value={editing.model} placeholder="provider/model" onChange={event => setEditing({ ...editing, model: event.target.value })} />
+          <div className="settings-editor-buttons">
+            <button className="primary" onClick={() => editing && upsert(editing)}>Save</button>
+            <button className="small" onClick={() => setEditing(null)}>Cancel</button>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }
