@@ -30,6 +30,9 @@ import {
   saveConfig,
   state,
   useStore,
+  worktrees,
+  createWorktree,
+  removeWorktree,
 } from "./store";
 
 const PAGES = [
@@ -44,6 +47,7 @@ const PAGES = [
   ["providers", "Providers"],
   ["usage", "Usage"],
   ["git", "Git"],
+  ["worktrees", "Worktrees"],
   ["archived", "Archived Sessions"],
   ["permissions", "Permissions"],
   ["system", "Engine & Storage"],
@@ -56,7 +60,7 @@ const PAGE_GROUPS = [
   ["Kuvo Code", ["appearance", "general", "keyboard", "notifications", "privacy"]],
   ["Models", ["providers", "usage"]],
   ["Agent", ["mcp", "agents", "skills", "commands", "permissions", "system"]],
-  ["Projects", ["projects", "git", "archived"]],
+  ["Projects", ["projects", "git", "worktrees", "archived"]],
   ["Side Panel", ["panel"]],
 ] as const;
 
@@ -77,6 +81,7 @@ const PAGE_SUBTITLES: Record<string, string> = {
   projects: "The folders and sessions you work in.",
   providers: "Sign in with a subscription you already have, or add an API key. Credentials stay on this machine.",
   git: "Branches, commits and pull requests made from Kuvo Code.",
+  worktrees: "Where they go, and the ones sessions have, with what each takes.",
   archived: "Sessions you put away: still searchable, out of the sidebar.",
   permissions: "What the agent may do without asking you first.",
   notifications: "When Kuvo Code tells you about a session, and how.",
@@ -187,6 +192,7 @@ export function Settings() {
       case "providers": return <ProvidersPage />;
       case "usage": return <UsagePage />;
       case "git": return <GitPage />;
+      case "worktrees": return <WorktreesPage />;
       case "archived": return <ArchivedPage />;
       case "permissions": return <PermissionsPage permissions={savedPermissions} onChange={setSavedPermissions} />;
       case "notifications": return <NotificationsPage />;
@@ -270,6 +276,7 @@ const PAGE_SYMBOLS: Record<string, SymbolName> = {
   providers: "person.crop.circle",
   usage: "gauge.with.dots.needle.50percent",
   git: "arrow.triangle.branch",
+  worktrees: "arrow.triangle.branch",
   archived: "archivebox",
   permissions: "checkmark.shield",
   system: "cpu",
@@ -870,6 +877,42 @@ function PanelPage() {
           <select value={count} disabled={!suggestions} onChange={event => { setCount(parseInt(event.target.value, 10)); persist("kuvo-panel-count", event.target.value); }}>
             {[4, 8, 12, 16].map(number => <option key={number} value={number}>{number}</option>)}
           </select>
+        </SettingRow>
+      </SettingGroup>
+    </>
+  );
+}
+
+/// Worktrees: where they go, and the ones sessions have, with what each takes (GitSettings.swift:60-136).
+function WorktreesPage() {
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const list = worktrees();
+  const remove = async (root: string, force = false) => {
+    setRemoving(root);
+    try { await removeWorktree(root, force); setRemoving(null); render(); } catch (error) { setFailure(String(error)); setRemoving(null); }
+  };
+  const create = async () => {
+    setCreating(true);
+    try { await createWorktree(); setCreating(false); render(); } catch (error) { setFailure(String(error)); setCreating(false); }
+  };
+  return (
+    <>
+      <SettingGroup title="Worktrees">
+        {list.length === 0 ? (
+          <div className="settings-note">None yet. Create one to give a session its own copy of the project.</div>
+        ) : list.map(item => (
+          <SettingRow key={item.root} label={item.branch} note={`${item.project} · ${item.root}`}>
+            <button className="small" onClick={() => (window as unknown as { kuvo?: { showInFolder?: (path: string) => void } }).kuvo?.showInFolder?.(item.root)}>Show in Folder</button>
+            <button className="small" disabled={removing === item.root} onClick={() => void remove(item.root)}>{removing === item.root ? "Removing…" : "Remove…"}</button>
+          </SettingRow>
+        ))}
+        {failure ? <div className="settings-note" style={{ color: "var(--danger)" }}>{failure}</div> : null}
+      </SettingGroup>
+      <SettingGroup title="Create">
+        <SettingRow label="New worktree" note="A copy of the project on a branch of its own, for a session to work in apart from the rest.">
+          <button className="small" disabled={creating || !state.project} onClick={() => void create()}>{creating ? "Creating…" : "Create"}</button>
         </SettingRow>
       </SettingGroup>
     </>

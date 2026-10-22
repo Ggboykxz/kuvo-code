@@ -116,6 +116,23 @@ export class EngineClient {
     return (await this.request("POST", "api/session", { body })).data;
   }
 
+  // ---- Projects and worktrees ----
+
+  async location(directory) {
+    return this.request("GET", "api/location", { directory });
+  }
+
+  async createWorktree(projectID, name) {
+    const body = { projectID };
+    if (name) body.name = name;
+    const response = await this.request("POST", "api/worktree", { body });
+    return response?.directory ?? response?.data?.directory ?? response;
+  }
+
+  async removeWorktree(projectID, directory, force = false) {
+    return this.request("DELETE", "api/worktree", { body: { projectID, directory, force } });
+  }
+
   async deleteSession(id) {
     await this.request("DELETE", `api/session/${encodeURIComponent(id)}`);
   }

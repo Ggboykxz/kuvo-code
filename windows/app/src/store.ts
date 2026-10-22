@@ -1187,3 +1187,50 @@ export async function boot() {
 }
 
 export type { Transcript };
+
+/// Worktrees: a git worktree of a project, where a session runs apart (Workspace.swift:201-216).
+/// Tracked on this machine, since the engine makes them but does not list them.
+export type Worktree = { project: string; root: string; branch: string };
+
+export function worktrees(): Worktree[] {
+  try { return JSON.parse(localStorage.getItem("kuvo-worktrees") ?? "[]"); } catch { return []; }
+}
+
+function saveWorktrees(list: Worktree[]) {
+  localStorage.setItem("kuvo-worktrees", JSON.stringify(list));
+}
+
+export async function createWorktree(directory?: string): Promise<string | null> {
+  const project = directory ?? state.project;
+  if (!project) return null;
+  try {
+    const location = await api<{ project: { id: string } }>(`/api/location?directory=${encodeURIComponent(project)}`);
+    const projectId = location.project?.id;
+    if (!projectId) throw new Error("No project for this folder.");
+    const { directory: root } = await api<{ directory: string }>("/api/worktree", { method: "POST", body: { projectID: projectId } });
+    // The engine leaves the worktree on no branch; give it one of its own, the Mac's way.
+    const branch = `kuvo/${root.replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "worktree"}`;
+    try { await api("/api/git/branch", { method: "POST", body: { name: branch, directory: root } }); } catch { /* branch creation is best-effort */ }
+    const list = worktrees();
+    if (!list.some(item => item.root === root)) list.push({ project, root, branch });
+    saveWorktrees(list);
+    return root;
+  } catch (error) {
+    complain(error);
+    return null;
+  }
+}
+
+export async function removeWorktree(root: string, force = false): Promise<void> {
+  const list = worktrees();
+  const entry = list.find(item => item.root === root);
+  try {
+    if (entry) {
+      const location = await api<{ project: { id: string } }>(`/api/location?directory=${encodeURIComponent(entry.project)}`);
+      if (location.project?.id) await api("/api/worktree", { method: "DELETE", body: { projectID: location.project.id, directory: root, force } });
+    }
+    saveWorktrees(list.filter(item => item.root !== root));
+  } catch (error) {
+    complain(error);
+  }
+}

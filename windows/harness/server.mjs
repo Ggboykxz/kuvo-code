@@ -249,6 +249,27 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       return json({ ok: true });
     }
 
+    // Worktrees: the engine makes a git worktree of a project, in its data folder.
+    if (url.pathname === "/api/location" && request.method === "GET") {
+      const { client } = await ensureEngine();
+      const directory = directoryOf(url.searchParams.get("directory") ?? currentProject);
+      return json(await client.location(directory));
+    }
+    if (url.pathname === "/api/worktree" && request.method === "POST") {
+      const body = await readBody(request);
+      const { client } = await ensureEngine();
+      const projectID = body.projectID ?? body.projectId ?? body.project;
+      const directory = await client.createWorktree(projectID, body.name);
+      return json({ directory });
+    }
+    if (url.pathname === "/api/worktree" && request.method === "DELETE") {
+      const body = await readBody(request);
+      const { client } = await ensureEngine();
+      const projectID = body.projectID ?? body.projectId ?? body.project;
+      await client.removeWorktree(projectID, body.directory, Boolean(body.force));
+      return json({ ok: true });
+    }
+
     // What the settings panel shows about this machine's storage.
     if (url.pathname === "/api/storage" && request.method === "GET") {
       const logsDir = path.join(os.homedir(), ".kuvo-code", "logs");
@@ -469,12 +490,13 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
     return json({ ok: true });
   }
   if (url.pathname === "/api/git/branch" && request.method === "POST") {
-    if (!currentProject) throw new HttpError(400, "No project folder is open.");
     const body = await readBody(request);
+    const directory = directoryOf(body.directory ?? currentProject);
+    if (!directory) throw new HttpError(400, "No project folder is open.");
     const name = String(body.name ?? "").trim();
     if (name === "") throw new HttpError(400, "No branch name was given.");
     const { execFileSync } = await import("node:child_process");
-    try { execFileSync("git", ["checkout", "-b", name], { cwd: currentProject, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
+    try { execFileSync("git", ["checkout", "-b", name], { cwd: directory, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
     catch (error) { throw new HttpError(500, error?.stderr?.toString() || error.message); }
     return json({ ok: true });
   }
