@@ -629,6 +629,20 @@ test("the page, in a browser, against the real engine", {
   await page.page.keyboard.press("Escape");
   await page.seen("the palette to close", () => document.getElementById("palette")?.hidden === true, null, 10_000);
 
+  // Open Quickly (⇧⌘O): the Mac's own palette for a file by name, newest first before
+  // anything is typed, and the file opens in the panel (OpenQuickly.swift:4-104).
+  await page.page.keyboard.press("Control+Shift+O");
+  await page.seen("Open Quickly to open", () => document.getElementById("open-quickly")?.hidden === false, null, 10_000);
+  assert.equal(await page.page.locator("#open-quickly-input").getAttribute("placeholder"), "Open a file in the project", "the Mac's own prompt");
+  await page.page.locator("#open-quickly-input").fill("notes");
+  await page.seen("the file to be found", () => [...document.querySelectorAll("#open-quickly-list .open-quickly-row")]
+    .some(row => row.textContent?.includes("notes.txt")), null, 10_000);
+  await page.page.keyboard.press("Enter");
+  await page.seen("the file to open in the panel", () => document.querySelector("#drawer-files .file-view")?.textContent?.includes("Shopping list"), null, 10_000);
+  assert.equal(await page.page.locator("#open-quickly").isHidden(), true, "the palette closes on the file it opens");
+  await page.element("toggle-files").click();
+  await page.seen("the panel to close", () => document.getElementById("drawer")?.hidden === true, null, 10_000);
+
   // The draft: what is typed but not sent is kept, per session, across a reload.
   const draftBox = page.element("prompt");
   await draftBox.fill("a draft that is not sent");
@@ -687,6 +701,30 @@ test("the page, in a browser, against the real engine", {
   await page.seen("the split to come back when the room does", () => document.getElementById("split-pane")?.hidden === false, null, 10_000);
   await page.element("split-close").click();
   await page.seen("the split card to close", () => document.getElementById("split-pane")?.hidden === true, null, 10_000);
+
+  // The tab keys (KuvoCodeApp.swift:161-171, 218-229): close the tab in view, reopen it
+  // where it was, and walk the strip by number and by next/previous.
+  const tabsBefore = await page.page.locator(".tab-track [role='tab']").count();
+  assert.ok(tabsBefore >= 2, "the test has the two tabs the split made");
+  const closedID = await page.page.locator(".tab-track [role='tab'][aria-selected='true']").getAttribute("data-id");
+  await page.page.keyboard.press("Control+W");
+  await page.seen("the tab to close", ([count]) => document.querySelectorAll(".tab-track [role='tab']").length === count - 1, [tabsBefore], 10_000);
+  await page.page.keyboard.press("Control+Shift+T");
+  await page.seen("the tab to come back where it was", ([id, count]) => {
+    const tabs = [...document.querySelectorAll(".tab-track [role='tab']")];
+    return tabs.length === count && tabs.some(tab => tab.getAttribute("data-id") === id && tab.getAttribute("aria-selected") === "true");
+  }, [closedID, tabsBefore], 10_000);
+  const currentID = await page.page.locator(".tab-track [role='tab'][aria-selected='true']").getAttribute("data-id");
+  await page.page.keyboard.press("Control+Tab");
+  await page.seen("the next tab to be in view", ([id]) => document.querySelector(".tab-track [role='tab'][aria-selected='true']")?.getAttribute("data-id") !== id, [currentID], 10_000);
+  await page.page.keyboard.press("Control+Shift+Tab");
+  await page.seen("the previous tab to come back", ([id]) => document.querySelector(".tab-track [role='tab'][aria-selected='true']")?.getAttribute("data-id") === id, [currentID], 10_000);
+  await page.page.keyboard.press("Control+9");
+  await page.seen("the last tab to be in view", () => {
+    const tabs = [...document.querySelectorAll(".tab-track [role='tab']")];
+    const last = tabs.at(-1);
+    return Boolean(last) && last.getAttribute("aria-selected") === "true";
+  }, null, 10_000);
 
   // The session's own menu: the Mac's, in its order (SidebarView.swift:600-643), and the
   // pin that keeps a session at the top of the sidebar.

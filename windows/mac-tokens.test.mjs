@@ -924,11 +924,35 @@ const checks = [
     const shell = fs.readFileSync(path.join(here, "electron", "main.js"), "utf8");
     const preload = fs.readFileSync(path.join(here, "electron", "preload.js"), "utf8");
     assert.match(shell, /Menu\.setApplicationMenu/);
-    for (const item of ["New Session", "Open Folder…", "Export Conversation as Markdown", "Command Palette", "Settings…", "Show Panel", "Show Sessions", "Check for Updates…"]) {
+    for (const item of [
+      "New Session", "Open Folder…", "Open Quickly…", "Export Conversation as Markdown",
+      "Close Tab", "Close Window", "Reopen Closed Tab",
+      "Stop", "Build Mode", "Plan Mode",
+      "Show Changes", "Show Files", "Run", "New Terminal", "Show Panel",
+      "Find in Conversation…",
+      "Command Palette…", "Settings…", "Show Sessions", "Show Next Tab", "Show Previous Tab", "Show Tab", "Last Tab",
+      "Kuvo Code Help", "What’s New", "Report an Issue…", "Contact Us…",
+      "Check for Updates…",
+    ]) {
       assert.ok(shell.includes(`label: "${item}"`), `the menu has "${item}"`);
     }
+    for (const label of ["Session", "Tools", "View"]) {
+      assert.ok(shell.includes(`label: "${label}"`), `the menu bar has the Mac's ${label} menu`);
+    }
+    assert.match(shell, /accelerator: "CmdOrCtrl\+W"/);
+    assert.match(shell, /accelerator: "CmdOrCtrl\+Shift\+T"/);
+    assert.match(shell, /accelerator: "Control\+Tab"/);
+    assert.match(shell, /accelerator: `CmdOrCtrl\+/);
     assert.match(preload, /onMenu/);
+    assert.match(preload, /setMenuState/);
+    assert.match(preload, /closeWindow/);
+    assert.match(shell, /label: "Find in Conversation…", accelerator: "CmdOrCtrl\+F"/);
+    assert.match(shell, /label: menuState\.tabBar \? "Hide Tab Bar" : "Show Tab Bar"/);
+    assert.match(shell, /appearance-system/);
+    assert.match(shell, /ipcMain\.on\("kuvo:menu-state"/);
     assert.match(app, /kuvo\?\.onMenu\?\./);
+    assert.match(app, /setMenuState\?\.\(\{ tabBar: state\.showsTabBar/);
+    assert.match(app, /case "appearance-system"/);
     // The Mac's double-click on the title bar zooms (Card.swift:186-198); on Windows, the
     // window is maximised.
     assert.match(preload, /maximize: \(\) => ipcRenderer\.send\("kuvo:maximize"\)/);
@@ -937,6 +961,37 @@ const checks = [
     // And the code block's copy mark, which becomes a check (CodeBlockStyle.swift).
     assert.match(lib, /doc\.on\.doc/);
     assert.match(lib, /checkmark/);
+  }],
+
+  ["Open Quickly and the tab history are the Mac's, with its own numbers", ({ app, over, styles, keys, shell, preload }) => {
+    // Open Quickly (OpenQuickly.swift:20-104): 560 wide, a 48 pt search, 30 pt rows, the
+    // newest first, and ten matches at most.
+    const quickly = read("..", "KuvoCode", "Views", "Utilities", "OpenQuickly.swift");
+    assert.match(quickly, /\.frame\(width: 560\)/);
+    assert.match(quickly, /\.frame\(height: 48\)/);
+    assert.match(quickly, /\.frame\(height: 30\)/);
+    assert.match(quickly, /TextField\("Open a file in the project"/);
+    assert.match(quickly, /Mentions\.matches\(query, in: files\.filter \{ !\$0\.isFolder \}, limit: 10\)/);
+    assert.match(quickly, /newestFirst/);
+    assert.match(over, /id="open-quickly"/);
+    assert.match(over, /Open a file in the project/);
+    assert.match(styles, /\.open-quickly-card[\s\S]*?width: min\(560px/);
+    assert.match(styles, /\.open-quickly-search[\s\S]*?height: 48px/);
+    assert.match(styles, /\.open-quickly-row[\s\S]*?height: 30px/);
+
+    // A tab closed is remembered where it was, and comes back from the menu; the Mac keeps
+    // fifty of them (MainView.swift:51-52, 1198-1232).
+    const tabs = read("app", "src", "tab-history.mjs");
+    assert.match(tabs, /MAX_CLOSED_TABS = 50/);
+    assert.match(app, /reopenClosedTab/);
+    assert.match(app, /closeSessionTab/);
+    assert.match(keys, /keys: "Ctrl\+W"/);
+    assert.match(keys, /keys: "Ctrl\+Shift\+T"/);
+    assert.match(keys, /keys: "Ctrl\+Tab"/);
+    assert.match(shell, /label: "Close Tab", accelerator: "CmdOrCtrl\+W"/);
+    assert.match(shell, /label: "Reopen Closed Tab", accelerator: "CmdOrCtrl\+Shift\+T"/);
+    assert.match(preload, /closeWindow: \(\) => ipcRenderer\.send\("kuvo:close-window"\)/);
+    assert.match(shell, /ipcMain\.on\("kuvo:close-window"/);
   }],
 
   ["the session's own menu is the Mac's, in its order", ({ app, sidebar }) => {

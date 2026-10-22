@@ -33,6 +33,9 @@ let terminalServer = null;
 let mainWindow = null;
 let tray = null;
 let quitting = false;
+// What the menu bar draws from the page's state: the tab bar's own command changes its
+// word, and the Appearance picker shows the one in use (KuvoCodeApp.swift:130-229).
+let menuState = { tabBar: true, appearance: "system" };
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -198,6 +201,7 @@ function applyShellPreferences() {
 /// ask the page to do it, by the shortcut the Mac uses.
 function applicationMenu() {
   const ask = id => () => { if (mainWindow) mainWindow.webContents.send("kuvo:menu", id); };
+  const open = url => () => { void shell.openExternal(url); };
   const template = [
     {
       label: "Kuvo Code",
@@ -214,6 +218,10 @@ function applicationMenu() {
         } },
         { label: "Check for Updates…", click: () => { void checkForUpdates(); } },
         { type: "separator" },
+        // The Mac's Settings and Accounts live in the app menu (KuvoCodeApp.swift:240-248);
+        // the accounts page itself is not this client's.
+        { label: "Settings…", accelerator: "CmdOrCtrl+,", click: ask("settings") },
+        { type: "separator" },
         { role: "quit" },
       ],
     },
@@ -222,9 +230,12 @@ function applicationMenu() {
       submenu: [
         { label: "New Session", accelerator: "CmdOrCtrl+N", click: ask("new-session") },
         { label: "Open Folder…", accelerator: "CmdOrCtrl+O", click: ask("open-folder") },
+        { label: "Open Quickly…", accelerator: "CmdOrCtrl+Shift+O", click: ask("open-quickly") },
         { label: "Export Conversation as Markdown", accelerator: "CmdOrCtrl+S", click: ask("save") },
         { type: "separator" },
-        { role: "close" },
+        { label: "Close Tab", accelerator: "CmdOrCtrl+W", click: ask("close-tab") },
+        { label: "Close Window", accelerator: "CmdOrCtrl+Shift+W", click: () => { if (mainWindow) mainWindow.close(); } },
+        { label: "Reopen Closed Tab", accelerator: "CmdOrCtrl+Shift+T", click: ask("reopen-tab") },
       ],
     },
     {
@@ -232,19 +243,64 @@ function applicationMenu() {
       submenu: [
         { role: "undo" }, { role: "redo" }, { type: "separator" },
         { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" },
+        { type: "separator" },
+        { label: "Find in Conversation…", accelerator: "CmdOrCtrl+F", click: ask("find") },
+      ],
+    },
+    {
+      label: "Session",
+      submenu: [
+        { label: "Stop", accelerator: "CmdOrCtrl+.", click: ask("stop") },
+        { type: "separator" },
+        { label: "Build Mode", accelerator: "Alt+CmdOrCtrl+1", click: ask("build-mode") },
+        { label: "Plan Mode", accelerator: "Alt+CmdOrCtrl+2", click: ask("plan-mode") },
+      ],
+    },
+    {
+      label: "Tools",
+      submenu: [
+        { label: "Show Changes", accelerator: "Alt+CmdOrCtrl+I", click: ask("changes") },
+        { label: "Show Files", accelerator: "Alt+CmdOrCtrl+F", click: ask("files") },
+        { label: "Run", accelerator: "CmdOrCtrl+R", click: ask("run") },
+        { label: "New Terminal", accelerator: "Control+`", click: ask("terminal") },
+        { type: "separator" },
+        { label: "Show Panel", accelerator: "Alt+CmdOrCtrl+0", click: ask("panel") },
       ],
     },
     {
       label: "View",
       submenu: [
-        { label: "Command Palette", accelerator: "CmdOrCtrl+K", click: ask("palette") },
-        { label: "Settings…", accelerator: "CmdOrCtrl+,", click: ask("settings") },
+        { label: "Command Palette…", accelerator: "CmdOrCtrl+K", click: ask("palette") },
         { type: "separator" },
-        { label: "Show Panel", accelerator: "Alt+CmdOrCtrl+0", click: ask("panel") },
         { label: "Show Sessions", accelerator: "CmdOrCtrl+0", click: ask("sidebar") },
+        { label: menuState.tabBar ? "Hide Tab Bar" : "Show Tab Bar", accelerator: "Alt+CmdOrCtrl+T", click: ask("tab-bar") },
+        { label: "Show Next Tab", accelerator: "Control+Tab", click: ask("next-tab") },
+        { label: "Show Previous Tab", accelerator: "Control+Shift+Tab", click: ask("previous-tab") },
+        {
+          label: "Show Tab",
+          submenu: [
+            ...[1, 2, 3, 4, 5, 6, 7, 8].map(number => ({
+              label: `Tab ${number}`,
+              accelerator: `CmdOrCtrl+${number}`,
+              click: ask(`show-tab-${number}`),
+            })),
+            { label: "Last Tab", accelerator: "CmdOrCtrl+9", click: ask("show-tab-9") },
+          ],
+        },
         { type: "separator" },
-        { role: "reload" }, { role: "toggleDevTools" }, { type: "separator" },
-        { role: "resetZoom" }, { role: "zoomIn" }, { role: "zoomOut" },
+        {
+          label: "Appearance",
+          submenu: [
+            { label: "System", type: "radio", checked: menuState.appearance === "system", click: ask("appearance-system") },
+            { label: "Light", type: "radio", checked: menuState.appearance === "light", click: ask("appearance-light") },
+            { label: "Dark", type: "radio", checked: menuState.appearance === "dark", click: ask("appearance-dark") },
+          ],
+        },
+        { type: "separator" },
+        // No Reload or Reset Zoom: their default keys are the Mac's Run (⌘R) and Show
+        // Sessions (⌘0), and the menu cannot hold two commands on one key.
+        { role: "toggleDevTools" }, { type: "separator" },
+        { role: "zoomIn" }, { role: "zoomOut" },
         { type: "separator" },
         { role: "togglefullscreen" },
       ],
@@ -253,7 +309,10 @@ function applicationMenu() {
     {
       label: "Help",
       submenu: [
-        { label: "Kuvo Code on the web", click: () => shell.openExternal("https://www.kuvo.run/code/") },
+        { label: "Kuvo Code Help", click: open("https://kuvo.run/code/docs/") },
+        { label: "What’s New", click: open("https://github.com/serhatandic/kuvo-code/releases") },
+        { label: "Report an Issue…", click: open("https://github.com/serhatandic/kuvo-code/issues/new/choose") },
+        { label: "Contact Us…", click: open("mailto:info@kuvo.run") },
       ],
     },
   ];
@@ -314,6 +373,23 @@ ipcMain.on("kuvo:maximize", () => {
   if (!mainWindow) return;
   if (mainWindow.isMaximized()) mainWindow.unmaximize();
   else mainWindow.maximize();
+});
+
+// Close Window (⇧⌘W on the Mac): the window goes to the tray, as its own close button
+// does; the app keeps running.
+ipcMain.on("kuvo:close-window", () => {
+  if (mainWindow) mainWindow.close();
+});
+
+// The page's state the menu bar draws from: the tab bar's own command, and the appearance
+// in use. The menu is rebuilt when either changes, so its words and checks stay true.
+ipcMain.on("kuvo:menu-state", (_event, next) => {
+  if (!next || typeof next !== "object") return;
+  const tabBar = next.tabBar !== false;
+  const appearance = ["system", "light", "dark"].includes(next.appearance) ? next.appearance : "system";
+  if (tabBar === menuState.tabBar && appearance === menuState.appearance) return;
+  menuState = { tabBar, appearance };
+  applicationMenu();
 });
 
 // The name of the user on this machine: the Mac's own avatar in the changes' comments

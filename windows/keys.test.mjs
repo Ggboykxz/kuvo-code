@@ -45,10 +45,20 @@ test("the list is the Mac's, in the groups it uses", () => {
   for (const title of [
     "Command palette",
     "New session",
+    "Open a folder as a project",
+    "Open Quickly: a project file by name",
     "Settings",
     "Stop the agent (or Esc in the composer)",
     "Find in the conversation",
+    "Build mode",
+    "Plan mode",
+    "Close the session tab",
+    "Close the window",
+    "Reopen the tab you closed last",
+    "Next session tab",
+    "Previous session tab",
     "Show or hide the sidebar",
+    "Show or hide the tab bar",
     "Files",
     "Changes",
     "New terminal",
@@ -74,6 +84,14 @@ test("the Mac's keys are written the Windows way", () => {
   assert.ok(ours.includes("Ctrl+`"), "our terminal shortcut");
   // And the Mac's ⌘0 (the sidebar) is Ctrl+0 here.
   assert.ok(ours.includes("Ctrl+0"), "our sidebar shortcut");
+  // The Mac's tab and menu keys, as Windows writes them.
+  assert.ok(ours.includes("Ctrl+W"), "our close-tab shortcut");
+  assert.ok(ours.includes("Ctrl+Shift+W"), "our close-window shortcut");
+  assert.ok(ours.includes("Ctrl+Shift+T"), "our reopen-tab shortcut");
+  assert.ok(ours.includes("Ctrl+Tab"), "our next-tab shortcut");
+  assert.ok(ours.includes("Ctrl+Shift+Tab"), "our previous-tab shortcut");
+  assert.ok(ours.includes("Ctrl+Shift+O"), "our Open Quickly shortcut");
+  assert.ok(ours.includes("Ctrl+Alt+T"), "our tab-bar shortcut");
 });
 
 test("every shortcut has its own name, and the keys are ours to read", () => {

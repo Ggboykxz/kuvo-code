@@ -19,16 +19,26 @@ export const SHORTCUT_GROUPS = [
   ["General", [
     { id: "palette", title: "Command palette", keys: "Ctrl+K" },
     { id: "new-session", title: "New session", keys: "Ctrl+N" },
-    { id: "save", title: "Save the conversation as Markdown", keys: "Ctrl+S" },
+    { id: "open-folder", title: "Open a folder as a project", keys: "Ctrl+O" },
+    { id: "open-quickly", title: "Open Quickly: a project file by name", keys: "Ctrl+Shift+O" },
     { id: "settings", title: "Settings", keys: "Ctrl+," },
+    { id: "save", title: "Save the conversation as Markdown", keys: "Ctrl+S" },
     { id: "run", title: "Run the project's command", keys: "Ctrl+R" },
   ]],
   ["Sessions", [
     { id: "stop", title: "Stop the agent (or Esc in the composer)", keys: "Ctrl+." },
     { id: "find", title: "Find in the conversation", keys: "Ctrl+F" },
+    { id: "build-mode", title: "Build mode", keys: "Ctrl+Alt+1" },
+    { id: "plan-mode", title: "Plan mode", keys: "Ctrl+Alt+2" },
   ]],
   ["Tabs and Window", [
+    { id: "close-tab", title: "Close the session tab", keys: "Ctrl+W" },
+    { id: "close-window", title: "Close the window", keys: "Ctrl+Shift+W" },
+    { id: "reopen-tab", title: "Reopen the tab you closed last", keys: "Ctrl+Shift+T" },
+    { id: "next-tab", title: "Next session tab", keys: "Ctrl+Tab" },
+    { id: "previous-tab", title: "Previous session tab", keys: "Ctrl+Shift+Tab" },
     { id: "sidebar", title: "Show or hide the sidebar", keys: "Ctrl+0" },
+    { id: "tab-bar", title: "Show or hide the tab bar", keys: "Ctrl+Alt+T" },
   ]],
   ["Side Panel", [
     { id: "panel", title: "Show or hide the panel", keys: "Alt+Ctrl+0" },

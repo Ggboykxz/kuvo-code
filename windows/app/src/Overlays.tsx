@@ -8,6 +8,7 @@ import { ChangesPanel } from "./Changes";
 import { complain, loadProjectFiles, loadSessions, notify, openProjectFile, openSession, projectName, projectRun, render, setProjectSettings, state, useStore, newSession, exportConversation, stopRun } from "./store";
 import { keysOf } from "./shortcuts";
 import { buildTree, type TreeNode } from "./filetree.mjs";
+import { openQuicklyMatches } from "./open-quickly.mjs";
 import { Symbol } from "./components/symbols";
 import { ContextMenu } from "./components/context-menu";
 
@@ -235,6 +236,98 @@ export function Palette() {
         ) : (
           <div className="palette-empty">Nothing matches.</div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ---- Open Quickly ----
+
+/// Open Quickly (Shift+Command+O on the Mac): type part of a file's name to find it in the project, and open it
+/// in the side panel. The Mac's own palette (OpenQuickly.swift:4-104): 560 wide, a 48 pt
+/// search, 30 pt rows, the newest files before anything is typed, and ten matches at most.
+export function OpenQuickly() {
+  useStore();
+  const [query, setQuery] = useState("");
+  const [index, setIndex] = useState(0);
+  const [files, setFiles] = useState<{ path: string; name: string; relative: string }[]>([]);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!state.openQuickly) return;
+    setQuery("");
+    setIndex(0);
+    setTimeout(() => inputRef.current?.focus(), 0);
+    if (!state.project) { setFiles([]); return; }
+    let current = true;
+    // The Mac lists the project's files newest first (ProjectFiles.newestFirst), so the
+    // ones changed most recently are what the palette opens with.
+    void api<{ files: { path: string; name: string; relative: string }[] }>("/api/files?sort=recent&limit=2000")
+      .then(answer => { if (current) setFiles(answer.files ?? []); })
+      .catch(() => { if (current) setFiles([]); });
+    return () => { current = false; };
+  }, [state.openQuickly, state.project]);
+
+  const matches = useMemo(() => openQuicklyMatches(query, files), [query, files]);
+  const current = matches.length ? Math.min(index, matches.length - 1) : 0;
+  const choose = (file: { relative?: string; path?: string } | undefined) => {
+    const relative = file?.relative || file?.path || "";
+    if (!relative) return;
+    state.openQuickly = false;
+    render();
+    void openProjectFile(relative);
+  };
+
+  return (
+    <div
+      id="open-quickly"
+      className={`open-quickly ${state.openQuickly ? "shown" : ""}`}
+      hidden={!state.openQuickly}
+      onClick={event => { if (event.target === event.currentTarget) { state.openQuickly = false; render(); } }}
+    >
+      <div className="open-quickly-card" role="dialog" aria-label="Open Quickly">
+        <div className="open-quickly-search">
+          <svg viewBox="0 0 16 16" width="15" height="15" fill="none" aria-hidden="true">
+            <circle cx="6.8" cy="6.8" r="4.1" stroke="currentColor" strokeWidth="1.3" />
+            <path d="M9.9 9.9L13.4 13.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+          </svg>
+          <input
+            id="open-quickly-input"
+            placeholder="Open a file in the project"
+            spellCheck={false}
+            autoComplete="off"
+            value={query}
+            ref={inputRef}
+            onChange={event => { setQuery(event.target.value); setIndex(0); }}
+            onKeyDown={event => {
+              if (event.key === "ArrowDown") { event.preventDefault(); setIndex(matches.length ? Math.min(matches.length - 1, current + 1) : 0); return; }
+              if (event.key === "ArrowUp") { event.preventDefault(); setIndex(Math.max(0, current - 1)); return; }
+              if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); state.openQuickly = false; render(); return; }
+              if (event.key === "Enter") { event.preventDefault(); choose(matches[current]); }
+            }}
+          />
+        </div>
+        {matches.length ? (
+          <div id="open-quickly-list" className="open-quickly-list" role="listbox" aria-label="Project files">
+            {matches.map((file, row) => {
+              const relative = file.relative || file.path || "";
+              const cut = relative.lastIndexOf("/");
+              return (
+                <button
+                  key={file.path || relative}
+                  className={`open-quickly-row ${row === current ? "selected" : ""}`}
+                  role="option"
+                  aria-selected={row === current}
+                  onClick={() => choose(file)}
+                >
+                  <Symbol name="doc" size={16} />
+                  <span className="open-quickly-name">{file.name}</span>
+                  {cut > 0 ? <span className="open-quickly-folder">{relative.slice(0, cut)}</span> : null}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
       </div>
     </div>
   );

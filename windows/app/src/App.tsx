@@ -22,6 +22,7 @@ import {
   closeTabs,
   complain,
   copyMarkdown,
+  cycleTab,
   deleteSession,
   dismissForm,
   exportConversation,
@@ -50,6 +51,9 @@ import {
   redoNow,
   render,
   rememberFolded,
+  rememberTabBar,
+  reopenClosedTab,
+  showTab,
   modelInView,
   rememberModel,
   removeProject,
@@ -68,7 +72,7 @@ import {
   useStore,
 } from "./store";
 import { Settings, settingsPageTitle } from "./Settings";
-import { DiffModal, Drawer, Palette, Picker, ProjectEditor, runInTerminal, runTheProject, Toast } from "./Overlays";
+import { DiffModal, Drawer, OpenQuickly, Palette, Picker, ProjectEditor, runInTerminal, runTheProject, Toast } from "./Overlays";
 import { Shimmer } from "./components/ai-elements/shimmer";
 import { FolderIcon, Symbol } from "./components/symbols";
 import { ContextMenu } from "./components/context-menu";
@@ -1053,6 +1057,7 @@ function SessionTabs() {
             key={id}
             className={`tab ${active ? "active" : ""}`}
             role="tab"
+            data-id={id}
             aria-selected={active}
             tabIndex={active ? 0 : -1}
             title={help}
@@ -2311,13 +2316,26 @@ function Choice({ id, title, groups, value, onPick, empty, suffix }: {
 /// What a shortcut does. The keys are the ones the user recorded, or the ones the app
 /// ships with; the Mac's own list is the same, in the Mac's key names.
 function runShortcut(id: string) {
+  const tab = /^show-tab-([1-9])$/.exec(id);
+  if (tab) { showTab(Number(tab[1])); return; }
   switch (id) {
     case "palette":
+      state.openQuickly = false;
       state.paletteOpen = !state.paletteOpen;
+      render();
+      return;
+    case "open-quickly":
+      if (!state.project) return;
+      state.paletteOpen = false;
+      state.openQuickly = true;
       render();
       return;
     case "new-session":
       if (state.project) void newSession();
+      return;
+    case "open-folder":
+      state.pickerOpen = true;
+      render();
       return;
     case "save":
       void exportConversation();
@@ -2337,6 +2355,41 @@ function runShortcut(id: string) {
       return;
     case "stop":
       void stopRun();
+      return;
+    case "close-tab":
+      // The Mac closes the settings' tab while settings are showing (MainView.swift:1295-1307);
+      // one page is what this client has.
+      if (state.settingsOpen) { state.settingsOpen = false; render(); return; }
+      if (state.session) closeSessionTab(state.session.id);
+      return;
+    case "close-window":
+      (window as unknown as { kuvo?: { closeWindow?: () => void } }).kuvo?.closeWindow?.();
+      return;
+    case "reopen-tab":
+      reopenClosedTab();
+      return;
+    case "next-tab":
+      cycleTab(1);
+      return;
+    case "previous-tab":
+      cycleTab(-1);
+      return;
+    case "tab-bar":
+      rememberTabBar(!state.showsTabBar);
+      render();
+      return;
+    case "appearance-system":
+    case "appearance-light":
+    case "appearance-dark":
+      look.theme = id.slice("appearance-".length);
+      applyLook();
+      render();
+      return;
+    case "build-mode":
+      selectAgent("build");
+      return;
+    case "plan-mode":
+      selectAgent("plan");
       return;
     case "sidebar":
       state.sidebarOpen = state.sidebarOpen === false;
@@ -2364,6 +2417,16 @@ function runShortcut(id: string) {
     default:
       return;
   }
+}
+
+/// The Mac's Build and Plan command-menu items (KuvoCodeApp.swift:178-193): the session's
+/// agent, changed where the composer changes it.
+function selectAgent(id: string) {
+  if (!state.session) return;
+  state.agent = id;
+  render();
+  void api(`/api/sessions/${encodeURIComponent(state.session.id)}/agent`, { method: "POST", body: { agent: id } })
+    .catch(complain);
 }
 
 export function App() {
@@ -2400,11 +2463,14 @@ export function App() {
     // The shell's menu bar: the items that act on the conversation come here, by the
     // shortcut the Mac uses (NativeMenu.swift).
     const kuvo = (window as unknown as { kuvo?: { onMenu?: (callback: (id: string) => void) => void } }).kuvo;
-    kuvo?.onMenu?.(id => {
-      if (id === "open-folder") { state.pickerOpen = true; render(); return; }
-      runShortcut(id);
-    });
+    kuvo?.onMenu?.(id => runShortcut(id));
   }, []);
+
+  useEffect(() => {
+    // The menu bar's words and checks are the page's state's (KuvoCodeApp.swift:130-229).
+    const bridge = (window as unknown as { kuvo?: { setMenuState?: (state: { tabBar: boolean; appearance: string }) => void } }).kuvo;
+    bridge?.setMenuState?.({ tabBar: state.showsTabBar, appearance: look.theme });
+  }, [state.showsTabBar, look.theme]);
 
   useEffect(() => {
     loadLook();
@@ -2424,10 +2490,17 @@ export function App() {
         runShortcut(shortcut.id);
         return;
       }
+      // ⌘1 to ⌘8 show that tab, ⌘9 the last one, as in browsers (KuvoCodeApp.swift:223-228).
+      if (event.ctrlKey && !event.altKey && !event.shiftKey && /^[1-9]$/.test(event.key)) {
+        event.preventDefault();
+        runShortcut(`show-tab-${event.key}`);
+        return;
+      }
       if (event.key === "Escape") {
         if ((document.activeElement as HTMLElement | null)?.id === "find") (document.activeElement as HTMLElement).blur();
         // Escape goes back one step, as it does on the Mac: the palette first, then the
         // settings, then the sheet that is open.
+        if (state.openQuickly) { state.openQuickly = false; render(); return; }
         if (state.paletteOpen) { state.paletteOpen = false; render(); return; }
         if (state.settingsOpen) { state.settingsOpen = false; render(); return; }
         state.diffOpen = false;
@@ -2572,6 +2645,7 @@ export function App() {
         <Drawer />
       </main>
       <Palette />
+      <OpenQuickly />
       <Picker />
       <Settings />
       <DiffModal />

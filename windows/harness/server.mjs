@@ -561,14 +561,19 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       return json({ files: found });
     }
 
-    // The project's files by name, for the prompt's @-mentions and the palette.
+    // The project's files by name, for the prompt's @-mentions, the palette and Open
+    // Quickly. Open Quickly asks for the newest first (the Mac's ProjectFiles.newestFirst),
+    // and for more of them than the mentions list asks for.
     if (url.pathname === "/api/files" && request.method === "GET") {
       const query = (url.searchParams.get("q") ?? "").toLowerCase();
+      const recent = url.searchParams.get("sort") === "recent";
+      const asked = Number(url.searchParams.get("limit"));
+      const limit = Number.isFinite(asked) && asked > 0 ? Math.min(Math.floor(asked), 2000) : 40;
       if (!currentProject) throw new HttpError(400, "No project is open.");
       const found = [];
       const skip = new Set(["node_modules", ".git", "dist", "build", ".next", "coverage", ".kuvo"]);
       const walk = (folder, depth) => {
-        if (depth > 6 || found.length > 500) return;
+        if (depth > 6 || found.length > 2000) return;
         let entries;
         try { entries = fs.readdirSync(folder, { withFileTypes: true }); }
         catch { return; }
@@ -579,10 +584,15 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
         }
       };
       walk(currentProject, 0);
-      const matches = query
+      let matches = query
         ? found.filter(file => file.toLowerCase().replace(/\\/g, "/").includes(query))
         : found;
-      return json({ files: matches.slice(0, 40).map(file => ({
+      if (recent) {
+        // A file that vanished as it was read is the oldest, not a reason to fail.
+        const when = file => { try { return fs.statSync(file).mtimeMs; } catch { return 0; } };
+        matches = [...matches].sort((left, right) => when(right) - when(left));
+      }
+      return json({ files: matches.slice(0, limit).map(file => ({
         path: file,
         name: path.basename(file),
         relative: path.relative(currentProject, file).replace(/\\/g, "/"),

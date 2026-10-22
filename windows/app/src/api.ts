@@ -235,6 +235,8 @@ export interface AppState {
   projectFiles: string[];
   openFile: string | null;
   paletteOpen: boolean;
+  /** Open Quickly's own palette (OpenQuickly.swift:4-10; MainView.swift:55). */
+  openQuickly: boolean;
   settingsOpen: boolean;
   settingsSection: string;
   diffOpen: boolean;

@@ -3635,3 +3635,99 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
   font-weight: 600;
   font-family: ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
 }
+
+/* ---- Open Quickly: 560 pt, 48 pt search, 30 pt rows (OpenQuickly.swift:20-104) ---- */
+.open-quickly {
+  position: fixed;
+  inset: 0;
+  z-index: 61;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 80px;
+  background: rgba(0, 0, 0, 0.001);
+}
+.open-quickly[hidden] { display: none; }
+.open-quickly-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 92vw);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-palette);
+  background: color-mix(in oklab, var(--panel) 75%, transparent);
+  box-shadow: var(--shadow-lifted);
+  -webkit-backdrop-filter: blur(32px) saturate(1.8);
+  backdrop-filter: blur(32px) saturate(1.8);
+  animation: kuvo-rise var(--motion-base) var(--ease-spring) both;
+}
+.open-quickly-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: var(--lit);
+  border-radius: var(--radius-palette) var(--radius-palette) 0 0;
+  pointer-events: none;
+}
+.open-quickly-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 48px;
+  height: 48px;
+  padding: 0 16px;
+  color: var(--ink-soft);
+}
+.open-quickly-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font-size: 17px;
+}
+.open-quickly-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: min(50vh, 420px);
+  overflow: auto;
+  padding: 6px;
+  border-top: 1px solid var(--line);
+}
+.open-quickly-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.open-quickly-row.selected { background: var(--accent-soft); }
+.open-quickly-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+}
+.open-quickly-folder {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-soft);
+  font-size: 12px;
+}

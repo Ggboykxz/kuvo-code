@@ -9,6 +9,7 @@ import { apply, emptyTranscript, fromHistory, sessionOf } from "../../harness/tr
 import { conversationMarkdown } from "../../harness/markdown.mjs";
 import { toolSummary } from "./components/tool-call";
 import { compatibilitySettings, copilotClaude } from "./compatibility.mjs";
+import { cycledTab, rememberClosed, tabAfterClose, tabAt, takeClosed } from "./tab-history.mjs";
 
 // ---- What the window remembers ----
 
@@ -123,6 +124,7 @@ export const state: AppState = {
   projectFiles: [] as string[],
   openFile: null,
   paletteOpen: false,
+  openQuickly: false,
   settingsOpen: false,
   settingsSection: "appearance",
   diffOpen: false,
@@ -326,12 +328,43 @@ export async function openSplit(id: string, force = false) {
   }
 }
 
+/// Tabs the user closed, last one last, with where they were: the Mac's closedTabs
+/// (MainView.swift:51-52, 1198-1232). Reopen Closed Tab walks it back.
+let closedTabs: { id: string; index: number }[] = [];
+
+/// A session by id, wherever the window has it: the sidebar's list, a project's list, or
+/// the one in view. The Mac asks the workspace the same way (MainView.swift:1214-1219).
+function knownSession(id: string) {
+  return state.session?.id === id
+    || state.sessions.some(session => session.id === id)
+    || Object.values(state.sessionsByProject).some(list => list.some(session => session.id === id));
+}
+
+export function canReopenTab() {
+  return takeClosed(closedTabs, state.openSessions, knownSession).entry !== null;
+}
+
+/// The Mac's Reopen Closed Tab (MainView.swift:1214-1232): the tab closed last comes back
+/// where it was, skipping the ones open again or deleted since.
+export function reopenClosedTab() {
+  const taken = takeClosed(closedTabs, state.openSessions, knownSession);
+  closedTabs = taken.closed;
+  if (!taken.entry) return;
+  const index = Math.min(taken.entry.index, state.openSessions.length);
+  state.openSessions.splice(index, 0, taken.entry.id);
+  void openSession(taken.entry.id);
+}
+
+/// Close Tab (⌘W on the Mac, Ctrl+W here): the tab on the right takes its place.
 export function closeSessionTab(id: string) {
-  state.openSessions = state.openSessions.filter(s => s !== id);
+  const index = state.openSessions.indexOf(id);
+  if (index < 0) return;
+  closedTabs = rememberClosed(closedTabs, [{ id, index }]);
+  state.openSessions = state.openSessions.filter(session => session !== id);
   state.transcripts.delete(id);
   if (state.session && state.session.id === id) {
-    const next = state.openSessions[state.openSessions.length - 1];
-    if (next) openSession(next);
+    const next = tabAfterClose(state.openSessions, index);
+    if (next) void openSession(next);
     else { state.session = null; state.transcript = null; render(); }
   } else {
     render();
@@ -339,12 +372,17 @@ export function closeSessionTab(id: string) {
 }
 
 /// The Mac's "Close Other Tabs" and "Close All Tabs" (TitleBar.swift:223-229): every tab
-/// but the one named, or every tab at all.
+/// but the one named, or every tab at all. The Mac remembers them reversed, so the
+/// leftmost comes back last (MainView.swift:1186-1196).
 export function closeTabs(keep: string | null) {
-  const closing = state.openSessions.filter(id => id !== keep);
+  const closing = state.openSessions
+    .map((id, index) => ({ id, index }))
+    .filter(tab => tab.id !== keep);
   if (!closing.length) return;
+  closedTabs = rememberClosed(closedTabs, [...closing].reverse());
+  const closingIDs = closing.map(tab => tab.id);
   state.openSessions = state.openSessions.filter(id => id === keep);
-  for (const id of closing) state.transcripts.delete(id);
+  for (const id of closingIDs) state.transcripts.delete(id);
   if (state.session && !state.openSessions.includes(state.session.id)) {
     const next = state.openSessions[state.openSessions.length - 1];
     if (next) void openSession(next);
@@ -352,6 +390,23 @@ export function closeTabs(keep: string | null) {
   } else {
     render();
   }
+}
+
+/// The Mac's next and previous tab keys (MainView.swift:1357-1358): around the strip.
+export function cycleTab(step: 1 | -1) {
+  // The Mac cycles the settings' own tabs while settings are showing (MainView.swift:1290);
+  // this client has one settings page, so there is nothing there to cycle.
+  if (state.settingsOpen) return;
+  const next = cycledTab(state.openSessions, state.session?.id ?? null, step);
+  if (next) void openSession(next);
+}
+
+/// The Mac's Show Tab menu (MainView.swift:1376-1385): a number names a session tab, or a
+/// settings tab while settings are showing. There is one settings page here, so no-op.
+export function showTab(number: number) {
+  if (state.settingsOpen) return;
+  const next = tabAt(state.openSessions, number);
+  if (next) void openSession(next);
 }
 
 /// A session's name, changed: the sidebar's row and the tab's own field both write here
