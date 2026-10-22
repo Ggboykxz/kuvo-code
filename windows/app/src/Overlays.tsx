@@ -346,6 +346,7 @@ interface Xterm {
   dispose(): void;
   cols: number;
   rows: number;
+  options: { theme?: Record<string, string> };
 }
 
 interface XtermAddon {
@@ -671,6 +672,53 @@ type TerminalHandle = {
   socket: WebSocket;
 };
 
+/// The terminal is part of the card: it takes the card's own background, and an ANSI palette
+/// that stays readable on it, the way TerminalSession.apply does (TerminalSession.swift:108-124).
+function terminalIsDark(): boolean {
+  const theme = document.documentElement.dataset.theme;
+  if (theme === "dark") return true;
+  if (theme === "light") return false;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
+function resolveColor(value: string): string {
+  const probe = document.createElement("span");
+  probe.style.color = value;
+  document.body.appendChild(probe);
+  const resolved = getComputedStyle(probe).color;
+  probe.remove();
+  return resolved || value;
+}
+
+function terminalPalette(dark: boolean): string[] {
+  return dark
+    ? ["#000000", "#cd3131", "#0dbc79", "#e5e510", "#2472c8", "#bc3fbc", "#11a8cd", "#e5e5e5", "#666666", "#f14c4c", "#23d18b", "#f5f543", "#3b8eea", "#d670d6", "#29b8db", "#ffffff"]
+    : ["#000000", "#cd3131", "#107c10", "#949800", "#0451a5", "#bc05bc", "#0598bc", "#555555", "#666666", "#cd3131", "#14a314", "#b5ba00", "#0451a5", "#bc05bc", "#0598bc", "#a5a5a5"];
+}
+
+function terminalTheme(): { background: string; foreground: string; cursor: string; ansi: string[] } {
+  const dark = terminalIsDark();
+  return {
+    background: resolveColor("var(--panel)"),
+    foreground: resolveColor("var(--ink)"),
+    cursor: resolveColor("var(--accent)"),
+    ansi: terminalPalette(dark),
+  };
+}
+
+function applyTerminalTheme(term: Xterm) {
+  const theme = terminalTheme();
+  term.options.theme = {
+    background: theme.background,
+    foreground: theme.foreground,
+    cursor: theme.cursor,
+    black: theme.ansi[0], red: theme.ansi[1], green: theme.ansi[2], yellow: theme.ansi[3],
+    blue: theme.ansi[4], magenta: theme.ansi[5], cyan: theme.ansi[6], white: theme.ansi[7],
+    brightBlack: theme.ansi[8], brightRed: theme.ansi[9], brightGreen: theme.ansi[10], brightYellow: theme.ansi[11],
+    brightBlue: theme.ansi[12], brightMagenta: theme.ansi[13], brightCyan: theme.ansi[14], brightWhite: theme.ansi[15],
+  };
+}
+
 export function Drawer() {
   useStore();
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -748,8 +796,8 @@ export function Drawer() {
       fontSize: 13,
       fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, monospace',
       scrollback: 10000,
-      theme: { background: "#0d1117", foreground: "#d0d6e0" },
     });
+    applyTerminalTheme(term);
     // addon-fit's browser build exposes the namespace, `{ FitAddon }`, not the class
     // itself; keeping both shapes working means a future build cannot break the fit.
     const fitNamespace = (window as unknown as { FitAddon?: { FitAddon?: new () => XtermAddon } | (new () => XtermAddon) }).FitAddon;
@@ -791,6 +839,18 @@ export function Drawer() {
       setTerminalNote(event.reason || "Terminal closed.");
     };
     term.onData(data => { if (socket.readyState === WebSocket.OPEN) socket.send(data); });
+
+    // The terminal is part of the card: its colours follow the card's, in light or dark.
+    const onThemeChange = () => { if (terminal.current === handle) applyTerminalTheme(term); };
+    const themeObserver = new MutationObserver(onThemeChange);
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "style"] });
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    mediaQuery.addEventListener("change", onThemeChange);
+
+    return () => {
+      themeObserver.disconnect();
+      mediaQuery.removeEventListener("change", onThemeChange);
+    };
   }, [state.drawerOpen, state.drawerTab, terminalAttempt]);
 
   // The drawer's own size changes when the panel is resized, not only the window's.

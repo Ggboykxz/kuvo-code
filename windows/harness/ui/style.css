@@ -682,7 +682,7 @@ aside {
 .file-editor.hidden { display: none; }
 .file-editor-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 #file-content { flex: 1; min-height: 200px; font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.5; }
-.terminal { flex: 1; min-height: 200px; background: #0d1117; border-radius: var(--radius-sm); padding: var(--space-2); overflow: hidden; }
+.terminal { flex: 1; min-height: 200px; background: var(--panel); border-radius: var(--radius-sm); padding: var(--space-2); overflow: hidden; }
 .terminal .xterm { height: 100%; }
 .modal {
   position: fixed; inset: 0; background: rgba(0, 0, 0, .5);
