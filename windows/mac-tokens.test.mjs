@@ -32,6 +32,7 @@ const sources = {
   lib: read("app", "src", "lib.ts"),
   changes: read("app", "src", "Changes.tsx"),
   diff: read("app", "src", "diff.mjs"),
+  filetree: read("app", "src", "filetree.mjs"),
   review: read("app", "src", "review-comments.mjs"),
   styles: read("harness", "ui", "style.css"),
   shimmer: read("app", "src", "components", "ai-elements", "shimmer.tsx"),
@@ -674,6 +675,15 @@ const checks = [
     assert.match(rule(".file-code {"), /white-space: pre-wrap/);
   }],
 
+  ["the panel's tree is the project's, on the path the platform writes", ({ filetree }) => {
+    // The project's own folder is the root, as it is in the Mac's panel
+    // (FilesView.swift:250-275). The prefix and the files' paths are brought to one
+    // separator first: a Windows path's is the other kind, and comparing them as they
+    // came put the whole drive in the panel instead of the project.
+    assert.match(filetree, /replace\(\/\\\\\/g, "\/"\)/);
+    assert.match(filetree, /full\.startsWith\(`\$\{base\}\/`\)/);
+  }],
+
   ["the file's lines can be sent to the composer, as the Mac's own menu does", ({ app, overlays }) => {
     // The menu is the Mac's: *Add to Message*, with the file named as a message names it
     // and the lines that were picked (CodeTextView.swift:91-111, FilesView.swift:389-392).
@@ -724,15 +734,15 @@ const checks = [
     assert.match(css, /\.diff-comment \{[^}]*left: 2px/);
   }],
 
-  ["the panel's files are a tree, the Mac's way (FilesView.swift:250-275)", ({ app, css, overlays, symbols, rule }) => {
+  ["the panel's files are a tree, the Mac's way (FilesView.swift:250-275)", ({ css, filetree, overlays, symbols, rule }) => {
     assert.match(overlays, /function FileTree\(/);
-    assert.match(overlays, /function buildTree\(/);
+    assert.match(filetree, /export function buildTree\(/);
     // The folders carry a chevron that turns; the files carry their own mark.
     assert.match(overlays, /<Symbol name="chevron\.right" size=\{10\} className=\{open\[node\.path\] \? "turned" : ""\} \/>/);
     assert.match(overlays, /<Symbol name="doc" size=\{13\} \/>/);
     assert.match(symbols, /"doc": \[/);
     // And the tree is the project's own: the folder it sits in is the root.
-    assert.match(overlays, /file\.path\.startsWith\(prefix\)/);
+    assert.match(filetree, /full\.startsWith\(`\$\{base\}\/`\)/);
     assert.match(rule(".file-row {"), /gap: 6px/);
     assert.match(rule(".file-row {"), /font-size: var\(--text-sm\)/);
     assert.match(css, /\.file-tree \{ display: flex; flex-direction: column;/);

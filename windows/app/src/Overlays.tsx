@@ -7,6 +7,7 @@ import { errorText } from "./lib";
 import { ChangesPanel } from "./Changes";
 import { complain, loadProjectFiles, loadSessions, notify, openProjectFile, openSession, projectName, projectRun, render, setProjectSettings, state, useStore, newSession, exportConversation, stopRun } from "./store";
 import { keysOf } from "./shortcuts";
+import { buildTree, type TreeNode } from "./filetree.mjs";
 import { Symbol } from "./components/symbols";
 import { ContextMenu } from "./components/context-menu";
 
@@ -714,34 +715,6 @@ function FileTree({ files, onOpen }: {
     </div>
   ));
   return <div className="file-tree">{draw(root, 0)}</div>;
-}
-
-type TreeNode = { path: string; name: string; kind: string; children?: TreeNode[] };
-
-/// The flat list of files, as a tree: a folder for every part of their paths. The
-/// project's own folder is the root, as it is in the Mac's panel.
-function buildTree(files: { path: string; name: string; kind: string }[], project = ""): TreeNode[] {
-  const root: TreeNode[] = [];
-  const folders = new Map<string, TreeNode>();
-  const prefix = project ? project.replace(/[/\\]+$/, "") + "/" : "";
-  for (const file of files) {
-    const relative = file.path.startsWith(prefix) ? file.path.slice(prefix.length) : file.path;
-    const parts = relative.replace(/^[/\\]+/, "").split(/[/\\]+/).filter(Boolean);
-    let folder = "";
-    let level = root;
-    for (const part of parts.slice(0, -1)) {
-      folder = folder ? `${folder}/${part}` : part;
-      let node = folders.get(folder);
-      if (!node) {
-        node = { path: folder, name: part, kind: "dir", children: [] };
-        folders.set(folder, node);
-        level.push(node);
-      }
-      level = node.children ?? [];
-    }
-    level.push({ path: file.path, name: parts.at(-1) ?? file.name, kind: file.kind === "dir" ? "dir" : "file" });
-  }
-  return root;
 }
 
 // ---- The changes of a session ----
