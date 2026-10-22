@@ -10976,6 +10976,43 @@ function said2(messages) {
 
 `), error, steps };
 }
+function activity(messages, promptID, sent) {
+  const at = messages.findIndex((message) => message?.id === promptID);
+  const after = at >= 0 ? messages.slice(at + 1) : messages.filter((message) => (message?.time?.created ?? 0) >= sent - 2000);
+  const found = [];
+  for (const message of after) {
+    if (message?.type !== "assistant")
+      continue;
+    for (const block of message.content ?? []) {
+      if (block?.type === "tool") {
+        found.push({ kind: "tool", call: bare(block) });
+      } else if (block?.type === "reasoning") {
+        const line = thought(String(block.text ?? ""));
+        if (line)
+          found.push({ kind: "thinking", text: line });
+      } else if (block?.type === "text" && String(block.text ?? "").trim() && found.at(-1)?.kind !== "writing") {
+        found.push({ kind: "writing" });
+      }
+    }
+  }
+  return found.slice(-2);
+}
+function thought(text) {
+  const line = text.split(/\r\n|\r|\n/).map((part) => part.replaceAll("**", "").trim()).filter(Boolean).at(-1);
+  if (!line)
+    return;
+  return length(line) > 100 ? sliceCharacters(line, 99) + "\u2026" : line;
+}
+function bare(call) {
+  const state = call.state;
+  if (state?.status === "completed")
+    return { ...call, state: { ...state, content: [] } };
+  if (state?.status === "error") {
+    const { content: _, ...rest } = state;
+    return { ...call, state: rest };
+  }
+  return call;
+}
 function trimmed(call) {
   const cut = (output) => output.map((item) => item?.type === "text" && length(item.text) > 4000 ? { ...item, text: sliceCharacters(item.text, 4000) + "\u2026" } : item);
   const state = call.state;
@@ -12196,7 +12233,7 @@ class GroupRunner {
   }
   talk(id) {
     const live = this.state(id);
-    return { speaking: live.speaking ?? live.splitting, discussing: live.abort !== undefined, paused: live.paused };
+    return { speaking: live.speaking ?? live.splitting, discussing: live.abort !== undefined, paused: live.paused, ...live.speaking && live.activity ? { activity: live.activity } : {} };
   }
   list() {
     return [...this.chats.values()].map((kept2) => {
@@ -12447,6 +12484,7 @@ class GroupRunner {
         this.seatAPI(bot, kept2.group, seat).then((api) => api?.interrupt(seat).catch(() => {}));
     }
     live.speaking = undefined;
+    live.activity = undefined;
     live.splitting = undefined;
     this.setTalking(id, false);
     this.told(id);
@@ -12485,6 +12523,7 @@ class GroupRunner {
       live.run = undefined;
       live.abort = undefined;
       live.speaking = undefined;
+      live.activity = undefined;
       this.setTalking(id, false);
       this.meetingEnded(id);
       this.told(id);
@@ -12604,7 +12643,13 @@ class GroupRunner {
         this.changed(id);
       }
       const sent = Date.now();
-      await this.waitForRun(seat, promptID, sent, api, signal);
+      await this.waitForRun(seat, promptID, sent, api, signal, (messages) => {
+        const now2 = activity(messages, promptID, sent);
+        if (live.speaking !== botID || JSON.stringify(now2) === JSON.stringify(live.activity ?? []))
+          return;
+        live.activity = now2.length ? now2 : undefined;
+        this.told(id);
+      });
       if (left())
         return "absent";
       const reply = await this.reply(seat, promptID, sent, api);
@@ -12627,8 +12672,10 @@ class GroupRunner {
       this.note(`${bot.name} couldn\u2019t answer: ${reason2(error3)}`, id);
       return "absent";
     } finally {
-      if (live.speaking === botID)
+      if (live.speaking === botID) {
         live.speaking = undefined;
+        live.activity = undefined;
+      }
       this.told(id);
     }
   }
@@ -12649,8 +12696,9 @@ class GroupRunner {
       this.setHeard(message.id, botID, id);
     } catch {}
   }
-  async waitForRun(seat, promptID, sent, api, signal) {
+  async waitForRun(seat, promptID, sent, api, signal, seen) {
     const pace = this.context.pace ?? 1;
+    let looked = Date.now();
     let gone = 0;
     let missing = 0;
     let idleSince;
@@ -12658,6 +12706,14 @@ class GroupRunner {
     for (;; ) {
       await sleep(600 * pace, signal);
       await this.decline(seat, api);
+      if (seen && Date.now() - looked > 1500 * pace) {
+        looked = Date.now();
+        const page2 = await api.messages(seat, 12).catch(() => {
+          return;
+        });
+        if (page2)
+          seen(page2.data);
+      }
       const active = await api.active().catch(() => {
         return;
       });
@@ -13463,4 +13519,4 @@ if (onMachine) {
 }
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
-// Built from Agents/src b769b2f439a301f5cf860a88d2bf57a03102232d908f4a58a7c853433d23cb8f
+// Built from Agents/src 8959486adf10be2715c0ebab72b3640de005068961d0834485d5e07db8a20ccc

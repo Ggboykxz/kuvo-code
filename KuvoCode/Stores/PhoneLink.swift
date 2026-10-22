@@ -786,10 +786,13 @@ final class PhoneLink {
             var discussing: Bool
             var paused: Bool
             var moving: Bool
+            /// What the bot talking is doing, a step or two (see `GroupActivity`).
+            var activity: [GroupActivity]?
         }
         guard let groups, groups.group(id) != nil else { return nil }
         let chat = Chat(messages: Array(groups.messages(in: id).suffix(300)), speaking: groups.speaking[id],
-                        discussing: groups.discussing.contains(id), paused: groups.paused.contains(id), moving: isMoving(id))
+                        discussing: groups.discussing.contains(id), paused: groups.paused.contains(id), moving: isMoving(id),
+                        activity: groups.activity[id])
         return try? Self.groupEncoder.encode(chat)
     }
 

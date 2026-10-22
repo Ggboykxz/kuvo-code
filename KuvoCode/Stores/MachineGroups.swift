@@ -25,6 +25,8 @@ final class MachineGroups {
     private var logs: [String: [GroupMessage]] = [:]
     /// Machines whose bridge runs group chats (an older one doesn't yet).
     private(set) var running: Set<String> = []
+    /// What the bot talking is doing, by chat, as its machine last said (see `GroupActivity`).
+    private(set) var activity: [String: [GroupActivity]] = [:]
     @ObservationIgnored weak var app: AppModel?
     /// The settings each machine was last given, so they go again only when they change.
     @ObservationIgnored private var settingsGiven: [String: Data] = [:]
@@ -146,6 +148,7 @@ final class MachineGroups {
         for index in chats.indices where chats[index].machine == machine {
             chats[index].discussing = false
             chats[index].speaking = nil
+            activity[chats[index].group.id] = nil
         }
     }
 
@@ -163,6 +166,8 @@ final class MachineGroups {
                 let updated = try decoded(event, as: Updated.self)
                 touchedWhileListing[machine]?.insert(updated.id)
                 apply(updated.group, held: updated.status == "held", state: updated.state, on: machine)
+                let now = updated.state.speaking == nil ? [] : updated.state.activity ?? []
+                if activity[updated.id] ?? [] != now { activity[updated.id] = now.isEmpty ? nil : now }
                 app?.workspace.seats.formUnion(updated.group.seats.values)
                 if let agentSeats = updated.group.agentSeats { app?.workspace.runsOnAgents(agentSeats) }
             case "kuvo.group.message":
@@ -207,6 +212,8 @@ final class MachineGroups {
         var speaking: String?
         var discussing: Bool
         var paused: Bool
+        /// What the bot talking is doing (see `GroupActivity`).
+        var activity: [GroupActivity]? = nil
     }
 
     struct Listed: Decodable {
@@ -271,6 +278,7 @@ final class MachineGroups {
     private func forget(_ id: String) {
         chats.removeAll { $0.group.id == id }
         logs[id] = nil
+        activity[id] = nil
         save()
         try? FileManager.default.removeItem(at: Self.folder.appending(path: "\(id).json"))
     }

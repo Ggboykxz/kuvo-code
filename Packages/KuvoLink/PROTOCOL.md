@@ -320,6 +320,10 @@ itself. A host serves:
   `task`, `state` (`proposed`, `waiting`, `working`, `done` or `failed`), `started`/`finished`,
   and `after` (the bots whose parts come first; it waits for them);
   `…/start` (`{"message"}`, the wrap-up) hands each proposed part to its bot's own conversation.
+  While a bot talks, one chat's events carry `activity`, what it's doing, its last step or two:
+  `{"kind": "tool", "call"}` (a tool call as a message's `steps` hold them, without its output),
+  `{"kind": "thinking", "text"}` (the line its thinking is on) or `{"kind": "writing"}`. Show
+  them under who's talking, so a long turn doesn't look stuck.
   A bot's message with `report` (a task's id) is it reporting back on its part. Times are
   seconds since 1970.
   A Mac lists all of yours: its own, and those that live on your machines (whose bots all live

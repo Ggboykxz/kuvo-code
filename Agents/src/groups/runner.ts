@@ -24,9 +24,11 @@ import {
   splitText,
   stamp,
   tasks as splitTasks,
+  activity as activityOf,
   trim,
   trimmed,
   turnText,
+  type Activity,
   type Group,
   type GroupMessage,
   type GroupTask,
@@ -56,6 +58,8 @@ export interface TalkState {
   speaking?: string
   discussing: boolean
   paused: boolean
+  /** What the bot talking is doing (see `activity`). */
+  activity?: Activity[]
 }
 
 interface Live {
@@ -63,6 +67,8 @@ interface Live {
   abort?: AbortController
   speaking?: string
   splitting?: string
+  /** What the bot talking is doing, as its seat shows it. */
+  activity?: Activity[]
   paused: boolean
   /** Goes up with each message of yours, so a discussion under way starts its count again. */
   asked: number
@@ -144,7 +150,7 @@ export class GroupRunner {
 
   talk(id: string): TalkState {
     const live = this.state(id)
-    return { speaking: live.speaking ?? live.splitting, discussing: live.abort !== undefined, paused: live.paused }
+    return { speaking: live.speaking ?? live.splitting, discussing: live.abort !== undefined, paused: live.paused, ...(live.speaking && live.activity ? { activity: live.activity } : {}) }
   }
 
   /** Each chat, with its last message, the last said (not a note) and the last from a bot, as a list shows them. */
@@ -400,6 +406,7 @@ export class GroupRunner {
       if (seat && bot && kept) void this.seatAPI(bot, kept.group, seat).then((api) => api?.interrupt(seat).catch(() => {}))
     }
     live.speaking = undefined
+    live.activity = undefined
     live.splitting = undefined
     this.setTalking(id, false)
     this.told(id)
@@ -440,6 +447,7 @@ export class GroupRunner {
       live.run = undefined
       live.abort = undefined
       live.speaking = undefined
+      live.activity = undefined
       this.setTalking(id, false)
       this.meetingEnded(id)
       this.told(id)
@@ -558,7 +566,12 @@ export class GroupRunner {
         this.changed(id)
       }
       const sent = Date.now()
-      await this.waitForRun(seat, promptID, sent, api, signal)
+      await this.waitForRun(seat, promptID, sent, api, signal, (messages) => {
+        const now = activityOf(messages, promptID, sent)
+        if (live.speaking !== botID || JSON.stringify(now) === JSON.stringify(live.activity ?? [])) return
+        live.activity = now.length ? now : undefined
+        this.told(id)
+      })
       if (left()) return "absent"
       const reply = await this.reply(seat, promptID, sent, api)
       going()
@@ -581,7 +594,10 @@ export class GroupRunner {
       this.note(`${bot.name} couldn’t answer: ${reason(error)}`, id)
       return "absent"
     } finally {
-      if (live.speaking === botID) live.speaking = undefined
+      if (live.speaking === botID) {
+        live.speaking = undefined
+        live.activity = undefined
+      }
       this.told(id)
     }
   }
@@ -603,8 +619,10 @@ export class GroupRunner {
   }
 
   /** Until the seat's run ends. Questions and requests for permission are turned down on the way, since nobody's there to answer them. */
-  private async waitForRun(seat: string, promptID: string, sent: number, api: SeatAPI, signal: AbortSignal) {
+  /** Until the seat's run ends; `seen` hears its latest messages now and then, for what it's doing. */
+  private async waitForRun(seat: string, promptID: string, sent: number, api: SeatAPI, signal: AbortSignal, seen?: (messages: any[]) => void) {
     const pace = this.context.pace ?? 1
+    let looked = Date.now()
     let gone = 0
     // Reads of its inbox that found no seat (deleted, as the bot left the chat), in a row.
     let missing = 0
@@ -613,6 +631,11 @@ export class GroupRunner {
     for (;;) {
       await sleep(600 * pace, signal)
       await this.decline(seat, api)
+      if (seen && Date.now() - looked > 1500 * pace) {
+        looked = Date.now()
+        const page = await api.messages(seat, 12).catch(() => undefined)
+        if (page) seen(page.data)
+      }
       const active = await api.active().catch(() => undefined)
       if (active && !active.has(seat)) {
         // No seat (404) is told from a moment's trouble, which is asked again.

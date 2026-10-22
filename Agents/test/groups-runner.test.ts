@@ -29,6 +29,8 @@ class Engine {
   /** Bots whose seats take a while (at work meanwhile), and ones whose prompts stay queued. */
   slow = new Map<string, number>()
   stuck = new Set<string>()
+  /** A slow bot's thinking, shown with a file it reads, while it's at work. */
+  working = new Map<string, string>()
   private busy = new Set<string>()
   private queued = new Map<string, { id: string }[]>()
   private deleted = new Set<string>()
@@ -99,6 +101,13 @@ class Engine {
       if (delay) {
         // At work a while, its answer not there yet.
         const said = conversation.pop()
+        const thinking = bot ? this.working.get(bot) : undefined
+        if (thinking) {
+          conversation.push({ type: "assistant", id: body.id + "_w", time: { created: at + 1 }, agent: "build", model: { id: "m", providerID: "p" }, content: [
+            { type: "reasoning", text: thinking },
+            { type: "tool", id: "call_r", name: "read", state: { status: "completed", input: { path: "notes.txt" }, content: [{ type: "text", text: "what the notes say" }] } },
+          ] })
+        }
         this.conversations.set(session, conversation)
         this.busy.add(session)
         setTimeout(() => {
@@ -270,6 +279,22 @@ describe("a group chat on a machine", () => {
     expect(groups.get("grp_team000001")!.messages.some((message) => message.author === "bot_ben")).toBe(true)
     // It left quietly: no note that it couldn't answer.
     expect(groups.get("grp_team000001")!.messages.filter((message) => message.kind === "note")).toEqual([])
+  })
+
+  test("what a bot does on its turn shows while it's at it, and goes when it's done", async () => {
+    const { groups } = runner()
+    engine.lines = { Ada: ["Here's the plan."], Ben: [] }
+    engine.slow.set("Ada", 1500)
+    engine.working.set("Ada", "**Checking the notes**\nReading what we wrote")
+    groups.put(group(), [], "active", false)
+    groups.send("grp_team000001", "Plan?")
+    await until(() => (groups.talk("grp_team000001").activity?.length ?? 0) > 0)
+    const shown: any[] = groups.talk("grp_team000001").activity!
+    expect(shown.map((step) => step.kind)).toEqual(["thinking", "tool"])
+    expect(shown[0].text).toBe("Reading what we wrote")
+    expect(shown[1].call.state.content).toEqual([])
+    await until(() => !groups.talk("grp_team000001").discussing, 8000)
+    expect(groups.talk("grp_team000001").activity).toBeUndefined()
   })
 
   test("a bot whose message stays queued (held after a stop) is woken, then passes", async () => {

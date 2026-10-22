@@ -175,6 +175,29 @@ import Testing
         #expect(!app.chats.list.contains { $0.id == "grp_box0000001" })
     }
 
+    /// What a bot on a machine does on its turn, as the machine says it: shown under who's
+    /// talking, gone when it's done.
+    @Test func whatABotDoesShowsWhileItTalks() async throws {
+        defer { Self.clean(); mac.stop() }
+        try saveBots([("bot_pal", "Pal", "box"), ("bot_lb", "Lokum Builder", "box")])
+        held.add(Self.group("grp_box0000001", members: ["bot_pal", "bot_lb"]), messages: [Self.said])
+        let app = app()
+        await app.machineGroups.connected("box")
+        let group = Self.group("grp_box0000001", members: ["bot_pal", "bot_lb"])
+        let read: [String: Any] = ["kind": "tool", "call": ["type": "tool", "id": "call_1", "name": "read",
+                                                            "state": ["status": "completed", "input": ["path": "notes.txt"], "content": []]]]
+        app.machineGroups.handle(try bridge.event("kuvo.group.updated", ["id": "grp_box0000001", "group": group, "status": "active",
+                                                                          "state": ["speaking": "bot_lb", "discussing": true, "paused": false,
+                                                                                    "activity": [read, ["kind": "thinking", "text": "Checking the build"]]]]), machine: "box")
+        let shown = try #require(app.chats.activity["grp_box0000001"])
+        #expect(shown.count == 2)
+        if case .step(let call) = shown[0] { #expect(call.name == "read") } else { Issue.record("not the step") }
+        #expect(shown[1] == .thinking("Checking the build"))
+        app.machineGroups.handle(try bridge.event("kuvo.group.updated", ["id": "grp_box0000001", "group": group, "status": "active",
+                                                                          "state": ["discussing": false, "paused": false]]), machine: "box")
+        #expect(app.chats.activity["grp_box0000001"] == nil)
+    }
+
     /// Looked at here: told there once, not again each time the machine says it back (in whole
     /// seconds, as it keeps times).
     @Test func aLookIsToldOnce() async throws {

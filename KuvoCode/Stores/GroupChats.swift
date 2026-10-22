@@ -20,6 +20,8 @@ final class GroupChats {
 
     var list: [BotGroup] { mac.list + machineChats.map(\.group) }
     var speaking: [String: String] { mac.speaking.merging(machines.speaking.filter { onMachine($0.key) }) { first, _ in first } }
+    /// What the bot talking is doing, by chat (see `GroupActivity`).
+    var activity: [String: [GroupActivity]] { mac.activity.merging(machines.activity.filter { onMachine($0.key) }) { first, _ in first } }
     var discussing: Set<String> { mac.discussing.union(machines.discussing.filter(onMachine)) }
     var paused: Set<String> { mac.paused.union(machines.paused.filter(onMachine)) }
     var seatIDs: Set<String> { mac.seatIDs.union(machines.seatIDs) }

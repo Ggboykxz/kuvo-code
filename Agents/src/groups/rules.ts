@@ -434,6 +434,51 @@ export function said(messages: any[]): { text: string; error?: string; steps: To
 }
 
 /** A step as it's kept with the chat: what it printed, cut short, so the log stays small. */
+/** What a bot is doing on its turn (the chat lists the last step or two under who's talking, so a
+ * long turn doesn't look stuck), as the Mac's `GroupActivity`: a tool it called (without what it
+ * gave back), the line its thinking is on, or its reply being written. */
+export type Activity = { kind: "tool"; call: ToolCall } | { kind: "thinking"; text: string } | { kind: "writing" }
+
+/** The last step or two in a seat's `messages` (oldest first), since `promptID` (or, not among
+ * them yet, since `sent`, in milliseconds). */
+export function activity(messages: any[], promptID: string, sent: number): Activity[] {
+  const at = messages.findIndex((message) => message?.id === promptID)
+  const after = at >= 0 ? messages.slice(at + 1) : messages.filter((message) => (message?.time?.created ?? 0) >= sent - 2000)
+  const found: Activity[] = []
+  for (const message of after) {
+    if (message?.type !== "assistant") continue
+    for (const block of message.content ?? []) {
+      if (block?.type === "tool") {
+        found.push({ kind: "tool", call: bare(block) })
+      } else if (block?.type === "reasoning") {
+        const line = thought(String(block.text ?? ""))
+        if (line) found.push({ kind: "thinking", text: line })
+      } else if (block?.type === "text" && String(block.text ?? "").trim() && found.at(-1)?.kind !== "writing") {
+        found.push({ kind: "writing" })
+      }
+    }
+  }
+  return found.slice(-2)
+}
+
+/** Thinking under way, in a line: the latest it's written, without Markdown's stars. */
+export function thought(text: string): string | undefined {
+  const line = text.split(/\r\n|\r|\n/).map((part) => part.replaceAll("**", "").trim()).filter(Boolean).at(-1)
+  if (!line) return undefined
+  return length(line) > 100 ? sliceCharacters(line, 99) + "…" : line
+}
+
+/** A step without what it gave back. */
+function bare(call: ToolCall): ToolCall {
+  const state: any = call.state
+  if (state?.status === "completed") return { ...call, state: { ...state, content: [] } }
+  if (state?.status === "error") {
+    const { content: _, ...rest } = state
+    return { ...call, state: rest }
+  }
+  return call
+}
+
 export function trimmed(call: ToolCall): ToolCall {
   const cut = (output: any[]) =>
     output.map((item) => (item?.type === "text" && length(item.text) > 4000 ? { ...item, text: sliceCharacters(item.text, 4000) + "…" } : item))

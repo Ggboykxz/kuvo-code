@@ -40,7 +40,7 @@ struct GroupChatView: View {
                     .environment(\.findHighlight, find.highlight(for: message.id))
             }
             if let speaker {
-                TypingRow(bot: speaker)
+                TypingRow(bot: speaker, activity: groups.activity[group.id] ?? [])
                     .id("typing")
                     .transition(.opacity)
             }
@@ -431,12 +431,36 @@ private struct WorkState: View {
 /// The bot talking now, at work.
 private struct TypingRow: View {
     let bot: Bot
+    /// What it's doing, a step or two: so a long turn doesn't look stuck.
+    var activity: [GroupActivity] = []
 
     var body: some View {
-        HStack(spacing: 10) {
-            BotAvatar(look: bot.look, size: 28, mood: .working)
-            ShimmerText(text: "\(bot.name) is thinking…")
-                .font(.callout)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 10) {
+                BotAvatar(look: bot.look, size: 28, mood: .working)
+                ShimmerText(text: "\(bot.name) is thinking…")
+                    .font(.callout)
+            }
+            ForEach(Array(activity.enumerated()), id: \.offset) { _, step in
+                Text(Self.line(step, in: bot.directory))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    // Under its name.
+                    .padding(.leading, 38)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.ui, value: activity)
+    }
+
+    /// A step as a session's conversation says it: "Reading notes.txt", "Searched the web for …".
+    static func line(_ step: GroupActivity, in directory: String) -> String {
+        switch step {
+        case .step(let call): ToolCallView.summary(of: call, in: directory)
+        case .thinking(let text): text
+        case .writing: "Writing its reply"
         }
     }
 }

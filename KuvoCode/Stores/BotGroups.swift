@@ -47,6 +47,80 @@ struct BotGroup: Codable, Identifiable, Hashable {
     }
 }
 
+/// What a bot is doing on its turn, as its seat shows it: the chat lists the last step or two
+/// under who's talking, so a long turn doesn't look stuck. A machine's chats send it as they run.
+enum GroupActivity: Codable, Hashable {
+    /// A tool it called (without what it gave back).
+    case step(Message.ToolCall)
+    /// Its thinking, the line it's on.
+    case thinking(String)
+    /// Its reply, being written.
+    case writing
+
+    private enum Key: String, CodingKey { case kind, call, text }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Key.self)
+        switch try c.decode(String.self, forKey: .kind) {
+        case "tool": self = .step(try c.decode(Message.ToolCall.self, forKey: .call))
+        case "thinking": self = .thinking(try c.decodeIfPresent(String.self, forKey: .text) ?? "")
+        default: self = .writing
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: Key.self)
+        switch self {
+        case .step(let call):
+            try c.encode("tool", forKey: .kind)
+            try c.encode(call, forKey: .call)
+        case .thinking(let text):
+            try c.encode("thinking", forKey: .kind)
+            try c.encode(text, forKey: .text)
+        case .writing:
+            try c.encode("writing", forKey: .kind)
+        }
+    }
+
+    /// The last step or two in a seat's `messages` (oldest first), since `promptID` (or, not among
+    /// them yet, since `sent`).
+    static func latest(in messages: [Message], after promptID: String, since sent: Date) -> [GroupActivity] {
+        let start = messages.firstIndex { $0.id == promptID }.map { $0 + 1 }
+        let since = sent.timeIntervalSince1970 * 1000 - 2000
+        var found: [GroupActivity] = []
+        for (index, message) in messages.enumerated() where start.map({ index >= $0 }) ?? (message.created >= since) {
+            guard case .assistant(let answer) = message else { continue }
+            for block in answer.content {
+                switch block {
+                case .tool(let call): found.append(.step(bare(call)))
+                case .reasoning(let text): if let line = thought(text.text) { found.append(.thinking(line)) }
+                case .text(let text):
+                    if !text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, found.last != .writing { found.append(.writing) }
+                default: break
+                }
+            }
+        }
+        return Array(found.suffix(2))
+    }
+
+    /// Thinking under way, in a line: the latest it's written, without Markdown's stars.
+    static func thought(_ text: String) -> String? {
+        let lines = text.split(whereSeparator: \.isNewline).map { $0.replacingOccurrences(of: "**", with: "").trimmingCharacters(in: .whitespaces) }
+        guard let line = lines.last(where: { !$0.isEmpty }) else { return nil }
+        return line.count > 100 ? String(line.prefix(99)) + "…" : line
+    }
+
+    private static func bare(_ call: Message.ToolCall) -> Message.ToolCall {
+        var call = call
+        switch call.state {
+        case .completed(let input, _, let metadata): call.state = .completed(input: input, output: [], metadata: metadata)
+        case .failed(let input, let error, _, let metadata): call.state = .failed(input: input, error: error, output: nil, metadata: metadata)
+        case .streaming, .running: break
+        }
+        return call
+    }
+}
+
 struct GroupMessage: Codable, Identifiable, Hashable {
     var id: String
     /// The bot that wrote it; nil for you.
@@ -204,6 +278,8 @@ final class BotGroups {
     private var logs: [String: [GroupMessage]] = [:]
     /// Whose turn it is, in each chat that's talking.
     private(set) var speaking: [String: String] = [:]
+    /// What the bot talking is doing, by chat (see `GroupActivity`).
+    private(set) var activity: [String: [GroupActivity]] = [:]
     /// Chats talking something through right now.
     private(set) var discussing: Set<String> = []
     /// Chats that stopped at their limit of turns with more to say.
@@ -732,7 +808,12 @@ final class BotGroups {
     private func turn(of botID: String, in id: String, wrapUp: Bool = false) async -> Outcome {
         guard let app, let bot = app.bots.bot(botID) else { return .absent }
         speaking[id] = botID
-        defer { if speaking[id] == botID { speaking[id] = nil } }
+        defer {
+            if speaking[id] == botID {
+                speaking[id] = nil
+                activity[id] = nil
+            }
+        }
         if Moves.isFrozen(botID) {
             note("\(bot.name) is moving to another computer, so it sat this out.", in: id)
             return .absent
@@ -761,7 +842,10 @@ final class BotGroups {
                 save()
             }
             let sent = Date.now
-            try await waitForRun(of: seat, after: ended, since: sent, api: api)
+            try await waitForRun(of: seat, after: ended, since: sent, api: api) { [weak self] messages in
+                let now = GroupActivity.latest(in: messages, after: promptID, since: sent)
+                if self?.speaking[id] == botID, self?.activity[id] ?? [] != now { self?.activity[id] = now.isEmpty ? nil : now }
+            }
             let (text, error, steps) = try await reply(in: seat, after: promptID, since: sent, api: api)
             if text.isEmpty {
                 if let error {
@@ -802,11 +886,18 @@ final class BotGroups {
     }
 
     /// Until the seat's run ends. Questions and requests for permission are turned down on the
-    /// way, since nobody's there to answer them.
-    private func waitForRun(of seat: String, after ended: Int, since sent: Date, api: OpenCodeAPI) async throws {
+    /// way, since nobody's there to answer them. `seen` hears its latest messages now and then,
+    /// for what it's doing.
+    private func waitForRun(of seat: String, after ended: Int, since sent: Date, api: OpenCodeAPI,
+                            seen: (([Message]) -> Void)? = nil) async throws {
         var checked = Date.now
+        var looked = Date.now
         while app?.workspace.endedRuns[seat, default: 0] == ended {
             try await Task.sleep(for: .milliseconds(300))
+            if let seen, Date.now.timeIntervalSince(looked) > 1.5 {
+                looked = .now
+                if let messages = try? await api.messages(session: seat, limit: 12).data { seen(messages) }
+            }
             if app?.workspace.asking.values.contains(seat) == true { await decline(in: seat, api: api) }
             // The engine's word, now and then, in case an event went missing in a reconnect.
             if Date.now.timeIntervalSince(checked) > 8 {
