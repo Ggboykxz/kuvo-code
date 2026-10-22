@@ -268,6 +268,8 @@ describe("a group chat on a machine", () => {
     await groups.update("grp_team000001", { members: ["bot_ben"] })
     await until(() => !groups.talk("grp_team000001").discussing)
     expect(groups.get("grp_team000001")!.messages.some((message) => message.author === "bot_ben")).toBe(true)
+    // It left quietly: no note that it couldn't answer.
+    expect(groups.get("grp_team000001")!.messages.filter((message) => message.kind === "note")).toEqual([])
   })
 
   test("a bot whose message stays queued (held after a stop) is woken, then passes", async () => {

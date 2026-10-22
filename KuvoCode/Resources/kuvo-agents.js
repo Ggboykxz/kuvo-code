@@ -12563,6 +12563,7 @@ class GroupRunner {
       if (signal.aborted)
         throw new Cancelled;
     };
+    const left = () => !this.chat(id)?.group.members.includes(botID);
     try {
       const kept2 = this.chat(id);
       if (!kept2)
@@ -12604,6 +12605,8 @@ class GroupRunner {
       }
       const sent = Date.now();
       await this.waitForRun(seat, promptID, sent, api, signal);
+      if (left())
+        return "absent";
       const reply = await this.reply(seat, promptID, sent, api);
       going();
       if (!reply.text) {
@@ -12618,7 +12621,7 @@ class GroupRunner {
       this.append({ id: groupMessageID(), author: botID, text: reply.text, time: stamp2(), kind: wrapUp ? "wrapUp" : "message", ...reply.steps.length ? { steps: reply.steps.map(trimmed) } : {} }, id);
       return "said";
     } catch (error3) {
-      if (signal.aborted || error3 instanceof Cancelled)
+      if (signal.aborted || error3 instanceof Cancelled || left())
         return "absent";
       console.error(`${botID}'s turn in ${id} failed:`, reason2(error3));
       this.note(`${bot.name} couldn\u2019t answer: ${reason2(error3)}`, id);
@@ -12649,6 +12652,7 @@ class GroupRunner {
   async waitForRun(seat, promptID, sent, api, signal) {
     const pace = this.context.pace ?? 1;
     let gone = 0;
+    let missing = 0;
     let idleSince;
     let woken = false;
     for (;; ) {
@@ -12658,9 +12662,13 @@ class GroupRunner {
         return;
       });
       if (active && !active.has(seat)) {
-        const inbox = await api.inbox(seat).catch(() => {
-          return;
-        });
+        const inbox = await api.inbox(seat).catch((error3) => error3?.status === 404 ? null : undefined);
+        if (inbox === null) {
+          if (++missing >= 3)
+            return;
+          continue;
+        }
+        missing = 0;
         if (inbox && !inbox.some((item) => item.id === promptID)) {
           const read2 = await api.messages(seat, 60).catch(() => {
             return;
@@ -12671,10 +12679,7 @@ class GroupRunner {
           if (at2 >= 0)
             gone = 0;
           idleSince = undefined;
-        } else if (!inbox) {
-          if (++gone >= 3)
-            return;
-        } else {
+        } else if (inbox) {
           idleSince ??= Date.now();
           if (Date.now() - idleSince > 8000 * pace) {
             if (!woken) {
@@ -13458,4 +13463,4 @@ if (onMachine) {
 }
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
-// Built from Agents/src 177d1dcdd76dbb14f7528df683c411b8e5d8f866ba97209a5e06d2c615871d8b
+// Built from Agents/src 99d62e3b774eb66e33352fc5c975ab0549bb1f86591b4609c1fa1d4ac1440f7e

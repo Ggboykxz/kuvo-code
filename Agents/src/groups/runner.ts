@@ -517,6 +517,8 @@ export class GroupRunner {
     const going = () => {
       if (signal.aborted) throw new Cancelled()
     }
+    // Taken out of the chat as it spoke: it leaves quietly.
+    const left = () => !this.chat(id)?.group.members.includes(botID)
     try {
       const kept = this.chat(id)
       if (!kept) return "absent"
@@ -557,6 +559,7 @@ export class GroupRunner {
       }
       const sent = Date.now()
       await this.waitForRun(seat, promptID, sent, api, signal)
+      if (left()) return "absent"
       const reply = await this.reply(seat, promptID, sent, api)
       going()
       if (!reply.text) {
@@ -573,7 +576,7 @@ export class GroupRunner {
       )
       return "said"
     } catch (error) {
-      if (signal.aborted || error instanceof Cancelled) return "absent"
+      if (signal.aborted || error instanceof Cancelled || left()) return "absent"
       console.error(`${botID}'s turn in ${id} failed:`, reason(error))
       this.note(`${bot.name} couldn’t answer: ${reason(error)}`, id)
       return "absent"
@@ -603,6 +606,8 @@ export class GroupRunner {
   private async waitForRun(seat: string, promptID: string, sent: number, api: SeatAPI, signal: AbortSignal) {
     const pace = this.context.pace ?? 1
     let gone = 0
+    // Reads of its inbox that found no seat (deleted, as the bot left the chat), in a row.
+    let missing = 0
     let idleSince: number | undefined
     let woken = false
     for (;;) {
@@ -610,7 +615,14 @@ export class GroupRunner {
       await this.decline(seat, api)
       const active = await api.active().catch(() => undefined)
       if (active && !active.has(seat)) {
-        const inbox = await api.inbox(seat).catch(() => undefined)
+        // No seat (404) is told from a moment's trouble, which is asked again.
+        const inbox = await api.inbox(seat).catch((error) => (error?.status === 404 ? null : undefined))
+        if (inbox === null) {
+          // Its seat is gone (the bot left the chat as it spoke): nothing more comes.
+          if (++missing >= 3) return
+          continue
+        }
+        missing = 0
         if (inbox && !inbox.some((item) => item.id === promptID)) {
           const read = await api.messages(seat, 60).catch(() => undefined)
           const at = read ? read.data.findIndex((message) => message?.id === promptID) : -1
@@ -618,10 +630,7 @@ export class GroupRunner {
           if (at >= 0 ? read!.data.slice(at + 1).some((message) => message?.type === "idle") : read ? ++gone >= 3 : false) return
           if (at >= 0) gone = 0
           idleSince = undefined
-        } else if (!inbox) {
-          // Its seat is gone (the bot left the chat as it spoke): nothing more comes.
-          if (++gone >= 3) return
-        } else {
+        } else if (inbox) {
           // Still waiting on a seat that isn't at work (held there after a stop): woken, then let go.
           idleSince ??= Date.now()
           if (Date.now() - idleSince > 8_000 * pace) {
