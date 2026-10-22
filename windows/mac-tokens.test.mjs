@@ -925,7 +925,7 @@ const checks = [
     const preload = fs.readFileSync(path.join(here, "electron", "preload.js"), "utf8");
     assert.match(shell, /Menu\.setApplicationMenu/);
     for (const item of [
-      "New Session", "Open Folder…", "Open Quickly…", "Export Conversation as Markdown",
+      "New Session", "New Chat", "New Project…", "Open Folder…", "Open Quickly…", "Export Conversation as Markdown",
       "Close Tab", "Close Window", "Reopen Closed Tab",
       "Stop", "Build Mode", "Plan Mode",
       "Show Changes", "Show Files", "Run", "New Terminal", "Show Panel",

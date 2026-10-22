@@ -2333,6 +2333,13 @@ function runShortcut(id: string) {
     case "new-session":
       if (state.project) void newSession();
       return;
+    case "new-chat":
+      void newSession();
+      return;
+    case "new-project":
+      state.pickerOpen = true;
+      render();
+      return;
     case "open-folder":
       state.pickerOpen = true;
       render();

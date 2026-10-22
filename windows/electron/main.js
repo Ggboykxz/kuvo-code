@@ -204,6 +204,8 @@ function applicationMenu() {
       label: "File",
       submenu: [
         { label: "New Session", accelerator: "CmdOrCtrl+N", click: ask("new-session") },
+        { label: "New Chat", accelerator: "CmdOrCtrl+Alt+N", click: ask("new-chat") },
+        { label: "New Project…", accelerator: "CmdOrCtrl+Shift+N", click: ask("new-project") },
         { label: "Open Folder…", accelerator: "CmdOrCtrl+O", click: ask("open-folder") },
         { label: "Open Quickly…", accelerator: "CmdOrCtrl+Shift+O", click: ask("open-quickly") },
         { label: "Export Conversation as Markdown", accelerator: "CmdOrCtrl+S", click: ask("save") },
