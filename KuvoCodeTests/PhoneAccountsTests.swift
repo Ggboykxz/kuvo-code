@@ -67,7 +67,11 @@ import Testing
         defer { StubWeb.stop() }
         var forgot: [String] = []
         link.endedSignIns = { ["openai"] }
-        link.forgetSignIn = { forgot.append($0) }
+        link.forgetSignIn = { provider in
+            guard provider == "openai" else { return false }
+            forgot.append(provider)
+            return true
+        }
         let ended = try await ask("kuvo/accounts/ended")
         #expect(ended.status == 200)
         #expect((try JSONSerialization.jsonObject(with: ended.body) as? [String: [String]]) == ["providers": ["openai"]])
@@ -75,7 +79,7 @@ import Testing
         #expect(try await ask("kuvo/accounts/openai/forget", method: "POST").status == 200)
         #expect(forgot == ["openai"])
         // Only a plan's own name: nothing else is signed out.
-        for path in ["kuvo/accounts/../credential/forget", "kuvo/accounts/a%2Fb/forget", "kuvo/accounts//forget"] {
+        for path in ["kuvo/accounts/../credential/forget", "kuvo/accounts/a%2Fb/forget", "kuvo/accounts//forget", "kuvo/accounts/notion/forget"] {
             #expect(try await ask(path, method: "POST").status == 404, "\(path)")
         }
         #expect(try await ask("kuvo/accounts/openai/forget", method: "GET").status == 404)

@@ -67,7 +67,8 @@ final class PhoneLink {
     /// Plans whose sign-in ended (the service refused it), for `kuvo/accounts/ended`, and
     /// Disconnect as Settings › Accounts does it (here and on your machines); set by AppModel.
     @ObservationIgnored var endedSignIns: () -> [String] = { [] }
-    @ObservationIgnored var forgetSignIn: (String) -> Void = { _ in }
+    /// (Whether it was one of your plans: nothing else is signed out.)
+    @ObservationIgnored var forgetSignIn: (String) -> Bool = { _ in false }
     /// Whether a group chat is on its way to another computer; set by AppModel.
     @ObservationIgnored var isMoving: (String) -> Bool = { Moves.isFrozen($0) }
 
@@ -558,12 +559,11 @@ final class PhoneLink {
             return (200, groupsJSON())
         case "kuvo/accounts/ended":
             return (200, (try? JSONEncoder().encode(["providers": endedSignIns()])) ?? Data())
-        case let path where path.hasPrefix("kuvo/accounts/") && path.hasSuffix("/forget") && request.method == "POST":
+        case let path where path.hasPrefix("kuvo/accounts/") && path.hasSuffix("/forget") && request.method.uppercased() == "POST":
             // Disconnect, as Settings › Accounts does it: its sign-ins and keys here, and the copies on your machines.
             let provider = String(path.dropFirst("kuvo/accounts/".count).dropLast("/forget".count))
             guard !provider.isEmpty, !provider.contains("/"), provider.range(of: #"^[A-Za-z0-9_@.-]+$"#, options: .regularExpression) != nil else { return (404, Data()) }
-            forgetSignIn(provider)
-            return (200, Data("{}".utf8))
+            return forgetSignIn(provider) ? (200, Data("{}".utf8)) : (404, Data())
         case "kuvo/usage":
             guard let usage = usageJSON() else { return (404, Data()) }
             return (200, usage)

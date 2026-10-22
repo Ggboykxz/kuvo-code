@@ -328,7 +328,12 @@ final class AppModel {
             phoneLink.machineName = { [weak self] id in self?.machines.list.first { $0.id == id }?.name }
             phoneLink.agents = agents
             phoneLink.endedSignIns = { [weak self] in self?.catalog.endedProviders ?? [] }
-            phoneLink.forgetSignIn = { [weak self] provider in self?.forgetSignIn(provider) }
+            phoneLink.forgetSignIn = { [weak self] provider in
+                // One of your plans, as Settings › Accounts lists them; never an integration's server.
+                guard let self, catalog.integrations.contains(where: { $0.id == provider && !$0.isMCP }) else { return false }
+                forgetSignIn(provider)
+                return true
+            }
             phoneLink.isMoving = { [weak self] id in self?.moves.underWay[id] != nil || Moves.isFrozen(id) }
             phoneLink.start(endpoint: server.endpoint)
             Analytics.shared.trackOnce("engine_ready", ["seconds": Int((SuspendingClock.now - began).components.seconds), "downloaded": downloaded])
