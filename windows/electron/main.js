@@ -386,6 +386,11 @@ ipcMain.on("kuvo:terminal-port", (event) => {
   event.returnValue = terminalPort;
 });
 
+// A settings page asks for something outside the app — a system page, a doc, a folder.
+ipcMain.on("kuvo:open-external", (_event, url) => {
+  if (typeof url === "string" && url) void shell.openExternal(url);
+});
+
 function shutdown() {
   if (terminalServer) { try { void terminalServer.close(); } catch {} terminalServer = null; }
   if (harness) { try { harness.kill(); } catch {} harness = null; }

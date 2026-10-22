@@ -47,13 +47,17 @@ const PAGES = [
   ["archived", "Archived Sessions"],
   ["permissions", "Permissions"],
   ["system", "Engine & Storage"],
+  ["notifications", "Notifications"],
+  ["privacy", "Privacy"],
+  ["panel", "Panel"],
 ] as const;
 
 const PAGE_GROUPS = [
-  ["Kuvo Code", ["appearance", "general", "keyboard"]],
+  ["Kuvo Code", ["appearance", "general", "keyboard", "notifications", "privacy"]],
   ["Models", ["providers", "usage"]],
   ["Agent", ["mcp", "agents", "skills", "commands", "permissions", "system"]],
   ["Projects", ["projects", "git", "archived"]],
+  ["Side Panel", ["panel"]],
 ] as const;
 
 /// The Mac's three modes, in its order (Look.Mode).
@@ -75,6 +79,9 @@ const PAGE_SUBTITLES: Record<string, string> = {
   git: "Branches, commits and pull requests made from Kuvo Code.",
   archived: "Sessions you put away: still searchable, out of the sidebar.",
   permissions: "What the agent may do without asking you first.",
+  notifications: "When Kuvo Code tells you about a session, and how.",
+  privacy: "Anonymous usage, and where your data is.",
+  panel: "What the side panel starts with, and its new tab page.",
 };
 
 export const settingsPageTitle = (section: string) =>
@@ -182,6 +189,9 @@ export function Settings() {
       case "git": return <GitPage />;
       case "archived": return <ArchivedPage />;
       case "permissions": return <PermissionsPage permissions={savedPermissions} onChange={setSavedPermissions} />;
+      case "notifications": return <NotificationsPage />;
+      case "privacy": return <PrivacyPage />;
+      case "panel": return <PanelPage />;
       default: return <SystemPage system={system} />;
     }
   };
@@ -263,6 +273,9 @@ const PAGE_SYMBOLS: Record<string, SymbolName> = {
   archived: "archivebox",
   permissions: "checkmark.shield",
   system: "cpu",
+  notifications: "bell",
+  privacy: "checkmark.shield",
+  panel: "sidebar.right",
 };
 
 function AppearancePage() {
@@ -766,6 +779,99 @@ function GitPage() {
         />
         <div className="where">Added when a pull request is written.</div>
       </div>
+    </>
+  );
+}
+
+/// Notifications: when Kuvo Code tells you about a session, and how (GeneralSettings.swift:166-194).
+function NotificationsPage() {
+  const [notifies, setNotifies] = useState(() => localStorage.getItem("kuvo-notify-sessions") !== "0");
+  const [sound, setSound] = useState(() => localStorage.getItem("kuvo-notify-sound") !== "0");
+  const [badge, setBadge] = useState(() => localStorage.getItem("kuvo-notify-badge") !== "0");
+  const persist = (key: string, value: boolean) => localStorage.setItem(key, value ? "1" : "0");
+  return (
+    <>
+      <SettingGroup title="Sessions">
+        <SettingRow label="Sessions" note="When a session finishes or needs your answer while you're in another app. A permission request can be answered from its notification.">
+          <input type="checkbox" checked={notifies} onChange={event => { setNotifies(event.target.checked); persist("kuvo-notify-sessions", event.target.checked); }} />
+        </SettingRow>
+        <SettingRow label="Play a sound" note="With each notification.">
+          <input type="checkbox" checked={sound} disabled={!notifies} onChange={event => { setSound(event.target.checked); persist("kuvo-notify-sound", event.target.checked); }} />
+        </SettingRow>
+        <SettingRow label="Count on the Dock icon" note="The sessions that finished while you were away, or wait for you.">
+          <input type="checkbox" checked={badge} onChange={event => { setBadge(event.target.checked); persist("kuvo-notify-badge", event.target.checked); }} />
+        </SettingRow>
+      </SettingGroup>
+      <SettingGroup title="System">
+        <SettingRow label="System notification settings" note="macOS asks the first time there's something to tell. To change how they look, or to allow them again, use System Settings.">
+          <button className="small" onClick={() => (window as unknown as { kuvo?: { openExternal?: (url: string) => void } }).kuvo?.openExternal?.("ms-settings:notifications")}>Open…</button>
+        </SettingRow>
+      </SettingGroup>
+    </>
+  );
+}
+
+/// Privacy: anonymous usage, and where your data is (GeneralSettings.swift:203-230).
+function PrivacyPage() {
+  const [analytics, setAnalytics] = useState(() => localStorage.getItem("kuvo-analytics") !== "0");
+  return (
+    <>
+      <SettingGroup title="Anonymous Usage">
+        <SettingRow label="Share anonymous usage" note="Which features you use and how often, and what kind of trouble you run into, with the app and Windows versions. Never your code, prompts, files or accounts.">
+          <input type="checkbox" checked={analytics} onChange={event => { setAnalytics(event.target.checked); localStorage.setItem("kuvo-analytics", event.target.checked ? "1" : "0"); }} />
+        </SettingRow>
+        <SettingRow label="What's sent">
+          <button className="small" onClick={() => (window as unknown as { kuvo?: { openExternal?: (url: string) => void } }).kuvo?.openExternal?.("https://www.kuvo.run/code/docs/privacy/")}>Privacy and Data</button>
+        </SettingRow>
+      </SettingGroup>
+      <SettingGroup title="On This Machine">
+        <SettingRow label="Sessions and accounts" note="Kept on this machine, in Kuvo Code's own folder. Messages go only to the model providers you choose.">
+          <button className="small" onClick={() => { state.settingsSection = "system"; render(); }}>Storage…</button>
+        </SettingRow>
+      </SettingGroup>
+    </>
+  );
+}
+
+/// The side panel: what it starts with, and the new tab page (BrowserSettings.swift:5-30).
+function PanelPage() {
+  const [startsWith, setStartsWith] = useState(() => localStorage.getItem("kuvo-panel-starts") ?? "changes");
+  const [reveals, setReveals] = useState(() => localStorage.getItem("kuvo-panel-reveals") !== "0");
+  const [tidies, setTidies] = useState(() => localStorage.getItem("kuvo-panel-tidies") !== "0");
+  const [tools, setTools] = useState(() => localStorage.getItem("kuvo-panel-tools") !== "0");
+  const [suggestions, setSuggestions] = useState(() => localStorage.getItem("kuvo-panel-suggestions") !== "0");
+  const [count, setCount] = useState(() => parseInt(localStorage.getItem("kuvo-panel-count") ?? "8", 10));
+  const persist = (key: string, value: string | boolean) => localStorage.setItem(key, String(value));
+  return (
+    <>
+      <SettingGroup title="Panel">
+        <SettingRow label="Start each panel with" note="The first time you open a session's, bot's or group chat's panel.">
+          <select value={startsWith} onChange={event => { setStartsWith(event.target.value); persist("kuvo-panel-starts", event.target.value); }}>
+            <option value="changes">Changes</option>
+            <option value="files">Files</option>
+            <option value="terminal">Terminal</option>
+          </select>
+        </SettingRow>
+        <SettingRow label="Show the panel when the agent browses" note="So you can watch it, and step in.">
+          <input type="checkbox" checked={reveals} onChange={event => { setReveals(event.target.checked); persist("kuvo-panel-reveals", event.target.checked); }} />
+        </SettingRow>
+        <SettingRow label="Close agents' tabs you haven't looked at" note="An hour after an agent last used one, so tabs don't pile up.">
+          <input type="checkbox" checked={tidies} onChange={event => { setTidies(event.target.checked); persist("kuvo-panel-tidies", event.target.checked); }} />
+        </SettingRow>
+      </SettingGroup>
+      <SettingGroup title="New Tab Page">
+        <SettingRow label="Tools" note="Changes, Terminal and Files, as tiles to open, and a way here.">
+          <input type="checkbox" checked={tools} onChange={event => { setTools(event.target.checked); persist("kuvo-panel-tools", event.target.checked); }} />
+        </SettingRow>
+        <SettingRow label="Suggested sites" note="The sites you visit most in the panel's browser.">
+          <input type="checkbox" checked={suggestions} onChange={event => { setSuggestions(event.target.checked); persist("kuvo-panel-suggestions", event.target.checked); }} />
+        </SettingRow>
+        <SettingRow label="Number of sites">
+          <select value={count} disabled={!suggestions} onChange={event => { setCount(parseInt(event.target.value, 10)); persist("kuvo-panel-count", event.target.value); }}>
+            {[4, 8, 12, 16].map(number => <option key={number} value={number}>{number}</option>)}
+          </select>
+        </SettingRow>
+      </SettingGroup>
     </>
   );
 }

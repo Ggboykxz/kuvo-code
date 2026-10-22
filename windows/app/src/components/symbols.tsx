@@ -59,7 +59,9 @@ export type SymbolName =
   | "cpu"
   | "puzzlepiece.extension"
   | "server.rack"
-  | "bubble.left.and.text.bubble.right";
+  | "bubble.left.and.text.bubble.right"
+  | "bell"
+  | "sidebar.right";
 
 /// The paths, on the 16 pt grid, in the Mac's own order.
 const PATHS: Record<SymbolName, string[]> = {
@@ -112,6 +114,8 @@ const PATHS: Record<SymbolName, string[]> = {
   "archivebox": ["M3.2 3.0h9.6a1.0 1.0 0 0 1 1.0 1.0v1.0a1.0 1.0 0 0 1 -1.0 1.0h-9.6a1.0 1.0 0 0 1 -1.0 -1.0v-1.0a1.0 1.0 0 0 1 1.0 -1.0z", "M3.4 6v5.7A1.3 1.3 0 0 0 4.7 13h6.6a1.3 1.3 0 0 0 1.3-1.3V6M6.2 8.5h3.6"],
   "checkmark.shield": ["M8 1.9l5 1.8v3.7c0 3-1.8 5.2-5 6.7-3.2-1.5-5-3.7-5-6.7V3.7z", "M5.7 8l1.6 1.6 3.1-3.2"],
   "cpu": ["M4.2 3.4h7.6a2.0 2.0 0 0 1 2.0 2.0v5.2a2.0 2.0 0 0 1 -2.0 2.0h-7.6a2.0 2.0 0 0 1 -2.0 -2.0v-5.2a2.0 2.0 0 0 1 2.0 -2.0z", "M2.2 6.4h11.6M2.2 9.6h11.6M5 3.4v9.2"],
+  "bell": ["M8 2.5a1.5 1.5 0 0 1 1.5 1.5v1l1.2 2.2v.8H5.3l1.2-2.2V4A1.5 1.5 0 0 1 8 2.5z", "M6.5 9.5a1.5 1.5 0 0 0 3 0"],
+  "sidebar.right": ["M2 4h12v8H2z", "M10 4v8"],
   "puzzlepiece.extension": ["M3 6.5h3.2V5a1.8 1.8 0 1 1 3.6 0v1.5H13v3.2h-1.5a1.8 1.8 0 1 0 0 3.6H13v.2H3V11.5h1.5a1.8 1.8 0 1 0 0-3.6H3z"],
   "server.rack": ["M3.6 2.6h8.8a1.2 1.2 0 0 1 1.2 1.2v1.8a1.2 1.2 0 0 1 -1.2 1.2h-8.8a1.2 1.2 0 0 1 -1.2 -1.2v-1.8a1.2 1.2 0 0 1 1.2 -1.2z", "M3.6 9.2h8.8a1.2 1.2 0 0 1 1.2 1.2v1.8a1.2 1.2 0 0 1 -1.2 1.2h-8.8a1.2 1.2 0 0 1 -1.2 -1.2v-1.8a1.2 1.2 0 0 1 1.2 -1.2z", "M4.8 4.7h.01M4.8 11.3h.01"],
   "square.and.pencil": ["M9.2 3.2h3.6v3.6", "M9.4 6.4L4.2 11.6l-2 .6.6-2 .4.6.6-2-1.4.4 4.2-4.2z"],

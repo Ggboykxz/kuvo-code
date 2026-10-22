@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld("kuvo", {
   // (ChangesPanel.swift:1214-1233).
   userName: ipcRenderer.sendSync("kuvo:user-name"),
   maximize: () => ipcRenderer.send("kuvo:maximize"),
+  openExternal: (url) => ipcRenderer.send("kuvo:open-external", url),
   closeWindow: () => ipcRenderer.send("kuvo:close-window"),
   // The menu bar's items that act on the conversation.
   onMenu: (callback) => ipcRenderer.on("kuvo:menu", (_event, id) => callback(id)),
