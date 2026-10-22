@@ -137,8 +137,10 @@ nonisolated enum AgentReferences {
     @MainActor static func naming(in message: String, excluding session: String?, here machine: String?) -> String {
         let (withComments, _) = Attachments.split(message)
         let (words, _) = ReviewComments.split(withComments)
-        guard words.contains(trigger) else { return message }
-        let named = text(words, excluding: session, here: machine)
+        // Sent again (Retry, Edit) with the block it had: that goes, and its agents are named afresh.
+        let bare = split(words).text
+        guard bare.contains(trigger) else { return message }
+        let named = text(bare, excluding: session, here: machine)
         guard named != words, let range = message.range(of: words) else { return message }
         return message.replacingCharacters(in: range, with: named)
     }

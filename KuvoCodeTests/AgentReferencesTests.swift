@@ -40,6 +40,16 @@ import Testing
         #expect(AgentReferences.matches("", in: agents, limit: 2).map(\.session) == ["s1", "s2"])
     }
 
+    /// A phone's message sent again (Retry, Edit) still ending with the block it had: that goes, and
+    /// its agents are named afresh, rather than the old block coming back escaped into its words.
+    @Test func aMessageSentAgainIsNamedOnce() throws {
+        let block = try #require(AgentReferences.note(naming: [agent("Scout", "ses_x")], here: nil))
+        let start = String(try #require(block.split(separator: "\n").first))
+        let named = AgentReferences.naming(in: "Ask &Scout to look\n\n" + block, excluding: nil, here: nil)
+        #expect(SentMessage.split(named).text == "Ask &Scout to look")
+        #expect(named.components(separatedBy: start).count <= 2)
+    }
+
     @Test func pickingOneWritesItsName() {
         let picked = AgentReferences.insert(agent("Fix login", "s2"), into: "Ask &fi")
         #expect(picked == "Ask &Fix login ")
