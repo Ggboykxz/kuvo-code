@@ -290,6 +290,18 @@
       "allowed": false
     },
     {
+      "path": "api/experimental/session/import#\u0301/wait",
+      "allowed": false
+    },
+    {
+      "path": "api/session/ses_1#\u0301/../../credential",
+      "allowed": false
+    },
+    {
+      "path": "api/fs/read/Re\u0301sume\u0301.txt",
+      "allowed": true
+    },
+    {
       "path": "api/session/ses_1/prompt ",
       "allowed": false
     },
@@ -760,6 +772,26 @@
     },
     {
       "path": "api/kuvo/engine  ",
+      "allowed": false,
+      "method": "PUT"
+    },
+    {
+      "path": "api/integration/claude-code/update#\u0301",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/claude-code/update?\u0301",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/claude-code/update/\u0301",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/kuvo/engine#\u200d",
       "allowed": false,
       "method": "PUT"
     }

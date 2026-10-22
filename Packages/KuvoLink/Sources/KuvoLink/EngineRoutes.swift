@@ -85,9 +85,13 @@ public enum EngineRoutes {
     /// isn't sent: ".../update#x" would be checked as itself and reach ".../update". Nor tabs,
     /// line breaks or other control characters, which URL parsers drop (".\t." is ".." to them),
     /// nor a space at either end, which they drop too (".../update " is ".../update" to them).
+    /// Nor a sign they split on (`/`, `?`, `#`, `.`, `\`, `%`) joined into one character with a
+    /// mark after it, which these checks, made on characters, wouldn't see as that sign
+    /// (".../update#\u{301}" is ".../update" to them).
     static func staysInProject(_ path: String) -> Bool {
         guard !path.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7f }),
               path.unicodeScalars.first != " ", path.unicodeScalars.last != " ",
+              !path.contains(where: { $0.unicodeScalars.count > 1 && $0.unicodeScalars.contains { $0.isASCII && !$0.properties.isAlphabetic && !("0"..."9").contains($0) } }),
               let decoded = path.removingPercentEncoding else { return false }
         return !decoded.contains("..") && !decoded.contains("\\") && !path.contains("..") && !path.contains("#")
     }

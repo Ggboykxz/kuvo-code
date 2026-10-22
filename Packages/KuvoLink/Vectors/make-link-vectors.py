@@ -51,6 +51,9 @@ routes = [{"path": p, "allowed": a} for p, a in [
     ("api/session/%2E%2E/credential", False), ("api/session/%2e%2e/credential", False), ("api/session%2f..%2fcredential", False),
     ("api/session/.\t./.\t./api/credential", False), ("api/session/.\n./.\r./api/config", False), ("api/session/x\x7f", False),
     ("api/session#/../credential", False),
+    # A sign joined with a mark after it (one character to some checks): still that sign to URL parsers.
+    ("api/experimental/session/import#\u0301/wait", False), ("api/session/ses_1#\u0301/../../credential", False),
+    ("api/fs/read/Re\u0301sume\u0301.txt", True),
     # A space at either end, which URL parsers drop.
     ("api/session/ses_1/prompt ", False), (" api/session", False), ("api/fs/read/a%20b.txt", True),
     ("api/fs/read/..%5c..%5csecret", False), ("api/fs/read/a%5cb", False), ("api/fs/read/bad%E0%A4%A", False),
@@ -110,6 +113,8 @@ agent_routes = [{"path": p, "allowed": a, "method": m} for p, a, m in [
     ("api/config", False, "GET"), ("api/kuvo/other", False, "GET"), ("api/shell", False, "POST"),
     ("api/integration/claude-code/update ", False, "POST"), (" api/kuvo/engine", False, "PUT"),
     ("api/kuvo/engine  ", False, "PUT"),
+    ("api/integration/claude-code/update#\u0301", False, "POST"), ("api/integration/claude-code/update?\u0301", False, "POST"),
+    ("api/integration/claude-code/update/\u0301", False, "POST"), ("api/kuvo/engine#\u200d", False, "PUT"),
 ]]
 
 json.dump({"addresses": addresses, "relay": relay, "frames": frames, "messages": messages, "routes": routes, "sockets": sockets,
