@@ -270,6 +270,64 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
       return json({ ok: true });
     }
 
+    // Credentials, kept in memory only: the usage panel's way in to a provider's plan.
+    if (url.pathname === "/api/credential" && request.method === "GET") {
+      const { client } = await ensureEngine();
+      const answer = await client.credentialSecrets();
+      const credentials = Array.isArray(answer) ? answer : (Array.isArray(answer?.data) ? answer.data : (Array.isArray(answer?.credentials) ? answer.credentials : []));
+      return json({ credentials });
+    }
+
+    // Plan usage: what each connected provider's own plan says (limits, pace, spend).
+    // The Mac reads these through UsageKit; here we ask the providers directly, with the
+    // credentials the engine holds, and keep the secrets on this machine.
+    if (url.pathname === "/api/usage/plans" && request.method === "GET") {
+      const { client } = await ensureEngine();
+      const answer = await client.credentialSecrets();
+      const credentials = Array.isArray(answer) ? answer : (Array.isArray(answer?.data) ? answer.data : (Array.isArray(answer?.credentials) ? answer.credentials : []));
+      const plans = [];
+      for (const credential of credentials) {
+        if (!credential?.active) continue;
+        const integration = credential.integrationID ?? credential.integration_id;
+        const secret = credential.value?.access ?? credential.value?.key;
+        if (!secret) continue;
+        const signedIn = credential.value?.type === "oauth" || !!credential.value?.access;
+        try {
+          if (integration === "github-copilot") {
+            const response = await fetch("https://api.github.com/copilot_internal/user", {
+              headers: { Authorization: `token ${secret}`, "User-Agent": "Kuvo-Code", Accept: "application/json" },
+            });
+            if (response.ok) {
+              const data = await response.json();
+              plans.push({ provider: "github-copilot", kind: "copilot", data });
+            } else {
+              plans.push({ provider: "github-copilot", kind: "copilot", error: `HTTP ${response.status}` });
+            }
+          } else if (integration === "openrouter") {
+            const response = await fetch("https://openrouter.ai/api/v1/credits", {
+              headers: { Authorization: `Bearer ${secret}`, "User-Agent": "Kuvo-Code" },
+            });
+            if (response.ok) {
+              const data = await response.json();
+              plans.push({ provider: "openrouter", kind: "openrouter", data: data?.data ?? data });
+            } else {
+              plans.push({ provider: "openrouter", kind: "openrouter", error: `HTTP ${response.status}` });
+            }
+          } else {
+            const provider = integration === "openai" ? (signedIn ? "codex" : null)
+              : integration === "xai" ? (signedIn ? "grok" : null)
+              : integration === "zai" || integration === "zai-coding-plan" ? "zai"
+              : integration === "opencode" || integration === "opencode-go" ? "opencode"
+              : null;
+            if (provider) plans.push({ provider: integration, kind: provider, status: "not-yet-supported" });
+          }
+        } catch (error) {
+          plans.push({ provider: integration, kind: integration, error: String(error?.message ?? error) });
+        }
+      }
+      return json({ plans });
+    }
+
     // What the settings panel shows about this machine's storage.
     if (url.pathname === "/api/storage" && request.method === "GET") {
       const logsDir = path.join(os.homedir(), ".kuvo-code", "logs");

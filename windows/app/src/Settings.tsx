@@ -759,7 +759,36 @@ function UsagePage() {
           <span>{`$${(session.cost ?? 0).toFixed(4)}`}</span>
         </div>
       ))}
-      <div className="settings-note">What the engine ran and what it cost, read from the engine's own sessions. The Mac app's menu-bar panel also follows each provider's plan — that needs the provider's sign-in, which this app deliberately leaves where opencode keeps it.</div>
+      <div className="settings-note">What the engine ran and what it cost, read from the engine's own sessions.</div>
+      <h3>Plans</h3>
+      <PlansSection />
+    </>
+  );
+}
+
+function PlansSection() {
+  const [plans, setPlans] = useState<{ provider: string; kind: string; data?: unknown; error?: string; status?: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    void api<{ plans: { provider: string; kind: string; data?: unknown; error?: string; status?: string }[] }>("/api/usage/plans")
+      .then(answer => { setPlans(answer.plans ?? []); setLoading(false); })
+      .catch(() => { setPlans([]); setLoading(false); });
+  }, []);
+  if (loading) return <div className="where">Loading…</div>;
+  if (plans.length === 0) return <div className="where">No connected account with a plan to follow. Sign in under Providers.</div>;
+  return (
+    <>
+      {plans.map((plan, index) => (
+        <div className="settings-row" key={index}>
+          <span>{plan.provider}</span>
+          <span className="where">
+            {plan.error ? `Couldn't read: ${plan.error}`
+              : plan.status === "not-yet-supported" ? "Plan read not implemented yet for this provider."
+              : JSON.stringify(plan.data).slice(0, 120)}
+          </span>
+        </div>
+      ))}
+      <div className="settings-note">Plan limits and pace come from each provider's own API, with the credentials the engine holds. They stay on this machine.</div>
     </>
   );
 }

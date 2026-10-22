@@ -133,6 +133,12 @@ export class EngineClient {
     return this.request("DELETE", "api/worktree", { body: { projectID, directory, force } });
   }
 
+  // ---- Credentials and plan usage ----
+
+  async credentialSecrets() {
+    return this.request("GET", "api/credential");
+  }
+
   async deleteSession(id) {
     await this.request("DELETE", `api/session/${encodeURIComponent(id)}`);
   }
