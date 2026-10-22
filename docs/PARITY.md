@@ -39,7 +39,7 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | --- | --- |
 | `SidebarView` | ✅ sessions, recherche, non lus, archivage |
 | `UtilitiesPane` / `FilesView` | ✅ l'onglet Files |
-| `TerminalSession` | ✅ l'onglet Terminal (ConPTY du shell) |
+| `TerminalSession` | ✅ l'onglet Terminal (ConPTY du shell) ; 0.5.95 : le même shell survit au panneau caché et aux autres onglets, démarre dans le dossier du projet à la grille réelle, se relance après une sortie, *Run* interrompt d'abord (Ctrl-C, 300 ms), et le menu du clic droit ajoute au message / copie / colle |
 | `ChangesPanel` | ✅ l'onglet Changes : git, plis, notes de ligne, message écrit, commit |
 | `ProjectChanges` | ✅ les portées uncommitted / unstaged / staged / branch / session |
 | `TitleBar`, `RootView`, `MainView` | ✅ la coque, la bande de titre |

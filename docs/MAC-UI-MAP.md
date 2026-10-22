@@ -145,7 +145,11 @@ as the Mac's own cards (`ChangesPanel.swift:1123-1155`). In 0.5.90 the diff took
 In 0.5.94 the menu bar took the Mac's own command groups — File's close and reopen tab commands,
 Edit's find, Session's Stop and modes, Tools' panel commands, View's tab commands and
 Appearance, and Help's links (`KuvoCodeApp.swift:130-229`) — with closed-tab history
-(`MainView.swift:1150-1232`) and Open Quickly (`OpenQuickly.swift:4-104`). The port's own
+(`MainView.swift:1150-1232`) and Open Quickly (`OpenQuickly.swift:4-104`). In 0.5.95 the
+terminal became the Mac's terminal (`TerminalSession.swift`): one ConPTY that survives
+hiding the panel and switching tabs, starts in the project at the page's real grid, fits
+when it is visible, says why it ended and can be restarted, interrupts what is running
+before *Run*, and carries the Mac's *Add to Message*, *Copy* and *Paste* menu. The port's own
 list of what is left is now: the two structures that are the Mac's alone — the Auto rail of
 the model picker (the coding agents' accounts, which a Windows client has no accounts for)
 and the pair style of the tab bar (a split pair shown as one tab, where the port's split is
@@ -420,7 +424,7 @@ below are grouped by area; the exhaustive list of all 74 files is in `MAC-UI-INV
 | `ChangesPanel` | Uncommitted / unstaged / staged / branch / session | ✅ / ◐ | 2, 6 |
 | `UtilitiesPane` | Right panel: Changes, Files, Terminal, Browser tabs | ✅ / ◐ | 2, 6 |
 | `FilesView` | File tree, rendered file, highlighted or previewed | ✅ / ◐ | 6 |
-| `TerminalSession` | Login shell in the project folder (ConPTY on Windows) | ✅ / ◐ | 6 |
+| `TerminalSession` | Login shell in the project folder (ConPTY on Windows) | ✅ / ◐ (0.5.95: the same shell across tabs and hiding, project folder and real grid, restart, Run's Ctrl-C, Add to Message / Copy / Paste) | 6 |
 | `WidgetView` | A page an agent made with `show_widget` | ⛔ browser surface | — |
 
 ### 6.3 Settings (23 Mac pages)

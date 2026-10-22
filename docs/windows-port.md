@@ -332,6 +332,24 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     run in the primary folder; the agent can work in the others too" — and the session in
     view is given them: the rules that allow those folders, and the note that tells the
     agent that "in chugs-pinterest" means that folder (`SessionModel.swift:1379-1405`).
+  - **2.91 (this change). The terminal is the Mac's terminal.** The port's panel had one
+    terminal tab, but its page marked the container ready once and never cleared it, so
+    hiding the panel or choosing Files/Changes came back to a dead socket; and addon-fit's
+    browser build is a namespace (`{ FitAddon }`), not a class, so the first open threw
+    before xterm was drawn. The page keeps one terminal handle for the tab's lifetime now:
+    the same ConPTY survives hiding the panel and switching tabs, `FitAddon.FitAddon` is
+    read for what it is, and the grid is fitted when the terminal is actually visible — on
+    the first open, on a panel resize, and on coming back. The socket carries the project
+    folder and the real `cols`/`rows` (`terminal.js`), so the shell starts in the project
+    at the size the page drew instead of in the home folder at 80×24; Windows PowerShell
+    is the guaranteed shell, with PowerShell 7 when it is installed. A shell that ends says
+    why and can be restarted from the note or the panel header, and *New Terminal* restarts
+    a dead shell. *Run* matches `TerminalSession.run` (`TerminalSession.swift:56-63`): Ctrl-C,
+    300 ms, then the command in the project's folder. The terminal's right-click menu is
+    the Mac's: *Add to Message* (a code block, trailing spaces removed), *Copy* and
+    *Paste*. The Windows runner now proves the real road with `node-pty` and `ws`: a shell
+    in a chosen folder, a resize, an exit, and a second shell, before electron-builder
+    rebuilds the module for Electron's ABI.
   - **2.90 (this change). The menu bar's own commands, and Open Quickly.** The port's
     menu bar had the app's commands one by one; it now has the Mac's command groups
     (`KuvoCodeApp.swift:130-229`): File's *Close Tab*, *Close Window*, *Reopen Closed Tab*
