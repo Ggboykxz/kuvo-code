@@ -6,6 +6,8 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- A conversation no longer goes blank when a long reply comes in; it used to show nothing until you scrolled.
+- The list that opens over the composer as you type /, @ or & no longer shows a dark block behind it.
 - Bots in a group chat answer small talk and quick questions straight away, and look things up (files, the web, other conversations) only when what's asked needs it.
 - An agent you name with & reads that conversation or writes to it only when what you ask needs it; a name that just comes up in your message stays a mention.
 - In a group chat you name a bot with &, as you name agents everywhere else; @ is only for files. Replying to a bot or clicking its face writes &Name.

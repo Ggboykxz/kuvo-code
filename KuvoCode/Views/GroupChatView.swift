@@ -11,6 +11,8 @@ struct GroupChatView: View {
     @Environment(Bots.self) private var bots
     @Environment(AppModel.self) private var app
     @State private var scroller = ConversationScroller()
+    /// The "&" list open over the composer (see `ComposerListShown`).
+    @State private var listShown = false
     /// Goes up to have the composer take the keyboard.
     @State private var composerFocus = 0
     /// The quote whose answer takes the keyboard: the one just added.
@@ -43,6 +45,7 @@ struct GroupChatView: View {
                     .transition(.opacity)
             }
         }
+        .scrollEdgeEffectHidden(listShown, for: .bottom)
         .conversationFind(find, scroller: scroller, version: [messages.last?.id, String(messages.count)]) {
             groups.messages(in: group.id).map { ConversationFind.Row(id: $0.id, parts: Self.findParts($0)) }
         }
@@ -84,6 +87,7 @@ struct GroupChatView: View {
             .padding(.bottom, 16)
             .readableColumn()
         }
+        .onPreferenceChange(ComposerListShown.self) { shown in listShown = shown }
         // Seen only while you're here, as a session is: what's said while you're in another app
         // waits for you (its notifications too), and counts as seen when you come back.
         .onAppear { if NSApp.isActive { groups.markViewed(group.id) } }
@@ -513,6 +517,7 @@ private struct GroupComposer: View {
         VStack(alignment: .leading, spacing: 10) {
             if let named = agents.matches(in: text, excluding: nil) {
                 AgentReferenceList(agents: named, selected: min(agents.selected, named.count - 1)) { agents.insert($0, into: $text) }
+                    .preference(key: ComposerListShown.self, value: true)
             }
             if !quotes.isEmpty {
                 QuoteList(quotes: $quotes, answering: $answering, focus: quoteFocus, font: messageFont.body, onSubmit: send)
