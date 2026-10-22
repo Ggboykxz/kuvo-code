@@ -332,6 +332,14 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     run in the primary folder; the agent can work in the others too" — and the session in
     view is given them: the rules that allow those folders, and the note that tells the
     agent that "in chugs-pinterest" means that folder (`SessionModel.swift:1379-1405`).
+  - **2.89 (this change). The panel's tree is the project's, on Windows too.** The Mac's
+    panel is rooted at the project's own folder (`FilesView.swift:250-275`): the files are
+    the tree, and the folder they live in is the root. The port compared the project's
+    folder, written with a slash, with the files' paths, which on Windows are written with
+    the other separator: nothing matched, and the tree was rooted at the drive. The two
+    are brought to one separator before they are compared now, so the project's folder is
+    the root on either platform. 0.5.91's numbered file view and 0.5.92's *Add to Message*
+    travel with it: their Windows runs stopped at the tree's root.
   - **2.88 (this change). The file's lines can be sent to the composer.** The Mac's file
     view carries its own right-click menu, and the lines that are picked can be sent to
     the composer as *Add to Message* — the file named as a message names it, and the lines
