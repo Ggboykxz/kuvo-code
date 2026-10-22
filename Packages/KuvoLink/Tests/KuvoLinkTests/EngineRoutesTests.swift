@@ -65,8 +65,13 @@ final class FakeEngine: URLProtocol, @unchecked Sendable {
         #expect(!EngineRoutes.allowsAgents("api/kuvo/engine", method: "PUT"))
         #expect(!EngineRoutes.allowsAgents("api/integration/claude-code/update", method: "POST"))
         #expect(!EngineRoutes.allowsAgents("api/fs/read/../../etc/passwd"))
-        // The engine's own list stays as it was.
-        #expect(!EngineRoutes.allows("api/integration"))
+        // The engine's own accounts: signed in to and switched, never read (no credential list,
+        // which carries keys and tokens), nor its program updated; nor Auto, the agents' own.
+        #expect(EngineRoutes.allows("api/integration"))
+        #expect(EngineRoutes.allows("api/integration/anthropic/connect/key", method: "POST"))
+        #expect(!EngineRoutes.allows("api/credential"))
+        #expect(!EngineRoutes.allows("api/credential/cred_1"))
+        #expect(!EngineRoutes.allows("api/integration/anthropic/update", method: "POST"))
         #expect(!EngineRoutes.allows("api/kuvo/auto"))
     }
 

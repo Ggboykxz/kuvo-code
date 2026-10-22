@@ -4,10 +4,11 @@ import Foundation
 /// bridge does in `kuvo-link.js` (the two lists are checked against `Vectors/link.json`).
 public enum EngineRoutes {
     /// Sessions and what's in them, live events, what the phone needs to show them, a project's
-    /// files to read, and terminals. Never accounts, keys or integrations, the engine's settings,
-    /// MCP servers or plugins.
+    /// files to read, terminals, and plan accounts (`allowsAccount`). Never what's signed in with
+    /// (keys, tokens), integrations' programs, the engine's settings, MCP servers or plugins.
     public static func allows(_ path: String, method: String = "GET") -> Bool {
         guard staysInProject(path) else { return false }
+        if allowsAccount(path, method: method) { return true }
         // Commands the engine runs for agents: read only (the list, one, its output); never run
         // one or remove it.
         if path.prefixMatch(of: #/api/shell(/|\?|$)/#) != nil {
@@ -21,6 +22,34 @@ public enum EngineRoutes {
             || path.prefixMatch(of: #/api/fs/read//#) != nil
             || path.prefixMatch(of: #/api/pty(/|\?|$)/#) != nil
     }
+
+    /// Plan accounts (Copilot, OpenCode, keyed providers…): a phone lists them and what each is
+    /// signed in as, signs in (a key, written only; a sign-in page and its code), switches to
+    /// another of an account's sign-ins or removes one. Never reads what's signed in with: the
+    /// credential list (`api/credential`) carries keys and tokens, so it isn't reachable at all,
+    /// nor one credential, nor an integration's program or other ways in.
+    static func allowsAccount(_ path: String, method: String) -> Bool {
+        let rules: [Regex<AnyRegexOutput>] = switch method.uppercased() {
+        case "GET": accountReads
+        case "POST": accountWrites
+        case "DELETE": accountRemovals
+        default: []
+        }
+        return rules.contains { path.wholeMatch(of: $0) != nil }
+    }
+
+    /// An integration's, a sign-in's or a credential's ID: what the engine names them with.
+    nonisolated(unsafe) private static let id = "[A-Za-z0-9_@-][A-Za-z0-9_.@-]*"
+    nonisolated(unsafe) private static let accountReads = [try! Regex("api/integration(/\(id)(/connect/oauth/\(id))?)?(\\?[^#]*)?")]
+    nonisolated(unsafe) private static let accountWrites = [
+        try! Regex("api/integration/\(id)/connect/(key|oauth)"),
+        try! Regex("api/integration/\(id)/connect/oauth/\(id)/complete"),
+        try! Regex("api/credential/\(id)/activate"),
+    ]
+    nonisolated(unsafe) private static let accountRemovals = [
+        try! Regex("api/integration/\(id)/connect/oauth/\(id)"),
+        try! Regex("api/credential/\(id)"),
+    ]
 
     /// What a phone may ask a Mac's coding agents' bridge for: what it may ask an engine for, and
     /// their accounts (adding, naming, removing and signing in to them) and Auto's list. Never

@@ -64,6 +64,10 @@ final class PhoneLink {
     @ObservationIgnored var machineName: (String) -> String? = { _ in nil }
     /// The agents bridge (Claude Code, Codex…), for `kuvo/agents/api/…`; set by AppModel.
     @ObservationIgnored var agents: OutsideAgents?
+    /// Plans whose sign-in ended (the service refused it), for `kuvo/accounts/ended`, and
+    /// Disconnect as Settings › Accounts does it (here and on your machines); set by AppModel.
+    @ObservationIgnored var endedSignIns: () -> [String] = { [] }
+    @ObservationIgnored var forgetSignIn: (String) -> Void = { _ in }
     /// Whether a group chat is on its way to another computer; set by AppModel.
     @ObservationIgnored var isMoving: (String) -> Bool = { Moves.isFrozen($0) }
 
@@ -344,6 +348,17 @@ final class PhoneLink {
                 }
             }
         }
+        // This Mac's accounts, without what they're signed in with.
+        if request.path.split(separator: "?").first == "kuvo/accounts/credentials" {
+            return AsyncThrowingStream { continuation in
+                Task { @MainActor in
+                    let (status, body) = await link?.credentialsJSON() ?? (503, Data())
+                    continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
+                    continuation.yield(.body(body))
+                    continuation.finish()
+                }
+            }
+        }
         // A session's wake-ups and watches: read, or one canceled.
         if request.path.hasPrefix("kuvo/wakes/") {
             return AsyncThrowingStream { continuation in
@@ -541,6 +556,14 @@ final class PhoneLink {
             return (200, (try? JSONEncoder().encode(Listed(sessions: entries))) ?? Data())
         case "kuvo/groups":
             return (200, groupsJSON())
+        case "kuvo/accounts/ended":
+            return (200, (try? JSONEncoder().encode(["providers": endedSignIns()])) ?? Data())
+        case let path where path.hasPrefix("kuvo/accounts/") && path.hasSuffix("/forget") && request.method == "POST":
+            // Disconnect, as Settings › Accounts does it: its sign-ins and keys here, and the copies on your machines.
+            let provider = String(path.dropFirst("kuvo/accounts/".count).dropLast("/forget".count))
+            guard !provider.isEmpty, !provider.contains("/"), provider.range(of: #"^[A-Za-z0-9_@.-]+$"#, options: .regularExpression) != nil else { return (404, Data()) }
+            forgetSignIn(provider)
+            return (200, Data("{}".utf8))
         case "kuvo/usage":
             guard let usage = usageJSON() else { return (404, Data()) }
             return (200, usage)
@@ -554,6 +577,19 @@ final class PhoneLink {
         default:
             return (404, Data())
         }
+    }
+
+    // MARK: Accounts
+
+    /// `kuvo/accounts/credentials`: each sign-in this Mac's engine keeps, by its ID, with the plan
+    /// it's for, its name and whether it's the one in use; never what it's signed in with (the
+    /// engine's list has that, which a phone can't reach).
+    private func credentialsJSON() async -> (Int, Data) {
+        guard let api = workspace?.api else { return (503, Data()) }
+        guard let credentials = try? await api.credentials() else { return (502, Data()) }
+        struct Listed: Encodable { var id: String; var integrationID: String; var label: String; var active: Bool }
+        let listed = credentials.map { Listed(id: $0.id, integrationID: $0.integrationID, label: $0.label, active: $0.active) }
+        return (200, (try? JSONEncoder().encode(["credentials": listed])) ?? Data())
     }
 
     // MARK: Asks

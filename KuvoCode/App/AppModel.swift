@@ -327,6 +327,8 @@ final class AppModel {
             phoneLink.workspace = workspace
             phoneLink.machineName = { [weak self] id in self?.machines.list.first { $0.id == id }?.name }
             phoneLink.agents = agents
+            phoneLink.endedSignIns = { [weak self] in self?.catalog.endedProviders ?? [] }
+            phoneLink.forgetSignIn = { [weak self] provider in self?.forgetSignIn(provider) }
             phoneLink.isMoving = { [weak self] id in self?.moves.underWay[id] != nil || Moves.isFrozen(id) }
             phoneLink.start(endpoint: server.endpoint)
             Analytics.shared.trackOnce("engine_ready", ["seconds": Int((SuspendingClock.now - began).components.seconds), "downloaded": downloaded])
