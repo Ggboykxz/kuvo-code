@@ -241,7 +241,11 @@ itself. A host serves:
     `…/session/<id>/fork {before}` makes a new session from a message.
 - Plan accounts (Copilot, OpenCode, GitLab, Poe, a provider's API key), on a Mac and (from
   bridge 0.7.5) a machine, as Settings › Accounts has them: the phone sees and signs in to them,
-  never what they're signed in with. Secrets only ever go in.
+  never what they're signed in with. Secrets only ever go in. A machine's plans that its Mac
+  also has a key or a sign-in for that stays the same (Copilot's) follow the Mac's: each time
+  the Mac connects, its own replaces what's in use there. Change those on the Mac, or with the
+  Mac's own routes; a change made on the machine lasts for plans the Mac has none of, and for
+  sign-ins that renew themselves (ChatGPT's, GitLab's), which each machine keeps its own of.
   - `GET api/integration` and `GET api/integration/<id>`: each plan, its ways to sign in
     (`methods`) and what it's signed in as (`connections`: label and status).
   - A key: `POST api/integration/<id>/connect/key {key, answer?}`.

@@ -135,6 +135,9 @@ test("a bridge there but not answering now is asked again, not taken as having n
   for (const route of ["kuvo/groups", "kuvo/groups/events", "kuvo/groups/grp_box0000001/events"]) {
     assert.equal((await ask(handle, "GET", route)).status, 503, route);
   }
+  // What a phone does there, too.
+  assert.equal((await ask(handle, "POST", "kuvo/groups/grp_box0000001", { body: '{"text":"Go"}' })).status, 503);
+  assert.equal((await ask(handle, "POST", "kuvo/groups/grp_box0000001/undo", { body: '{"message":"gm_1"}' })).status, 503);
 });
 
 test("without the coding agents' bridge, a machine's group chats say why", async () => {

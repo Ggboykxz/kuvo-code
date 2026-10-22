@@ -22,7 +22,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 // Goes up with every change, so `setup` replaces a running bridge that's older.
-export const BRIDGE_VERSION = "0.7.5";
+export const BRIDGE_VERSION = "0.7.6";
 const K = process.env.KUVO_HOME || path.join(os.homedir(), ".kuvo-code");
 const RUN = path.join(K, "run");
 export const LINK_FILE = path.join(RUN, "link.json");
@@ -1091,7 +1091,7 @@ async function* answerGroups(target, id, action, request, signal) {
       if (typeof given.message !== "string") return yield* json(404, {});
       asked = await askGroups(target, "POST", `/${id}/undo`, { message: given.message }, signal);
       // Moving: 409, as for what you write.
-      if (asked.status !== 200) return yield* json(asked.status === 409 ? 409 : 404, {});
+      if (asked.status !== 200) return yield* json(failed(asked.status), {});
       return yield* json(200, { text: asked.value.data?.text ?? "" });
     }
     case "start":
@@ -1099,8 +1099,12 @@ async function* answerGroups(target, id, action, request, signal) {
       asked = await askGroups(target, "POST", `/${id}/start-work`, { wrapUp: given.message }, signal);
       break;
   }
-  return yield* json(asked.status === 200 ? 200 : asked.status === 409 ? 409 : 404, {});
+  return yield* json(asked.status === 200 ? 200 : failed(asked.status), {});
 }
+
+// What a phone hears of a group chat's action the coding agents' bridge didn't take: moving (409),
+// there but not answering now (503: ask again), or no such chat or message (404).
+const failed = status => (status === 409 ? 409 : status >= 500 ? 503 : 404);
 
 // This machine's bots, as the Mac lists them in `kuvo/bots`: each by its session, with its name,
 // look and job as the app last described it, and what its folder says now (paused, its next
