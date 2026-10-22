@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- In a group chat you name a bot with &, as you name agents everywhere else; @ is only for files. Replying to a bot or clicking its face writes &Name.
 - The context ring of a Cursor session counts the last request Cursor reports, rather than all of a reply's requests added up.
 - The first launch after an update that changes how your things are kept backs up your lists and settings first, then brings them up to date, while the window says Updating. Each bot's name, look and job are now also kept in its own folder, on this Mac or its machine.
 - A remote machine that restarts starts Kuvo Code's engine again by itself, as your Mac last started it, with its bots' wake-ups and your integrations' keys, so it carries on without your Mac. It keeps those keys between starts (only you can read them), and a line in your crontab there does the starting; removing the machine takes it out.

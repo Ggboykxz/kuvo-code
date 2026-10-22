@@ -170,7 +170,7 @@ import Testing
             "Ada": ["I'd go with Postgres.", "PASS"],
             "Ben": ["SQLite, it's a notes app.", "PASS"],
         ])
-        app.groups.send("@Ben which database?", to: group.id)
+        app.groups.send("&Ben which database?", to: group.id)
         try await talkedThrough(app, group)
         #expect(seats.speakers.first == "Ben")
         #expect(said(app, group) == [nil, "bot_ben", "bot_ada"])

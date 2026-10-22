@@ -127,7 +127,7 @@ enum GroupWork {
         var after: [String] = []
     }
 
-    /// Who does what in a lead's list of `@Name: task` lines, or `@Name (after @Other): task` for
+    /// Who does what in a lead's list of `&Name: task` lines, or `&Name (after &Other): task` for
     /// a part that waits for another (bullets and bold allowed): one part for each name, several
     /// lines for one going together as a list; and whether its GO or WAIT line said to go ahead.
     /// Lines for anyone not in `names` are left out.
@@ -144,7 +144,8 @@ enum GroupWork {
             if line.range(of: #"^\W*GO\W*$"#, options: .regularExpression) != nil { go = true; continue }
             if line.range(of: #"^\W*WAIT\W*$"#, options: .regularExpression) != nil { go = false; continue }
             for name in byLength {
-                let pattern = "^@?" + NSRegularExpression.escapedPattern(for: name) + #"\s*(?:\(\s*(?:after|once)\s+([^)]*)\))?\s*[:—–-]\s*"#
+                // "&", or "@" as a lead may still write it.
+                let pattern = "^[@&]?" + NSRegularExpression.escapedPattern(for: name) + #"\s*(?:\(\s*(?:after|once)\s+([^)]*)\))?\s*[:—–-]\s*"#
                 guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
                       let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
                       let whole = Range(match.range, in: line) else { continue }
@@ -152,7 +153,7 @@ enum GroupWork {
                 if task.isEmpty { break }
                 let waitsFor = Range(match.range(at: 1), in: line).map { String(line[$0]) } ?? ""
                 let after = byLength.filter { other in
-                    other != name && waitsFor.range(of: #"(^|[^\p{L}\p{N}])@?"# + NSRegularExpression.escapedPattern(for: other) + #"($|[^\p{L}\p{N}])"#,
+                    other != name && waitsFor.range(of: #"(^|[^\p{L}\p{N}])[@&]?"# + NSRegularExpression.escapedPattern(for: other) + #"($|[^\p{L}\p{N}])"#,
                                                     options: [.regularExpression, .caseInsensitive]) != nil
                 }
                 if let index = parts.firstIndex(where: { $0.name == name }) {
@@ -712,12 +713,12 @@ final class BotGroups {
         return order.first { candidates.contains($0) }
     }
 
-    /// The bots a message names with @, in the order it names them: each by its ID and name.
+    /// The bots a message names with &, in the order it names them: each by its ID and name.
     static func mentions(in text: String, among bots: [(id: String, name: String)]) -> [String] {
         bots.compactMap { bot -> (String, String.Index)? in
-            // The whole name: "@Sam" isn't Samantha.
+            // The whole name: "&Sam" isn't Samantha.
             var from = text.startIndex
-            while let found = text.range(of: "@" + bot.name, options: [.caseInsensitive, .diacriticInsensitive], range: from..<text.endIndex) {
+            while let found = text.range(of: "&" + bot.name, options: [.caseInsensitive, .diacriticInsensitive], range: from..<text.endIndex) {
                 if found.upperBound == text.endIndex || !(text[found.upperBound].isLetter || text[found.upperBound].isNumber) { return (bot.id, found.lowerBound) }
                 from = found.upperBound
             }
@@ -1004,9 +1005,9 @@ final class BotGroups {
     static func splitText(members: [Bot], said: [String]) -> String {
         var text = """
         For the app, not the chat: list who does what next, from what was decided, one line for each bot with work, as
-        @Name: what they do, with what they need to know
-        If a part can only start once others are done, write it as @Name (after @Other): …; it then starts when theirs is done, with what they reported.
-        Only the bots in this chat (\(members.map { "@" + $0.name }.joined(separator: ", "))), and only work that was agreed on, not what's still open.
+        &Name: what they do, with what they need to know
+        If a part can only start once others are done, write it as &Name (after &Other): …; it then starts when theirs is done, with what they reported.
+        Only the bots in this chat (\(members.map { "&" + $0.name }.joined(separator: ", "))), and only work that was agreed on, not what's still open.
         Then, on a line of its own, GO or WAIT: GO if the user told you to go ahead and do the work (like "go ahead", "do it", "get going", "do your parts"), WAIT if they only asked for a plan or haven't decided.
         If there's no work to hand out, reply just NONE.
         """
@@ -1347,7 +1348,7 @@ final class BotGroups {
         Each message you get here holds what was said in the chat since you last spoke, and means it's your turn. Your reply is posted \
         to the chat as your message, so write it to the group: a few sentences, plain and to the point, like a colleague in a team \
         chat. Add something new: build on what others said instead of repeating it, disagree when you do, and ask someone directly \
-        with @Name. Write to the user as "you". If you have nothing new to add, reply with just PASS.
+        with &Name. Write to the user as "you". If you have nothing new to add, reply with just PASS.
 
         You can look things up before you answer (read and search files, search the web) when it helps; there are no commands, subagents or messages to other agents here. \
         Don't change files or start the work here: the chat is for talking it through. When something needs doing, say who should \

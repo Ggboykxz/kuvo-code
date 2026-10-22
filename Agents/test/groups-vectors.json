@@ -238,7 +238,7 @@
         "Sam",
         "Samantha"
       ],
-      "text" : "@Sam and @Samantha"
+      "text" : "&Sam and &Samantha"
     },
     {
       "ids" : [
@@ -248,7 +248,7 @@
         "Sam",
         "Samantha"
       ],
-      "text" : "@samantha first"
+      "text" : "&samantha first"
     },
     {
       "ids" : [
@@ -257,7 +257,7 @@
       "names" : [
         "Sam"
       ],
-      "text" : "mail me at me@Sam.com"
+      "text" : "mail me at me&Sam.com"
     },
     {
       "ids" : [
@@ -268,7 +268,7 @@
         "Ben",
         "Ada"
       ],
-      "text" : "@Ada's idea, then @Ben"
+      "text" : "&Ada's idea, then &Ben"
     },
     {
       "ids" : [
@@ -277,7 +277,7 @@
       "names" : [
         "Zoë"
       ],
-      "text" : "@Zoe and @ZOË"
+      "text" : "&Zoe and &ZOË"
     },
     {
       "ids" : [
@@ -286,7 +286,7 @@
       "names" : [
         "İlkay"
       ],
-      "text" : "@İlkay?"
+      "text" : "&İlkay?"
     },
     {
       "ids" : [
@@ -304,7 +304,7 @@
       "names" : [
         "Ada"
       ],
-      "text" : "@Ada2 and @Ada"
+      "text" : "&Ada2 and &Ada"
     },
     {
       "ids" : [
@@ -313,7 +313,7 @@
       "names" : [
         "🐱"
       ],
-      "text" : "@🐶 only"
+      "text" : "&🐶 only"
     },
     {
       "ids" : [
@@ -324,7 +324,7 @@
         "Jean-Luc",
         "Jean"
       ],
-      "text" : "@Jean-Luc, thoughts? @Jean too"
+      "text" : "&Jean-Luc, thoughts? &Jean too"
     },
     {
       "ids" : [
@@ -333,7 +333,7 @@
       "names" : [
         "猫"
       ],
-      "text" : "@猫，你呢？"
+      "text" : "&猫，你呢？"
     },
     {
       "ids" : [
@@ -342,7 +342,7 @@
       "names" : [
         "C++ Bot"
       ],
-      "text" : "@C++ Bot please"
+      "text" : "&C++ Bot please"
     }
   ],
   "next" : [
@@ -15221,7 +15221,7 @@
         {
           "id" : "u1",
           "kind" : "message",
-          "text" : "What do you think, @Ben?",
+          "text" : "What do you think, &Ben?",
           "time" : "2026-09-21T14:13:20Z"
         }
       ],
@@ -15466,7 +15466,7 @@
           "author" : "bot_ada",
           "id" : "a1",
           "kind" : "message",
-          "text" : "> @Carl said this\n\nI agree",
+          "text" : "> &Carl said this\n\nI agree",
           "time" : "2026-09-21T14:13:20Z"
         }
       ],
@@ -15506,7 +15506,7 @@
         {
           "id" : "u1",
           "kind" : "message",
-          "text" : "@zoe ready?",
+          "text" : "&zoe ready?",
           "time" : "2026-09-21T14:13:20Z"
         }
       ],
@@ -15546,7 +15546,7 @@
         {
           "id" : "u1",
           "kind" : "message",
-          "text" : "@işık, sen?",
+          "text" : "&işık, sen?",
           "time" : "2026-09-21T14:13:20Z"
         }
       ],
@@ -15685,7 +15685,7 @@
         {
           "id" : "u1",
           "kind" : "message",
-          "text" : "@Carl first, then @Ada",
+          "text" : "&Carl first, then &Ada",
           "time" : "2026-09-21T14:13:20Z"
         }
       ],
@@ -15725,7 +15725,31 @@
           "task" : "fix what fails"
         }
       ],
-      "text" : "@Ada: write the tests\n@Ben (after @Ada): fix what fails\nGO"
+      "text" : "&Ada: write the tests\n&Ben (after &Ada): fix what fails\nGO"
+    },
+    {
+      "go" : true,
+      "names" : [
+        "Ada",
+        "Ben"
+      ],
+      "parts" : [
+        {
+          "after" : [
+
+          ],
+          "name" : "Ada",
+          "task" : "written with @, as a lead may"
+        },
+        {
+          "after" : [
+            "Ada"
+          ],
+          "name" : "Ben",
+          "task" : "mixed"
+        }
+      ],
+      "text" : "@Ada: written with @, as a lead may\n&Ben (after @Ada): mixed\nGO"
     },
     {
       "go" : false,
@@ -15773,7 +15797,7 @@
           "task" : "bigger part"
         }
       ],
-      "text" : "1. @Sam: small part\n2) @Samantha: bigger part\nGO\nWAIT"
+      "text" : "1. &Sam: small part\n2) &Samantha: bigger part\nGO\nWAIT"
     },
     {
       "go" : true,
@@ -15805,7 +15829,7 @@
           "task" : "kontrol"
         }
       ],
-      "text" : "@İlkay: Türkçe notları yaz\n@Işık (once @İlkay): gözden geçir\n@zoë: kontrol\n**GO**"
+      "text" : "&İlkay: Türkçe notları yaz\n&Işık (once &İlkay): gözden geçir\n&zoë: kontrol\n**GO**"
     },
     {
       "go" : false,
@@ -15839,7 +15863,7 @@
           "task" : "a part"
         }
       ],
-      "text" : "> @Ada: quoted line\n@Ben – a part\n@Carl: not a member"
+      "text" : "> &Ada: quoted line\n&Ben – a part\n&Carl: not a member"
     },
     {
       "go" : false,
@@ -15856,7 +15880,7 @@
           "task" : "something"
         }
       ],
-      "text" : "@Ada:\n@Ben: something"
+      "text" : "&Ada:\n&Ben: something"
     },
     {
       "go" : false,
@@ -15889,7 +15913,7 @@
           "task" : "also first"
         }
       ],
-      "text" : "@Ada (after Ben and @Carl): later\r\n@Ben: first\r\n@Carl: also first\r\n"
+      "text" : "&Ada (after Ben and &Carl): later\r\n&Ben: first\r\n&Carl: also first\r\n"
     },
     {
       "go" : false,
@@ -15905,7 +15929,7 @@
           "task" : "self"
         }
       ],
-      "text" : "@Ada (after @Ada): self\n  go  \n"
+      "text" : "&Ada (after &Ada): self\n  go  \n"
     },
     {
       "go" : true,
@@ -15921,7 +15945,7 @@
           "task" : "- one\n- two\n- three"
         }
       ],
-      "text" : "• @Ada — one\n· @Ada - two\n3) @Ada – three\n\n> GO"
+      "text" : "• &Ada — one\n· &Ada - two\n3) &Ada – three\n\n> GO"
     },
     {
       "go" : false,
@@ -15937,7 +15961,7 @@
           "task" : "- lower case\n- upper case"
         }
       ],
-      "text" : "@ada: lower case\n@ADA: upper case"
+      "text" : "&ada: lower case\n&ADA: upper case"
     },
     {
       "go" : false,
@@ -15962,7 +15986,7 @@
           "task" : "first"
         }
       ],
-      "text" : "@Ada (after @Benjamin): waits\n@Ben: first"
+      "text" : "&Ada (after &Benjamin): waits\n&Ben: first"
     },
     {
       "go" : true,
@@ -15986,7 +16010,7 @@
           "task" : "- check it\n- also this"
         }
       ],
-      "text" : "@Jean-Luc: write it\n@Ana (after @Jean-Luc): check it\n١. @Ana: also this\nGO"
+      "text" : "&Jean-Luc: write it\n&Ana (after &Jean-Luc): check it\n١. &Ana: also this\nGO"
     },
     {
       "go" : false,
@@ -16018,7 +16042,7 @@
           "task" : "purr"
         }
       ],
-      "text" : "@🐱: meow\n@猫 — 喵\n@😺 (after @🐱): purr"
+      "text" : "&🐱: meow\n&猫 — 喵\n&😺 (after &🐱): purr"
     },
     {
       "go" : false,
@@ -16042,7 +16066,7 @@
           "task" : "travel"
         }
       ],
-      "text" : "@C++ Bot: compile\n@Dr. Who (after @C++ Bot): travel"
+      "text" : "&C++ Bot: compile\n&Dr. Who (after &C++ Bot): travel"
     }
   ],
   "ring" : [
@@ -16627,7 +16651,7 @@
         }
       ],
       "personality" : "Your personality: Mentor. Patient and clear. Let it show in how you write, not in what you do or how carefully you work.",
-      "text" : "You are Ada, one of the user's bots in Kuvo Code: Keeps CI green. Your personality: Mentor. Patient and clear. Let it show in how you write, not in what you do or how carefully you work.\nYour job:\nKeeps CI green.\nNever merges on Fridays.\n\nYour memory file is \"/home/me/.kuvo-code/bots/bot_ada/MEMORY.md\": read it for context on your work.\n\nThis conversation is your seat in \"Release crew\", a group chat between the user and these bots: Ben (Writes docs), Carl, and you. You lead it. The chat is for: Plan each week's release\n\nEach message you get here holds what was said in the chat since you last spoke, and means it's your turn. Your reply is posted to the chat as your message, so write it to the group: a few sentences, plain and to the point, like a colleague in a team chat. Add something new: build on what others said instead of repeating it, disagree when you do, and ask someone directly with @Name. Write to the user as \"you\". If you have nothing new to add, reply with just PASS.\n\nYou can look things up before you answer (read and search files, search the web) when it helps; there are no commands, subagents or messages to other agents here. Don't change files or start the work here: the chat is for talking it through. When something needs doing, say who should do it. Once the user says go, each of you gets your part in your own conversation, does it there with all your tools, and reports back here: don't send anyone the work yourself, and don't wait on it in the chat.\n\nYour name, look, personality and model are set by the user in Kuvo Code, under Edit Bot. You can't change them, and writing a new name into your memory doesn't change it either. If you're asked to, say so plainly and suggest Edit Bot, which lists the models they can use; don't list models yourself, since you'd see ones they have no account for. Your job is yours to keep, in your memory, as the user gives it to you.\n\nYou lead this chat. When the user brings something up, you go first: frame it in a line or two and say who should weigh in on what. Keep it moving and short. When you're asked to wrap up, sum up what was decided, what's still open and who does what."
+      "text" : "You are Ada, one of the user's bots in Kuvo Code: Keeps CI green. Your personality: Mentor. Patient and clear. Let it show in how you write, not in what you do or how carefully you work.\nYour job:\nKeeps CI green.\nNever merges on Fridays.\n\nYour memory file is \"/home/me/.kuvo-code/bots/bot_ada/MEMORY.md\": read it for context on your work.\n\nThis conversation is your seat in \"Release crew\", a group chat between the user and these bots: Ben (Writes docs), Carl, and you. You lead it. The chat is for: Plan each week's release\n\nEach message you get here holds what was said in the chat since you last spoke, and means it's your turn. Your reply is posted to the chat as your message, so write it to the group: a few sentences, plain and to the point, like a colleague in a team chat. Add something new: build on what others said instead of repeating it, disagree when you do, and ask someone directly with &Name. Write to the user as \"you\". If you have nothing new to add, reply with just PASS.\n\nYou can look things up before you answer (read and search files, search the web) when it helps; there are no commands, subagents or messages to other agents here. Don't change files or start the work here: the chat is for talking it through. When something needs doing, say who should do it. Once the user says go, each of you gets your part in your own conversation, does it there with all your tools, and reports back here: don't send anyone the work yourself, and don't wait on it in the chat.\n\nYour name, look, personality and model are set by the user in Kuvo Code, under Edit Bot. You can't change them, and writing a new name into your memory doesn't change it either. If you're asked to, say so plainly and suggest Edit Bot, which lists the models they can use; don't list models yourself, since you'd see ones they have no account for. Your job is yours to keep, in your memory, as the user gives it to you.\n\nYou lead this chat. When the user brings something up, you go first: frame it in a line or two and say who should weigh in on what. Keep it moving and short. When you're asked to wrap up, sum up what was decided, what's still open and who does what."
     },
     {
       "bot" : {
@@ -16695,7 +16719,7 @@
         }
       ],
       "personality" : null,
-      "text" : "You are Ben, one of the user's bots in Kuvo Code: Writes docs.\nYour memory file is \"/home/me/.kuvo-code/bots/bot_ben/MEMORY.md\": read it for context on your work.\n\nThis conversation is your seat in \"Release crew\", a group chat between the user and these bots: Ada (Keeps CI green), Carl, and you. Ada leads it. The chat is for: Plan each week's release\n\nEach message you get here holds what was said in the chat since you last spoke, and means it's your turn. Your reply is posted to the chat as your message, so write it to the group: a few sentences, plain and to the point, like a colleague in a team chat. Add something new: build on what others said instead of repeating it, disagree when you do, and ask someone directly with @Name. Write to the user as \"you\". If you have nothing new to add, reply with just PASS.\n\nYou can look things up before you answer (read and search files, search the web) when it helps; there are no commands, subagents or messages to other agents here. Don't change files or start the work here: the chat is for talking it through. When something needs doing, say who should do it. Once the user says go, each of you gets your part in your own conversation, does it there with all your tools, and reports back here: don't send anyone the work yourself, and don't wait on it in the chat.\n\nYour name, look, personality and model are set by the user in Kuvo Code, under Edit Bot. You can't change them, and writing a new name into your memory doesn't change it either. If you're asked to, say so plainly and suggest Edit Bot, which lists the models they can use; don't list models yourself, since you'd see ones they have no account for. Your job is yours to keep, in your memory, as the user gives it to you."
+      "text" : "You are Ben, one of the user's bots in Kuvo Code: Writes docs.\nYour memory file is \"/home/me/.kuvo-code/bots/bot_ben/MEMORY.md\": read it for context on your work.\n\nThis conversation is your seat in \"Release crew\", a group chat between the user and these bots: Ada (Keeps CI green), Carl, and you. Ada leads it. The chat is for: Plan each week's release\n\nEach message you get here holds what was said in the chat since you last spoke, and means it's your turn. Your reply is posted to the chat as your message, so write it to the group: a few sentences, plain and to the point, like a colleague in a team chat. Add something new: build on what others said instead of repeating it, disagree when you do, and ask someone directly with &Name. Write to the user as \"you\". If you have nothing new to add, reply with just PASS.\n\nYou can look things up before you answer (read and search files, search the web) when it helps; there are no commands, subagents or messages to other agents here. Don't change files or start the work here: the chat is for talking it through. When something needs doing, say who should do it. Once the user says go, each of you gets your part in your own conversation, does it there with all your tools, and reports back here: don't send anyone the work yourself, and don't wait on it in the chat.\n\nYour name, look, personality and model are set by the user in Kuvo Code, under Edit Bot. You can't change them, and writing a new name into your memory doesn't change it either. If you're asked to, say so plainly and suggest Edit Bot, which lists the models they can use; don't list models yourself, since you'd see ones they have no account for. Your job is yours to keep, in your memory, as the user gives it to you."
     },
     {
       "bot" : {
@@ -16733,7 +16757,7 @@
 
       ],
       "personality" : null,
-      "text" : "You are Carl, one of the user's bots in Kuvo Code.\nYour memory file is \"/home/me/.kuvo-code/bots/bot_carl/MEMORY.md\": read it for context on your work.\n\nThis conversation is your seat in \"Solo\", a group chat between the user and these bots: just you, and you. \n\nEach message you get here holds what was said in the chat since you last spoke, and means it's your turn. Your reply is posted to the chat as your message, so write it to the group: a few sentences, plain and to the point, like a colleague in a team chat. Add something new: build on what others said instead of repeating it, disagree when you do, and ask someone directly with @Name. Write to the user as \"you\". If you have nothing new to add, reply with just PASS.\n\nYou can look things up before you answer (read and search files, search the web) when it helps; there are no commands, subagents or messages to other agents here. Don't change files or start the work here: the chat is for talking it through. When something needs doing, say who should do it. Once the user says go, each of you gets your part in your own conversation, does it there with all your tools, and reports back here: don't send anyone the work yourself, and don't wait on it in the chat.\n\nYour name, look, personality and model are set by the user in Kuvo Code, under Edit Bot. You can't change them, and writing a new name into your memory doesn't change it either. If you're asked to, say so plainly and suggest Edit Bot, which lists the models they can use; don't list models yourself, since you'd see ones they have no account for. Your job is yours to keep, in your memory, as the user gives it to you."
+      "text" : "You are Carl, one of the user's bots in Kuvo Code.\nYour memory file is \"/home/me/.kuvo-code/bots/bot_carl/MEMORY.md\": read it for context on your work.\n\nThis conversation is your seat in \"Solo\", a group chat between the user and these bots: just you, and you. \n\nEach message you get here holds what was said in the chat since you last spoke, and means it's your turn. Your reply is posted to the chat as your message, so write it to the group: a few sentences, plain and to the point, like a colleague in a team chat. Add something new: build on what others said instead of repeating it, disagree when you do, and ask someone directly with &Name. Write to the user as \"you\". If you have nothing new to add, reply with just PASS.\n\nYou can look things up before you answer (read and search files, search the web) when it helps; there are no commands, subagents or messages to other agents here. Don't change files or start the work here: the chat is for talking it through. When something needs doing, say who should do it. Once the user says go, each of you gets your part in your own conversation, does it there with all your tools, and reports back here: don't send anyone the work yourself, and don't wait on it in the chat.\n\nYour name, look, personality and model are set by the user in Kuvo Code, under Edit Bot. You can't change them, and writing a new name into your memory doesn't change it either. If you're asked to, say so plainly and suggest Edit Bot, which lists the models they can use; don't list models yourself, since you'd see ones they have no account for. Your job is yours to keep, in your memory, as the user gives it to you."
     }
   ],
   "seatRules" : [
@@ -16919,7 +16943,7 @@
       "said" : [
 
       ],
-      "text" : "For the app, not the chat: list who does what next, from what was decided, one line for each bot with work, as\n@Name: what they do, with what they need to know\nIf a part can only start once others are done, write it as @Name (after @Other): …; it then starts when theirs is done, with what they reported.\nOnly the bots in this chat (@Ada, @Ben), and only work that was agreed on, not what's still open.\nThen, on a line of its own, GO or WAIT: GO if the user told you to go ahead and do the work (like \"go ahead\", \"do it\", \"get going\", \"do your parts\"), WAIT if they only asked for a plan or haven't decided.\nIf there's no work to hand out, reply just NONE."
+      "text" : "For the app, not the chat: list who does what next, from what was decided, one line for each bot with work, as\n&Name: what they do, with what they need to know\nIf a part can only start once others are done, write it as &Name (after &Other): …; it then starts when theirs is done, with what they reported.\nOnly the bots in this chat (&Ada, &Ben), and only work that was agreed on, not what's still open.\nThen, on a line of its own, GO or WAIT: GO if the user told you to go ahead and do the work (like \"go ahead\", \"do it\", \"get going\", \"do your parts\"), WAIT if they only asked for a plan or haven't decided.\nIf there's no work to hand out, reply just NONE."
     },
     {
       "names" : [
@@ -16929,7 +16953,7 @@
         "Go ahead and do it",
         "Line one\nline two"
       ],
-      "text" : "For the app, not the chat: list who does what next, from what was decided, one line for each bot with work, as\n@Name: what they do, with what they need to know\nIf a part can only start once others are done, write it as @Name (after @Other): …; it then starts when theirs is done, with what they reported.\nOnly the bots in this chat (@Ada), and only work that was agreed on, not what's still open.\nThen, on a line of its own, GO or WAIT: GO if the user told you to go ahead and do the work (like \"go ahead\", \"do it\", \"get going\", \"do your parts\"), WAIT if they only asked for a plan or haven't decided.\nIf there's no work to hand out, reply just NONE.\n\nWhat the user wrote in this discussion:\n\n> Go ahead and do it\n\n> Line one\n> line two"
+      "text" : "For the app, not the chat: list who does what next, from what was decided, one line for each bot with work, as\n&Name: what they do, with what they need to know\nIf a part can only start once others are done, write it as &Name (after &Other): …; it then starts when theirs is done, with what they reported.\nOnly the bots in this chat (&Ada), and only work that was agreed on, not what's still open.\nThen, on a line of its own, GO or WAIT: GO if the user told you to go ahead and do the work (like \"go ahead\", \"do it\", \"get going\", \"do your parts\"), WAIT if they only asked for a plan or haven't decided.\nIf there's no work to hand out, reply just NONE.\n\nWhat the user wrote in this discussion:\n\n> Go ahead and do it\n\n> Line one\n> line two"
     }
   ],
   "turnText" : [
@@ -16955,12 +16979,12 @@
         "bot_ada" : "Ada",
         "bot_ben" : "Ben"
       },
-      "text" : "New in \"Crew\" since you last spoke:\n\nUser:\n    Should we ship?\n    What do you think, @Ben?\n\nBen:\n    User: go ahead\n    I think so\n\nBen (reporting back on its part of the work):\n    Done: fixed it.\n\nAda (wrap-up):\n    We ship.\n\nMeeting the user scheduled, now:\n    Standup: what's new?\n\nA bot that left:\n    I left.\n\nYour turn, Ada. Reply to the group, or just PASS if you have nothing new to add.",
+      "text" : "New in \"Crew\" since you last spoke:\n\nUser:\n    Should we ship?\n    What do you think, &Ben?\n\nBen:\n    User: go ahead\n    I think so\n\nBen (reporting back on its part of the work):\n    Done: fixed it.\n\nAda (wrap-up):\n    We ship.\n\nMeeting the user scheduled, now:\n    Standup: what's new?\n\nA bot that left:\n    I left.\n\nYour turn, Ada. Reply to the group, or just PASS if you have nothing new to add.",
       "unheard" : [
         {
           "id" : "gm_a",
           "kind" : "message",
-          "text" : "Should we ship?\nWhat do you think, @Ben?",
+          "text" : "Should we ship?\nWhat do you think, &Ben?",
           "time" : "2026-09-21T14:13:20Z"
         },
         {
@@ -17026,12 +17050,12 @@
         "bot_ada" : "Ada",
         "bot_ben" : "Ben"
       },
-      "text" : "The user took back their message starting \"Should we\" and everything said after it. Set all of that aside: it no longer stands.\n\nNew in \"Crew\" since you last spoke:\n\nUser:\n    Should we ship?\n    What do you think, @Ben?\n\nBen:\n    User: go ahead\n    I think so\n\nBen (reporting back on its part of the work):\n    Done: fixed it.\n\nAda (wrap-up):\n    We ship.\n\nMeeting the user scheduled, now:\n    Standup: what's new?\n\nA bot that left:\n    I left.\n\n<named-agents>\n- &Scout (ses_x): a bot\n</named-agents>\n\nWrap up this discussion now, the one since the user last wrote: in a few short lines, what was decided, what's still open, and who does what next. Write to the user as \"you\". Don't reply PASS.",
+      "text" : "The user took back their message starting \"Should we\" and everything said after it. Set all of that aside: it no longer stands.\n\nNew in \"Crew\" since you last spoke:\n\nUser:\n    Should we ship?\n    What do you think, &Ben?\n\nBen:\n    User: go ahead\n    I think so\n\nBen (reporting back on its part of the work):\n    Done: fixed it.\n\nAda (wrap-up):\n    We ship.\n\nMeeting the user scheduled, now:\n    Standup: what's new?\n\nA bot that left:\n    I left.\n\n<named-agents>\n- &Scout (ses_x): a bot\n</named-agents>\n\nWrap up this discussion now, the one since the user last wrote: in a few short lines, what was decided, what's still open, and who does what next. Write to the user as \"you\". Don't reply PASS.",
       "unheard" : [
         {
           "id" : "gm_a",
           "kind" : "message",
-          "text" : "Should we ship?\nWhat do you think, @Ben?",
+          "text" : "Should we ship?\nWhat do you think, &Ben?",
           "time" : "2026-09-21T14:13:20Z"
         },
         {

@@ -148,12 +148,12 @@ export const ownWords = (message: string) =>
 
 // MARK: Who talks
 
-/** The bots a message names with @, in the order it names them: the whole name ("@Sam" isn't Samantha). */
+/** The bots a message names with &, in the order it names them: the whole name ("&Sam" isn't Samantha). */
 export function mentions(text: string, among: { id: string; name: string }[]): string[] {
   const found: { id: string; at: number }[] = []
   const folded = fold(text)
   for (const bot of among) {
-    const name = fold("@" + bot.name)
+    const name = fold("&" + bot.name)
     let from = 0
     for (;;) {
       const at = folded.indexOf(name, from)
@@ -182,7 +182,7 @@ function fold(text: string): string {
 }
 
 /**
- * Who talks next: someone the last message named with @, after one of yours the lead, otherwise
+ * Who talks next: someone the last message named with &, after one of yours the lead, otherwise
  * the next in line after whoever spoke last. Nobody twice in a row (unless something of yours came
  * that it hasn't heard), and nobody who passed since the last thing said. Undefined once there's
  * nobody left with something to add.
@@ -268,9 +268,9 @@ export function turnText(bot: string, group: Group, unheard: GroupMessage[], wra
  */
 export function splitText(names: string[], said: string[]): string {
   let text = `For the app, not the chat: list who does what next, from what was decided, one line for each bot with work, as
-@Name: what they do, with what they need to know
-If a part can only start once others are done, write it as @Name (after @Other): …; it then starts when theirs is done, with what they reported.
-Only the bots in this chat (${names.map((name) => "@" + name).join(", ")}), and only work that was agreed on, not what's still open.
+&Name: what they do, with what they need to know
+If a part can only start once others are done, write it as &Name (after &Other): …; it then starts when theirs is done, with what they reported.
+Only the bots in this chat (${names.map((name) => "&" + name).join(", ")}), and only work that was agreed on, not what's still open.
 Then, on a line of its own, GO or WAIT: GO if the user told you to go ahead and do the work (like "go ahead", "do it", "get going", "do your parts"), WAIT if they only asked for a plan or haven't decided.
 If there's no work to hand out, reply just NONE.`
   if (said.length > 0) {
@@ -286,7 +286,7 @@ export interface Part {
 }
 
 /**
- * Who does what in a lead's list of `@Name: task` lines, or `@Name (after @Other): task` for a part
+ * Who does what in a lead's list of `&Name: task` lines, or `&Name (after &Other): task` for a part
  * that waits for another (bullets and bold allowed): one part for each name, several lines for one
  * going together as a list; and whether its GO or WAIT line said to go ahead. Lines for anyone not
  * in `names` are left out.
@@ -308,13 +308,13 @@ export function parts(text: string, names: string[]): { parts: Part[]; go: boole
       continue
     }
     for (const name of byLength) {
-      const match = new RegExp(`^@?${escape(name)}\\s*(?:\\(\\s*(?:after|once)\\s+([^)]*)\\))?\\s*[:—–\\-]\\s*`, "iu").exec(line)
+      const match = new RegExp(`^[@&]?${escape(name)}\\s*(?:\\(\\s*(?:after|once)\\s+([^)]*)\\))?\\s*[:—–\\-]\\s*`, "iu").exec(line)
       if (!match) continue
       const task = trimSpaces(line.slice(match[0].length))
       if (task.length === 0) break
       const waitsFor = match[1] ?? ""
       const after = byLength.filter(
-        (other) => other !== name && new RegExp(`(^|[^\\p{L}\\p{N}])@?${escape(other)}($|[^\\p{L}\\p{N}])`, "iu").test(waitsFor),
+        (other) => other !== name && new RegExp(`(^|[^\\p{L}\\p{N}])[@&]?${escape(other)}($|[^\\p{L}\\p{N}])`, "iu").test(waitsFor),
       )
       const existing = found.find((part) => part.name === name)
       if (existing) existing.after.push(...after.filter((other) => !existing.after.includes(other)))
@@ -487,7 +487,7 @@ export function seatInstructions(bot: SeatBot, group: Group, others: SeatBot[], 
     `Each message you get here holds what was said in the chat since you last spoke, and means it's your turn. Your reply is posted ` +
     `to the chat as your message, so write it to the group: a few sentences, plain and to the point, like a colleague in a team ` +
     `chat. Add something new: build on what others said instead of repeating it, disagree when you do, and ask someone directly ` +
-    `with @Name. Write to the user as "you". If you have nothing new to add, reply with just PASS.\n` +
+    `with &Name. Write to the user as "you". If you have nothing new to add, reply with just PASS.\n` +
     `\n` +
     `You can look things up before you answer (read and search files, search the web) when it helps; there are no commands, subagents or messages to other agents here. ` +
     `Don't change files or start the work here: the chat is for talking it through. When something needs doing, say who should ` +

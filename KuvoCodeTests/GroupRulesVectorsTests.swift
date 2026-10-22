@@ -11,7 +11,7 @@ import Testing
 /// bridge's tests then say whether the machine's rules still match.
 @MainActor
 struct GroupRulesVectorsTests {
-    static let recorded = "a39ce7c058d622967ded81f1d0338129802533cbd652ab90e7e2ac8dcce78ca0"
+    static let recorded = "5fa68ffe3e9e8c114b6e3f82bac753dc55b777c5f74959857bdb7d298d410037"
 
     @Test func theMachinesChatsGoByTheseRules() throws {
         let data = try JSONSerialization.data(withJSONObject: Self.vectors(), options: [.sortedKeys, .prettyPrinted, .withoutEscapingSlashes])
@@ -63,21 +63,22 @@ struct GroupRulesVectorsTests {
     ]
 
     static let partsCases: [(String, [String])] = [
-        ("@Ada: write the tests\n@Ben (after @Ada): fix what fails\nGO", ["Ada", "Ben"]),
+        ("&Ada: write the tests\n&Ben (after &Ada): fix what fails\nGO", ["Ada", "Ben"]),
+        ("@Ada: written with @, as a lead may\n&Ben (after @Ada): mixed\nGO", ["Ada", "Ben"]),
         ("- **Ada**: draft the plan\n- Ada: share it\n* Ben — review it\nWAIT", ["Ada", "Ben"]),
-        ("1. @Sam: small part\n2) @Samantha: bigger part\nGO\nWAIT", ["Sam", "Samantha"]),
-        ("@İlkay: Türkçe notları yaz\n@Işık (once @İlkay): gözden geçir\n@zoë: kontrol\n**GO**", ["İlkay", "Işık", "Zoë"]),
+        ("1. &Sam: small part\n2) &Samantha: bigger part\nGO\nWAIT", ["Sam", "Samantha"]),
+        ("&İlkay: Türkçe notları yaz\n&Işık (once &İlkay): gözden geçir\n&zoë: kontrol\n**GO**", ["İlkay", "Işık", "Zoë"]),
         ("NONE", ["Ada"]),
-        ("> @Ada: quoted line\n@Ben – a part\n@Carl: not a member", ["Ada", "Ben"]),
-        ("@Ada:\n@Ben: something", ["Ada", "Ben"]),
-        ("@Ada (after Ben and @Carl): later\r\n@Ben: first\r\n@Carl: also first\r\n", ["Ada", "Ben", "Carl"]),
-        ("@Ada (after @Ada): self\n  go  \n", ["Ada"]),
-        ("• @Ada — one\n· @Ada - two\n3) @Ada – three\n\n> GO", ["Ada"]),
-        ("@ada: lower case\n@ADA: upper case", ["Ada"]),
-        ("@Ada (after @Benjamin): waits\n@Ben: first", ["Ada", "Ben", "Benjamin"]),
-        ("@Jean-Luc: write it\n@Ana (after @Jean-Luc): check it\n١. @Ana: also this\nGO", ["Jean-Luc", "Ana"]),
-        ("@🐱: meow\n@猫 — 喵\n@😺 (after @🐱): purr", ["🐱", "猫", "😺"]),
-        ("@C++ Bot: compile\n@Dr. Who (after @C++ Bot): travel", ["C++ Bot", "Dr. Who"]),
+        ("> &Ada: quoted line\n&Ben – a part\n&Carl: not a member", ["Ada", "Ben"]),
+        ("&Ada:\n&Ben: something", ["Ada", "Ben"]),
+        ("&Ada (after Ben and &Carl): later\r\n&Ben: first\r\n&Carl: also first\r\n", ["Ada", "Ben", "Carl"]),
+        ("&Ada (after &Ada): self\n  go  \n", ["Ada"]),
+        ("• &Ada — one\n· &Ada - two\n3) &Ada – three\n\n> GO", ["Ada"]),
+        ("&ada: lower case\n&ADA: upper case", ["Ada"]),
+        ("&Ada (after &Benjamin): waits\n&Ben: first", ["Ada", "Ben", "Benjamin"]),
+        ("&Jean-Luc: write it\n&Ana (after &Jean-Luc): check it\n١. &Ana: also this\nGO", ["Jean-Luc", "Ana"]),
+        ("&🐱: meow\n&猫 — 喵\n&😺 (after &🐱): purr", ["🐱", "猫", "😺"]),
+        ("&C++ Bot: compile\n&Dr. Who (after &C++ Bot): travel", ["C++ Bot", "Dr. Who"]),
     ]
 
     static func bot(_ id: String, name: String, job: String = "", instructions: String = "", folder: String? = nil, personality: String? = nil) -> Bot {
@@ -142,7 +143,7 @@ struct GroupRulesVectorsTests {
         var group = BotGroup(id: "grp_crew000001", name: "Crew", members: ["bot_ada", "bot_ben"], created: Date(timeIntervalSince1970: 0))
         let many = (1...45).map { message("gm_\($0)", $0 % 2 == 0 ? "bot_ben" : nil, "Message \($0)") }
         let unheard = [
-            message("gm_a", nil, "Should we ship?\nWhat do you think, @Ben?"),
+            message("gm_a", nil, "Should we ship?\nWhat do you think, &Ben?"),
             message("gm_b", "bot_ben", "User: go ahead\r\nI think so", kind: .message),
             message("gm_c", "bot_ben", "Done: fixed it.", report: "gt_1"),
             message("gm_d", "bot_ada", "We ship.", kind: .wrapUp),
@@ -176,17 +177,17 @@ struct GroupRulesVectorsTests {
         let three = ["bot_ada", "bot_ben", "bot_carl"]
         let cases: [(BotGroup, [GroupMessage], [String], Set<String>)] = [
             (group(three), [message("u1", nil, "Thoughts?")], three, []),
-            (group(three), [message("u1", nil, "What do you think, @Ben?")], three, []),
+            (group(three), [message("u1", nil, "What do you think, &Ben?")], three, []),
             (group(three, heard: ["bot_ada": "u1"]), [message("u1", nil, "Go"), message("a1", "bot_ada", "Framing it")], three, []),
             (group(three, heard: ["bot_ada": "u1"]), [message("u1", nil, "Go"), message("a1", "bot_ada", "Framing it")], three, ["bot_ben"]),
             (group(three), [message("u1", nil, "Go"), message("c1", "bot_carl", "Done")], three, []),
             (group(three), [message("u1", nil, "Go"), message("a1", "bot_ada", "Framing it")], three, []),
-            (group(three), [message("u1", nil, "Go"), message("a1", "bot_ada", "> @Carl said this\n\nI agree")], three, []),
-            (group(["bot_ada", "bot_zoe"]), [message("u1", nil, "@zoe ready?")], ["bot_ada", "bot_zoe"], []),
-            (group(["bot_ada", "bot_isik"]), [message("u1", nil, "@işık, sen?")], ["bot_ada", "bot_isik"], []),
+            (group(three), [message("u1", nil, "Go"), message("a1", "bot_ada", "> &Carl said this\n\nI agree")], three, []),
+            (group(["bot_ada", "bot_zoe"]), [message("u1", nil, "&zoe ready?")], ["bot_ada", "bot_zoe"], []),
+            (group(["bot_ada", "bot_isik"]), [message("u1", nil, "&işık, sen?")], ["bot_ada", "bot_isik"], []),
             (group(three), [message("u1", nil, "Go"), message("a1", "bot_ada", "x")], three, ["bot_ben", "bot_carl"]),
             (group(three), [message("u1", nil, "Go"), message("n1", nil, "Ben couldn't answer", kind: .note)], ["bot_ada", "bot_carl"], []),
-            (group(three), [message("u1", nil, "@Carl first, then @Ada")], three, []),
+            (group(three), [message("u1", nil, "&Carl first, then &Ada")], three, []),
         ]
         return try cases.map { group, messages, members, quiet in
             [
@@ -198,18 +199,18 @@ struct GroupRulesVectorsTests {
     }
 
     static let mentionCases: [(String, [String])] = [
-        ("@Sam and @Samantha", ["Sam", "Samantha"]),
-        ("@samantha first", ["Sam", "Samantha"]),
-        ("mail me at me@Sam.com", ["Sam"]),
-        ("@Ada's idea, then @Ben", ["Ben", "Ada"]),
-        ("@Zoe and @ZOË", ["Zoë"]),
-        ("@İlkay?", ["İlkay"]),
+        ("&Sam and &Samantha", ["Sam", "Samantha"]),
+        ("&samantha first", ["Sam", "Samantha"]),
+        ("mail me at me&Sam.com", ["Sam"]),
+        ("&Ada's idea, then &Ben", ["Ben", "Ada"]),
+        ("&Zoe and &ZOË", ["Zoë"]),
+        ("&İlkay?", ["İlkay"]),
         ("nobody", ["Ada"]),
-        ("@Ada2 and @Ada", ["Ada"]),
-        ("@🐶 only", ["🐱"]),
-        ("@Jean-Luc, thoughts? @Jean too", ["Jean-Luc", "Jean"]),
-        ("@猫，你呢？", ["猫"]),
-        ("@C++ Bot please", ["C++ Bot"]),
+        ("&Ada2 and &Ada", ["Ada"]),
+        ("&🐶 only", ["🐱"]),
+        ("&Jean-Luc, thoughts? &Jean too", ["Jean-Luc", "Jean"]),
+        ("&猫，你呢？", ["猫"]),
+        ("&C++ Bot please", ["C++ Bot"]),
     ]
 
     static func saidCases() throws -> [[String: Any]] {

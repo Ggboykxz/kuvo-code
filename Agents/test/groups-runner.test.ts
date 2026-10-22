@@ -174,7 +174,7 @@ afterEach(() => {
 describe("a group chat on a machine", () => {
   test("the lead first, nobody twice in a row, until everyone passes; then the wrap-up and the work", async () => {
     const { groups, store } = runner()
-    engine.lines = { Ada: ["Let's ship. @Ben, the build?", "Agreed.", "PASS", "We ship Friday; Ben fixes the build.", "@Ada: write the notes\n@Ben (after @Ada): fix the build\nGO"], Ben: ["Build is red; I'll fix it.", "Done soon."] }
+    engine.lines = { Ada: ["Let's ship. &Ben, the build?", "Agreed.", "PASS", "We ship Friday; Ben fixes the build.", "&Ada: write the notes\n&Ben (after &Ada): fix the build\nGO"], Ben: ["Build is red; I'll fix it.", "Done soon."] }
     engine.reports = { Ada: "Notes written.", Ben: "Build fixed." }
     groups.put(group(), [], "active", false)
     groups.send("grp_team000001", "Should we ship this week? Go ahead and do it.")
@@ -214,7 +214,7 @@ describe("a group chat on a machine", () => {
     const { groups } = runner()
     engine.lines = { Ada: [], Ben: ["Here."] }
     groups.put(group(), [], "active", false)
-    groups.send("grp_team000001", "@Ben, are you there?")
+    groups.send("grp_team000001", "&Ben, are you there?")
     await until(() => !groups.talk("grp_team000001").discussing && groups.get("grp_team000001")!.messages.length > 1)
     expect(groups.get("grp_team000001")!.messages.filter((message) => message.author).map((message) => message.author)).toEqual(["bot_ben"])
   })

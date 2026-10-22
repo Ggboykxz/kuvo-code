@@ -10728,7 +10728,7 @@ function mentions(text, among) {
   const found = [];
   const folded = fold(text);
   for (const bot of among) {
-    const name = fold("@" + bot.name);
+    const name = fold("&" + bot.name);
     let from = 0;
     for (;; ) {
       const at = folded.indexOf(name, from);
@@ -10830,9 +10830,9 @@ Your turn, ${name(bot)}. Reply to the group, or just PASS if you have nothing ne
 }
 function splitText(names, said2) {
   let text = `For the app, not the chat: list who does what next, from what was decided, one line for each bot with work, as
-@Name: what they do, with what they need to know
-If a part can only start once others are done, write it as @Name (after @Other): \u2026; it then starts when theirs is done, with what they reported.
-Only the bots in this chat (${names.map((name) => "@" + name).join(", ")}), and only work that was agreed on, not what's still open.
+&Name: what they do, with what they need to know
+If a part can only start once others are done, write it as &Name (after &Other): \u2026; it then starts when theirs is done, with what they reported.
+Only the bots in this chat (${names.map((name) => "&" + name).join(", ")}), and only work that was agreed on, not what's still open.
 Then, on a line of its own, GO or WAIT: GO if the user told you to go ahead and do the work (like "go ahead", "do it", "get going", "do your parts"), WAIT if they only asked for a plan or haven't decided.
 If there's no work to hand out, reply just NONE.`;
   if (said2.length > 0) {
@@ -10863,14 +10863,14 @@ function parts(text, names) {
       continue;
     }
     for (const name of byLength) {
-      const match = new RegExp(`^@?${escape(name)}\\s*(?:\\(\\s*(?:after|once)\\s+([^)]*)\\))?\\s*[:\u2014\u2013\\-]\\s*`, "iu").exec(line);
+      const match = new RegExp(`^[@&]?${escape(name)}\\s*(?:\\(\\s*(?:after|once)\\s+([^)]*)\\))?\\s*[:\u2014\u2013\\-]\\s*`, "iu").exec(line);
       if (!match)
         continue;
       const task = trimSpaces(line.slice(match[0].length));
       if (task.length === 0)
         break;
       const waitsFor = match[1] ?? "";
-      const after = byLength.filter((other) => other !== name && new RegExp(`(^|[^\\p{L}\\p{N}])@?${escape(other)}($|[^\\p{L}\\p{N}])`, "iu").test(waitsFor));
+      const after = byLength.filter((other) => other !== name && new RegExp(`(^|[^\\p{L}\\p{N}])[@&]?${escape(other)}($|[^\\p{L}\\p{N}])`, "iu").test(waitsFor));
       const existing = found.find((part) => part.name === name);
       if (existing)
         existing.after.push(...after.filter((other) => !existing.after.includes(other)));
@@ -11008,7 +11008,7 @@ ${job}
 ` + `
 ` + `This conversation is your seat in "${group.name}", a group chat between the user and these bots: ${who.length === 0 ? "just you" : who}, and you. ${leads}${purpose}
 ` + `
-` + `Each message you get here holds what was said in the chat since you last spoke, and means it's your turn. Your reply is posted ` + `to the chat as your message, so write it to the group: a few sentences, plain and to the point, like a colleague in a team ` + `chat. Add something new: build on what others said instead of repeating it, disagree when you do, and ask someone directly ` + `with @Name. Write to the user as "you". If you have nothing new to add, reply with just PASS.
+` + `Each message you get here holds what was said in the chat since you last spoke, and means it's your turn. Your reply is posted ` + `to the chat as your message, so write it to the group: a few sentences, plain and to the point, like a colleague in a team ` + `chat. Add something new: build on what others said instead of repeating it, disagree when you do, and ask someone directly ` + `with &Name. Write to the user as "you". If you have nothing new to add, reply with just PASS.
 ` + `
 ` + `You can look things up before you answer (read and search files, search the web) when it helps; there are no commands, subagents or messages to other agents here. ` + `Don't change files or start the work here: the chat is for talking it through. When something needs doing, say who should ` + `do it. Once the user says go, each of you gets your part in your own conversation, does it there with all your tools, and ` + `reports back here: don't send anyone the work yourself, and don't wait on it in the chat.
 ` + `
@@ -13458,4 +13458,4 @@ if (onMachine) {
 }
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
-// Built from Agents/src c80691b08e1d6ef78f5ce8a5f2ec3754de43fbb836cb859bb6317c9ba66bde07
+// Built from Agents/src 177d1dcdd76dbb14f7528df683c411b8e5d8f866ba97209a5e06d2c615871d8b
