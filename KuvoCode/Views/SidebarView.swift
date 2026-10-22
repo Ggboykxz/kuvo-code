@@ -1207,7 +1207,7 @@ private struct MoveToComputerMenu: View {
         switch thing {
         case .bot(let bot): bot.machine
         case .chat(let session): RemoteFolder.machine(of: session.location.directory)
-        case .group(let group): app.machineGroups.machine(of: group.id)
+        case .group(let group): app.chats.machine(of: group.id)
         }
     }
 

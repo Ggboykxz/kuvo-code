@@ -176,8 +176,8 @@ final class Moves {
         // One in a group chat moving now: once that's where it's going.
         if let moving = app.chats.list.first(where: { $0.members.contains(bot.id) && underWay[$0.id] != nil }) { throw Failure.working("“\(moving.name)”") }
         // One in a group chat that lives with its bots on a machine stays with it.
-        if let chat = app.machineGroups.chats.first(where: { $0.group.members.contains(bot.id) }) {
-            throw Failure.inMachineGroup(name: bot.name, chat: chat.group.name, machine: app.machines.engine(chat.machine)?.machine.name ?? chat.machine)
+        if let chat = app.chats.list.first(where: { $0.members.contains(bot.id) && app.chats.machine(of: $0.id) != nil }), let there = app.chats.machine(of: chat.id) {
+            throw Failure.inMachineGroup(name: bot.name, chat: chat.name, machine: app.machines.engine(there)?.machine.name ?? there)
         }
         guard let source = app.workspace.api(forFolder: bot.directory) else { throw Failure.notConnected(bot.machine ?? AppInfo.name) }
         guard let target = api(on: machine) else { throw Failure.notConnected(machine ?? AppInfo.name) }
@@ -340,12 +340,12 @@ final class Moves {
                 app.groups.adopt(held.group, messages: held.messages)
             }
         } catch {
-            _ = await takeBackGroup(record)
+            if await !takeBackGroup(record) { recoverSoon() }
             log.error("A group chat didn't move: \(error.localizedDescription, privacy: .public)")
             throw error
         }
         switched(&record)
-        _ = await completeGroup(record)
+        if await !completeGroup(record) { recoverSoon() }
         Analytics.shared.track("group_moved", ["to": machine == nil ? "mac" : "machine"])
     }
 
@@ -353,6 +353,7 @@ final class Moves {
     /// and it carries on where it was. Whether that's done (its machine was there).
     private func takeBackGroup(_ record: Record) async -> Bool {
         guard let app else { return false }
+        if goneElsewhere(record) { return true }
         if let to = record.to {
             guard await app.machineGroups.takeBack(record.id, on: to) else { return false }
         } else if let from = record.from {
@@ -368,6 +369,7 @@ final class Moves {
     /// Trash, or the machine's trash folder, with its seats left, as its bots live there).
     private func completeGroup(_ record: Record) async -> Bool {
         guard let app else { return false }
+        if goneElsewhere(record) { return true }
         if let to = record.to {
             await app.groups.release(record.id, toTrash: true)
             guard app.machineGroups.reachable(to) else { return false }
@@ -378,6 +380,23 @@ final class Moves {
         }
         forget(record)
         return true
+    }
+
+    /// A group chat's move to or from a machine you removed meanwhile: nothing's left to do there
+    /// (this Mac keeps what it has; a copy held there is let go if you add it again).
+    private func goneElsewhere(_ record: Record) -> Bool {
+        guard let machine = record.to ?? record.from, removed.contains(machine) else { return false }
+        forget(record)
+        return true
+    }
+
+    /// A step that failed with its machine still there (a moment's trouble): tried again soon,
+    /// rather than at the next launch or connection.
+    private func recoverSoon() {
+        Task {
+            try? await Task.sleep(for: .seconds(30))
+            await recover()
+        }
     }
 
     // MARK: The conversation
