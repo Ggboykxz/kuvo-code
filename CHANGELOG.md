@@ -6,6 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
+- An agent you name with & reads that conversation or writes to it only when what you ask needs it; a name that just comes up in your message stays a mention.
 - In a group chat you name a bot with &, as you name agents everywhere else; @ is only for files. Replying to a bot or clicking its face writes &Name.
 - The context ring of a Cursor session counts the last request Cursor reports, rather than all of a reply's requests added up.
 - The first launch after an update that changes how your things are kept backs up your lists and settings first, then brings them up to date, while the window says Updating. Each bot's name, look and job are now also kept in its own folder, on this Mac or its machine.

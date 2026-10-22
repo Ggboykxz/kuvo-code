@@ -50,6 +50,14 @@ import Testing
         #expect(named.components(separatedBy: start).count <= 2)
     }
 
+    /// A message sent before the note's words changed still reads as naming its agents.
+    @Test func anEarlierNoteStillReads() {
+        let earlier = "Ask &Scout\n\n<named-agents>\nAgents the user named with & in this message. Read one's conversation with read_conversation, or write to it with send_message, by its address:\n- &Scout (ses_x): session, on the Mac\n</named-agents>"
+        let (text, references) = AgentReferences.split(earlier)
+        #expect(text == "Ask &Scout")
+        #expect(references.map(\.session) == ["ses_x"])
+    }
+
     @Test func pickingOneWritesItsName() {
         let picked = AgentReferences.insert(agent("Fix login", "s2"), into: "Ask &fi")
         #expect(picked == "Ask &Fix login ")

@@ -120,8 +120,12 @@ nonisolated enum AgentReferences {
 
     // MARK: The block
 
-    private static let heading = "Agents the user named with & in this message. Read one's conversation with read_conversation, or write to it with send_message, by its address:"
-    private static let block = MessageBlock(start: "<named-agents>", end: "</named-agents>", headings: [heading])
+    /// What the agent is told of them: who they are, and that it decides whether what's asked needs
+    /// their conversation, a word with them, or neither (a name that only comes up).
+    private static let heading = "Agents the user named with & in this message, by their address. Read one's conversation with read_conversation only when what the user asks needs what it knows or did, and write to it with send_message only to ask it something or hand it work; when the user only mentions one, do neither:"
+    /// (What earlier messages said, still read as the block.)
+    private static let earlierHeading = "Agents the user named with & in this message. Read one's conversation with read_conversation, or write to it with send_message, by its address:"
+    private static let block = MessageBlock(start: "<named-agents>", end: "</named-agents>", headings: [heading, earlierHeading])
 
     /// `text` with the block that says who each agent it names with "&" is, as the agent in a
     /// conversation `here` (nil: on this Mac) reads it; not naming the conversation `excluding`.

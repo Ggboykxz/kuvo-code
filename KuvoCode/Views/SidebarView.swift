@@ -1229,7 +1229,7 @@ private struct MoveToComputerMenu: View {
             } else if case .group(let group) = thing, groupPlaces(group).isEmpty {
                 // A chat whose bots live on different computers, or all here, is this Mac's.
                 Text(Set(group.members.compactMap { app.bots.bot($0)?.machine }).isEmpty
-                     ? "Its bots live on this Mac" : "Its bots live on different computers, so it stays on this Mac")
+                     ? "Move its bots to a machine first; then it can go there too" : "Its bots live on different computers, so it stays on this Mac")
             } else if case .group(let group) = thing {
                 ForEach(groupPlaces(group), id: \.self) { place in
                     if let place, app.machines.engine(place)?.isReady != true {
