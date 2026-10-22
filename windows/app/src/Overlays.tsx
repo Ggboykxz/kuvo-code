@@ -9,6 +9,7 @@ import { complain, loadProjectFiles, loadSessions, notify, openProjectFile, open
 import { keysOf } from "./shortcuts";
 import { buildTree, type TreeNode } from "./filetree.mjs";
 import { openQuicklyMatches } from "./open-quickly.mjs";
+import { terminalSelectionBlock, terminalSocketUrl } from "./terminal.mjs";
 import { Symbol } from "./components/symbols";
 import { ContextMenu } from "./components/context-menu";
 
@@ -337,15 +338,19 @@ export function OpenQuickly() {
 interface Xterm {
   open(container: HTMLElement): void;
   write(data: string): void;
+  paste(data: string): void;
   focus(): void;
   onData(handler: (data: string) => void): void;
   loadAddon(addon: XtermAddon): void;
+  getSelection(): string;
+  dispose(): void;
   cols: number;
   rows: number;
 }
 
 interface XtermAddon {
   fit(): void;
+  dispose?(): void;
 }
 
 // ---- The folder picker ----
@@ -541,15 +546,43 @@ export function ProjectEditor() {
 /// project's run command in the panel's terminal (MainView.swift:1479-1491).
 let terminalSocket: WebSocket | null = null;
 let terminalWaiting: string | null = null;
+let terminalNeedsRestart = false;
+let terminalRestart: (() => void) | null = null;
+let terminalRun = 0;
 
-/// A command run in the terminal, in the project's folder: the Mac's own Run.
-export function runInTerminal(command: string, folder: string) {
+/// New Terminal (⌃`), from the Mac's menu. One shell is enough for this panel; a dead
+/// shell is restarted rather than opening a second tab that has nowhere to live.
+export function openTerminal() {
   state.drawerOpen = true;
   state.drawerTab = "terminal";
   render();
-  const line = folder ? `cd "${folder}"\r\n${command}\r\n` : `${command}\r\n`;
-  if (terminalSocket && terminalSocket.readyState === WebSocket.OPEN) terminalSocket.send(line);
-  else terminalWaiting = line;
+  if (terminalNeedsRestart) terminalRestart?.();
+}
+
+/// A command run in the terminal, in the project's folder: the Mac's own Run. A command
+/// already running is interrupted first, as TerminalSession.run does (Ctrl-C, 300 ms),
+/// rather than the new text being typed into the program that is still running.
+export function runInTerminal(command: string, folder: string) {
+  openTerminal();
+  // Single quotes are literal in PowerShell, the shell the server starts: a project
+  // folder with a `$` in its name cannot be expanded. An apostrophe is doubled, which is
+  // how PowerShell writes one inside a single-quoted string.
+  const quoted = folder.replace(/'/g, "''");
+  const line = folder ? `cd '${quoted}'\r\n${command}\r\n` : `${command}\r\n`;
+  const run = ++terminalRun;
+  if (terminalSocket && terminalSocket.readyState === WebSocket.OPEN) {
+    terminalSocket.send("\x03");
+    window.setTimeout(() => {
+      // A second Run in the 300 ms window replaces this one, rather than both commands
+      // arriving at the shell.
+      if (run !== terminalRun) return;
+      if (terminalSocket && terminalSocket.readyState === WebSocket.OPEN) terminalSocket.send(line);
+      else terminalWaiting = line;
+    }, 300);
+    return;
+  }
+  terminalWaiting = line;
+  if (terminalNeedsRestart) terminalRestart?.();
 }
 
 /// A file, as the Mac shows it: the code, numbered in a ruler beside it
@@ -632,10 +665,19 @@ function FileView({ content, path }: { content: string; path: string }) {
   );
 }
 
+type TerminalHandle = {
+  term: Xterm;
+  fit: XtermAddon | null;
+  socket: WebSocket;
+};
+
 export function Drawer() {
   useStore();
   const terminalRef = useRef<HTMLDivElement>(null);
+  const terminal = useRef<TerminalHandle | null>(null);
+  const [terminalAttempt, setTerminalAttempt] = useState(0);
   const [terminalNote, setTerminalNote] = useState("");
+  const [terminalMenu, setTerminalMenu] = useState<{ x: number; y: number; selection: string } | null>(null);
   const [fileQuery, setFileQuery] = useState("");
   const [fileMatches, setFileMatches] = useState<{ path: string; hits: { snippet: string }[] }[]>([]);
 
@@ -651,19 +693,67 @@ export function Drawer() {
     return () => clearTimeout(timer);
   }, [fileQuery, state.project]);
 
-  // The terminal: the shell's ConPTY, over a WebSocket on the port it passed.
+  /// Fit the terminal to the space it actually has, and tell the shell. The old code
+  /// waited for a window resize, so the PTY stayed 80×24 while the panel was wider.
+  const fitTerminal = () => {
+    const current = terminal.current;
+    const container = terminalRef.current;
+    if (!current || !container || container.offsetWidth === 0 || container.offsetHeight === 0) return;
+    current.fit?.fit();
+    if (current.socket.readyState === WebSocket.OPEN) {
+      current.socket.send(JSON.stringify({ type: "resize", cols: current.term.cols, rows: current.term.rows }));
+    }
+  };
+
+  const restartTerminal = () => {
+    const current = terminal.current;
+    // Forget the old handle first: its close handler must not put a note on the fresh
+    // terminal that is about to replace it.
+    terminal.current = null;
+    terminalSocket = null;
+    terminalNeedsRestart = false;
+    if (current) {
+      try { current.socket.close(); } catch { /* already closed */ }
+      try { current.fit?.dispose?.(); } catch { /* already disposed */ }
+      try { current.term.dispose(); } catch { /* already disposed */ }
+    }
+    terminalRef.current?.replaceChildren();
+    setTerminalNote("");
+    setTerminalAttempt(value => value + 1);
+  };
+
+  // The terminal stays alive when the panel is hidden or another tab is chosen: its
+  // shell is the same one when it comes back, as the Mac's terminal tab does.
   useEffect(() => {
     if (!state.drawerOpen || state.drawerTab !== "terminal") return;
     const container = terminalRef.current;
-    if (!container || container.dataset.ready === "1") return;
-    container.dataset.ready = "1";
+    if (!container) return;
+    const current = terminal.current;
+    if (current) {
+      // A live or connecting socket is kept, not replaced on every tab change. A dead
+      // one stays dead until Restart, so its last output can be read.
+      if (current.socket.readyState === WebSocket.OPEN || current.socket.readyState === WebSocket.CONNECTING) {
+        requestAnimationFrame(fitTerminal);
+      }
+      return;
+    }
+
     const port = (window as unknown as { kuvo?: { terminalPort?: number } }).kuvo?.terminalPort
       || new URLSearchParams(window.location.search).get("terminalPort");
     if (!port) { setTerminalNote("Terminal is available when running inside the Kuvo Code shell."); return; }
     const TerminalClass = (window as unknown as { Terminal?: new (options: unknown) => Xterm }).Terminal;
     if (!TerminalClass) { setTerminalNote("Terminal library failed to load."); return; }
-    const term = new TerminalClass({ convertEol: true, fontSize: 13, theme: { background: "#121316", foreground: "#d0d6e0" } });
-    const FitAddonClass = (window as unknown as { FitAddon?: new () => XtermAddon }).FitAddon;
+    const term = new TerminalClass({
+      cursorBlink: true,
+      fontSize: 13,
+      fontFamily: '"Cascadia Mono", "Cascadia Code", Consolas, monospace',
+      scrollback: 10000,
+      theme: { background: "#0d1117", foreground: "#d0d6e0" },
+    });
+    // addon-fit's browser build exposes the namespace, `{ FitAddon }`, not the class
+    // itself; keeping both shapes working means a future build cannot break the fit.
+    const fitNamespace = (window as unknown as { FitAddon?: { FitAddon?: new () => XtermAddon } | (new () => XtermAddon) }).FitAddon;
+    const FitAddonClass = typeof fitNamespace === "function" ? fitNamespace : fitNamespace?.FitAddon;
     let fitAddon: XtermAddon | null = null;
     if (FitAddonClass) {
       fitAddon = new FitAddonClass();
@@ -671,27 +761,78 @@ export function Drawer() {
     }
     term.open(container);
     fitAddon?.fit();
-    const socket = new WebSocket(`ws://127.0.0.1:${port}`);
+    const socket = new WebSocket(terminalSocketUrl(Number(port), state.project ?? "", term.cols, term.rows));
+    const handle: TerminalHandle = { term, fit: fitAddon, socket };
+    terminal.current = handle;
     terminalSocket = socket;
+    terminalNeedsRestart = false;
+
     socket.onopen = () => {
+      if (terminal.current !== handle) return;
+      terminalNeedsRestart = false;
       setTerminalNote("");
-      term.focus();
+      requestAnimationFrame(() => {
+        fitTerminal();
+        term.focus();
+      });
       // A command asked for before the terminal was there runs now.
       if (terminalWaiting) {
         socket.send(terminalWaiting);
         terminalWaiting = null;
       }
     };
-    socket.onmessage = event => term.write(typeof event.data === "string" ? event.data : "");
-    socket.onclose = event => setTerminalNote(event.reason || "Terminal closed.");
-    term.onData(data => { if (socket.readyState === WebSocket.OPEN) socket.send(data); });
-    const onResize = () => {
-      fitAddon?.fit();
-      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+    socket.onmessage = event => {
+      if (terminal.current === handle) term.write(typeof event.data === "string" ? event.data : "");
     };
-    window.addEventListener("resize", onResize);
-    return () => { window.removeEventListener("resize", onResize); socket.close(); terminalSocket = null; };
-  }, [state.drawerOpen, state.drawerTab]);
+    socket.onclose = event => {
+      if (terminal.current !== handle) return;
+      terminalSocket = null;
+      terminalNeedsRestart = true;
+      setTerminalNote(event.reason || "Terminal closed.");
+    };
+    term.onData(data => { if (socket.readyState === WebSocket.OPEN) socket.send(data); });
+  }, [state.drawerOpen, state.drawerTab, terminalAttempt]);
+
+  // The drawer's own size changes when the panel is resized, not only the window's.
+  useEffect(() => {
+    const container = terminalRef.current;
+    if (!container || typeof ResizeObserver === "undefined") return;
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(fitTerminal);
+    });
+    observer.observe(container);
+    return () => { cancelAnimationFrame(frame); observer.disconnect(); };
+  }, []);
+
+  // Coming back to a hidden terminal: fit it to the space it now has and put the caret
+  // back, without touching its shell.
+  useEffect(() => {
+    if (!state.drawerOpen || state.drawerTab !== "terminal") return;
+    const frame = requestAnimationFrame(() => {
+      fitTerminal();
+      terminal.current?.term.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [state.drawerOpen, state.drawerTab, terminalAttempt]);
+
+  useEffect(() => {
+    terminalRestart = restartTerminal;
+  });
+
+  // The app closing is the one time hiding the panel does end the shell.
+  useEffect(() => () => {
+    terminalRestart = null;
+    terminalNeedsRestart = false;
+    const current = terminal.current;
+    terminal.current = null;
+    terminalSocket = null;
+    if (current) {
+      try { current.socket.close(); } catch { /* already closed */ }
+      try { current.term.dispose(); } catch { /* already disposed */ }
+    }
+  }, []);
 
   useEffect(() => {
     if (!state.drawerOpen || state.drawerTab !== "files" || !state.project) return;
@@ -724,6 +865,14 @@ export function Drawer() {
             <span>Terminal</span>
           </button>
         </div>
+        {state.drawerTab === "terminal" ? (
+          <button id="terminal-restart" className="titlebar-icon panel-action" title="Restart Terminal" aria-label="Restart Terminal" onClick={restartTerminal}>
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+              <path d="M13 8a5 5 0 1 1-1.4-3.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+              <path d="M13 3.1v3.2H9.8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        ) : null}
         <button id="drawer-close" className="titlebar-icon panel-action" title="Hide Panel" aria-label="Hide Panel" onClick={() => { state.drawerOpen = false; render(); }}>
           <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
             <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
@@ -767,8 +916,57 @@ export function Drawer() {
         <ChangesPanel />
       </div>
       <div id="drawer-terminal" className="drawer-body" hidden={state.drawerTab !== "terminal"}>
-        <div id="terminal" ref={terminalRef} className="terminal" />
-        <div id="terminal-note" className="where">{terminalNote}</div>
+        <div
+          id="terminal"
+          ref={terminalRef}
+          className="terminal"
+          onContextMenu={event => {
+            event.preventDefault();
+            setTerminalMenu({ x: event.clientX, y: event.clientY, selection: terminal.current?.term.getSelection() ?? "" });
+          }}
+        />
+        {terminalMenu ? (
+          <ContextMenu
+            x={terminalMenu.x}
+            y={terminalMenu.y}
+            // The menu is the Mac's, and it takes the caret back when it closes: the
+            // keys typed after it belong to the shell.
+            onClose={() => {
+              setTerminalMenu(null);
+              requestAnimationFrame(() => terminal.current?.term.focus());
+            }}
+            items={[
+              {
+                label: "Add to Message",
+                disabled: !terminalMenu.selection.trim(),
+                run: () => {
+                  const block = terminalSelectionBlock(terminalMenu.selection);
+                  if (!block) return;
+                  state.addition = block;
+                  render();
+                },
+              },
+              { label: "", separator: true },
+              {
+                label: "Copy",
+                disabled: !terminalMenu.selection,
+                run: () => { void navigator.clipboard.writeText(terminalMenu.selection).catch(error => complain(error)); },
+              },
+              {
+                label: "Paste",
+                run: () => {
+                  void navigator.clipboard.readText()
+                    .then(text => { if (text) terminal.current?.term.paste(text); })
+                    .catch(error => complain(error));
+                },
+              },
+            ]}
+          />
+        ) : null}
+        <div id="terminal-note" className="where terminal-note" hidden={!terminalNote}>
+          <span>{terminalNote}</span>
+          {terminalNeedsRestart ? <button className="small" onClick={restartTerminal}>Restart Terminal</button> : null}
+        </div>
       </div>
     </section>
   );

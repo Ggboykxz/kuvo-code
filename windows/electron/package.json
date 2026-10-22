@@ -9,7 +9,8 @@
     "start": "electron .",
     "build": "electron-builder --win --publish never",
     "build:portable": "electron-builder --win portable --publish never",
-    "smoke": "node smoke.js"
+    "smoke": "node smoke.js",
+    "test:terminal": "node --test terminal.test.js"
   },
   "dependencies": {
     "node-pty": "^1.0.0",
@@ -30,6 +31,7 @@
       "main.js",
       "preload.js",
       "update-check.js",
+      "terminal.js",
       "package.json",
       "build/icon.png"
     ],

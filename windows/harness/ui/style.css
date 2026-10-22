@@ -2738,6 +2738,16 @@ main.changes-hidden .drawer.utility-pane { display: none; }
   overflow: auto;
 }
 .drawer .terminal { border-radius: 10px; }
+.terminal-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+  color: var(--ink-soft);
+  font-size: var(--text-xs);
+}
+.terminal-note[hidden] { display: none; }
+.terminal-note button.small { margin-left: auto; }
 
 /* ---- The palette: 600 pt card, 18 pt corner, 48 pt search, 30 pt rows ---- */
 .palette {

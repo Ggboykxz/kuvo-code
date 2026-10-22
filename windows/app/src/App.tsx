@@ -72,7 +72,7 @@ import {
   useStore,
 } from "./store";
 import { Settings, settingsPageTitle } from "./Settings";
-import { DiffModal, Drawer, OpenQuickly, Palette, Picker, ProjectEditor, runInTerminal, runTheProject, Toast } from "./Overlays";
+import { DiffModal, Drawer, OpenQuickly, Palette, Picker, ProjectEditor, openTerminal, runInTerminal, runTheProject, Toast } from "./Overlays";
 import { Shimmer } from "./components/ai-elements/shimmer";
 import { FolderIcon, Symbol } from "./components/symbols";
 import { ContextMenu } from "./components/context-menu";
@@ -2410,9 +2410,7 @@ function runShortcut(id: string) {
       render();
       return;
     case "terminal":
-      state.drawerOpen = true;
-      state.drawerTab = "terminal";
-      render();
+      openTerminal();
       return;
     default:
       return;

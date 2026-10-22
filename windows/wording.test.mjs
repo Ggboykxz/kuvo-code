@@ -111,6 +111,13 @@ const TRANSCRIPT = [
   "Show each step",
 ];
 
+/// The terminal's own menu, the Mac's (TerminalSession.swift:132-139).
+const TERMINAL = [
+  "Add to Message",
+  "Copy",
+  "Paste",
+];
+
 /// The strings that are ours alone, and why.
 const OURS = {
   "Before you start": "The note about what the app collects: the Windows client's facts are its own, so the Mac's wording would be a lie here.",
@@ -118,10 +125,13 @@ const OURS = {
   "Compact context": "The gauge's own action; the Mac compacts from the transcript, which this client does not have.",
   "Queue for After This Run": "The Mac's own name for the queue; ours says the same thing in the queue's own words.",
   "Show in Folder": "The Mac's \"Show in Finder\" opens the Finder; a Windows client opens the Explorer, and says so.",
+  "Restart Terminal": "The Mac's panel opens another terminal tab instead of restarting the one it has; this client keeps a single terminal, so the shell that ended is started again.",
+  "Terminal is available when running inside the Kuvo Code shell.": "The page's own words for a terminal it cannot have: the shell is the Windows client's, and the Mac's app always has one.",
+  "Terminal library failed to load.": "The page's own words when xterm itself could not be loaded; the Mac's app carries the library inside itself and cannot fail this way.",
 };
 
 test("the Mac says the shell's strings, and so does the app", () => {
-  for (const text of [...SHELL, ...TRANSCRIPT]) {
+  for (const text of [...SHELL, ...TRANSCRIPT, ...TERMINAL]) {
     assert.ok(mac.includes(`"${text}"`), `the Mac says "${text}"`);
     // In the app a string is either a quoted one or a word between two tags.
     const said = app.includes(`"${text}"`) || app.includes(`>${text}<`) || app.includes(`> ${text} <`);

@@ -7,6 +7,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { RELEASES_API, pickRelease } = require('./update-check.js');
+const { startTerminalServer: startPtyServer } = require('./terminal.js');
 let pty = null;
 try { pty = require('node-pty'); } catch (error) { console.error('node-pty unavailable:', error && error.message); }
 let WebSocketServer = null;
@@ -30,6 +31,7 @@ let harness = null;
 let harnessUrl = null;
 let terminalPort = 0;
 let terminalServer = null;
+let terminalCwd = os.homedir();
 let mainWindow = null;
 let tray = null;
 let quitting = false;
@@ -74,51 +76,23 @@ async function startHarness(project) {
     harness.on('exit', (code) => { clearTimeout(timer); reject(new Error(`the harness stopped before it was up (exit ${code})`)); });
   });
   harnessUrl = url;
+  terminalCwd = folder;
   if (project) { const c = loadConfig(); c.project = project; saveConfig(c); }
   return url;
 }
 
-function startTerminalServer() {
-  if (!WebSocketServer) return Promise.resolve(0);
-  return new Promise((resolve) => {
-    terminalServer = new WebSocketServer({ port: 0, host: '127.0.0.1' }, () => {
-      terminalPort = terminalServer.address().port;
-      resolve(terminalPort);
-    });
-    terminalServer.on('connection', (ws) => {
-      if (!pty) {
-        try { ws.close(1011, 'The terminal needs node-pty, which this build does not carry.'); } catch {}
-        return;
-      }
-      const shell = process.platform === 'win32' ? 'powershell.exe' : (process.env.SHELL || '/bin/bash');
-      let term;
-      try {
-        term = pty.spawn(shell, [], { name: 'xterm-color', cols: 80, rows: 24, cwd: os.homedir(), env: process.env });
-      } catch (error) {
-        // The page shows the reason where the terminal would be, rather than only closing.
-        // A close's reason fits 123 bytes: cut it on a character boundary that does.
-        const said = `The terminal could not start: ${String(error && error.message || error)}`;
-        let reason = said;
-        while (Buffer.byteLength(reason, 'utf8') > 120) reason = reason.slice(0, -1);
-        try { ws.close(1011, reason); } catch {}
-        return;
-      }
-      term.onData((data) => { try { ws.send(data); } catch {} });
-      ws.on('message', (raw) => {
-        const text = raw.toString();
-        try {
-          const message = JSON.parse(text);
-          if (message && message.type === 'resize' && message.cols && message.rows) {
-            term.resize(message.cols, message.rows);
-            return;
-          }
-        } catch { /* not JSON: treat as input */ }
-        term.write(text);
-      });
-      ws.on('close', () => { try { term.kill(); } catch {} });
-      term.onExit(() => { try { ws.close(); } catch {} });
-    });
+async function startTerminalServer() {
+  if (!WebSocketServer) return 0;
+  terminalServer = await startPtyServer({
+    WebSocketServer,
+    pty,
+    // The page sends the folder with each connection; this is the fallback for a reload
+    // that arrives before the page knows its project.
+    cwd: () => terminalCwd,
+    env: process.env,
   });
+  terminalPort = terminalServer.port;
+  return terminalPort;
 }
 
 function createWindow(url) {
@@ -166,6 +140,7 @@ function recentProjects() {
 }
 
 function rememberProject(project) {
+  terminalCwd = project;
   try {
     fs.mkdirSync(path.dirname(recentFile()), { recursive: true });
     const next = [project, ...recentProjects().filter(item => item !== project)].slice(0, 8);
@@ -412,7 +387,7 @@ ipcMain.on("kuvo:terminal-port", (event) => {
 });
 
 function shutdown() {
-  if (terminalServer) { try { terminalServer.close(); } catch {} terminalServer = null; }
+  if (terminalServer) { try { void terminalServer.close(); } catch {} terminalServer = null; }
   if (harness) { try { harness.kill(); } catch {} harness = null; }
 }
 
