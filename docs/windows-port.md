@@ -332,6 +332,17 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     run in the primary folder; the agent can work in the others too" — and the session in
     view is given them: the rules that allow those folders, and the note that tells the
     agent that "in chugs-pinterest" means that folder (`SessionModel.swift:1379-1405`).
+  - **2.92 (this change). Three of the settings pages the port was missing.** The Mac's
+    Settings has Notifications, Privacy and Panel pages (`GeneralSettings.swift:166-230`,
+    `BrowserSettings.swift:5-30`) that the port did not draw. They are drawn now, with the
+    Mac's words and toggles: Notifications (sessions, a sound, the count on the taskbar
+    icon, and the system's notification settings), Privacy (anonymous usage, what is sent,
+    and where the data lives), and Panel (what it starts with, whether it shows itself
+    when the agent browses, tidying the agents' tabs, and the new tab page). The values
+    stay in the app's own store; the system notification settings open in Windows'
+    Settings. The port's own settings list is now missing only the surfaces it does not
+    have yet: Accounts, Auto, Worktrees, Machines, Integrations, Browser, Passwords, Phone
+    and Storage (Storage lives in Engine & Storage).
   - **2.91 (this change). The terminal is the Mac's terminal.** The port's panel had one
     terminal tab, but its page marked the container ready once and never cleared it, so
     hiding the panel or choosing Files/Changes came back to a dead socket; and addon-fit's

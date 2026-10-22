@@ -54,6 +54,9 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | Mac | Windows |
 | --- | --- |
 | `GeneralSettings` | ✅ (mises à jour, démarrage à l'login, veille, import opencode) |
+| `NotificationSettings` | ✅ (0.5.96 : sessions, son, compteur sur l'icône, lien vers les réglages système) |
+| `PrivacySettings` | ✅ (0.5.96 : partage anonyme, ce qui est envoyé, raccourcis vers le stockage, le navigateur et les mots de passe) |
+| `PanelSettings` | ✅ (0.5.96 : ce avec quoi le panneau démarre, affichage à la navigation de l'agent, rangement des onglets, page Nouvel onglet) |
 | `AppearanceSettings` | ✅ (accent, thème, taille du texte, mouvement) |
 | `ShortcutsSettings` | ✅ la liste, cherchable ; les raccourcis sont câblés et **enregistrables** (l'enregistreur du Mac : clic, puis les touches) |
 | `UsageKit` (le panneau de la barre des menus) | ◐ l'usage du moteur : ce que l'agent a dépensé, par modèle et par session. Les forfaits des fournisseurs (Copilot, Codex, Grok, OpenRouter, Z.ai) demanderaient la clé du fournisseur — on ne la prend pas. |

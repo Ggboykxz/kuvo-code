@@ -149,7 +149,10 @@ Appearance, and Help's links (`KuvoCodeApp.swift:130-229`) — with closed-tab h
 terminal became the Mac's terminal (`TerminalSession.swift`): one ConPTY that survives
 hiding the panel and switching tabs, starts in the project at the page's real grid, fits
 when it is visible, says why it ended and can be restarted, interrupts what is running
-before *Run*, and carries the Mac's *Add to Message*, *Copy* and *Paste* menu. The port's own
+before *Run*, and carries the Mac's *Add to Message*, *Copy* and *Paste* menu. In 0.5.96
+three of the settings pages the port was missing are drawn: Notifications, Privacy and
+Panel (`GeneralSettings.swift:166-230`, `BrowserSettings.swift:5-30`), with the Mac's words
+and toggles. The port's own
 list of what is left is now: the two structures that are the Mac's alone — the Auto rail of
 the model picker (the coding agents' accounts, which a Windows client has no accounts for)
 and the pair style of the tab bar (a split pair shown as one tab, where the port's split is
