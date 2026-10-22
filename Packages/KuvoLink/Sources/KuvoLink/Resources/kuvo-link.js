@@ -22,7 +22,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 // Goes up with every change, so `setup` replaces a running bridge that's older.
-export const BRIDGE_VERSION = "0.7.3";
+export const BRIDGE_VERSION = "0.7.4";
 const K = process.env.KUVO_HOME || path.join(os.homedir(), ".kuvo-code");
 const RUN = path.join(K, "run");
 export const LINK_FILE = path.join(RUN, "link.json");
@@ -676,6 +676,12 @@ export function engineHandler(readEngine = readEngineFile, info = {}, readBridge
       yield { body: Buffer.from(JSON.stringify({ bots: listBots(info.name) })) };
       return;
     }
+    if (request.path.split("?")[0] === "kuvo/wakes") {
+      if (!["GET", "HEAD"].includes(request.method.toUpperCase())) return yield* text(405, "Read them with GET.");
+      yield { head: { status: 200, headers: { "content-type": "application/json" } } };
+      yield { body: Buffer.from(JSON.stringify({ sessions: listWakes() })) };
+      return;
+    }
     const wakes = request.path.split("?")[0].match(/^kuvo\/wakes\/([^/]+)(?:\/(cancel|now))?$/);
     if (wakes) {
       let session;
@@ -877,6 +883,21 @@ export function wakeFolder(session) {
   }
   const own = path.join(SESSION_WAKES, session);
   return textOf(path.join(own, "session")) === null ? null : own;
+}
+
+// Each session here with a wake-up or a watch, as the Mac lists them in `kuvo/wakes`: its soonest
+// wake-up and whether it watches. Bots' come with `kuvo/bots`.
+export function listWakes() {
+  const sessions = [];
+  for (const name of listOf(SESSION_WAKES)) {
+    const folder = path.join(SESSION_WAKES, name);
+    const session = (textOf(path.join(folder, "session")) ?? "").trim();
+    if (!session) continue;
+    const { wakes, watches } = readWakes(folder);
+    if (!wakes.length && !watches.length) continue;
+    sessions.push({ session, ...(wakes.length ? { next: wakes[0].due } : {}), watching: watches.length > 0 });
+  }
+  return sessions;
 }
 
 // A folder's waiting wake-ups (soonest first), its watches, and whether you paused them.

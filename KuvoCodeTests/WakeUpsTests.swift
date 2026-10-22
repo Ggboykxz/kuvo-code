@@ -1,4 +1,5 @@
 import Foundation
+import KuvoLink
 import OpenCodeKit
 import Testing
 @testable import KuvoCode
@@ -90,6 +91,26 @@ import Testing
         await app.wakeUps.archived(try #require(app.workspace.session(id)), false)
         #expect(!FileManager.default.fileExists(atPath: folder(id, "paused")))
         #expect(!app.wakeUps.paused.contains(id))
+    }
+
+    /// A phone lists every session that waits at once, for the marks beside them in its list: the
+    /// soonest wake-up, and whether it watches.
+    @Test func aPhoneSeesWhichSessionsWait() async throws {
+        await start()
+        defer { done() }
+        let made = await app.wakeUps.call("schedule_wake_up", arguments: ["when": "+2h", "note": "Look again"], caller: id)
+        #expect(!made.isError, "\(made.text)")
+        let link = PhoneLink()
+        link.wakeUps = app.wakeUps
+        var listed = Data()
+        for try await part in PhoneLink.respond(to: LinkRequest(path: "kuvo/wakes"), link: link, engine: URL(string: Self.engine + "/")!, password: nil, agents: nil) {
+            if case .body(let data) = part { listed += data }
+        }
+        let sessions = try #require((try JSONSerialization.jsonObject(with: listed) as? [String: Any])?["sessions"] as? [[String: Any]])
+        #expect(sessions.map { $0["session"] as? String } == [id])
+        let next = try #require(sessions.first?["next"] as? Double)
+        #expect(abs(next - Date.now.addingTimeInterval(7200).timeIntervalSince1970) < 120)
+        #expect(sessions.first?["watching"] as? Bool == false)
     }
 
     /// The prompts the engine was sent for the session, each a wake-up's.

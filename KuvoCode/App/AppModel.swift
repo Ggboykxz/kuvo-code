@@ -321,6 +321,7 @@ final class AppModel {
             #endif
             phoneLink.readyMachines = { [weak self] in self?.machines.engines.values.filter(\.isReady) ?? [] }
             phoneLink.bots = bots
+            phoneLink.wakeUps = wakeUps
             phoneLink.browserAsks = browserAsks
             phoneLink.groups = chats
             phoneLink.workspace = workspace

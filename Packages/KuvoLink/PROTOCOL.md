@@ -271,7 +271,11 @@ itself. A host serves:
   {"message"}` when it couldn't go. A Mac answers for its sessions and its machines'; a
   machine's bridge (from 0.6.0) for its own sessions and bots, with the Mac closed too (a
   session that keeps none answers an empty list). A wake-up reaches the conversation as a
-  message starting with `[Wake-up] `.
+  message starting with `[Wake-up] `. `GET kuvo/wakes` lists every session with a wake-up or a
+  watch at once, for the marks beside them in a list: `{"sessions": [{session, next, watching}]}`
+  (`next`, the soonest, in seconds since 1970, left out when it has none). Bots' come with
+  `kuvo/bots`. A Mac lists its sessions' and those it has read of its machines'; a machine's
+  bridge (from 0.7.4) its own.
 - On a Mac, `kuvo/asks`: what agents ask you for while they browse, on the Mac or a machine: a
   sign-in (the fields the page has, and the accounts Passwords keeps for the site, never
   their passwords), a one-time code, or a step only you can do. `kuvo/asks/events` is the same

@@ -132,6 +132,19 @@ test("kuvo/wakes reads a bot's or a session's wake-ups, watches and pause", asyn
   // One that keeps none, and one that can't name a folder: nothing waiting.
   assert.deepEqual((await ask(handle, "GET", "kuvo/wakes/ses_other")).json, { wakes: [], watches: [], paused: false });
   assert.deepEqual((await ask(handle, "GET", "kuvo/wakes/..%2F..%2Fetc")).json, { wakes: [], watches: [], paused: false });
+
+  // All at once, for the marks beside them: each session's soonest and whether it watches; bots' come with kuvo/bots.
+  const watching = path.join(home, "wakes", "ses_watch");
+  write(path.join(watching, "session"), "ses_watch");
+  write(path.join(watching, "watches", "Ww2", "check"), "test -f done");
+  write(path.join(path.join(home, "wakes", "ses_none"), "session"), "ses_none");
+  const all = await ask(handle, "GET", "kuvo/wakes");
+  assert.equal(all.status, 200);
+  assert.deepEqual(all.json.sessions.sort((a, b) => a.session.localeCompare(b.session)), [
+    { session: "ses_plain", next: 1792000900, watching: false },
+    { session: "ses_watch", watching: true },
+  ]);
+  assert.equal((await ask(handle, "POST", "kuvo/wakes")).status, 405);
 });
 
 test("a wake-up or watch is cancelled by its letters; nothing else goes", async () => {

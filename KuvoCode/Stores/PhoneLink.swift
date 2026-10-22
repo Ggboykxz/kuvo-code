@@ -49,6 +49,8 @@ final class PhoneLink {
     /// Your bots, for `kuvo/bots`: the phone draws and describes each as the Mac does; set by
     /// AppModel.
     @ObservationIgnored weak var bots: Bots?
+    /// Every conversation's wake-ups and watches, for `kuvo/wakes`; set by AppModel.
+    @ObservationIgnored weak var wakeUps: WakeUps?
     /// What agents ask you for while they browse, for `kuvo/asks`: a phone answers them as the
     /// cards in the window do; set by AppModel.
     @ObservationIgnored weak var browserAsks: BrowserAsks?
@@ -523,6 +525,20 @@ final class PhoneLink {
             return (200, (try? encoder.encode(Hosts(hosts: hosts))) ?? Data())
         case "kuvo/asks":
             return (200, asksJSON())
+        case "kuvo/wakes":
+            // Every session's with a wake-up or a watch, for the marks beside it as in the sidebar:
+            // its soonest wake-up (seconds since 1970) and whether it watches. Bots' come with `kuvo/bots`.
+            struct Listed: Encodable {
+                struct Entry: Encodable { var session: String; var next: Double?; var watching: Bool }
+                var sessions: [Entry]
+            }
+            let wakes = wakeUps?.wakes ?? [:]
+            let watches = wakeUps?.watches ?? [:]
+            let keys = Set(wakes.filter { !$0.value.isEmpty }.keys).union(watches.filter { !$0.value.isEmpty }.keys).filter { bots?.bot($0) == nil }
+            let entries = keys.sorted().map { key in
+                Listed.Entry(session: key, next: wakes[key]?.map(\.due).min()?.timeIntervalSince1970, watching: watches[key]?.isEmpty == false)
+            }
+            return (200, (try? JSONEncoder().encode(Listed(sessions: entries))) ?? Data())
         case "kuvo/groups":
             return (200, groupsJSON())
         case "kuvo/usage":
