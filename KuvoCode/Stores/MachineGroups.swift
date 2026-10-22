@@ -31,7 +31,10 @@ final class MachineGroups {
     /// Chats being read whole now, and what their machine said of them meanwhile, so the read
     /// (from before) doesn't take it away.
     @ObservationIgnored private var arriving: [String: [GroupMessage]] = [:]
-    @ObservationIgnored private var updatedWhileListing: Set<String>?
+    /// Reads of a chat's messages under way, by ID: what arrives is kept until the last is through.
+    @ObservationIgnored private var reloading: [String: Int] = [:]
+    /// Chats a machine said something of (changed or gone) while its list was being read, by machine.
+    @ObservationIgnored private var touchedWhileListing: [String: Set<String>] = [:]
     private let log = Logger(subsystem: "run.kuvo.code", category: "machine-groups")
 
     private static var file: URL { AppInfo.supportDirectory.appending(path: "machine-groups.json") }
@@ -81,8 +84,8 @@ final class MachineGroups {
         guard let api = api(machine) else { return }
         await giveSettings(to: machine)
         let listed: [Listed]
-        updatedWhileListing = []
-        defer { updatedWhileListing = nil }
+        touchedWhileListing[machine] = []
+        defer { touchedWhileListing[machine] = nil }
         do {
             listed = try await api.machineGroups()
         } catch let error as ServerError where error.status == 404 {
@@ -95,28 +98,32 @@ final class MachineGroups {
         }
         running.insert(machine)
         let ids = Set(listed.map(\.group.id))
+        // What it said of a chat since the list was read is newer than the list.
+        let touched = touchedWhileListing[machine] ?? []
         // Gone there (deleted elsewhere, or moved away): gone here too; not one moving there now.
-        for gone in chats.filter({ $0.machine == machine && !ids.contains($0.group.id) && app?.moves.isMoving($0.group.id) != true }) { forget(gone.group.id) }
+        for gone in chats.filter({ $0.machine == machine && !ids.contains($0.group.id) && !touched.contains($0.group.id) && app?.moves.isMoving($0.group.id) != true }) {
+            forget(gone.group.id)
+        }
         for chat in listed {
-            // What it said since the list was read is newer.
-            if updated.contains(chat.group.id) { continue }
-            // One held there for a move that isn't under way, which this Mac has (a move taken back
-            // that couldn't let it go there): let go now, its seats left.
-            if chat.status == "held", app?.groups.group(chat.group.id) != nil, app?.moves.isMoving(chat.group.id) != true, app?.moves.isPending(chat.group.id) != true {
-                _ = try? await api.machineGroupAction(chat.group.id, "release")
-                forget(chat.group.id)
-                continue
+            if touched.contains(chat.group.id) {
+                // Gone meanwhile: stays gone.
+                guard has(chat.group.id) else { continue }
+            } else {
+                // One held there for a move that isn't under way, which this Mac has (a move taken
+                // back that couldn't let it go there): let go now, its seats left.
+                if chat.status == "held", app?.groups.group(chat.group.id) != nil, app?.moves.isMoving(chat.group.id) != true, app?.moves.isPending(chat.group.id) != true {
+                    _ = try? await api.machineGroupAction(chat.group.id, "release")
+                    forget(chat.group.id)
+                    continue
+                }
+                apply(chat.group, held: chat.status == "held", state: chat.state, on: machine)
             }
-            apply(chat.group, held: chat.status == "held", state: chat.state, on: machine)
             // Its messages, unless the last one is the one here already.
             if logs[chat.group.id]?.last?.id != chat.last?.id || chat.last == nil { await reload(chat.group.id) }
         }
         app?.workspace.seats.formUnion(seatIDs)
         app?.workspace.runsOnAgents(agentSeatIDs)
     }
-
-    /// What was said of chats while their list was being read, by ID.
-    private var updated: Set<String> { updatedWhileListing ?? [] }
 
     /// A machine you removed: its chats go from here (they stay there, for when you add it again).
     func forget(machine: String) {
@@ -153,7 +160,7 @@ final class MachineGroups {
             switch event.type {
             case "kuvo.group.updated":
                 let updated = try decoded(event, as: Updated.self)
-                updatedWhileListing?.insert(updated.id)
+                touchedWhileListing[machine]?.insert(updated.id)
                 apply(updated.group, held: updated.status == "held", state: updated.state, on: machine)
                 app?.workspace.seats.formUnion(updated.group.seats.values)
                 if let agentSeats = updated.group.agentSeats { app?.workspace.runsOnAgents(agentSeats) }
@@ -169,7 +176,9 @@ final class MachineGroups {
                 let id = try decoded(event, as: Named.self).id
                 Task { await reload(id) }
             case "kuvo.group.deleted":
-                forget(try decoded(event, as: Named.self).id)
+                let id = try decoded(event, as: Named.self).id
+                touchedWhileListing[machine]?.insert(id)
+                forget(id)
             case "kuvo.group.met":
                 let met = try decoded(event, as: Met.self)
                 guard let last = met.last else {
@@ -204,6 +213,9 @@ final class MachineGroups {
         var last: GroupMessage?
     }
 
+    /// A time as a machine says it: whole seconds.
+    private static func seconds(_ date: Date) -> TimeInterval { date.timeIntervalSince1970.rounded(.down) }
+
     private func decoded<Value: Decodable>(_ event: ServerEvent, as type: Value.Type) throws -> Value {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -213,7 +225,8 @@ final class MachineGroups {
     private func apply(_ group: BotGroup, held: Bool, state: State, on machine: String) {
         var group = group
         // Looked at here while its machine was away: that stands, and it's said there.
-        if let seen = chat(group.id)?.group.viewed, seen > (group.viewed ?? .distantPast) {
+        // (In whole seconds, as it's said there.)
+        if let seen = chat(group.id)?.group.viewed, Self.seconds(seen) > Self.seconds(group.viewed ?? .distantPast) {
             group.viewed = seen
             if let api = api(machine) {
                 let viewed = ISO8601DateFormatter().string(from: seen)
@@ -234,8 +247,13 @@ final class MachineGroups {
     /// A chat's messages, read again whole.
     func reload(_ id: String) async {
         guard let machine = machine(of: id), let api = api(machine) else { return }
-        arriving[id] = []
-        defer { arriving[id] = nil }
+        // (Another read of it under way keeps what arrives for both.)
+        if reloading[id, default: 0] == 0 { arriving[id] = [] }
+        reloading[id, default: 0] += 1
+        defer {
+            reloading[id, default: 1] -= 1
+            if reloading[id] == 0 { reloading[id] = nil; arriving[id] = nil }
+        }
         guard let read = try? await api.machineGroup(id) else { return }
         apply(read.group, held: read.status == "held", state: read.state, on: machine)
         // What came while it was read: kept (the read is from before it).
@@ -292,7 +310,7 @@ final class MachineGroups {
     func markViewed(_ id: String) {
         Notifier.shared.clear(session: BotGroups.tabKey(id))
         guard let index = chats.firstIndex(where: { $0.group.id == id }), isUnread(chats[index].group) else { return }
-        let now = Date.now
+        let now = Date(timeIntervalSince1970: Self.seconds(.now))
         chats[index].group.viewed = now
         save()
         guard let api = api(chats[index].machine) else { return }

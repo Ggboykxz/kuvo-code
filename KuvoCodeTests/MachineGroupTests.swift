@@ -175,6 +175,28 @@ import Testing
         #expect(!app.chats.list.contains { $0.id == "grp_box0000001" })
     }
 
+    /// Looked at here: told there once, not again each time the machine says it back (in whole
+    /// seconds, as it keeps times).
+    @Test func aLookIsToldOnce() async throws {
+        defer { Self.clean(); mac.stop() }
+        try saveBots([("bot_pal", "Pal", "box"), ("bot_lb", "Lokum Builder", "box")])
+        held.add(Self.group("grp_box0000001", members: ["bot_pal", "bot_lb"]), messages: [Self.said])
+        let app = app()
+        await app.machineGroups.connected("box")
+        let told = { held.actions.filter { $0 == "PATCH grp_box0000001" }.count }
+        app.chats.markViewed("grp_box0000001")
+        for _ in 0..<50 where told() == 0 { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(told() == 1)
+        let seen = try #require(app.chats.group("grp_box0000001")?.viewed)
+        var group = Self.group("grp_box0000001", members: ["bot_pal", "bot_lb"])
+        group["viewed"] = ISO8601DateFormatter().string(from: seen)
+        app.machineGroups.handle(try bridge.event("kuvo.group.updated", ["id": "grp_box0000001", "group": group, "status": "active",
+                                                                          "state": ["discussing": false, "paused": false]]), machine: "box")
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(told() == 1, "not told again")
+        #expect(app.chats.group("grp_box0000001")?.viewed == seen)
+    }
+
     @Test func aChatWhoseBotsLiveOnAMachineMovesThereAndBack() async throws {
         defer { Self.clean(); mac.stop() }
         try saveBots([("bot_pal", "Pal", "box"), ("bot_lb", "Lokum Builder", "box")])
