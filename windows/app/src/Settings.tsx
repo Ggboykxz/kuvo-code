@@ -45,6 +45,7 @@ const PAGES = [
   ["commands", "Commands"],
   ["projects", "Projects"],
   ["providers", "Providers"],
+  ["accounts", "Accounts"],
   ["usage", "Usage"],
   ["git", "Git"],
   ["worktrees", "Worktrees"],
@@ -65,7 +66,7 @@ const PAGES = [
 
 const PAGE_GROUPS = [
   ["Kuvo Code", ["appearance", "general", "keyboard", "notifications", "privacy"]],
-  ["Models", ["providers", "usage", "auto"]],
+  ["Models", ["providers", "accounts", "usage", "auto"]],
   ["Agent", ["mcp", "agents", "skills", "commands", "permissions", "system"]],
   ["Projects", ["projects", "git", "worktrees", "machines", "archived"]],
   ["Side Panel", ["panel", "browser", "passwords"]],
@@ -89,6 +90,7 @@ const PAGE_SUBTITLES: Record<string, string> = {
   commands: "Prompts you use often, run by typing / and their name.",
   projects: "The folders and sessions you work in.",
   providers: "Sign in with a subscription you already have, or add an API key. Credentials stay on this machine.",
+  accounts: "What's connected, the popular providers, and every other one the engine knows.",
   git: "Branches, commits and pull requests made from Kuvo Code.",
   worktrees: "Where they go, and the ones sessions have, with what each takes.",
   storage: "Where this machine keeps things, and what the engine is running.",
@@ -206,6 +208,7 @@ export function Settings() {
       case "commands": return <CommandsPage />;
       case "projects": return <ProjectsPage />;
       case "providers": return <ProvidersPage />;
+      case "accounts": return <AccountsPage />;
       case "usage": return <UsagePage />;
       case "git": return <GitPage />;
       case "worktrees": return <WorktreesPage />;
@@ -297,6 +300,7 @@ const PAGE_SYMBOLS: Record<string, SymbolName> = {
   commands: "slash.circle",
   projects: "folder",
   providers: "person.crop.circle",
+  accounts: "person.crop.circle",
   usage: "gauge.with.dots.needle.50percent",
   git: "arrow.triangle.branch",
   worktrees: "arrow.triangle.branch",
@@ -1122,6 +1126,45 @@ function MachinesPage() {
           <button className="small" disabled>Add Machine…</button>
         </SettingRow>
       </SettingGroup>
+    </>
+  );
+}
+
+/// Accounts: what's connected, the popular providers, and every other one the engine knows.
+function AccountsPage() {
+  const [integrations, setIntegrations] = useState<{ id: string; name?: string; connections?: unknown[] }[]>([]);
+  const [connecting, setConnecting] = useState<string | null>(null);
+  useEffect(() => {
+    void api<{ integrations: { id: string; name?: string; connections?: unknown[] }[] }>("/api/integrations")
+      .then(answer => setIntegrations(answer.integrations ?? []))
+      .catch(() => setIntegrations([]));
+  }, []);
+  const connect = async (id: string) => {
+    setConnecting(id);
+    try {
+      await api(`/api/integrations/${encodeURIComponent(id)}/connect`, { method: "POST" }).catch(() => {});
+    } catch (error) { complain(error); }
+    setConnecting(null);
+    void api<{ integrations: { id: string; name?: string; connections?: unknown[] }[] }>("/api/integrations")
+      .then(answer => setIntegrations(answer.integrations ?? []))
+      .catch(() => {});
+  };
+  return (
+    <>
+      <SettingGroup title="Accounts">
+        {integrations.length === 0 ? <div className="settings-note">Loading…</div> : integrations.map(one => (
+          <SettingRow key={one.id} label={one.name ?? one.id} note={(one.connections ?? []).length ? "Connected" : "Not connected"}>
+            {(one.connections ?? []).length ? (
+              <span className="where">Connected</span>
+            ) : (
+              <button className="small" disabled={connecting === one.id} onClick={() => void connect(one.id)}>
+                {connecting === one.id ? "Connecting…" : "Connect…"}
+              </button>
+            )}
+          </SettingRow>
+        ))}
+      </SettingGroup>
+      <div className="settings-note">Sign in with a subscription you already have, or add an API key. Credentials stay on this machine. The Providers page is where you add your own.</div>
     </>
   );
 }
