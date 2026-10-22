@@ -332,6 +332,10 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     run in the primary folder; the agent can work in the others too" — and the session in
     view is given them: the rules that allow those folders, and the note that tells the
     agent that "in chugs-pinterest" means that folder (`SessionModel.swift:1379-1405`).
+  - **2.94 (this change). New Project and New Chat, in the menu.** The Mac's File
+    menu carries *New Project…* (⇧⌘N) and *New Chat* (⌥⌘N); the port drew neither. They
+    are drawn now, and ask the page to do them: *New Project…* opens the folder picker,
+    *New Chat* starts a session.
   - **2.93 (this change). Worktrees, the Mac's way.** The Mac gives a session its own
     copy of the project on a branch of its own, so its changes stay apart
     (`Workspace.swift:201-216`, `GitSettings.swift:60-136`); the port had none. The harness
