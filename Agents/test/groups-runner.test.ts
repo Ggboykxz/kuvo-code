@@ -31,6 +31,7 @@ class Engine {
   stuck = new Set<string>()
   private busy = new Set<string>()
   private queued = new Map<string, { id: string }[]>()
+  private deleted = new Set<string>()
 
   constructor() {
     this.server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: (request) => this.answer(request) })
@@ -66,6 +67,13 @@ class Engine {
     if (url.pathname === "/api/session/active") return ok(Object.fromEntries([...this.busy].map((id) => [id, { type: "busy" }])))
     const session = parts[2]
     const what = parts[3]
+    // A seat deleted: gone, its run with it.
+    if (request.method === "DELETE" && !what) {
+      this.deleted.add(session)
+      this.busy.delete(session)
+      return ok()
+    }
+    if (this.deleted.has(session)) return Response.json({ message: "No such session." }, { status: 404 })
     if (request.method === "GET" && !what) return ok({ id: session, model: { id: "m", providerID: "p" } })
     if (what === "prompt" && this.stuck.has(this.seats.get(session) ?? "")) {
       this.queued.set(session, [...(this.queued.get(session) ?? []), { id: body.id }])
@@ -247,6 +255,19 @@ describe("a group chat on a machine", () => {
     await Bun.sleep(700)
     expect(groups.get("grp_team000001")!.messages.map((message) => message.author ?? "you")).toEqual(["you"])
     expect(engine.requests.some((request) => request.path.endsWith("/interrupt"))).toBe(true)
+  })
+
+  test("a bot taken out of the chat as it speaks: the chat goes on without it", async () => {
+    const { groups } = runner()
+    engine.lines = { Ada: ["A long answer."], Ben: ["Here."] }
+    // Never done by itself.
+    engine.slow.set("Ada", 60_000)
+    groups.put(group(), [], "active", false)
+    groups.send("grp_team000001", "Go")
+    await until(() => groups.talk("grp_team000001").speaking === "bot_ada" && engine.prompts().length > 0)
+    await groups.update("grp_team000001", { members: ["bot_ben"] })
+    await until(() => !groups.talk("grp_team000001").discussing)
+    expect(groups.get("grp_team000001")!.messages.some((message) => message.author === "bot_ben")).toBe(true)
   })
 
   test("a bot whose message stays queued (held after a stop) is woken, then passes", async () => {

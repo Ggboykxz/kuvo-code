@@ -18,6 +18,7 @@ export async function groupRoutes(runner: GroupRunner | undefined, store: GroupS
   // What the Mac says for every chat here: personalities, Ask First, what's denied, the time zone.
   if (id === "settings" && method === "PUT") {
     const value = await body()
+    const before = store.settings()
     store.writeSettings({
       personalities: value?.personalities && typeof value.personalities === "object" ? value.personalities : {},
       identityNote: typeof value?.identityNote === "string" ? value.identityNote : "",
@@ -26,6 +27,8 @@ export async function groupRoutes(runner: GroupRunner | undefined, store: GroupS
       timeZone: typeof value?.timeZone === "string" ? value.timeZone : undefined,
       locale: typeof value?.locale === "string" ? value.locale : undefined,
     })
+    const after = store.settings()
+    if (JSON.stringify([before?.askFirst, before?.denies]) !== JSON.stringify([after?.askFirst, after?.denies])) runner.rulesChanged()
     return json({})
   }
   if (!/^grp_[a-z0-9]+$/.test(id)) return error(404, "No such chat.")

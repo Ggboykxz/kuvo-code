@@ -102,6 +102,11 @@ export class GroupRunner {
   private declined = new Set<string>()
   /** Seats whose rules were brought up to date since this runner started, and what each was last told. */
   private seatsChecked = new Set<string>()
+
+  /** What's asked first or denied changed: each seat is told again at its next turn. */
+  rulesChanged() {
+    this.seatsChecked.clear()
+  }
   private seatTexts = new Map<string, string>()
   private syncs = new Map<string, ReturnType<typeof setTimeout>>()
   private meetings?: ReturnType<typeof setTimeout>
@@ -294,6 +299,8 @@ export class GroupRunner {
         if (group.retracted) delete group.retracted[bot]
       }
     }
+    // The same as it was (a look already noted): nothing to tell.
+    if (JSON.stringify(group) === JSON.stringify(old)) return true
     this.changed(id)
     if (edits.meeting !== undefined) this.scheduleMeetings(0)
     for (const { bot, seat } of leaving) await this.deleteSeat(seat, old, bot)
@@ -611,7 +618,10 @@ export class GroupRunner {
           if (at >= 0 ? read!.data.slice(at + 1).some((message) => message?.type === "idle") : read ? ++gone >= 3 : false) return
           if (at >= 0) gone = 0
           idleSince = undefined
-        } else if (inbox) {
+        } else if (!inbox) {
+          // Its seat is gone (the bot left the chat as it spoke): nothing more comes.
+          if (++gone >= 3) return
+        } else {
           // Still waiting on a seat that isn't at work (held there after a stop): woken, then let go.
           idleSince ??= Date.now()
           if (Date.now() - idleSince > 8_000 * pace) {
