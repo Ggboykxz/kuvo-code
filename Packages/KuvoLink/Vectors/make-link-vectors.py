@@ -54,6 +54,8 @@ routes = [{"path": p, "allowed": a} for p, a in [
     # A sign joined with a mark after it (one character to some checks): still that sign to URL parsers.
     ("api/experimental/session/import#\u0301/wait", False), ("api/session/ses_1#\u0301/../../credential", False),
     ("api/fs/read/Re\u0301sume\u0301.txt", True),
+    # The same, encoded: ".." with a joining mark after it, once decoded.
+    ("api/session/%2e%2e\u200d/credential", False), ("api/session/%2e%2e\u0301/credential", False),
     # A space at either end, which URL parsers drop.
     ("api/session/ses_1/prompt ", False), (" api/session", False), ("api/fs/read/a%20b.txt", True),
     ("api/fs/read/..%5c..%5csecret", False), ("api/fs/read/a%5cb", False), ("api/fs/read/bad%E0%A4%A", False),
@@ -94,6 +96,7 @@ sockets = [{"path": p, "allowed": a} for p, a in [
     ("api/pty/pty_1", False), ("api/pty", False), ("api/event", False), ("api/pty/pty_1/connect/x", False),
     ("api/pty/a/b/connect", False), ("api/pty/%2e%2e/connect", False), ("api/pty/..%5cx/connect", False),
     ("api/experimental/persistent-pty/pty_1/connect", False), ("api/session/ses_1/connect", False),
+    ("api/pty/%2e%2e\u200d/connect", False),
 ]]
 
 # What a phone may ask the coding agents' bridge for, on a Mac or a machine (`kuvo/agents/api/…`,
@@ -115,6 +118,7 @@ agent_routes = [{"path": p, "allowed": a, "method": m} for p, a, m in [
     ("api/kuvo/engine  ", False, "PUT"),
     ("api/integration/claude-code/update#\u0301", False, "POST"), ("api/integration/claude-code/update?\u0301", False, "POST"),
     ("api/integration/claude-code/update/\u0301", False, "POST"), ("api/kuvo/engine#\u200d", False, "PUT"),
+    ("api/integration/claude-code/update%3F\u0301", False, "POST"),
 ]]
 
 json.dump({"addresses": addresses, "relay": relay, "frames": frames, "messages": messages, "routes": routes, "sockets": sockets,

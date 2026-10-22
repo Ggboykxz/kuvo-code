@@ -91,9 +91,20 @@ public enum EngineRoutes {
     static func staysInProject(_ path: String) -> Bool {
         guard !path.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7f }),
               path.unicodeScalars.first != " ", path.unicodeScalars.last != " ",
-              !path.contains(where: { $0.unicodeScalars.count > 1 && $0.unicodeScalars.contains { $0.isASCII && !$0.properties.isAlphabetic && !("0"..."9").contains($0) } }),
-              let decoded = path.removingPercentEncoding else { return false }
-        return !decoded.contains("..") && !decoded.contains("\\") && !path.contains("..") && !path.contains("#")
+              !joinsASign(path), let decoded = path.removingPercentEncoding, !joinsASign(decoded) else { return false }
+        // As bytes, as parsers read them, not characters ("..\u{200D}" is ".." to them).
+        return !has("..", in: decoded) && !has("\\", in: decoded) && !has("..", in: path) && !has("#", in: path)
+    }
+
+    /// A sign other than a letter or digit, joined into one character with what follows it.
+    private static func joinsASign(_ text: String) -> Bool {
+        text.contains { $0.unicodeScalars.count > 1 && $0.unicodeScalars.contains { $0.isASCII && !$0.properties.isAlphabetic && !("0"..."9").contains($0) } }
+    }
+
+    private static func has(_ part: String, in text: String) -> Bool {
+        let bytes = Array(text.utf8), wanted = Array(part.utf8)
+        guard bytes.count >= wanted.count else { return false }
+        return (0...(bytes.count - wanted.count)).contains { Array(bytes[$0..<($0 + wanted.count)]) == wanted }
     }
 
     static let requestHeaders = ["content-type", "accept", "x-opencode-directory", "last-event-id"]

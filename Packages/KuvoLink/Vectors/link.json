@@ -302,6 +302,14 @@
       "allowed": true
     },
     {
+      "path": "api/session/%2e%2e\u200d/credential",
+      "allowed": false
+    },
+    {
+      "path": "api/session/%2e%2e\u0301/credential",
+      "allowed": false
+    },
+    {
       "path": "api/session/ses_1/prompt ",
       "allowed": false
     },
@@ -622,6 +630,10 @@
     {
       "path": "api/session/ses_1/connect",
       "allowed": false
+    },
+    {
+      "path": "api/pty/%2e%2e\u200d/connect",
+      "allowed": false
     }
   ],
   "agentRoutes": [
@@ -794,6 +806,11 @@
       "path": "api/kuvo/engine#\u200d",
       "allowed": false,
       "method": "PUT"
+    },
+    {
+      "path": "api/integration/claude-code/update%3F\u0301",
+      "allowed": false,
+      "method": "POST"
     }
   ]
 }
