@@ -1122,13 +1122,44 @@ function AutoPage() {
 
 /// Machines: Linux servers whose engine Kuvo Code runs over SSH (MachinesSettings.swift).
 function MachinesPage() {
+  const [machines, setMachines] = useState<{ id: string; name: string; destination: string; status?: string }[]>(() => {
+    try { return JSON.parse(localStorage.getItem("kuvo-machines") ?? "[]"); } catch { return []; }
+  });
+  const [name, setName] = useState("");
+  const [destination, setDestination] = useState("");
+  const [testing, setTesting] = useState<string | null>(null);
+  const save = (list: typeof machines) => { setMachines(list); localStorage.setItem("kuvo-machines", JSON.stringify(list)); };
+  const add = () => {
+    if (!name.trim() || !destination.trim()) return;
+    save([...machines, { id: `m-${Date.now()}`, name: name.trim(), destination: destination.trim() }]);
+    setName(""); setDestination("");
+  };
+  const remove = (id: string) => save(machines.filter(m => m.id !== id));
+  const test = async (id: string) => {
+    setTesting(id);
+    const machine = machines.find(m => m.id === id);
+    if (!machine) { setTesting(null); return; }
+    const result = await (window as unknown as { kuvo?: { sshCheck?: (d: string) => Promise<{ ok: boolean; error?: string }> } }).kuvo?.sshCheck?.(machine.destination);
+    save(machines.map(m => m.id === id ? { ...m, status: result?.ok ? "reachable" : `unreachable: ${result?.error ?? "unknown"}` } : m));
+    setTesting(null);
+  };
   return (
     <>
       <SettingGroup title="Machines">
         <div className="settings-note">Linux servers you reach with SSH, like a home server or a VPS. Their projects open next to this machine's, and their sessions run there. Kuvo Code installs its engine on each.</div>
-        <SettingRow label="Add Machine…">
-          <button className="small" disabled>Add Machine…</button>
-        </SettingRow>
+        {machines.length === 0 ? <div className="settings-note">None yet.</div> : machines.map(machine => (
+          <SettingRow key={machine.id} label={machine.name} note={`${machine.destination}${machine.status ? ` · ${machine.status}` : ""}`}>
+            <button className="small" disabled={testing === machine.id} onClick={() => void test(machine.id)}>{testing === machine.id ? "Testing…" : "Test"}</button>
+            <button className="small" onClick={() => remove(machine.id)}>Remove</button>
+          </SettingRow>
+        ))}
+      </SettingGroup>
+      <SettingGroup title="Add a Machine">
+        <div className="settings-row"><span>Name</span><input type="text" value={name} onChange={event => setName(event.target.value)} /></div>
+        <div className="settings-row"><span>SSH destination</span><input type="text" value={destination} placeholder="user@host" onChange={event => setDestination(event.target.value)} /></div>
+        <div className="settings-editor-buttons">
+          <button className="primary" disabled={!name.trim() || !destination.trim()} onClick={add}>Add Machine…</button>
+        </div>
       </SettingGroup>
     </>
   );
