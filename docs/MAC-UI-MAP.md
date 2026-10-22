@@ -1,3 +1,8 @@
+> **Frozen — 0.5.101.** This document tracked the Windows client's parity with the macOS
+> Kuvo Code app. As of 0.6.0 the Windows client is its own product: parity tracking
+> stops here, and the content below is historical reference. New work is tracked in
+> `docs/ROADMAP.md`.
+
 # The Mac UI, mapped — Phase 0 ledger
 
 **Status: Phase 0, extraction complete** (2026-10-20, at `4340961`, `windows-v0.5.36`).

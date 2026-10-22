@@ -1,3 +1,8 @@
+> **Frozen — 0.5.101.** This document tracked the Windows client's parity with the macOS
+> Kuvo Code app. As of 0.6.0 the Windows client is its own product: parity tracking
+> stops here, and the content below is historical reference. New work is tracked in
+> `docs/ROADMAP.md`.
+
 # Parity — the Mac app, and the Windows one
 
 What the macOS app does (646 Swift files, ~133 000 lines) and where the Windows client
