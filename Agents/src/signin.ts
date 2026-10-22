@@ -176,7 +176,9 @@ export function afterInstall(installing: string, instructions: string, acceptsCo
       if (failed) return { status: "failed", message: failed }
       if (!inner) return { status: "pending", message: installing }
       const status = inner.status()
-      return status.status === "pending" ? { ...status, url: status.url || inner.url } : status
+      return status.status === "pending"
+        ? { ...status, url: status.url || inner.url, instructions: inner.instructions, ...(inner.userCode ? { userCode: inner.userCode } : {}) }
+        : status
     },
     complete: acceptsCode
       ? async (code: string) => {

@@ -18,7 +18,7 @@ import { kuvoToolName, loadKuvoTools, setToolServer } from "../src/kuvotools"
 import { pictureData, pictureFile, withPictures } from "../src/pictures"
 import { expandCommand } from "../src/server"
 import { commandParts, parseCommands, withTextFiles } from "../src/sessions"
-import { commandSignIn } from "../src/signin"
+import { afterInstall, commandSignIn } from "../src/signin"
 
 describe("diffs", () => {
   test("a changed line, with the lines around it", () => {
@@ -221,6 +221,19 @@ exit 1
     } finally {
       rmSync(folder, { recursive: true, force: true })
     }
+  })
+
+  test("a device code still reaches the other device when its agent is installed first", async () => {
+    let installed!: () => void
+    const done = new Promise<void>((resolve) => (installed = resolve))
+    const sign = afterInstall("Installing Codex…", "Finish signing in with ChatGPT in your browser.", false, async () => {
+      await done
+      return { url: "https://auth.openai.com/codex/device", instructions: "Enter the code on that page.", mode: "auto", userCode: "ABCD-1234", status: () => ({ status: "pending" }), cancel: () => {} }
+    })
+    expect(sign.status()).toEqual({ status: "pending", message: "Installing Codex…" })
+    installed()
+    await Bun.sleep(10)
+    expect(sign.status()).toMatchObject({ status: "pending", url: "https://auth.openai.com/codex/device", instructions: "Enter the code on that page.", userCode: "ABCD-1234" })
   })
 
   async function settled(sign: Awaited<ReturnType<typeof attempt>>) {

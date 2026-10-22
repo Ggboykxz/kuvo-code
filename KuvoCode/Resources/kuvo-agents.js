@@ -3080,7 +3080,7 @@ function afterInstall(installing2, instructions, acceptsCode, start) {
       if (!inner)
         return { status: "pending", message: installing2 };
       const status = inner.status();
-      return status.status === "pending" ? { ...status, url: status.url || inner.url } : status;
+      return status.status === "pending" ? { ...status, url: status.url || inner.url, instructions: inner.instructions, ...inner.userCode ? { userCode: inner.userCode } : {} } : status;
     },
     complete: acceptsCode ? async (code) => {
       if (!inner?.complete)
@@ -11297,6 +11297,7 @@ async function groupRoutes(runner, store, method, parts2, body) {
   }
   if (id === "settings" && method === "PUT") {
     const value = await body();
+    const before = store.settings();
     store.writeSettings({
       personalities: value?.personalities && typeof value.personalities === "object" ? value.personalities : {},
       identityNote: typeof value?.identityNote === "string" ? value.identityNote : "",
@@ -11305,6 +11306,9 @@ async function groupRoutes(runner, store, method, parts2, body) {
       timeZone: typeof value?.timeZone === "string" ? value.timeZone : undefined,
       locale: typeof value?.locale === "string" ? value.locale : undefined
     });
+    const after = store.settings();
+    if (JSON.stringify([before?.askFirst, before?.denies]) !== JSON.stringify([after?.askFirst, after?.denies]))
+      runner.rulesChanged();
     return json({});
   }
   if (!/^grp_[a-z0-9]+$/.test(id))
@@ -12158,6 +12162,9 @@ class GroupRunner {
   following = new Set;
   declined = new Set;
   seatsChecked = new Set;
+  rulesChanged() {
+    this.seatsChecked.clear();
+  }
   seatTexts = new Map;
   syncs = new Map;
   meetings;
@@ -12334,6 +12341,8 @@ class GroupRunner {
           delete group.retracted[bot];
       }
     }
+    if (JSON.stringify(group) === JSON.stringify(old))
+      return true;
     this.changed(id);
     if (edits2.meeting !== undefined)
       this.scheduleMeetings(0);
@@ -12662,7 +12671,10 @@ class GroupRunner {
           if (at2 >= 0)
             gone = 0;
           idleSince = undefined;
-        } else if (inbox) {
+        } else if (!inbox) {
+          if (++gone >= 3)
+            return;
+        } else {
           idleSince ??= Date.now();
           if (Date.now() - idleSince > 8000 * pace) {
             if (!woken) {
@@ -13446,4 +13458,4 @@ if (onMachine) {
 }
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
-// Built from Agents/src 61737f258c74d2e7d3b2c8313bbe933e33b7c07418ce8a0b586aacd8f26c39ee
+// Built from Agents/src c80691b08e1d6ef78f5ce8a5f2ec3754de43fbb836cb859bb6317c9ba66bde07

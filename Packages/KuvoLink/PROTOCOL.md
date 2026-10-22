@@ -215,7 +215,8 @@ itself. A host serves:
     "Sign-in ended") and offer to sign in again.
   - Signing in to an agent: `POST kuvo/agents/api/integration/<provider>/connect/oauth {methodID,
     remote}` → `{data: {attemptID, url, instructions, mode, acceptsCode?, userCode?, time}}`; `GET
-    …/connect/oauth/<attempt>` → its status (`pending`, with `url` and `message` as they come;
+    …/connect/oauth/<attempt>` → its status (`pending`, with `url`, `instructions`, `userCode` and
+    `message` as they come, for an agent installed first;
     `complete`; `failed` with `message`; `expired`); `POST …/connect/oauth/<attempt>/complete
     {code}` for one with `acceptsCode`; `DELETE …/connect/oauth/<attempt>` to give up. A key:
     `POST …/connect/key {key}`. With `remote: true` the page is for another device (the phone),
