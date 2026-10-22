@@ -50,6 +50,11 @@ const PAGES = [
   ["worktrees", "Worktrees"],
   ["storage", "Storage"],
   ["integrations", "Integrations"],
+  ["browser", "Browser"],
+  ["passwords", "Passwords"],
+  ["phone", "Phone"],
+  ["auto", "Custom Auto"],
+  ["machines", "Machines"],
   ["archived", "Archived Sessions"],
   ["permissions", "Permissions"],
   ["system", "Engine & Storage"],
@@ -60,11 +65,12 @@ const PAGES = [
 
 const PAGE_GROUPS = [
   ["Kuvo Code", ["appearance", "general", "keyboard", "notifications", "privacy"]],
-  ["Models", ["providers", "usage"]],
+  ["Models", ["providers", "usage", "auto"]],
   ["Agent", ["mcp", "agents", "skills", "commands", "permissions", "system"]],
-  ["Projects", ["projects", "git", "worktrees", "archived"]],
-  ["Side Panel", ["panel"]],
+  ["Projects", ["projects", "git", "worktrees", "machines", "archived"]],
+  ["Side Panel", ["panel", "browser", "passwords"]],
   ["Engine", ["system", "storage", "integrations"]],
+  ["Phone", ["phone"]],
 ] as const;
 
 /// The Mac's three modes, in its order (Look.Mode).
@@ -87,6 +93,11 @@ const PAGE_SUBTITLES: Record<string, string> = {
   worktrees: "Where they go, and the ones sessions have, with what each takes.",
   storage: "Where this machine keeps things, and what the engine is running.",
   integrations: "Services that give the agent more tools.",
+  browser: "The panel's browser: its search engine, history and website data.",
+  passwords: "The sign-ins the panel's browser saved.",
+  phone: "Pair Kuvo Code for iPhone with this Mac.",
+  auto: "Your lists of models, one for bugfixes and one for features.",
+  machines: "Linux servers whose engine Kuvo Code runs over SSH.",
   archived: "Sessions you put away: still searchable, out of the sidebar.",
   permissions: "What the agent may do without asking you first.",
   notifications: "When Kuvo Code tells you about a session, and how.",
@@ -200,6 +211,11 @@ export function Settings() {
       case "worktrees": return <WorktreesPage />;
       case "storage": return <StoragePage />;
       case "integrations": return <IntegrationsPage />;
+      case "browser": return <BrowserPage />;
+      case "passwords": return <PasswordsPage />;
+      case "phone": return <PhonePage />;
+      case "auto": return <AutoPage />;
+      case "machines": return <MachinesPage />;
       case "archived": return <ArchivedPage />;
       case "permissions": return <PermissionsPage permissions={savedPermissions} onChange={setSavedPermissions} />;
       case "notifications": return <NotificationsPage />;
@@ -286,6 +302,11 @@ const PAGE_SYMBOLS: Record<string, SymbolName> = {
   worktrees: "arrow.triangle.branch",
   storage: "server.rack",
   integrations: "puzzlepiece.extension",
+  browser: "globe",
+  passwords: "checkmark.shield",
+  phone: "questionmark.bubble",
+  auto: "wand.and.stars",
+  machines: "server.rack",
   archived: "archivebox",
   permissions: "checkmark.shield",
   system: "cpu",
@@ -968,6 +989,95 @@ function IntegrationsPage() {
             <span className="where">{(one.connections ?? []).length ? "Connected" : "Not connected"}</span>
           </SettingRow>
         ))}
+      </SettingGroup>
+    </>
+  );
+}
+
+/// Browser: the panel's browser, its search engine, history and website data (BrowserSettings.swift).
+function BrowserPage() {
+  const [engine, setEngine] = useState("google");
+  const [historyCount, setHistoryCount] = useState(0);
+  useEffect(() => {
+    const stored = localStorage.getItem("kuvo-browser-engine");
+    if (stored) setEngine(stored);
+  }, []);
+  const set = (value: string) => { setEngine(value); localStorage.setItem("kuvo-browser-engine", value); };
+  return (
+    <>
+      <SettingGroup title="Search">
+        <SettingRow label="Search engine" note="For anything you type in the address field that isn't an address.">
+          <select value={engine} onChange={event => set(event.target.value)}>
+            <option value="google">Google</option>
+            <option value="bing">Bing</option>
+            <option value="duckduckgo">DuckDuckGo</option>
+          </select>
+        </SettingRow>
+        <SettingRow label="Browsing history" note={historyCount ? `${historyCount} sites, which the new tab page suggests.` : "None yet."}>
+          <button className="small" onClick={() => { localStorage.removeItem("kuvo-browser-history"); setHistoryCount(0); }}>Clear</button>
+        </SettingRow>
+      </SettingGroup>
+      <SettingGroup title="Website Data">
+        <SettingRow label="Website data" note="Sign-ins, cookies and what sites store, kept apart from your other browsers. Removing a site's data signs you out of it.">
+          <button className="small" onClick={() => (window as unknown as { kuvo?: { showInFolder?: (path: string) => void } }).kuvo?.showInFolder?.(localStorage.getItem("kuvo-browser-data") ?? "")}>Remove All…</button>
+        </SettingRow>
+      </SettingGroup>
+    </>
+  );
+}
+
+/// Passwords: the sign-ins the panel's browser saved (PasswordsSettings.swift).
+function PasswordsPage() {
+  const [offers, setOffers] = useState(() => localStorage.getItem("kuvo-passwords-offers") !== "0");
+  return (
+    <>
+      <SettingGroup title="Passwords">
+        <SettingRow label="Offer to save passwords" note="When you sign in to a site in the panel's browser. Click the key in its toolbar to fill one in.">
+          <input type="checkbox" checked={offers} onChange={event => { setOffers(event.target.checked); localStorage.setItem("kuvo-passwords-offers", event.target.checked ? "1" : "0"); }} />
+        </SettingRow>
+      </SettingGroup>
+      <div className="settings-note">Kept in your credential store, where the system lists them too. Kuvo Code fills one in only when you ask, and the agent never sees them.</div>
+    </>
+  );
+}
+
+/// Phone: pairing Kuvo Code for iPhone with this Mac (PhoneSettings.swift).
+function PhonePage() {
+  return (
+    <>
+      <SettingGroup title="Pair">
+        <div className="settings-note">Pair a phone from the Kuvo Code app on your iPhone: scan the QR code it shows. The phone link is switched on in General.</div>
+        <SettingRow label="Pair a Phone…">
+          <button className="small" disabled>Pair a Phone…</button>
+        </SettingRow>
+      </SettingGroup>
+      <SettingGroup title="Phones">
+        <div className="settings-note">None yet.</div>
+      </SettingGroup>
+    </>
+  );
+}
+
+/// Auto: your lists of models, one for bugfixes and one for features (AutoSettings.swift).
+function AutoPage() {
+  return (
+    <>
+      <SettingGroup title="Custom Auto">
+        <div className="settings-note">Custom Auto runs with the coding agents, which aren't available on this client yet. When they are, your lists of models — one for bugfixes, one for features — go here, each tried in order when one reaches a limit.</div>
+      </SettingGroup>
+    </>
+  );
+}
+
+/// Machines: Linux servers whose engine Kuvo Code runs over SSH (MachinesSettings.swift).
+function MachinesPage() {
+  return (
+    <>
+      <SettingGroup title="Machines">
+        <div className="settings-note">Linux servers you reach with SSH, like a home server or a VPS. Their projects open next to this machine's, and their sessions run there. Kuvo Code installs its engine on each.</div>
+        <SettingRow label="Add Machine…">
+          <button className="small" disabled>Add Machine…</button>
+        </SettingRow>
       </SettingGroup>
     </>
   );
