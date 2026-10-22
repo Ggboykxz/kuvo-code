@@ -44,7 +44,7 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | `ProjectChanges` | ✅ les portées uncommitted / unstaged / staged / branch / session |
 | `TitleBar`, `RootView`, `MainView` | ✅ la coque, la bande de titre |
 | `CommandPalette` | ✅ (Ctrl+K) : sessions, fichiers, commandes, et ce qu'on peut faire — avec les touches qui le font |
-| `OpenQuickly` | ✅ (la palette trouve les fichiers) |
+| `OpenQuickly` | ✅ (0.5.94 : 560 de large, recherche de 48, lignes de 30, dix résultats, les plus récents d'abord, le classement du Mac) |
 | `BrowserSession`, `BrowserChrome`, `BrowserAskCard` | ⛔ le navigateur intégré : surface **amont** |
 | `ImageViewer` | ✅ (la visionneuse par-dessus la page) |
 | `AgentBadge` | ⛔ c'est le badge du navigateur intégré (« X navigue », *Take Over*) : il suit le navigateur |
@@ -99,7 +99,7 @@ mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
 | `ClaudeCode`, `Bots`, `BotGroups`, `BotRecipe` | ⛔ amont |
 | `SidebarView` (les projets) | ✅ la barre latérale porte **tous** les projets, chacun avec ses sessions (cinq à la fois, le reste à la demande), et les *Récents* : les huit sessions les plus récentes de tous les projets. Le dossier est servi par le harnais (`POST /api/project`), et la coquille et le harnais gardent **une** seule liste des projets récents |
 | `ProviderLogo` | ✅ la marque du fournisseur (models.dev), fetched et dessinée dans l'encre, ou dans la couleur du fabricant ; l'initiale tient sa place jusqu'à son arrivée |
-| `NativeMenu` | ✅ une vraie barre de menus (l'app, File, Edit, View, Window, Help), avec les items et les touches du Mac ; ceux qui agissent sur la conversation le demandent à la page |
+| `NativeMenu` | ✅ une vraie barre de menus (l'app, File, Edit, Session, Tools, View, Window, Help), avec les commandes et les touches du Mac ; celles qui agissent sur la conversation le demandent à la page. 0.5.94 : les groupes Session et Tools, l'historique des onglets fermés et Open Quickly ; les commandes des surfaces absentes (New Project, New Chat, bots, navigateur, Accounts) ne sont pas dessinées. |
 
 ## What the shipped Mac app does now (v0.5.20, v0.5.21)
 

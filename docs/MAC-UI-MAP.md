@@ -141,12 +141,17 @@ gutter, the text without the patch's signs, and a coloured edge on a line that c
 0.5.88 a comment on a line became the Mac's own card (`ChangesPanel.swift:1088-1212`) — the
 editor under the line, the comment kept beneath it, and the block the agent reads
 (`ReviewComments.swift:21-39`) — and in 0.5.89 the conversation showed those comments back
-as the Mac's own cards (`ChangesPanel.swift:1123-1155`). In 0.5.90 the diff took the Mac's own folding (`ChangesPanel.swift:890-952`): each change with three lines around it, and the long unchanged stretches folded into a row of their own. In 0.5.91 a file was shown with its lines numbered, in the Mac's own ruler (`CodeTextView.swift:119-168`), and in 0.5.92 the lines that are picked could be sent to the composer, from the file view's own menu (`CodeTextView.swift:91-111`); both travel in 0.5.93, whose Windows run found the panel's tree rooted at the drive instead of the project — the two kinds of path are read with one separator now (`FilesView.swift:250-275`). The port's
-own list of what is left is now: the two structures that are the Mac's alone — the Auto
-rail of the model picker (the coding agents' accounts, which a Windows client has no
-accounts for) and the pair style of the tab bar (a split pair shown as one tab, where the
-port's split is a card of its own).
-Everything else in §1–§9 is now the Mac's, and the checks hold it there.
+as the Mac's own cards (`ChangesPanel.swift:1123-1155`). In 0.5.90 the diff took the Mac's own folding (`ChangesPanel.swift:890-952`): each change with three lines around it, and the long unchanged stretches folded into a row of their own. In 0.5.91 a file was shown with its lines numbered, in the Mac's own ruler (`CodeTextView.swift:119-168`), and in 0.5.92 the lines that are picked could be sent to the composer, from the file view's own menu (`CodeTextView.swift:91-111`); both travel in 0.5.93, whose Windows run found the panel's tree rooted at the drive instead of the project — the two kinds of path are read with one separator now (`FilesView.swift:250-275`).
+In 0.5.94 the menu bar took the Mac's own command groups — File's close and reopen tab commands,
+Edit's find, Session's Stop and modes, Tools' panel commands, View's tab commands and
+Appearance, and Help's links (`KuvoCodeApp.swift:130-229`) — with closed-tab history
+(`MainView.swift:1150-1232`) and Open Quickly (`OpenQuickly.swift:4-104`). The port's own
+list of what is left is now: the two structures that are the Mac's alone — the Auto rail of
+the model picker (the coding agents' accounts, which a Windows client has no accounts for)
+and the pair style of the tab bar (a split pair shown as one tab, where the port's split is
+a card of its own) — and the menu commands for surfaces the client does not have yet: New
+Project, New Chat, the bots, New Browser Tab and Accounts.
+Everything else this client can draw in §1–§9 is the Mac's, and the checks hold it there.
 
 **The wording is finished with the screens it lives in.** The shell's strings are the Mac's,
 word for word, and a check holds them to the Mac's own source
@@ -284,7 +289,7 @@ most behaviours but not for the values; Phase 1–4 port the values.
 | `IconOnlyToolbar.swift` | AppKit toolbar without Icon/Text menu | `IconOnlyToolbar.swift:4-38` | — (no AppKit) | — |
 | `InlineTitleField.swift` | Rename where it shows: all selected, Return commits, Escape cancels, click-away keeps | `InlineTitleField.swift:4-55` | ✅ (0.5.48: the rename happens in the row, the way the Mac's does) | 7 |
 | `Look.swift` | Appearance: accent, window, text size, typeface | §3.2, §3.3 | ✅ (0.5.45; 0.5.78: the window's material, the typeface of the messages and the detail of the steps) | 1 |
-| `NativeMenu.swift` | Real AppKit menus with values on the right and subtitles | `NativeMenu.swift:5-165` | ✅ (0.5.61: a real menu bar, the Mac's items and keys) | 6 |
+| `NativeMenu.swift` | Real AppKit menus with values on the right and subtitles | `NativeMenu.swift:5-165` | ✅ (0.5.61: a real menu bar; 0.5.94: the Mac's File, Edit, Session, Tools, View and Help commands and keys) | 6 |
 | `PillPicker.swift` | Glass track, raised pill slides to the choice | `.ui` spring, matched geometry | ✅ (0.5.40) | 3, 6 |
 | `PlainDatePicker.swift` | Date/time without a box, for a well row | `PlainDatePicker.swift:6-30` | ⛔ (only the bot editor asks for a date, and the bots are an upstream decision) | 6 |
 | `Pressable.swift` | Every small control's hover/pressed language | hover 8 %, pressed 13 %, hover 0.12 s; list selected 16 %, pressed 24 %; disabled 45 %; accent badge hover 1.12 / −0.07, press −0.15 | ✅ (0.5.64: the press is a fill, and the scale the old direction had is gone) | 3 |
@@ -376,7 +381,7 @@ below are grouped by area; the exhaustive list of all 74 files is in `MAC-UI-INV
 | `SidebarView` | New Session, projects, sessions, search, unread, archived | ✅ / ✅ (0.5.62: the projects, each with its own sessions, and the Recents; the bots, the chats and the pinned ones wait for the Stage 3 decisions) | 2, 6 |
 | `SettingsView` | 23 pages in 5 groups, search, page header, in-window card | ◐ / ◐ | 2, 6 |
 | `CommandPalette` | Actions, sessions, files, commands, shortcuts shown | ✅ / ◐ | 2, 6 |
-| `OpenQuickly` | Find a file in any project folder | ✅ / ◐ | 6 |
+| `OpenQuickly` | Find a file in any project folder | ✅ / ◐ (0.5.94: 560 wide, 48 pt search, 30 pt rows, ten matches, newest first, the Mac's ranking) | 6 |
 | `AnalyticsNotice` | One-time anonymous-usage note at the sidebar's foot | ✅ / ◐ | 6 |
 | `ImageViewer` | Pictures over the window, fit/zoom, toolbar | ✅ / ◐ | 6 |
 | `ProjectEditor` | Create/change a project: name and folders | ◐ / ◐ | 6 |

@@ -332,6 +332,23 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     run in the primary folder; the agent can work in the others too" — and the session in
     view is given them: the rules that allow those folders, and the note that tells the
     agent that "in chugs-pinterest" means that folder (`SessionModel.swift:1379-1405`).
+  - **2.90 (this change). The menu bar's own commands, and Open Quickly.** The port's
+    menu bar had the app's commands one by one; it now has the Mac's command groups
+    (`KuvoCodeApp.swift:130-229`): File's *Close Tab*, *Close Window*, *Reopen Closed Tab*
+    and *Open Quickly…*; Edit's *Find in Conversation…*; the **Session** menu (*Stop*,
+    *Build Mode*, *Plan Mode*); the **Tools** menu (*Show Changes*, *Show Files*, *Run*,
+    *New Terminal*, *Show Panel*); View's *Show Next Tab*, *Show Previous Tab*, the
+    *Show Tab* submenu and the *Appearance* picker; and Help's four links. A closed tab is
+    remembered where it was — fifty of them, as the Mac keeps them — and comes back at
+    the same index, skipping the ones open again or deleted since
+    (`MainView.swift:1150-1232`); closing the tab in view shows the tab that took its
+    place, not the last one by default. Open Quickly is the Mac's own palette
+    (`OpenQuickly.swift:4-104`): 560 points wide, 80 from the top, a 48-point search,
+    30-point rows, ten matches, the project's files newest first before anything is typed,
+    and `Mentions.matches`' order after. It opens the chosen file in the panel. The menu's
+    tab-bar word and appearance check follow the page (`kuvo:menu-state`). The commands
+    for surfaces this client does not have — *New Project*, *New Chat*, the bots,
+    *New Browser Tab* and *Accounts* — are not drawn.
   - **2.89 (this change). The panel's tree is the project's, on Windows too.** The Mac's
     panel is rooted at the project's own folder (`FilesView.swift:250-275`): the files are
     the tree, and the folder they live in is the root. The port compared the project's
