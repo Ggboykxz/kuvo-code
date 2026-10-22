@@ -936,7 +936,7 @@ private struct GroupRow: View {
             if let destination = app.moves.underWay[group.id] {
                 ShimmerText(text: "Moving to \(destination.flatMap { place in app.machines.engine(place)?.machine.name ?? place } ?? "this Mac")…")
             } else if let speaker {
-                ShimmerText(text: "\(speaker.name) is typing…")
+                ShimmerText(text: "\(speaker.name) is thinking…")
             } else if groups.discussing.contains(group.id) {
                 ShimmerText(text: "Talking it over…")
             } else {
