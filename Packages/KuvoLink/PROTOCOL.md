@@ -174,7 +174,7 @@ itself. A host serves:
 
 - `api/…`: passed to its engine, if the path is on the host's list (sessions, messages,
   prompts, permissions, questions, events, providers, agents, commands, a project's files,
-  terminals, plan accounts as below). Never what anything is signed in with. The commands the engine runs for agents are read only:
+  terminals). Never accounts or keys. The commands the engine runs for agents are read only:
   `GET api/shell` (those running in the folder `x-opencode-directory` names), `GET
   api/shell/<id>` and `GET api/shell/<id>/output?cursor=&limit=`; running one or removing it is
   refused. Their `shell.created`, `shell.exited` and `shell.deleted` come with `api/event`.
@@ -239,26 +239,6 @@ itself. A host serves:
     too: it runs those through an engine session of its own, which carries
     `metadata.kuvo.engineFor` and is never shown (hide it in the engine's session list).
     `…/session/<id>/fork {before}` makes a new session from a message.
-- Plan accounts (Copilot, OpenCode, GitLab, Poe, a provider's API key), on a Mac and (from
-  bridge 0.7.0) a machine, as Settings › Accounts has them: the phone sees and signs in to them,
-  never what they're signed in with. Secrets only ever go in.
-  - `GET api/integration` and `GET api/integration/<id>`: each plan, its ways to sign in
-    (`methods`) and what it's signed in as (`connections`: label and status).
-  - A key: `POST api/integration/<id>/connect/key {key, answer?}`.
-  - A sign-in page: `POST api/integration/<id>/connect/oauth {methodID, answer?}` → the attempt
-    (its URL, `mode`, and `acceptsCode`); `GET …/connect/oauth/<attempt>` for its status; `POST
-    …/connect/oauth/<attempt>/complete {code}` for one that ends on a code; `DELETE
-    …/connect/oauth/<attempt>` to give up. A page that sends the browser back to `localhost` on
-    the computer (GitLab's, Poe's, ChatGPT's) can't finish from a phone on a machine: offer it on
-    the Mac. Device codes (Copilot, OpenCode Console, SuperGrok) and keys work from anywhere.
-  - Its sign-ins: `GET kuvo/accounts/credentials` → `{credentials: [{id, integrationID, label,
-    active}]}` (never the engine's `api/credential`, which carries keys and tokens, nor one of
-    them); `POST api/credential/<id>/activate` uses one; `DELETE api/credential/<id>` removes one.
-  - On a Mac only: `GET kuvo/accounts/ended` → `{providers: [id]}`, the plans whose sign-in in use
-    ended (the service refused it; the Mac says "Sign-in ended"); `POST
-    kuvo/accounts/<provider>/forget` is Disconnect, as Settings › Accounts does it: its sign-ins
-    and keys on the Mac, and the copies on your machines.
-  What a phone may ask an engine for is the same on both (`Vectors/link.json`, `routes`).
 - On a Mac, `kuvo/hosts`: the machines this phone may reach directly, with their addresses
   and static keys, so pairing once with the Mac reaches them all.
 - `kuvo/bots`: bots by their session, with their name, look and job, whether their wake-ups

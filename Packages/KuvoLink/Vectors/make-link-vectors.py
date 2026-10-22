@@ -43,7 +43,6 @@ routes = [{"path": p, "allowed": a} for p, a in [
     ("api/provider", True), ("api/model/default", True), ("api/permission/saved", True), ("api/form", True),
     ("api/experimental/session/ses_1/wait", True), ("api/experimental/session/ses_1/instructions/entries/k", False),
     ("api/credential", False), ("api/credential/anthropic", False), ("api/integration/github/connect/key", False),
-    ("api/integration", True), ("api/integration/github-copilot", True),
     ("api/config", False), ("api/config/shell", False), ("api/mcp", False), ("api/plugin", False),
     ("api/fs/list", True), ("api/fs/list?path=Sources", True), ("api/fs/find?query=main", True),
     ("api/fs/read/Sources/main.swift", True), ("api/fs/read", False), ("api/fs/write/x", False), ("api/fs/read/../../etc/hosts", False),
@@ -66,26 +65,6 @@ routes = [{"path": p, "allowed": a} for p, a in [
 # Read only: a phone lists and reads commands running for agents, but never runs or removes one.
 routes += [{"path": p, "allowed": a, "method": m} for p, a, m in [
     ("api/shell", False, "POST"), ("api/shell/sh_1", False, "DELETE"), ("api/shell/sh_1/output", True, "GET"),
-]]
-
-# Plan accounts (PROTOCOL.md, "Accounts"): signed in to, switched and removed, never read: no
-# credential list or credential, which carry keys and tokens, nor other ways in.
-routes += [{"path": p, "allowed": a, "method": m} for p, a, m in [
-    ("api/integration", True, "GET"), ("api/integration?fresh=1", True, "GET"), ("api/integration/github-copilot", True, "GET"),
-    ("api/integration/anthropic/connect/key", True, "POST"), ("api/integration/github-copilot/connect/oauth", True, "POST"),
-    ("api/integration/github-copilot/connect/oauth/att_1", True, "GET"), ("api/integration/gitlab/connect/oauth/att_1/complete", True, "POST"),
-    ("api/integration/gitlab/connect/oauth/att_1", True, "DELETE"), ("api/credential/cred_1/activate", True, "POST"),
-    ("api/credential/cred_1", True, "DELETE"), ("api/integration/openai@work/connect/key", True, "POST"),
-    ("api/credential", False, "GET"), ("api/credential/cred_1", False, "GET"), ("api/credential", False, "POST"),
-    ("api/credential?x=1", False, "GET"), ("api/credential/cred_1/activate", False, "GET"), ("api/credential/cred_1/x", False, "DELETE"),
-    ("api/integration/anthropic/update", False, "POST"), ("api/integration/anthropic/connect/external", False, "POST"),
-    ("api/integration/anthropic/connect/%6bey", False, "POST"), ("api/integration/anthropic//connect/key", False, "POST"),
-    ("api/integration/./connect/key", False, "POST"), ("api/integration/anthropic/connect/key/x", False, "POST"),
-    ("api/integration/anthropic/connect/key?x=1", False, "POST"), ("api/integration/anthropic", False, "DELETE"),
-    ("api/integration/anthropic", False, "PATCH"), ("api/integration/anthropic/connect/key", False, "GET"),
-    ("api/integration/anthropic/connect/key", False, "PUT"), ("api/integration/../credential", False, "GET"),
-    ("api/integration/%2e%2e/credential", False, "GET"), ("api/integration/anthropic/connect/oauth/att_1/complete ", False, "POST"),
-    ("api/integration/a#/../../credential", False, "GET"), ("api/credential/.hidden", False, "DELETE"),
 ]]
 
 # The sockets a phone may open (PROTOCOL.md, "Sockets"): a terminal's.

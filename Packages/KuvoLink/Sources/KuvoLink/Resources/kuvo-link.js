@@ -22,7 +22,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 // Goes up with every change, so `setup` replaces a running bridge that's older.
-export const BRIDGE_VERSION = "0.7.1";
+export const BRIDGE_VERSION = "0.7.2";
 const K = process.env.KUVO_HOME || path.join(os.homedir(), ".kuvo-code");
 const RUN = path.join(K, "run");
 export const LINK_FILE = path.join(RUN, "link.json");
@@ -505,8 +505,8 @@ export class LinkHost {
 // ---- Forwarding to the engine ----
 
 // What a phone may ask the engine for: sessions and what's in them, live events, what it needs
-// to show them, a project's files to read, and plan accounts (ACCOUNTS). Never what's signed in
-// with (keys, tokens), integrations' programs, the engine's settings, MCP servers or plugins.
+// to show them, and a project's files to read. Never accounts, keys or integrations, the
+// engine's settings, MCP servers or plugins.
 const ALLOWED = [
   /^api\/session(\/|\?|$)/,
   /^api\/experimental\/session\/[^/]+\/wait(\?|$)/,
@@ -516,20 +516,6 @@ const ALLOWED = [
   /^api\/fs\/read\//,
   /^api\/pty(\/|\?|$)/,
 ];
-// Plan accounts: a phone lists them and what each is signed in as, signs in (a key, written
-// only; a sign-in page and its code), switches to another of an account's sign-ins or removes
-// one. Never reads what's signed in with: the credential list carries keys and tokens.
-const ID = "[A-Za-z0-9_@-][A-Za-z0-9_.@-]*";
-const ACCOUNTS = {
-  GET: [new RegExp(`^api/integration(/${ID}(/connect/oauth/${ID})?)?(\\?[^#]*)?$`)],
-  POST: [
-    new RegExp(`^api/integration/${ID}/connect/(key|oauth)$`),
-    new RegExp(`^api/integration/${ID}/connect/oauth/${ID}/complete$`),
-    new RegExp(`^api/credential/${ID}/activate$`),
-  ],
-  DELETE: [new RegExp(`^api/integration/${ID}/connect/oauth/${ID}$`), new RegExp(`^api/credential/${ID}$`)],
-};
-const accountAllowed = (path, method) => (ACCOUNTS[method.toUpperCase()] ?? []).some(pattern => pattern.test(path));
 // The sockets a phone may open: a terminal's.
 const SOCKETS = [/^api\/pty\/[^/?]+\/connect(\?|$)/];
 const REQUEST_HEADERS = ["content-type", "accept", "x-opencode-directory", "last-event-id"];
@@ -554,7 +540,6 @@ const SHELL = /^api\/shell(\/|\?|$)/;
 const SHELL_READ = /^api\/shell(\/[^/?]+(\/output)?)?(\?.*)?$/;
 export const allowed = (path, method = "GET") => {
   if (leavesProject(path)) return false;
-  if (accountAllowed(path, method)) return true;
   if (SHELL.test(path)) return ["GET", "HEAD"].includes(method.toUpperCase()) && SHELL_READ.test(path);
   return ALLOWED.some(pattern => pattern.test(path));
 };
@@ -671,33 +656,6 @@ export function engineHandler(readEngine = readEngineFile, info = {}, readBridge
         return;
       }
       return yield* forward(target, path, request, signal, agentsAllowed);
-    }
-    // This machine's plan accounts, without what they're signed in with: the engine's list has
-    // that, which a phone can't reach.
-    if (request.path.split("?")[0] === "kuvo/accounts/credentials") {
-      if (!["GET", "HEAD"].includes(request.method.toUpperCase())) return yield* text(405, "Read them with GET.");
-      let engine;
-      try {
-        engine = readEngine();
-      } catch {
-        return yield* text(503, "The engine isn't running.");
-      }
-      let listed;
-      try {
-        const response = await fetch(`http://127.0.0.1:${engine.port}/api/credential`, {
-          headers: { authorization: `Basic ${Buffer.from(`opencode:${engine.password}`).toString("base64")}` },
-          signal,
-        });
-        if (!response.ok) return yield* text(502, "The engine didn't answer.");
-        listed = ((await response.json())?.data ?? []).map(credential => ({
-          id: String(credential.id), integrationID: String(credential.integrationID), label: String(credential.label ?? ""), active: Boolean(credential.active),
-        }));
-      } catch {
-        return yield* text(502, "The engine didn't answer.");
-      }
-      yield { head: { status: 200, headers: { "content-type": "application/json" } } };
-      yield { body: Buffer.from(JSON.stringify({ credentials: listed })) };
-      return;
     }
     // The group chats that live here, as the Mac answers its own (`kuvo/groups`), from the
     // coding agents' bridge, which runs them.

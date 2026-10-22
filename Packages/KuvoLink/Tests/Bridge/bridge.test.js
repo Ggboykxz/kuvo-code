@@ -186,14 +186,6 @@ async function fakeEngine() {
       request.on("close", () => { clearInterval(timer); asked.push({ closed: request.url }); });
       return;
     }
-    if (request.url === "/api/credential" && request.method === "GET") {
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ data: [
-        { id: "cred_1", integrationID: "anthropic", label: "Work", active: true, value: { type: "api", key: "sk-ant-secret" } },
-        { id: "cred_2", integrationID: "github-copilot", label: "me", active: false, value: { type: "oauth", refresh: "ghr_secret" } },
-      ] }));
-      return;
-    }
     let body = "";
     request.on("data", chunk => { body += chunk; });
     request.on("end", () => {
@@ -241,44 +233,6 @@ test("requests go to the engine with its password; other routes don't", async t 
   phone.send({ t: "cancel", id: 9 });
   for (let i = 0; i < 50 && !engine.asked.some(a => a.closed === "/api/event"); i++) await new Promise(r => setTimeout(r, 20));
   assert.ok(engine.asked.some(a => a.closed === "/api/event"));
-});
-
-test("plan accounts: signed in to and switched from a phone, never read", async t => {
-  const engine = await fakeEngine();
-  t.after(engine.close);
-  const hostKey = link.newKey();
-  const handle = link.engineHandler(() => ({ pid: process.pid, port: engine.port, password: "s3cret", version: "2.0.30" }));
-  const host = new link.LinkHost({ key: hostKey, hello: { v: 1, kind: "machine", name: "m", app: "0" }, authorize: () => true, handle });
-  const phone = phoneFor(host, hostKey);
-  await phone.open({});
-
-  // Its sign-ins, by name and which is in use; never what they're signed in with.
-  phone.send({ t: "req", id: 1, m: "GET", p: "kuvo/accounts/credentials", h: {} });
-  const listed = await phone.response();
-  assert.equal(listed.head.s, 200);
-  assert.deepEqual(JSON.parse(listed.body), { credentials: [
-    { id: "cred_1", integrationID: "anthropic", label: "Work", active: true },
-    { id: "cred_2", integrationID: "github-copilot", label: "me", active: false },
-  ] });
-  assert.ok(!listed.body.toString().includes("secret"));
-
-  // A key goes in; another sign-in is switched to; the list itself never goes out.
-  phone.send({ t: "req", id: 2, m: "POST", p: "api/integration/anthropic/connect/key", h: { "Content-Type": "application/json" } }, Buffer.from('{"key":"sk-new"}'));
-  assert.equal((await phone.response()).head.s, 200);
-  phone.send({ t: "req", id: 3, m: "POST", p: "api/credential/cred_2/activate", h: {} });
-  assert.equal((await phone.response()).head.s, 200);
-  // A sign-in page, started with its method's hidden answers (OpenCode's server), as the Mac sends them.
-  const start = '{"methodID":"console","answer":{"server":"https://opencode.ai"}}';
-  phone.send({ t: "req", id: 7, m: "POST", p: "api/integration/opencode/connect/oauth", h: { "Content-Type": "application/json" } }, Buffer.from(start));
-  const started = await phone.response();
-  assert.equal(started.head.s, 200);
-  assert.equal(JSON.parse(started.body).body, start);
-  for (const [id, m, p] of [[4, "GET", "api/credential"], [5, "GET", "api/credential/cred_1"], [6, "POST", "api/integration/anthropic/update"]]) {
-    phone.send({ t: "req", id, m, p, h: {} });
-    assert.equal((await phone.response()).head.s, 403, p);
-  }
-  assert.deepEqual(engine.asked.filter(a => a.url?.startsWith("/api/")).map(a => `${a.method} ${a.url}`),
-    ["GET /api/credential", "POST /api/integration/anthropic/connect/key", "POST /api/credential/cred_2/activate", "POST /api/integration/opencode/connect/oauth"]);
 });
 
 // A terminal on a free port as the engine serves one: a WebSocket that first says where its
