@@ -337,6 +337,10 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     run in the primary folder; the agent can work in the others too" — and the session in
     view is given them: the rules that allow those folders, and the note that tells the
     agent that "in chugs-pinterest" means that folder (`SessionModel.swift:1379-1405`).
+  - **2.100 (this change). Accounts settings page.** The Mac's Settings has an
+    Accounts page (`ProvidersView.swift`) that the port did not draw. It is drawn now,
+    listing what's connected and every other provider the engine knows, with a Connect
+    action. Your own providers are added on the Providers page.
   - **2.99 (this change). Coding agents on this machine.** The Mac's OutsideAgents
     detects Claude Code, Codex, Cursor, Grok and Antigravity by their CLI; the port did
     not. The Auto settings page now lists them with their install state, looked up on
