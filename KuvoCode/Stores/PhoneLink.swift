@@ -786,7 +786,7 @@ final class PhoneLink {
             var discussing: Bool
             var paused: Bool
             var moving: Bool
-            /// What the bot talking is doing, a step or two (see `GroupActivity`).
+            /// What the bot talking is doing, its last step (see `GroupActivity`).
             var activity: [GroupActivity]?
         }
         guard let groups, groups.group(id) != nil else { return nil }

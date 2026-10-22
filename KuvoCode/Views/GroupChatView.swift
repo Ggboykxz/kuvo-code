@@ -431,7 +431,7 @@ private struct WorkState: View {
 /// The bot talking now, at work.
 private struct TypingRow: View {
     let bot: Bot
-    /// What it's doing, a step or two: so a long turn doesn't look stuck.
+    /// What it's doing, its last step: so a long turn doesn't look stuck.
     var activity: [GroupActivity] = []
 
     var body: some View {

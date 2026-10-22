@@ -6,7 +6,7 @@ release, Unreleased is renamed to the version; the release notes come from that 
 
 ## Unreleased
 
-- In a group chat, the bot that's talking shows what it's doing, a step or two under its name, like the file it's reading or the line it's thinking, so a long turn doesn't look stuck.
+- In a group chat, the bot that's talking shows what it's doing under its name, like the file it's reading or the line it's thinking, so a long turn doesn't look stuck.
 - A conversation no longer goes blank when a long reply comes in; it used to show nothing until you scrolled.
 - The list that opens over the composer as you type /, @ or & no longer shows a dark block behind it.
 - Bots in a group chat answer small talk and quick questions straight away, and look things up (files, the web, other conversations) only when what's asked needs it.

@@ -47,8 +47,8 @@ struct BotGroup: Codable, Identifiable, Hashable {
     }
 }
 
-/// What a bot is doing on its turn, as its seat shows it: the chat lists the last step or two
-/// under who's talking, so a long turn doesn't look stuck. A machine's chats send it as they run.
+/// What a bot is doing on its turn, as its seat shows it: the chat shows its last step under
+/// who's talking, so a long turn doesn't look stuck. A machine's chats send it as they run.
 enum GroupActivity: Codable, Hashable {
     /// A tool it called (without what it gave back).
     case step(Message.ToolCall)
@@ -82,8 +82,8 @@ enum GroupActivity: Codable, Hashable {
         }
     }
 
-    /// The last step or two in a seat's `messages` (oldest first), since `promptID` (or, not among
-    /// them yet, since `sent`).
+    /// The last step in a seat's `messages` (oldest first), since `promptID` (or, not among them
+    /// yet, since `sent`); none before its first.
     static func latest(in messages: [Message], after promptID: String, since sent: Date) -> [GroupActivity] {
         let start = messages.firstIndex { $0.id == promptID }.map { $0 + 1 }
         let since = sent.timeIntervalSince1970 * 1000 - 2000
@@ -100,7 +100,7 @@ enum GroupActivity: Codable, Hashable {
                 }
             }
         }
-        return Array(found.suffix(2))
+        return Array(found.suffix(1))
     }
 
     /// Thinking under way, in a line: the latest it's written, without Markdown's stars.

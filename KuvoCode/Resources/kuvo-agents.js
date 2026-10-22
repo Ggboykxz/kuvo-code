@@ -10995,7 +10995,7 @@ function activity(messages, promptID, sent) {
       }
     }
   }
-  return found.slice(-2);
+  return found.slice(-1);
 }
 function thought(text) {
   const line = text.split(/\r\n|\r|\n/).map((part) => part.replaceAll("**", "").trim()).filter(Boolean).at(-1);
@@ -13519,4 +13519,4 @@ if (onMachine) {
 }
 process.on("SIGTERM", stop);
 process.on("SIGINT", stop);
-// Built from Agents/src 8959486adf10be2715c0ebab72b3640de005068961d0834485d5e07db8a20ccc
+// Built from Agents/src dfc4dd2a1c231104dbb6434a0edc3af9e67c3099c34f3e476ee40f19024db403

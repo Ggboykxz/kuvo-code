@@ -434,13 +434,13 @@ export function said(messages: any[]): { text: string; error?: string; steps: To
 }
 
 /** A step as it's kept with the chat: what it printed, cut short, so the log stays small. */
-/** What a bot is doing on its turn (the chat lists the last step or two under who's talking, so a
- * long turn doesn't look stuck), as the Mac's `GroupActivity`: a tool it called (without what it
+/** What a bot is doing on its turn (the chat shows its last step under who's talking, so a long
+ * turn doesn't look stuck), as the Mac's `GroupActivity`: a tool it called (without what it
  * gave back), the line its thinking is on, or its reply being written. */
 export type Activity = { kind: "tool"; call: ToolCall } | { kind: "thinking"; text: string } | { kind: "writing" }
 
-/** The last step or two in a seat's `messages` (oldest first), since `promptID` (or, not among
- * them yet, since `sent`, in milliseconds). */
+/** The last step in a seat's `messages` (oldest first), since `promptID` (or, not among them yet,
+ * since `sent`, in milliseconds); none before its first. */
 export function activity(messages: any[], promptID: string, sent: number): Activity[] {
   const at = messages.findIndex((message) => message?.id === promptID)
   const after = at >= 0 ? messages.slice(at + 1) : messages.filter((message) => (message?.time?.created ?? 0) >= sent - 2000)
@@ -458,7 +458,7 @@ export function activity(messages: any[], promptID: string, sent: number): Activ
       }
     }
   }
-  return found.slice(-2)
+  return found.slice(-1)
 }
 
 /** Thinking under way, in a line: the latest it's written, without Markdown's stars. */

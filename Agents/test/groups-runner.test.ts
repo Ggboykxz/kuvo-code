@@ -289,10 +289,11 @@ describe("a group chat on a machine", () => {
     groups.put(group(), [], "active", false)
     groups.send("grp_team000001", "Plan?")
     await until(() => (groups.talk("grp_team000001").activity?.length ?? 0) > 0)
+    // Its last step only: the file it read after thinking, without what the file said.
     const shown: any[] = groups.talk("grp_team000001").activity!
-    expect(shown.map((step) => step.kind)).toEqual(["thinking", "tool"])
-    expect(shown[0].text).toBe("Reading what we wrote")
-    expect(shown[1].call.state.content).toEqual([])
+    expect(shown.map((step) => step.kind)).toEqual(["tool"])
+    expect(shown[0].call.state.input.path).toBe("notes.txt")
+    expect(shown[0].call.state.content).toEqual([])
     await until(() => !groups.talk("grp_team000001").discussing, 8000)
     expect(groups.talk("grp_team000001").activity).toBeUndefined()
   })
