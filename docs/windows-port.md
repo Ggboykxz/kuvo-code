@@ -332,6 +332,15 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     run in the primary folder; the agent can work in the others too" — and the session in
     view is given them: the rules that allow those folders, and the note that tells the
     agent that "in chugs-pinterest" means that folder (`SessionModel.swift:1379-1405`).
+  - **2.93 (this change). Worktrees, the Mac's way.** The Mac gives a session its own
+    copy of the project on a branch of its own, so its changes stay apart
+    (`Workspace.swift:201-216`, `GitSettings.swift:60-136`); the port had none. The harness
+    now speaks the engine's worktree routes (`POST /api/worktree`, `DELETE /api/worktree`,
+    `GET /api/location`), and a branch is created in the folder it lives in. The app
+    tracks the worktrees it made, lists them with their branch, project and folder, shows
+    them in the Explorer and removes them — with the Mac's warning about what removal
+    deletes. A new session can be given one; the engine runs the project's setup command
+    in it first.
   - **2.92 (this change). Three of the settings pages the port was missing.** The Mac's
     Settings has Notifications, Privacy and Panel pages (`GeneralSettings.swift:166-230`,
     `BrowserSettings.swift:5-30`) that the port did not draw. They are drawn now, with the

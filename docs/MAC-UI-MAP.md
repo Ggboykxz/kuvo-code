@@ -81,8 +81,9 @@ captures is in `docs/captures/`, written by `windows/harness/captures.mjs`.
 
 **What is left, and why.** The rows still marked ◐ or ⬜ are: the Settings pages the
 maintainer has not reopened (Notifications, Privacy, Panel) and the usage of a provider's
-plan (which needs the account's keys). The worktrees are out of reach on both sides — the
-engine exposes no worktrees to ask, and the Mac's own page is the maintainer's to reopen.
+plan (which needs the account's keys). The worktrees are reachable now: the engine makes them (`api.createWorktree`,
+`api.removeWorktree`), and the port draws the page. The Auto rail and the tab-pair style
+remain the Mac's alone.
 The provider's marks, which the Mac takes from models.dev, are fetched and drawn in 0.5.63.
 The native menus became a real menu bar in 0.5.61, the code block's copy mark became the
 Mac's mark that becomes a check, the double-click on a title bar zooms the window as it
@@ -152,7 +153,9 @@ when it is visible, says why it ended and can be restarted, interrupts what is r
 before *Run*, and carries the Mac's *Add to Message*, *Copy* and *Paste* menu. In 0.5.96
 three of the settings pages the port was missing are drawn: Notifications, Privacy and
 Panel (`GeneralSettings.swift:166-230`, `BrowserSettings.swift:5-30`), with the Mac's words
-and toggles. The port's own
+and toggles. In 0.5.97 the worktrees are drawn (`GitSettings.swift:60-136`): the engine
+makes them, and the port tracks, lists and removes them, with their branch, folder and
+Show in Folder. The port's own
 list of what is left is now: the two structures that are the Mac's alone — the Auto rail of
 the model picker (the coding agents' accounts, which a Windows client has no accounts for)
 and the pair style of the tab bar (a split pair shown as one tab, where the port's split is
@@ -453,7 +456,7 @@ Mac pages in `SettingsView.swift:135-139`; Windows `PAGES` in `Settings.tsx:33-4
 | MCP | MCP servers | ✅ / ◐ | 6 |
 | Engine | Engine & storage | ✅ / ◐ (merged) | 6 |
 | Git | Git | ✅ / ◐ | 6 |
-| Worktrees | Projects | ⛔ (the engine exposes no worktrees; and the Mac's own page is the maintainer's to reopen) | 6 |
+| Worktrees | Projects | ✅ / ◐ (0.5.97: the engine's worktrees, tracked on this machine, with their branch, folder, Show in Folder and Remove) | 6 |
 | Archived | Archived sessions | ✅ / ◐ | 6 |
 | Machines | — | ⛔ upstream | — |
 | Panel | — | ⬜ / ⬜ | 6 |
@@ -707,7 +710,7 @@ interpretation of it.
 | **— The platform** | The window is built by Next.js (a static export the harness serves) and the page is read in a real browser in CI; the look and the behaviour do not move | — | 0.5.41 |
 | **4. Icons** | 89 symbols → drawn SVGs; FolderIcon; PromptMark; provider logos; remove text glyphs and the naked `@` | §7 | 0.5.42 ✅ |
 | **5. Wording** | 1 208 sites compared; menus, tooltips, accessibility labels; punctuation | §8 | 0.5.43 ✅ (the shell's words; the rest with the screens) |
-| **6. Screens** | Sidebar + title bar; transcript; composer + queue + gauge; palette + drawer; settings (14 existing + 3 missing: Notifications, Privacy, Panel; Worktrees maps to Projects); files/changes/terminal | §6.1–6.3 | 0.5.44 ✅ (the transcript, the gauge, the steps row) · 0.5.45 ✅ (the settings' grouped form) · 0.5.46 ✅ (the rest of the groups; the run that would not end) · 0.5.47 ✅ (the panel's files, as a tree) · 0.5.55 ✅ (the project's drawn folder) · 0.5.61 ✅ (the real menu bar, the copy mark, the zoomed title bar) · 0.5.62 ✅ (every project, with its own sessions, and the Recents) · 0.5.63 ✅ (the provider's marks) · 0.5.64 ✅ (the upstream's main, merged in; the press is a fill; the engine's events reach the conversation; the working mark is the Mac's own) → 0.5.49 |
+| **6. Screens** | Sidebar + title bar; transcript; composer + queue + gauge; palette + drawer; settings (17 existing: Notifications, Privacy and Panel added in 0.5.96, Worktrees in 0.5.97); files/changes/terminal | §6.1–6.3 | 0.5.44 ✅ (the transcript, the gauge, the steps row) · 0.5.45 ✅ (the settings' grouped form) · 0.5.46 ✅ (the rest of the groups; the run that would not end) · 0.5.47 ✅ (the panel's files, as a tree) · 0.5.55 ✅ (the project's drawn folder) · 0.5.61 ✅ (the real menu bar, the copy mark, the zoomed title bar) · 0.5.62 ✅ (every project, with its own sessions, and the Recents) · 0.5.63 ✅ (the provider's marks) · 0.5.64 ✅ (the upstream's main, merged in; the press is a fill; the engine's events reach the conversation; the working mark is the Mac's own) → 0.5.49 |
 | **7. Gestures & micro-UX** | Rename, double-click, resize grabber, history, popover flip, clear/remove/badge behaviours, find and search field shape | §9 | 0.5.48 ✅ (the rename, the grabber, the history) · 0.5.49 ✅ (the find bar) · 0.5.50 ✅ (the popover that flips, the clear) · 0.5.52 ✅ (the actions under a message) · 0.5.53 ✅ (the disabled and remove states) · 0.5.54 ✅ (the quote card, the message menu) |
 | **8. Verification** | Full capture matrix, computed-value checks, close every ◐; final side-by-side | all in-scope rows | 0.5.51 ✅ (the matrix and the measured values) |
 
