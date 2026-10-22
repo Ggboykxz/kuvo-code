@@ -337,6 +337,10 @@ writes for machines) needs `.cmd`/PowerShell or JS equivalents.
     run in the primary folder; the agent can work in the others too" — and the session in
     view is given them: the rules that allow those folders, and the note that tells the
     agent that "in chugs-pinterest" means that folder (`SessionModel.swift:1379-1405`).
+  - **2.98 (this change). Provider plan usage.** The Usage page asked only what the
+    engine ran and cost. It now asks each connected provider its own plan — Copilot and
+    OpenRouter first — with the credentials the engine holds, and shows what they
+    report. Providers whose endpoint isn't wired yet say so.
   - **2.97 (this change). Browser, Passwords, Phone, Auto and Machines settings
     pages.** The Mac's Settings has five more pages the port did not draw
     (`BrowserSettings.swift`, `PasswordsSettings.swift`, `PhoneSettings.swift`,
