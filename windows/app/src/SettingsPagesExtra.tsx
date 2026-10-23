@@ -107,11 +107,46 @@ export function IntegrationsPage() {
 export function BrowserPage() {
   const [engine, setEngine] = useState("google");
   const [historyCount, setHistoryCount] = useState(0);
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
-    const stored = localStorage.getItem("kuvo-browser-engine");
-    if (stored) setEngine(stored);
+    void load();
   }, []);
-  const set = (value: string) => { setEngine(value); localStorage.setItem("kuvo-browser-engine", value); };
+
+  const load = async () => {
+    try {
+      const { engine: loaded } = await api<{ engine: string }>("/api/browser/search-engine");
+      setEngine(loaded);
+    } catch { setEngine("google"); }
+    try {
+      const { count } = await api<{ count: number }>("/api/browser/history");
+      setHistoryCount(count);
+    } catch { setHistoryCount(0); }
+    setLoading(false);
+  };
+
+  const set = async (value: string) => {
+    try {
+      await api("/api/browser/search-engine", { method: "POST", body: { engine: value } });
+      setEngine(value);
+    } catch (error) { complain(error); }
+  };
+
+  const clearHistory = async () => {
+    try {
+      await api("/api/browser/history", { method: "DELETE" });
+      setHistoryCount(0);
+    } catch (error) { complain(error); }
+  };
+
+  const clearCookies = async () => {
+    try {
+      await api("/api/browser/cookies", { method: "DELETE" });
+    } catch (error) { complain(error); }
+  };
+
+  if (loading) return <SettingGroup title="Search"><div className="settings-note">Loading…</div></SettingGroup>;
+
   return (
     <>
       <SettingGroup title="Search">
@@ -123,17 +158,18 @@ export function BrowserPage() {
           </select>
         </SettingRow>
         <SettingRow label="Browsing history" note={historyCount ? `${historyCount} sites, which the new tab page suggests.` : "None yet."}>
-          <button className="small" onClick={() => { localStorage.removeItem("kuvo-browser-history"); setHistoryCount(0); }}>Clear</button>
+          <button className="small" onClick={clearHistory}>Clear</button>
         </SettingRow>
       </SettingGroup>
       <SettingGroup title="Website Data">
         <SettingRow label="Website data" note="Sign-ins, cookies and what sites store, kept apart from your other browsers. Removing a site's data signs you out of it.">
-          <button className="small" onClick={() => (window as unknown as { kuvo?: { showInFolder?: (path: string) => void } }).kuvo?.showInFolder?.(localStorage.getItem("kuvo-browser-data") ?? "")}>Remove All…</button>
+          <button className="small" onClick={clearCookies}>Remove All…</button>
         </SettingRow>
       </SettingGroup>
     </>
   );
 }
+
 
 /// Passwords: the sign-ins the panel's browser saved (PasswordsSettings.swift).
 export function PasswordsPage() {

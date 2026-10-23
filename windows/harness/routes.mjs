@@ -11,8 +11,9 @@ import { handle as handleMisc } from "./routes/misc.mjs";
 import { handle as handleBots } from "./routes/bots.mjs";
 import { handle as handleMachines } from "./routes/machines.mjs";
 import { handle as handleCredentials } from "./routes/credentials.mjs";
+import { handle as handleBrowser } from "./routes/browser.mjs";
 
-const handlers = [handleProjects, handleFiles, handleGit, handleSessions, handleModels, handleSettings, handleMisc, handleBots, handleMachines, handleCredentials];
+const handlers = [handleProjects, handleFiles, handleGit, handleSessions, handleModels, handleSettings, handleMisc, handleBots, handleMachines, handleCredentials, handleBrowser];
 
 export function createApi(ctx) {
   return async function api(request, response, url) {
