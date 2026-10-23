@@ -638,8 +638,23 @@ async function applyProviderCompatibility() {
 
 export async function loadAgents() {
   try {
-    const { agents } = await api<{ agents: Agent[] }>("/api/agents");
-    state.agents = Array.isArray(agents) ? agents : [];
+    const [{ agents: configured }, { agents: detected }] = await Promise.all([
+      api<{ agents: Agent[] }>("/api/agents"),
+      api<{ agents: Array<{ id: string; name: string; binary: string; logo: string; installed: boolean }> }>("/api/agents/detect").catch(() => ({ agents: [] })),
+    ]);
+    const configuredIds = new Set((configured ?? []).map(a => a.id));
+    const merged = [
+      ...(configured ?? []),
+      ...(detected ?? []).filter(a => a.installed && !configuredIds.has(a.id)).map(a => ({
+        id: a.id,
+        name: a.name,
+        mode: a.binary,
+        description: `Coding agent: ${a.name}`,
+        detected: true,
+        logo: a.logo,
+      } as Agent)),
+    ];
+    state.agents = Array.isArray(merged) ? merged : [];
   } catch {
     state.agents = [];
   }
