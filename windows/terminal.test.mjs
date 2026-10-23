@@ -79,10 +79,11 @@ test("a close reason fits the WebSocket limit", () => {
   assert.equal(reason.startsWith("The terminal could not start:"), true);
 });
 
-test("the packaged shell carries the terminal module", () => {
+test("the packaged shell carries the terminal and ssh modules", () => {
   const manifest = JSON.parse(fs.readFileSync(path.join(here, "electron", "package.json"), "utf8"));
   assert.ok(manifest.build.files.includes("terminal.js"), "terminal.js must be in electron-builder's files");
-  assert.equal(manifest.scripts["test:terminal"], "node --test terminal.test.js");
+  assert.ok(manifest.build.files.includes("ssh.js"), "ssh.js must be in electron-builder's files");
+  assert.equal(manifest.scripts["test:terminal"], "node --test terminal.test.js ssh.test.js");
 });
 
 test("the page keeps its shell across tabs and reads addon-fit's real shape", () => {

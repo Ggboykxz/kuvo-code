@@ -111,7 +111,24 @@ test("the page's own values, measured against the Mac's", {
   assert.equal(await style(".palette-card", "border-radius"), "18px", "with an 18 pt corner");
   assert.equal((await box(".palette-search"))?.height, 48, "and a 48 pt search");
   assert.equal((await box(".palette-item"))?.height, 30, "and 30 pt rows");
+  // A dialog, not a div: it announces itself, takes focus and gives it back.
+  assert.equal(await page.getAttribute("#palette", "role"), "dialog");
+  assert.equal(await page.getAttribute("#palette", "aria-modal"), "true");
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "palette-input", "the palette takes the keyboard");
   await page.keyboard.press("Escape");
+  await page.waitForTimeout(250);
+  assert.notEqual(await page.evaluate(() => document.activeElement?.id), "palette-input", "the palette gives it back");
+
+  // Settings is the other dialog, and its opener is replaced by a back button while it
+  // is open: closing it must still put focus back on the settings button.
+  await page.click("#settings-open");
+  await page.waitForTimeout(300);
+  assert.equal(await page.getAttribute("#settings-modal", "role"), "dialog");
+  assert.equal(await page.getAttribute("#settings-modal", "aria-modal"), "true");
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "settings-search", "Settings takes the keyboard");
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "settings-open", "Settings gives it back");
 
   // The gauge: a 12 pt ring with a 2.5 stroke (ContextGauge.swift:25-31).
   const ring = await page.evaluate(() => {

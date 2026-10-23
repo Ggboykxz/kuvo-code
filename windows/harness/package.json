@@ -8,6 +8,7 @@
     "build:exe": "node build-exe.mjs",
     "smoke:exe": "node smoke-exe.mjs",
     "test": "node --test harness.test.mjs",
+    "test:coverage": "node --test --experimental-test-coverage harness.test.mjs",
     "test:live": "node --test --test-concurrency=1 live.test.mjs ui.dom.test.mjs verify.test.mjs"
   },
   "devDependencies": {

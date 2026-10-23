@@ -8,6 +8,7 @@ const os = require('os');
 const path = require('path');
 const { RELEASES_API, pickRelease } = require('./update-check.js');
 const { startTerminalServer: startPtyServer } = require('./terminal.js');
+const { checkDestination } = require('./ssh.js');
 let pty = null;
 try { pty = require('node-pty'); } catch (error) { console.error('node-pty unavailable:', error && error.message); }
 let WebSocketServer = null;
@@ -394,18 +395,7 @@ ipcMain.on("kuvo:open-external", (_event, url) => {
 });
 
 // A machine reached over SSH: is it there, and can we talk to it?
-ipcMain.handle("kuvo:ssh-check", async (_event, destination) => {
-  if (typeof destination !== "string" || !destination.trim()) return { ok: false, error: "No destination." };
-  const { execFileSync } = require("child_process");
-  try {
-    const output = execFileSync("ssh", ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", destination.trim(), "echo", "ok"], {
-      encoding: "utf8", timeout: 10000, stdio: ["ignore", "pipe", "pipe"],
-    });
-    return { ok: String(output).trim() === "ok", output: String(output).trim() };
-  } catch (error) {
-    return { ok: false, error: String(error?.stderr?.toString() || error?.message || error) };
-  }
-});
+ipcMain.handle("kuvo:ssh-check", async (_event, destination) => checkDestination(destination));
 
 function shutdown() {
   if (terminalServer) { try { void terminalServer.close(); } catch {} terminalServer = null; }

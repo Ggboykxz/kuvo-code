@@ -7,6 +7,7 @@ import { errorText } from "./lib";
 import { ChangesPanel } from "./Changes";
 import { complain, loadProjectFiles, loadSessions, notify, openProjectFile, openSession, projectName, projectRun, render, setProjectSettings, state, useStore, newSession, exportConversation, stopRun } from "./store";
 import { keysOf } from "./shortcuts";
+import { useDialogFocus } from "./focus";
 import { buildTree, type TreeNode } from "./filetree.mjs";
 import { openQuicklyMatches } from "./open-quickly.mjs";
 import { terminalSelectionBlock, terminalSocketUrl } from "./terminal.mjs";
@@ -79,12 +80,13 @@ export function Palette() {
   const [index, setIndex] = useState(0);
   const [files, setFiles] = useState<{ path: string; name: string; relative: string }[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
+  const paletteRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(state.paletteOpen, paletteRef, "#palette-input");
 
   useEffect(() => {
     if (state.paletteOpen) {
       setQuery("");
       setIndex(0);
-      setTimeout(() => inputRef.current?.focus(), 0);
     }
   }, [state.paletteOpen]);
 
@@ -181,7 +183,17 @@ export function Palette() {
   };
 
   return (
-    <div id="palette" className={`palette ${state.paletteOpen ? "shown" : ""}`} hidden={!state.paletteOpen} onClick={event => { if (event.target === event.currentTarget) { state.paletteOpen = false; render(); } }}>
+    <div
+      id="palette"
+      ref={paletteRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Command palette"
+      tabIndex={-1}
+      className={`palette ${state.paletteOpen ? "shown" : ""}`}
+      hidden={!state.paletteOpen}
+      onClick={event => { if (event.target === event.currentTarget) { state.paletteOpen = false; render(); } }}
+    >
       {/* The palette is one card of glass: a 48 pt search, then the list (CommandPalette.swift:81-111). */}
       <div className="palette-card">
         <div className="palette-search">
@@ -192,6 +204,10 @@ export function Palette() {
           <input
             id="palette-input"
             placeholder={state.project ? "Search sessions, files and actions" : "Search sessions and actions"}
+            aria-label="Search commands, sessions, and files"
+            role="combobox"
+            aria-expanded={sections.length > 0}
+            aria-controls="palette-list"
             spellCheck={false}
             autoComplete="off"
             value={query}
@@ -212,7 +228,7 @@ export function Palette() {
           />
         </div>
         {sections.length ? (
-          <div id="palette-list" className="palette-list">
+          <div id="palette-list" className="palette-list" role="listbox" aria-label="Matches">
             {sections.map(section => (
               <div className="palette-section" key={section.title}>
                 <div className="palette-title">{section.title}</div>
@@ -221,6 +237,8 @@ export function Palette() {
                   return (
                     <div
                       key={item.id}
+                      role="option"
+                      aria-selected={position === current}
                       className={`palette-item ${position === current ? "selected" : ""}`}
                       onClick={() => void run(item.run)}
                     >

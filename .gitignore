@@ -25,3 +25,6 @@ windows/app/out/
 windows/app/next-env.d.ts
 windows/app/tsconfig.tsbuildinfo
 Agents/node_modules/
+
+# ECC's project memory vault (local handoffs and lessons; not team docs)
+.ecc/

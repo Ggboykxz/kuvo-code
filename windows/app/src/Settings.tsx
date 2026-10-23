@@ -1,7 +1,8 @@
 // The settings: the Mac app's pages, edited the same way — values in, changes into the
 // engine's settings file, saved whole as they are made.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useDialogFocus } from "./focus";
 import { Symbol, type SymbolName } from "./components/symbols";
 import { api } from "./api";
 import {
@@ -101,7 +102,7 @@ const PAGE_SUBTITLES: Record<string, string> = {
   passwords: "The sign-ins the panel's browser saved.",
   phone: "Pair Kuvo Code for iPhone with this Mac.",
   auto: "Your lists of models, one for bugfixes and one for features.",
-  machines: "Linux servers whose engine Kuvo Code runs over SSH.",
+  machines: "Linux servers you can reach over SSH. Reachability now; remote sessions next.",
   archived: "Sessions you put away: still searchable, out of the sidebar.",
   permissions: "What the agent may do without asking you first.",
   notifications: "When Kuvo Code tells you about a session, and how.",
@@ -177,6 +178,8 @@ export function Settings() {
   const [savedPermissions, setSavedPermissions] = useState<{ id: string; action?: string; resource?: string }[]>([]);
   const [system, setSystem] = useState<{ engine?: string; storage?: string; lists?: string }>({});
   const [search, setSearch] = useState("");
+  const modalRef = useRef<HTMLDivElement>(null);
+  useDialogFocus(state.settingsOpen, modalRef, "#settings-search", "#settings-open");
 
   useEffect(() => {
     void bootConfig();
@@ -232,11 +235,20 @@ export function Settings() {
   };
 
   return (
-    <div id="settings-modal" className={`settings ${state.settingsOpen ? "shown" : ""}`} hidden={!state.settingsOpen}>
+    <div
+      id="settings-modal"
+      ref={modalRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="settings-heading"
+      tabIndex={-1}
+      className={`settings ${state.settingsOpen ? "shown" : ""}`}
+      hidden={!state.settingsOpen}
+    >
       {/* Settings takes the sessions' place, the Mac's way: its sidebar on the glass,
           the open page in a card beside it (SettingsView.swift:24-73). */}
       <aside className="settings-sidebar">
-        <div className="settings-heading">Settings</div>
+        <div className="settings-heading" id="settings-heading">Settings</div>
         <label className="search-well settings-search">
           <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
             <circle cx="6.9" cy="6.9" r="4" stroke="currentColor" strokeWidth="1.2" />
@@ -246,12 +258,13 @@ export function Settings() {
             id="settings-search"
             value={search}
             placeholder="Search"
+            aria-label="Search settings"
             spellCheck={false}
             onChange={event => setSearch(event.target.value)}
           />
         </label>
         <div className="settings-nav-scroll">
-          <nav className="settings-nav">
+          <nav className="settings-nav" aria-label="Settings sections">
             {PAGE_GROUPS.map(([group, ids]) => {
               const members = visiblePages.filter(([id]) => (ids as readonly string[]).includes(id));
               if (!members.length) return null;
@@ -263,6 +276,7 @@ export function Settings() {
                       key={id}
                       data-section={id}
                       className={section === id ? "active" : ""}
+                      aria-current={section === id ? "page" : undefined}
                       onClick={() => { state.settingsSection = id; render(); }}
                     >
                       <Symbol name={PAGE_SYMBOLS[id] ?? "gearshape"} size={15} />
@@ -356,6 +370,8 @@ function AppearancePage() {
                 className={`swatch ${look.accent === key ? "selected" : ""}`}
                 data-accent={key}
                 title={accent.title}
+                aria-label={accent.title}
+                aria-pressed={look.accent === key}
                 style={{ background: accent.color || "var(--accent)" }}
                 onClick={() => { look.accent = key; applyLook(); render(); }}
               />
@@ -1146,7 +1162,7 @@ function MachinesPage() {
   return (
     <>
       <SettingGroup title="Machines">
-        <div className="settings-note">Linux servers you reach with SSH, like a home server or a VPS. Their projects open next to this machine's, and their sessions run there. Kuvo Code installs its engine on each.</div>
+        <div className="settings-note">Linux servers you reach with SSH, like a home server or a VPS. Test reachability here; installing the engine on the remote and running sessions there comes next.</div>
         {machines.length === 0 ? <div className="settings-note">None yet.</div> : machines.map(machine => (
           <SettingRow key={machine.id} label={machine.name} note={`${machine.destination}${machine.status ? ` · ${machine.status}` : ""}`}>
             <button className="small" disabled={testing === machine.id} onClick={() => void test(machine.id)}>{testing === machine.id ? "Testing…" : "Test"}</button>
@@ -1168,38 +1184,27 @@ function MachinesPage() {
 /// Accounts: what's connected, the popular providers, and every other one the engine knows.
 function AccountsPage() {
   const [integrations, setIntegrations] = useState<{ id: string; name?: string; connections?: unknown[] }[]>([]);
-  const [connecting, setConnecting] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     void api<{ integrations: { id: string; name?: string; connections?: unknown[] }[] }>("/api/integrations")
       .then(answer => setIntegrations(answer.integrations ?? []))
-      .catch(() => setIntegrations([]));
+      .catch(() => setIntegrations([]))
+      .finally(() => setLoaded(true));
   }, []);
-  const connect = async (id: string) => {
-    setConnecting(id);
-    try {
-      await api(`/api/integrations/${encodeURIComponent(id)}/connect`, { method: "POST" }).catch(() => {});
-    } catch (error) { complain(error); }
-    setConnecting(null);
-    void api<{ integrations: { id: string; name?: string; connections?: unknown[] }[] }>("/api/integrations")
-      .then(answer => setIntegrations(answer.integrations ?? []))
-      .catch(() => {});
-  };
   return (
     <>
       <SettingGroup title="Accounts">
-        {integrations.length === 0 ? <div className="settings-note">Loading…</div> : integrations.map(one => (
+        {!loaded ? <div className="settings-note">Loading…</div> : integrations.length === 0 ? <div className="settings-note">The engine did not report any integrations.</div> : integrations.map(one => (
           <SettingRow key={one.id} label={one.name ?? one.id} note={(one.connections ?? []).length ? "Connected" : "Not connected"}>
             {(one.connections ?? []).length ? (
               <span className="where">Connected</span>
             ) : (
-              <button className="small" disabled={connecting === one.id} onClick={() => void connect(one.id)}>
-                {connecting === one.id ? "Connecting…" : "Connect…"}
-              </button>
+              <button className="small" onClick={() => { state.settingsSection = "providers"; render(); }}>Set up in Providers</button>
             )}
           </SettingRow>
         ))}
       </SettingGroup>
-      <div className="settings-note">Sign in with a subscription you already have, or add an API key. Credentials stay on this machine. The Providers page is where you add your own.</div>
+      <div className="settings-note">Sign in with a subscription you already have, or add an API key. Credentials stay on this machine. This page lists the engine's integrations; signing in to them from here comes next, and Providers is where you add your own today.</div>
     </>
   );
 }
