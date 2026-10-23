@@ -160,7 +160,12 @@ export function Header() {
               title={sidebarOpen ? "Hide Sessions" : "Show Sessions"}
               aria-label={sidebarOpen ? "Hide Sessions" : "Show Sessions"}
               aria-pressed={!sidebarOpen}
-              onClick={() => { state.sidebarOpen = !sidebarOpen; render(); }}
+              onClick={() => {
+                state.sidebarOpen = !sidebarOpen;
+                const main = document.querySelector("main");
+                if (main) main.classList.toggle("sidebar-open", state.sidebarOpen);
+                render();
+              }}
             >
               <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
                 <rect x="2.2" y="3" width="11.6" height="10" rx="2" stroke="currentColor" strokeWidth="1.2" />

@@ -55,6 +55,10 @@ export function Settings() {
   useDialogFocus(state.settingsOpen, modalRef, "#settings-search", "#settings-open");
 
   useEffect(() => {
+    if (state.settingsOpen) {
+      const settings = document.querySelector(".settings");
+      if (window.innerWidth <= 760 && settings) settings.classList.add("sidebar-open");
+    }
     void bootConfig();
     void api<{ permissions: { id: string; action?: string; resource?: string }[] }>("/api/permission/saved")
       .then(answer => setSavedPermissions(answer.permissions ?? []))
@@ -121,7 +125,24 @@ export function Settings() {
       {/* Settings takes the sessions' place, the Mac's way: its sidebar on the glass,
           the open page in a card beside it (SettingsView.swift:24-73). */}
       <aside className="settings-sidebar">
-        <div className="settings-heading" id="settings-heading">Settings</div>
+        <div className="settings-header">
+          <button
+            className="settings-back"
+            aria-label="Back"
+            title="Close Settings"
+            onClick={() => {
+              state.settingsOpen = false;
+              const settings = document.querySelector(".settings");
+              if (settings) settings.classList.remove("sidebar-open");
+              render();
+            }}
+          >
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
+              <path d="M9.8 3.4L5.2 8l4.6 4.6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <div className="settings-heading" id="settings-heading">Settings</div>
+        </div>
         <label className="search-well settings-search">
           <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
             <circle cx="6.9" cy="6.9" r="4" stroke="currentColor" strokeWidth="1.2" />

@@ -68,15 +68,63 @@ const withEndings = (raw, windows) => {
 
 /// The helpers the checks read the stylesheet with.
 const reader = (css) => {
-  // The Mac binding is the last block of the file; a token's last declaration in that block
-  // is the one the cascade uses. Test those, not the retired block at the top.
+  // Normalize line endings first
+  const norm = css.replace(/\r\n/g, "\n");
+  
+  // The Mac binding is the main design-token block (the one with --radius-card, --bg, etc.),
+  // not the retired block at the top, and not the mobile block inside @media.
+  // Find the :root block that contains the core design tokens (e.g., --radius-card).
+  const findMainRoot = (css) => {
+    let pos = 0;
+    while ((pos = css.indexOf(":root {", pos)) !== -1) {
+      const end = css.indexOf("\n}", pos);
+      if (end === -1) break;
+      const block = css.slice(pos, end);
+      // The main Mac binding block has both --bg and --radius-card
+      if (block.includes("--bg:") && block.includes("--radius-card")) {
+        return pos;
+      }
+      pos += 7;
+    }
+    // Fallback: first :root with --bg
+    pos = 0;
+    while ((pos = css.indexOf(":root {", pos)) !== -1) {
+      const end = css.indexOf("\n}", pos);
+      if (end === -1) break;
+      const block = css.slice(pos, end);
+      if (block.includes("--bg:")) return pos;
+      pos += 7;
+    }
+    return css.lastIndexOf(":root {");
+  };
+
+  const findMainDark = (css) => {
+    let pos = 0;
+    let found = -1;
+    while ((pos = css.indexOf('html[data-theme="dark"] {', pos)) !== -1) {
+      const end = css.indexOf("\n}", pos);
+      if (end === -1) break;
+      const block = css.slice(pos, end);
+      // The main dark mode block has --bg and --accent
+      if (block.includes("--bg:") && block.includes("--accent")) {
+        found = pos;
+      }
+      pos += 28;
+    }
+    return found >= 0 ? found : css.lastIndexOf('html[data-theme="dark"] {');
+  };
+
+  const mainRoot = findMainRoot(norm);
+  const mainDark = findMainDark(norm);
+
   const tokensIn = (start, name) => {
     assert.ok(start >= 0, "token block exists");
-    const body = css.slice(start, css.indexOf("\n}", start));
-    return [...body.matchAll(new RegExp(`--${name}:\\s*([^;]+);`, "g"))].at(-1)?.[1]?.trim();
+    const body = norm.slice(start, norm.indexOf("\n}", start));
+    const matches = [...body.matchAll(new RegExp(`--${name}:\\s*([^;]+);`, "g"))];
+    return matches.at(-1)?.[1]?.trim();
   };
-  const lightTokens = (name) => tokensIn(css.lastIndexOf(":root {"), name);
-  const darkTokens = (name) => tokensIn(css.lastIndexOf('html[data-theme="dark"] {'), name);
+  const lightTokens = (name) => tokensIn(mainRoot, name);
+  const darkTokens = (name) => tokensIn(mainDark, name);
 
   /// The rule that is written last for a selector: the one the cascade uses. A rule inside
   /// a media query is not that one (it only applies at some widths), so those are skipped.
@@ -201,9 +249,9 @@ const checks = [
     assert.match(app, /id="conversation"/);
   }],
 
-  ["the sidebar is one search, with 32 pt rows and the state dot", ({ css, app }) => {
-    assert.match(css, /#sessions li \{ height: 32px; \}/);
-    assert.match(css, /\.session \{[^}]*height: 32px/s);
+  ["the sidebar is one search, with 44 pt rows (Windows touch target) and the state dot", ({ css, app }) => {
+    assert.match(css, /#sessions li \{ height: 44px; \}/);
+    assert.match(css, /\.session \{[^}]*height: 44px/s);
     assert.match(app, /placeholder="Search"/);
     assert.doesNotMatch(app, /placeholder="Search sessions…"/);
     assert.doesNotMatch(app, /placeholder="Search messages…"/);
@@ -224,7 +272,7 @@ const checks = [
     assert.match(track, /padding: 3px/);
     assert.match(track, /border-radius: 999px/);
     const tab = rule(".tab {");
-    assert.match(tab, /height: 30px/);
+    assert.match(tab, /height: 44px/);
     assert.match(tab, /gap: 8px/);
     assert.match(rule(".tab-title {"), /max-width: 190px/);
     // The pill: white in the light, a lighter glass in the dark, held off the track.
@@ -278,7 +326,7 @@ const checks = [
     assert.match(pane, /background: var\(--panel\)/);
     assert.match(rule(".drawer-head {"), /height: 44px/);
     const tab = rule(".drawer-tab {");
-    assert.match(tab, /height: 30px/);
+    assert.match(tab, /height: 44px/);
     assert.match(tab, /border-radius: 9px/);
     // The panel sits in the window's row, beside the conversation, not over it.
     const main = app.indexOf("<main");
@@ -312,7 +360,7 @@ const checks = [
     assert.match(rule(".settings-content {"), /border-radius: var\(--radius-panel\)/);
     assert.match(rule(".settings-content-head {"), /padding: 26px 49px 4px/);
     assert.match(rule(".settings-page {"), /max-width: 798px/);
-    assert.match(rule(".settings-nav button {"), /height: 32px/);
+    assert.match(rule(".settings-nav button {"), /height: 44px/);
   }],
 
   ["the shell leaves room for Windows' own window controls, and the page drags", ({ css, app, rule }) => {
@@ -827,7 +875,7 @@ const checks = [
     assert.match(app, /className="project-row"/);
     assert.match(app, /className="project-compose"/);
     assert.match(app, /New Session in \$\{folderName\(folder\)\}/);
-    assert.match(rule("aside .project-row {"), /height: 32px/);
+    assert.match(rule("aside .project-row {"), /height: 44px/);
     assert.match(rule("aside .project-icon {"), /flex: 0 0 18px/);
     assert.match(css, /aside \.project-compose \{[\s\S]*?opacity: 0;/);
   }],

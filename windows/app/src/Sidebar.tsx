@@ -120,7 +120,7 @@ export function Sidebar() {
             onBlur={event => { void commitRename(session.id, event.currentTarget.value); }}
           />
         ) : (
-          <button className="session" data-id={session.id} onClick={() => { state.settingsOpen = false; void openSession(session.id); }}>
+          <button className="session" data-id={session.id} onClick={() => { state.settingsOpen = false; void openSession(session.id); const main = document.querySelector("main"); if (main) main.classList.remove("sidebar-open"); }}>
             <span className="session-title">{session.title || "New Session"}</span>
             {running || unread ? <span className={`session-state ${running ? "running" : "unread"}`} aria-hidden="true" /> : null}
           </button>
@@ -346,6 +346,7 @@ export function PaneResizer({ pane }: { pane: "sessions" | "split" | "changes" }
     <div
       className={`pane-resizer ${pane} ${dragging ? "dragging" : ""}`}
       title="Drag to resize"
+      style={{ touchAction: "none" }}
       onPointerDown={event => {
         event.preventDefault();
         setDragging(true);
@@ -402,7 +403,7 @@ export function MessageSearch({ query }: { query: string }) {
         <div className="hit" key={match.session.id}>
           <div>{match.session.title || match.session.id}</div>
           {match.hits.map((hit, index) => (
-            <div className="where" key={index} onClick={() => void openSession(match.session.id)}>{hit.snippet}</div>
+            <div className="where" key={index} onClick={() => { void openSession(match.session.id); const main = document.querySelector("main"); if (main) main.classList.remove("sidebar-open"); }}>{hit.snippet}</div>
           ))}
         </div>
       ))}
