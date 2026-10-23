@@ -6,10 +6,10 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSy
 import { homedir } from "node:os"
 import { join } from "node:path"
 import { providerID, type AgentAccount } from "../accounts"
-import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, SubagentRun, Thread, TurnHooks, PromptFile } from "../agent"
+import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, SignInOptions, SubagentRun, Thread, TurnHooks, PromptFile } from "../agent"
 import type { Limit } from "../auto"
-import { accountName, failure, model } from "../agent"
-import { fromPatch } from "../diff"
+import { accountName, ContextWindows, failure, model } from "../agent"
+import { fileDiff, fromPatch } from "../diff"
 import { emit } from "../events"
 import { kuvoTools, toolServerName } from "../kuvotools"
 import { pictureData, pictureFile, withPictures } from "../pictures"
@@ -22,7 +22,7 @@ import { RPC, RPCError } from "../rpc"
 import { engineSkills, skillsFolder, skillsFor, turnedOff, upward, within } from "../skills"
 import { afterInstall } from "../signin"
 import type { Turn } from "../turn"
-import type { FileDiff, FormField, Model, ModelRef, OAuthStatus, Session, TokenUsage } from "../wire"
+import type { FileDiff, FormField, Model, ModelRef, OAuthStatus, Session } from "../wire"
 
 const places = ["/opt/homebrew/bin", "/usr/local/bin", join(homedir(), ".local/bin"), join(homedir(), ".codex/bin")]
 const outputLimit = 30_000
@@ -252,11 +252,10 @@ export class CodexAgent implements Agent {
   }
 
   /** How much each model holds, as Codex said in a turn. */
-  private contexts = new Map<string, number>()
+  private windows = new ContextWindows()
 
-  noteContext(model: string, window: number) {
-    if (this.contexts.get(model) === window) return
-    this.contexts.set(model, window)
+  noteContext(model: string, window: unknown) {
+    if (!this.windows.note(model, window)) return
     this.modelList = undefined
     emit("model.updated", {})
   }
@@ -295,13 +294,33 @@ export class CodexAgent implements Agent {
     return account
   }
 
-  async signIn(): Promise<SignInAttempt> {
+  /** ChatGPT's device code works wherever its page is opened. */
+  readonly signsInRemotely = true
+
+  async signIn(_methodID = "chatgpt", options: SignInOptions = {}): Promise<SignInAttempt> {
     // On a machine without it yet: installed first, said at once.
     if (onMachine && !codexProgram(this.context.deps)) return afterInstall("Installing Codex on this machine…", "Finish signing in with ChatGPT in your browser.", false, async () => {
       await installCodex(this.context.deps)
-      return this.signIn()
+      return this.signIn(_methodID, options)
     })
     const rpc = await this.rpc()
+    // On another device: a code to enter on ChatGPT's page, as `codex login --device-auth` has it.
+    if (options.remote) {
+      const device: any = await rpc.request("account/login/start", { type: "chatgptDeviceCode" }, 30_000)
+      let status: OAuthStatus = { status: "pending" }
+      this.logins.set(device.loginId, (done) => (status = done))
+      return {
+        url: device.verificationUrl,
+        userCode: device.userCode,
+        instructions: `Open ChatGPT's page, sign in, and enter the code ${device.userCode}. Codex keeps the sign-in, as when you run codex login.`,
+        mode: "auto",
+        status: () => status,
+        cancel: () => {
+          this.logins.delete(device.loginId)
+          void rpc.request("account/login/cancel", { loginId: device.loginId }).catch(() => {})
+        },
+      }
+    }
     const result: any = await rpc.request("account/login/start", { type: "chatgpt" }, 30_000)
     let status: OAuthStatus = { status: "pending" }
     this.logins.set(result.loginId, (done) => (status = done))
@@ -337,7 +356,7 @@ export class CodexAgent implements Agent {
           model(this.providerID, info.model ?? info.id, info.displayName ?? info.model, {
             variants: (info.supportedReasoningEfforts ?? []).map((effort: any) => effort.reasoningEffort),
             images: (info.inputModalities ?? []).includes("image"),
-            context: this.contexts.get(info.model ?? info.id) ?? 400_000,
+            context: this.windows.get(info.model ?? info.id) ?? 400_000,
             // Listed in Codex's order: its default first.
             released: info.isDefault ? 2000 : order--,
           }),
@@ -461,7 +480,6 @@ interface Lane {
   output: Map<string, string>
   /** A tool ran since the last words: the next words start a new step. */
   toolsSinceText: boolean
-  usage?: TokenUsage
   /** Reasoning items whose summary came as deltas (their raw text then isn't shown too), and those whose raw text did. */
   summarized?: Set<string>
   reasoned?: Set<string>
@@ -740,8 +758,7 @@ class CodexThread implements Thread {
         return
       case "thread/tokenUsage/updated": {
         // How much its model holds, as Codex says: the models list it.
-        const window = params.tokenUsage?.modelContextWindow
-        if (typeof window === "number" && window > 0) this.agent.noteContext(active.model, window)
+        this.agent.noteContext(active.model, params.tokenUsage?.modelContextWindow)
         this.laneNotification(active, method, params)
         return
       }
@@ -771,7 +788,7 @@ class CodexThread implements Thread {
       case "turn/completed": {
         this.active = undefined
         if (active.plan) turn.toolSucceeded(active.plan.id, "", { todos: active.plan.todos })
-        turn.endStep({ tokens: active.usage })
+        turn.endStep()
         const status = params.turn?.status
         // A limit only when the turn didn't go through: one it got past on a retry doesn't count.
         const limit = status === "failed" ? (active.limit ?? this.limitOf(params.turn?.error, active.model)) : status === "interrupted" && active.stoppedForLimit ? active.limit : undefined
@@ -855,15 +872,20 @@ class CodexThread implements Thread {
         return
       }
       case "thread/tokenUsage/updated": {
+        // Told as a model call ends (after the commands it ran): its step ends with what it used,
+        // and what comes next is the next call's step, as the engine's steps are. (One with
+        // nothing read or written, Codex's estimate after it compacted, isn't a call.)
         const last = params.tokenUsage?.last
-        if (last) {
-          lane.usage = {
+        if (!last?.inputTokens && !last?.outputTokens) return
+        lane.toolsSinceText = false
+        turn.endStep({
+          tokens: {
             input: Math.max(0, (last.inputTokens ?? 0) - (last.cachedInputTokens ?? 0)),
             output: Math.max(0, (last.outputTokens ?? 0) - (last.reasoningOutputTokens ?? 0)),
             reasoning: last.reasoningOutputTokens ?? 0,
             cache: { read: last.cachedInputTokens ?? 0, write: last.cacheWriteInputTokens ?? 0 },
-          }
-        }
+          },
+        })
         return
       }
       case "hook/started":
@@ -1024,7 +1046,7 @@ class CodexThread implements Thread {
   private endSubagent(lane: SubagentLane, outcome: "succeeded" | "failed" | "interrupted", message?: string) {
     if (lane.ended) return
     lane.ended = true
-    lane.turn.endStep({ tokens: lane.usage })
+    lane.turn.endStep()
     lane.run.end(outcome, outcome === "failed" ? { type: "agent", message: message ?? "The agent stopped with an error." } : undefined)
   }
 
@@ -1032,8 +1054,7 @@ class CodexThread implements Thread {
   private words(lane: Lane) {
     if (!lane.toolsSinceText) return
     lane.toolsSinceText = false
-    lane.turn.endStep({ tokens: lane.usage })
-    lane.usage = undefined
+    lane.turn.endStep()
     lane.turn.startStep()
   }
 
@@ -1307,7 +1328,7 @@ class CodexThread implements Thread {
       case "item/fileChange/requestApproval": {
         // A spawned agent's change: its session has it.
         const changes = (lane ?? active!).changes.get(params.itemId) ?? []
-        const files = changes.map((change) => fromPatch(change.path, change.diff, change.kind === "add" ? "added" : change.kind === "delete" ? "deleted" : "modified"))
+        const files = changes.map(changeDiff)
         const decision = await hooks.permission({
           toolCallID: params.itemId,
           action: "edit",
@@ -1459,8 +1480,11 @@ function codexChanges(raw: unknown): { path: string; kind: string; diff: string;
   return ((Array.isArray(raw) ? raw : []) as any[]).map((change) => ({ path: change.path, kind: change.kind?.type ?? "update", diff: change.diff ?? "", movedTo: change.kind?.move_path ?? undefined }))
 }
 
+/** A change as the app draws it: Codex gives a new or deleted file's whole text, and an edit's unified diff. */
 function changeDiff(change: { path: string; kind: string; diff: string; movedTo?: string }): FileDiff {
-  return fromPatch(change.movedTo ?? change.path, change.diff, change.kind === "add" ? "added" : change.kind === "delete" ? "deleted" : "modified")
+  if (change.kind === "add") return fileDiff(change.path, undefined, change.diff)
+  if (change.kind === "delete") return fileDiff(change.path, change.diff, undefined)
+  return fromPatch(change.movedTo ?? change.path, change.diff, "modified")
 }
 
 /** An MCP tool's result, as words and pictures (resources and links named, audio said). */

@@ -2,6 +2,7 @@ import AppKit
 import CryptoKit
 import Foundation
 import OpenCodeKit
+import Sparkle
 
 /// The browser machines run, as `browser-runtime.json` pins it (`scripts/browser-runtime.py`):
 /// Chrome for Testing for each Linux architecture, run headless, and the Enterprise Linux 8
@@ -152,20 +153,25 @@ nonisolated enum MachineBrowserInstaller {
     /// Chromium, or the same Chromium put there by a newer Kuvo Code. A Mac with an older version
     /// of the app uses the browser a newer one put there, rather than swapping it back, so two Macs
     /// on different versions don't send theirs in turns. A build from before they said which Kuvo
-    /// Code put them there is replaced.
-    static func keeps(_ build: String, madeBy: String, over runtime: BrowserRuntime, version: String = AppInfo.version) -> Bool {
+    /// Code put them there is replaced. Kuvo Code's versions are its builds' (`AppInfo.build`),
+    /// ordered as updates are, so a beta's (0.7.0b1) comes before the release (0.7.0).
+    static func keeps(_ build: String, madeBy: String, over runtime: BrowserRuntime, version: String = madeBy) -> Bool {
         let theirs = build.split(separator: "-").first.map(String.init) ?? ""
         switch theirs.compare(runtime.chromium.version, options: .numeric) {
         case .orderedDescending: return true
         case .orderedAscending: return false
-        case .orderedSame: return !madeBy.isEmpty && madeBy.compare(version, options: .numeric) == .orderedDescending
+        case .orderedSame: return !madeBy.isEmpty && SUStandardVersionComparator.default.compareVersion(madeBy, toVersion: version) == .orderedDescending
         }
     }
+
+    /// This copy's version, as builds are marked with it: its build's (0.7.0b1 for a beta), or
+    /// for one built in Xcode (whose build is "1") its version's.
+    static var madeBy: String { AppInfo.build.contains(".") ? AppInfo.build : AppInfo.version }
 
     /// Sends a bundle to the machine and makes it the one in use. Older builds go, unless a browser
     /// still runs from one (it moves to the new one when it next starts).
     static func send(_ bundle: URL, _ runtime: BrowserRuntime, to connection: SSHConnection) async throws {
-        let version = AppInfo.version.filter { $0.isASCII && ($0.isNumber || $0 == ".") }
+        let version = madeBy.filter { $0.isASCII && ($0.isNumber || $0 == "." || $0 == "b") }
         try await connection.run("""
             set -e
             B="\(folder)"
@@ -448,7 +454,7 @@ extension MachineBrowserInstaller {
         let file = FileManager.default.temporaryDirectory.appending(path: "kuvo-browser-\(UUID().uuidString).js")
         try Data(helper.text.utf8).write(to: file)
         defer { try? FileManager.default.removeItem(at: file) }
-        try await connection.run("""
+        try await connection.run(BoxVersion.guardScript + "\n" + """
             set -e
             mkdir -p "$HOME/\(RemoteEngineInstaller.root)/bin"
             cat >"\(helperPath).new"
@@ -462,7 +468,7 @@ extension MachineBrowserInstaller {
     static func command(_ mode: String) -> String {
         """
         K="$HOME/\(RemoteEngineInstaller.root)"; E="$K/engine/\(OpenCodeEngine.version)/opencode"; \
-        [ -x "$E" ] || E=$(ls -d "$K"/engine/*/opencode 2>/dev/null | tail -n 1); \
+        [ -x "$E" ] || E="\(RemoteEngineInstaller.newestEngine)"; \
         XDG_DATA_HOME="$K/data" XDG_CONFIG_HOME="$K/config" XDG_STATE_HOME="$K/state" XDG_CACHE_HOME="$K/cache" \
         BUN_INSTALL="$K/cache/bun" KUVO_HOME="$K" KUVO_LANG="\(languages)" BUN_BE_BUN=1 exec "$E" "\(helperPath)" \(mode)
         """

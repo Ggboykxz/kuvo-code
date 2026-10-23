@@ -1,12 +1,14 @@
 import OpenCodeKit
 import SwiftUI
 
-/// Accounts, a page of Settings: what's connected, the popular providers, and every other one
-/// the engine knows. The list comes from the engine, so it grows without app updates. Signing
-/// in to a provider, or setting up one of your own, opens in the page's place.
+/// Accounts, a page of Settings, on each computer: what's connected there, the popular providers,
+/// and every other one its engine knows. The list comes from the engine, so it grows without app
+/// updates. Signing in to a provider, or setting up one of your own, opens in the page's place,
+/// and is that computer's own.
 struct ProvidersView: View {
     @Environment(Catalog.self) private var catalog
     @Environment(AppModel.self) private var app
+    @Environment(\.settingsBox) private var box
     @Environment(\.colorScheme) private var scheme
     @Environment(\.settingsInset) private var inset
     @State private var connecting: Connecting?
@@ -16,11 +18,10 @@ struct ProvidersView: View {
     @State private var removal: [String]?
     @State private var search = ""
 
-    /// The machine whose coding agents show (nil: this Mac's), picked in their section.
-    private var machine: MachineEngine? { app.accountsPlace.flatMap { app.machines.engine($0) } }
+    /// The machine whose accounts these are, on a machine's tab.
+    private var machine: MachineEngine? { app.machines.engine(box.machine) }
 
-    /// A sign-in, open in the page's place: a coding agent's on this Mac or on a machine (its own
-    /// there); anything else this Mac's, which your machines get a copy of.
+    /// A sign-in, open in the page's place, on the computer it's for.
     struct Connecting: Identifiable {
         let integration: Integration
         var machine: String?
@@ -48,11 +49,11 @@ struct ProvidersView: View {
         #if DEBUG
         .task {
             if let id = ProcessInfo.processInfo.environment["KUVO_DEMO_PROVIDERS"], let provider = catalog.providers.first(where: { $0.id == id }) {
-                connecting = Connecting(integration: provider)
+                connecting = Connecting(integration: provider, machine: box.machine)
             }
-            // KUVO_DEMO_ACCOUNTS_MACHINE=<machine>: that machine's coding agents.
-            if let id = ProcessInfo.processInfo.environment["KUVO_DEMO_ACCOUNTS_MACHINE"], app.machines.engine(id) != nil {
-                app.accountsPlace = id
+            // KUVO_DEMO_ACCOUNTS_MACHINE=<machine>: that machine's accounts.
+            if let id = ProcessInfo.processInfo.environment["KUVO_DEMO_ACCOUNTS_MACHINE"], app.machines.engine(id) != nil, box.machine == nil {
+                app.settingsTabs.show(.accounts, on: .machine(id))
             }
         }
         #endif
@@ -60,14 +61,14 @@ struct ProvidersView: View {
 
     private func removePending() {
         guard let removal else { return }
-        app.engineConfig.set(nil, at: removal)
-        // Its key goes with it, here and on your machines: one made again with its name doesn't
-        // quietly reconnect with the old one.
-        if let id = removal.last, let api = app.api, let provider = catalog.integrations.first(where: { $0.id == id }) {
+        app.config(for: box).set(nil, at: removal)
+        // Its key goes with it: one made again with its name doesn't quietly reconnect with the
+        // old one.
+        if let id = removal.last, let api = app.api(for: box), let provider = catalog.integrations.first(where: { $0.id == id }) {
             let ids = provider.connections.filter { $0.type == "credential" }.compactMap(\.credentialID)
             Task {
                 for credential in ids { try? await api.removeCredential(credential) }
-                app.forgetSignIn(id)
+                app.forgetSignIn(id, on: box)
             }
         }
         self.removal = nil
@@ -79,26 +80,21 @@ struct ProvidersView: View {
                 SearchField(text: $search, prompt: "Search \(catalog.providers.count) providers")
 
                 if search.isEmpty {
-                    SubscriptionsSection(shows: .agents, machine: machine) { connecting = Connecting(integration: $0, machine: machine?.machine.id) }
-                        .environment(machine?.catalog ?? catalog)
-                        .environment(\.agentsBridge, machine?.agents)
-                        // Another place's agents: asked anew.
-                        .id(machine?.machine.id)
-                    SubscriptionsSection(shows: .plans) { connecting = Connecting(integration: $0) }
+                    SubscriptionsSection(shows: .agents, machine: machine) { connecting = Connecting(integration: $0, machine: box.machine) }
+                    SubscriptionsSection(shows: .plans, machine: machine) { connecting = Connecting(integration: $0, machine: box.machine) }
                 }
 
                 if search.isEmpty, !connected.isEmpty {
                     section("Connected") {
                         VStack(spacing: 0) {
                             ForEach(connected) { provider in
-                                ConnectedRow(provider: provider) { connecting = Connecting(integration: provider) }
+                                ConnectedRow(provider: provider) { connecting = Connecting(integration: provider, machine: box.machine) }
                                 if provider.id != connected.last?.id {
                                     Divider().padding(.leading, 56)
                                 }
                             }
                         }
-                        .background(Surface.cardFill(scheme, focused: false), in: .rect(cornerRadius: Metrics.cardRadius))
-                        .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
+                        .background(SettingsMetrics.groupFill(scheme), in: .rect(cornerRadius: SettingsMetrics.groupRadius))
                     }
                 }
 
@@ -106,14 +102,14 @@ struct ProvidersView: View {
                     section("Popular") {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 12)], spacing: 12) {
                             ForEach(featured) { provider in
-                                ProviderTile(provider: provider) { connecting = Connecting(integration: provider) }
+                                ProviderTile(provider: provider) { connecting = Connecting(integration: provider, machine: box.machine) }
                             }
                         }
                     }
                 }
 
                 if search.isEmpty {
-                    CustomProvidersSection { connecting = Connecting(integration: $0) } edit: { id in editing = ProviderEdit(id: id) }
+                    CustomProvidersSection { connecting = Connecting(integration: $0, machine: box.machine) } edit: { id in editing = ProviderEdit(id: id) }
                 }
 
                 if others.isEmpty, !search.isEmpty {
@@ -130,12 +126,11 @@ struct ProvidersView: View {
                     section(search.isEmpty ? "All Providers" : "Results") {
                         LazyVStack(spacing: 0) {
                             ForEach(others) { provider in
-                                ProviderRow(provider: provider) { connecting = Connecting(integration: provider) }
+                                ProviderRow(provider: provider) { connecting = Connecting(integration: provider, machine: box.machine) }
                             }
                         }
                         .padding(4)
-                        .background(Surface.cardFill(scheme, focused: false), in: .rect(cornerRadius: Metrics.cardRadius))
-                        .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
+                        .background(SettingsMetrics.groupFill(scheme), in: .rect(cornerRadius: SettingsMetrics.groupRadius))
                     }
                 }
             }
@@ -158,7 +153,7 @@ struct ProvidersView: View {
         let query = search.trimmingCharacters(in: .whitespaces)
         if query.isEmpty {
             // Your own are listed in their own section.
-            let shown = Set(Catalog.featured).union(app.engineConfig.value(at: CustomProvidersSection.path)?.object?.keys ?? [:].keys)
+            let shown = Set(Catalog.featured).union(app.config(for: box).value(at: CustomProvidersSection.path)?.object?.keys ?? [:].keys)
             return catalog.providers.filter { !shown.contains($0.id) && !$0.isConnected && !OutsideAgents.isAgent($0.id) && !Catalog.planProviders.contains($0.id) }
         }
         return catalog.providers.filter { $0.name.localizedCaseInsensitiveContains(query) || $0.id.localizedCaseInsensitiveContains(query) }
@@ -236,11 +231,10 @@ private struct ProviderTile: View {
                 .controlSize(.small)
         }
         .padding(12)
-        .background(Surface.cardFill(scheme, focused: false), in: .rect(cornerRadius: Metrics.cardRadius))
-        .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
+        .background(SettingsMetrics.groupFill(scheme), in: .rect(cornerRadius: SettingsMetrics.groupRadius))
         // Under the pointer, an accent edge: the whole tile connects.
         .overlay {
-            RoundedRectangle(cornerRadius: Metrics.cardRadius)
+            RoundedRectangle(cornerRadius: SettingsMetrics.groupRadius)
                 .strokeBorder(.tint, lineWidth: 1.5)
                 .opacity(isHovering ? 1 : 0)
         }
@@ -306,6 +300,8 @@ private struct ConnectedRow: View {
     let provider: Integration
     let addAccount: () -> Void
     @Environment(AppModel.self) private var app
+    @Environment(\.settingsBox) private var box
+    @Environment(Catalog.self) private var catalog
 
     var body: some View {
         HStack(spacing: 12) {
@@ -319,7 +315,7 @@ private struct ConnectedRow: View {
                     .foregroundStyle(needsAttention ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
             }
             Spacer()
-            Button("Add Account", action: addAccount)
+            Button(signInEnded ? "Sign In Again" : "Add Account", action: addAccount)
                 .buttonStyle(.glass)
             if provider.connections.contains(where: { $0.type == "credential" }) {
                 Button("Disconnect", role: .destructive, action: disconnect)
@@ -332,10 +328,13 @@ private struct ConnectedRow: View {
 
     private var active: Integration.Connection? { provider.connections.first }
 
-    private var needsAttention: Bool { active?.status?.status == "needs_auth" }
+    /// Its sign-in ended: the engine says so, or a run was refused it.
+    private var signInEnded: Bool { catalog.hasEndedSignIn(provider.id) }
+    private var needsAttention: Bool { active?.status?.status == "needs_auth" || signInEnded }
 
     private var detail: String {
         guard let active else { return "" }
+        if signInEnded { return "Sign-in ended" }
         if let status = active.status { return status.message }
         switch active.type {
         case "env": return "From \(active.name ?? "the environment")"
@@ -346,48 +345,8 @@ private struct ConnectedRow: View {
         }
     }
 
+    /// Its sign-ins and keys on this computer.
     private func disconnect() {
-        guard let api = app.api else { return }
-        let ids = provider.connections.filter { $0.type == "credential" }.compactMap(\.credentialID)
-        Task {
-            for id in ids { try? await api.removeCredential(id) }
-            // And its copies on your machines (a ChatGPT sign-in).
-            app.forgetSignIn(provider.id)
-        }
-    }
-}
-
-/// Whose coding agents Accounts shows, by their section's title: this Mac's, or one of your
-/// machines' (each signs in to them on its own). Only there while you have machines.
-struct AccountsPlaceMenu: View {
-    @Environment(AppModel.self) private var app
-
-    var body: some View {
-        if !app.machines.list.isEmpty {
-            let current = app.accountsPlace.flatMap { id in app.machines.list.first { $0.id == id } }
-            Menu {
-                Picker("Coding Agents On", selection: Binding(get: { current?.id }, set: { id in withAnimation(.ui) { app.accountsPlace = id } })) {
-                    Label("This Mac", systemImage: "laptopcomputer").tag(String?.none)
-                    Section("Machines") {
-                        ForEach(app.machines.list) { machine in
-                            Label(machine.name, systemImage: "server.rack").tag(Optional(machine.id))
-                        }
-                    }
-                }
-                .pickerStyle(.inline)
-            } label: {
-                HStack(spacing: 5) {
-                    Label(current?.name ?? "This Mac", systemImage: current == nil ? "laptopcomputer" : "server.rack")
-                        .labelStyle(.titleAndIcon)
-                    MenuChevron()
-                }
-                .font(.system(size: 13, weight: .medium))
-            }
-            .menuStyle(.button)
-            .menuIndicator(.hidden)
-            .buttonStyle(TextButtonStyle(cornerRadius: 6, dimsAtRest: false))
-            .fixedSize()
-            .help("Each machine signs in to the coding agents on its own. Plans and API keys work on all of them.")
-        }
+        app.forgetSignIn(provider.id, on: box)
     }
 }

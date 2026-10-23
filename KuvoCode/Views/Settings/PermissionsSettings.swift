@@ -5,30 +5,41 @@ import SwiftUI
 /// particular commands or files, approvals saved with "Always", and blocks nothing overrides.
 struct PermissionsSettings: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.settingsBox) private var box
     @Environment(Workspace.self) private var workspace
     @State private var saved: [Saved] = []
 
     /// An approval saved with Always, and the engine that keeps it: this Mac's, or a machine's.
-    private struct Saved: Identifiable {
+    struct Saved: Identifiable {
         let permission: SavedPermission
         let engine: MachineEngine?
         var id: String { (engine?.machine.id ?? "") + "/" + permission.id }
     }
 
-    private var config: EngineConfig { app.engineConfig }
+    private var config: EngineConfig { app.config(for: box) }
     private static let path = ["permissions"]
 
     /// The kinds of action, with what they cover; each is a rule for every resource ("*").
     static let actions: [(id: String, title: String, detail: String)] = [
-        ("edit", "Edit files", "Changing, creating or deleting files."),
+        ("edit", "Edit files", "Changing, creating or deleting files. Plan mode doesn't, by default."),
         ("shell", "Run commands", "In the terminal."),
-        ("read", "Read files", "Files ending in .env ask first unless you allow this. Codex, Cursor, Grok and Antigravity can read files without asking, so only Kuvo Code's agent and Claude Code are sure to keep to it."),
-        ("external_directory", "Work outside the project", "In folders that aren't the project's. Asks by default."),
+        ("read", "Read files", "Files ending in .env ask first unless you allow this."),
+        ("external_directory", "Work outside the project", "In folders that aren't the project's."),
         ("webfetch", "Open web pages", ""),
         ("websearch", "Search the web", ""),
         ("subagent", "Hand work to subagents", ""),
         ("skill", "Use skills", ""),
     ]
+
+    /// What the engine does with no choice made: everything is allowed but working outside the
+    /// project, which asks; Plan mode doesn't edit (its built-in rules, as the engine lists them).
+    static func engineDefault(_ action: String, agent: String? = nil) -> PermissionRule.Effect {
+        switch (action, agent) {
+        case ("external_directory", _): .ask
+        case ("edit", "plan"): .deny
+        default: .allow
+        }
+    }
 
     var body: some View {
         ScrollingSettingsForm {
@@ -37,7 +48,7 @@ struct PermissionsSettings: View {
             } header: {
                 Text("When the Agent Wants To")
             } footer: {
-                Text("For every session and mode, so Allow here also lets Plan mode do it. A session set to Approve All does what's set to Ask First here without asking, and one set to Ask First still asks; Don't Allow holds for all of them.")
+                Text("For every session and mode. Don't Allow holds even in Approve All. Codex, Cursor, Grok and Antigravity may read files without asking.")
                     .foregroundStyle(.secondary)
             }
 
@@ -65,7 +76,7 @@ struct PermissionsSettings: View {
                             Text("\(Self.title(of: permission.action)): \(permission.resource)")
                                 .lineLimit(2)
                                 .truncationMode(.middle)
-                            Text(projectName(permission.projectID) + (item.engine.map { " · on \($0.machine.name)" } ?? ""))
+                            Text(projectName(permission.projectID))
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
@@ -74,7 +85,7 @@ struct PermissionsSettings: View {
                             Task {
                                 // From the engine that keeps it (a machine's, not this Mac's, also
                                 // while it's away: then it stays, and shows again).
-                                try? await (item.engine.map(\.api) ?? app.api)?.removeSavedPermission(permission.id)
+                                try? await (item.engine.map(\.api) ?? app.api(for: box))?.removeSavedPermission(permission.id)
                                 await loadSaved()
                             }
                         } label: {
@@ -99,15 +110,14 @@ struct PermissionsSettings: View {
         }
         .task {
             // Engine 2.0.29 moved blocks out of `experimental`; bring any set there along.
-            let old = app.engineConfig.items(["experimental", "policies"])
+            let old = config.items(["experimental", "policies"])
             if !old.isEmpty {
-                app.engineConfig.setItems(app.engineConfig.items(["policies"]) + old, at: ["policies"])
-                app.engineConfig.set(nil, at: ["experimental", "policies"])
+                config.set([(["policies"], .array(config.items(["policies"]) + old)), (["experimental", "policies"], nil)])
             }
             await loadSaved()
         }
-        // Sessions' rules hold these too (see ToolApproval.rules(settings:)): open ones follow now.
-        .onChange(of: app.engineConfig.settings["permissions"]) { workspace.syncPermissions() }
+        // Again once its engine answers (a machine's, connecting as the page opened).
+        .task(id: app.isReady(box)) { if app.isReady(box) { await loadSaved() } }
     }
 
     static let policyKinds: [(id: String, title: String)] = [
@@ -116,17 +126,20 @@ struct PermissionsSettings: View {
         ("integration.use", "MCP server, skill or plugin"),
     ]
 
-    /// This Mac's engine's approvals, then each connected machine's: Always in a session on a
-    /// machine saves it there.
+    /// This computer's engine's approvals: Always in a session saves it in the engine of the
+    /// computer it's on.
     private func loadSaved() async {
-        var engines: [(api: OpenCodeAPI, engine: MachineEngine?)] = app.api.map { [($0, nil)] } ?? []
-        for engine in app.machines.engines.values.sorted(by: { $0.machine.name < $1.machine.name }) where engine.isReady {
-            if let api = engine.api { engines.append((api, engine)) }
-        }
+        let engines: [(api: OpenCodeAPI, engine: MachineEngine?)] = app.api(for: box).map { [($0, app.machines.engine(box.machine))] } ?? []
+        saved = await Self.saved(from: engines, sessions: workspace.sessions) { saved = $0 }
+    }
+
+    /// Every engine's approvals, `shown` as each engine answers (a slow machine doesn't hold up
+    /// this Mac's). An engine lists one project's at a time: the folders outside any, then each
+    /// project its sessions are in.
+    static func saved(from engines: [(api: OpenCodeAPI, engine: MachineEngine?)], sessions: [Session], shown: ([Saved]) -> Void = { _ in }) async -> [Saved] {
         var all: [Saved] = []
         for (api, engine) in engines {
-            let sessions = workspace.sessions.filter { RemoteFolder.machine(of: $0.location.directory) == engine?.machine.id }
-            // An engine lists one project's at a time: the folders outside any, then each project's.
+            let sessions = sessions.filter { RemoteFolder.machine(of: $0.location.directory) == engine?.machine.id }
             var found = (try? await api.savedPermissions()) ?? []
             for project in Set(sessions.map(\.projectID)).sorted() {
                 for permission in (try? await api.savedPermissions(projectID: project)) ?? [] where !found.contains(where: { $0.id == permission.id }) {
@@ -134,10 +147,9 @@ struct PermissionsSettings: View {
                 }
             }
             all += found.map { Saved(permission: $0, engine: engine) }
-            // Shown as each engine answers: a slow machine doesn't hold up this Mac's.
-            saved = all
+            shown(all)
         }
-        saved = all
+        return all
     }
 
     private func projectName(_ id: String) -> String {
@@ -154,23 +166,42 @@ struct PermissionsSettings: View {
 /// commands or files, after it, win.
 struct ActionChoices: View {
     let path: [String]
+    /// The agent these are for, in its editor: Default there is what Settings › Permissions
+    /// chose, else the engine's default for it.
+    var agent: String? = nil
     @Environment(AppModel.self) private var app
+    @Environment(\.settingsBox) private var box
     @Environment(\.editedConfig) private var edited
 
-    private var config: EngineConfig { edited ?? app.engineConfig }
+    private var config: EngineConfig { edited ?? app.config(for: box) }
 
     var body: some View {
         ForEach(PermissionsSettings.actions, id: \.id) { action in
-            Picker(selection: effect(for: action.id)) {
-                Text("Default").tag(PermissionRule.Effect?.none)
-                Text("Allow").tag(Optional(PermissionRule.Effect.allow))
-                Text("Ask First").tag(Optional(PermissionRule.Effect.ask))
-                Text("Don't Allow").tag(Optional(PermissionRule.Effect.deny))
+            LabeledContent {
+                Picker(action.title, selection: effect(for: action.id)) {
+                    // What Default comes to, so it says what the agent may do.
+                    Text("Default (\(inherited(action.id).title))").tag(PermissionRule.Effect?.none)
+                    Text("Allow").tag(Optional(PermissionRule.Effect.allow))
+                    Text("Ask First").tag(Optional(PermissionRule.Effect.ask))
+                    Text("Don't Allow").tag(Optional(PermissionRule.Effect.deny))
+                }
+                .labelsHidden()
+                .fixedSize()
             } label: {
                 Text(action.title)
                 if !action.detail.isEmpty { Text(action.detail) }
             }
         }
+    }
+
+    /// What applies with no choice here: Settings › Permissions' choice (for an agent), else the
+    /// engine's default.
+    private func inherited(_ action: String) -> PermissionRule.Effect {
+        if agent != nil || path != ["permissions"],
+           let global = app.config(for: box).items(["permissions"]).compactMap(\.rule).last(where: { $0.action == action && $0.resource == "*" }) {
+            return global.effect
+        }
+        return PermissionsSettings.engineDefault(action, agent: agent)
     }
 
     private func effect(for action: String) -> Binding<PermissionRule.Effect?> {
@@ -181,6 +212,17 @@ struct ActionChoices: View {
             var items = config.items(path).filter { $0.rule.map { !($0.action == action && $0.resource == "*") } ?? true }
             if let effect { items.insert(PermissionRule(action: action, resource: "*", effect: effect).json, at: 0) }
             config.setItems(items, at: path)
+        }
+    }
+}
+
+extension PermissionRule.Effect {
+    /// As the choices name it.
+    var title: String {
+        switch self {
+        case .allow: "Allow"
+        case .ask: "Ask First"
+        case .deny: "Don't Allow"
         }
     }
 }
@@ -212,6 +254,7 @@ struct RulesEditor: View {
     /// What a new rule's pattern field says while it's empty; nil for the action's own example.
     var prompt: String?
     @Environment(AppModel.self) private var app
+    @Environment(\.settingsBox) private var box
     @Environment(\.editedConfig) private var edited
     /// Rules being added, until each has a pattern: a half-made rule never changes what the
     /// agent may do.
@@ -227,7 +270,7 @@ struct RulesEditor: View {
     /// Where a draft's new rules wait, in front of their path: `[pendingKey] + path`.
     static let pendingKey = "pendingRules"
 
-    private var config: EngineConfig { edited ?? app.engineConfig }
+    private var config: EngineConfig { edited ?? app.config(for: box) }
 
     /// Why a rule can't be saved as it is, if it can't.
     static func problem(of rule: PermissionRule, hiding: Set<String>) -> String? {

@@ -41,10 +41,12 @@ struct MachineForm: View {
     private var settingsForm: some View {
         SettingsDetailPage {
             Section {
-                TextField("SSH host", text: $destination, prompt: Text(verbatim: "my-server or user@host"))
-                    .autocorrectionDisabled()
-                    .focused($isFocused)
-                    .onSubmit(add)
+                SettingsTextRow(title: "SSH host") {
+                    TextField("SSH host", text: $destination, prompt: Text(verbatim: "my-server or user@host"))
+                        .autocorrectionDisabled()
+                        .focused($isFocused)
+                        .onSubmit(add)
+                }
                 ForEach(suggestions, id: \.self) { host in
                     Button { destination = host } label: {
                         Label(host, systemImage: "arrow.turn.down.right")
@@ -140,8 +142,8 @@ struct MachineForm: View {
             failure = problem
             return
         }
-        if app.machines.engine(destination) != nil {
-            added(destination)
+        if app.machines.engine(destination) != nil || app.machines.list.contains(where: { $0.addresses.contains(destination) }) {
+            added(app.machines.list.first { $0.addresses.contains(destination) }?.id ?? destination)
             return
         }
         isChecking = true
@@ -155,6 +157,16 @@ struct MachineForm: View {
                 return
             }
             // Canceled meanwhile: not added, nor your accounts copied to it.
+            guard !Task.isCancelled else { return }
+            // A machine already here, at another address (its local name, its Tailscale one): one
+            // of its addresses, not another machine to set up.
+            if let identity = await Machine.identity(at: destination), let known = app.machines.machine(calling: identity) {
+                guard !Task.isCancelled else { return }
+                app.machines.addAddress(destination, to: known.id)
+                app.machines.noteAdded(destination, to: known.id)
+                added(known.id)
+                return
+            }
             guard !Task.isCancelled else { return }
             app.addMachine(destination)
             added(destination)
@@ -171,10 +183,10 @@ extension MachineForm {
     }
 }
 
-/// The hosts named in `~/.ssh/config` (and the files it includes), without patterns.
+/// The hosts named in `~/.ssh/config` (and the files it includes), without patterns. `home` is
+/// whose (a test's own).
 nonisolated enum SSHConfig {
-    static func hosts() -> [String] {
-        let home = FileManager.default.homeDirectoryForCurrentUser
+    static func hosts(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> [String] {
         var hosts: [String] = []
         var seen = Set<String>()
         func read(_ url: URL, depth: Int) {

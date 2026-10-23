@@ -2,9 +2,38 @@ import AppKit
 import SwiftUI
 import WebKit
 
-/// Over what you select in the conversation: Add to Chat (it goes over the composer as a quote
-/// to answer) or Copy. It shows when a drag or a double click leaves text selected, and goes
-/// at the next click, scroll or key.
+/// What you can do with a selection in the conversation: Add to Chat (it goes over the composer
+/// as a quote to answer), where the conversation takes quotes, and Copy. The conversation shows
+/// it over its own selection (see `RowStackView`), and `SelectionMenu` over a page's in it.
+struct SelectionActions: View {
+    var addToChat: (() -> Void)?
+    var copy: () -> Void
+
+    var body: some View {
+        HStack(spacing: 2) {
+            if let addToChat {
+                Button(action: addToChat) {
+                    Label("Add to Chat", systemImage: "text.quote")
+                }
+                .help("Reply to this part: it goes over the composer, to answer under")
+                Divider().frame(height: 14)
+            }
+            Button(action: copy) {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+        }
+        .font(.callout)
+        .buttonStyle(TextButtonStyle())
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .glassEffect(.regular, in: .capsule)
+        .fixedSize()
+    }
+}
+
+/// The menu over what you select in a page in the conversation (a widget), which the
+/// conversation doesn't see: the page holds its selection. It shows when a drag or a double click
+/// in the page leaves text selected, and goes at the next click, scroll or key.
 struct SelectionMenu: ViewModifier {
     let addToChat: (String) -> Void
     /// A conversation kept hidden (see `SessionView`) has none.
@@ -17,8 +46,8 @@ struct SelectionMenu: ViewModifier {
     @State private var windowBox = WindowBox()
     /// Where the button went down, to tell a drag from a click.
     @State private var downAt: CGPoint?
-    /// What's selected in a page in the conversation (a widget), read as the menu shows: a page
-    /// copies only a moment later, too late for Add to Chat.
+    /// What's selected in the page, read as the menu shows: a page copies only a moment later,
+    /// too late for Add to Chat.
     @State private var pageSelection: String?
 
     func body(content: Content) -> some View {
@@ -27,52 +56,24 @@ struct SelectionMenu: ViewModifier {
             .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { frame = $0 }
             .overlay(alignment: .topLeading) {
                 if let point {
-                    menu
-                        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { menuFrame = $0 }
-                        .fixedSize()
-                        .position(x: min(max(point.x, 90), max(frame.width - 90, 90)), y: max(point.y - 26, 18))
-                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    SelectionActions(addToChat: {
+                        if let pageSelection { addToChat(pageSelection) }
+                        self.point = nil
+                    }, copy: {
+                        NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
+                        self.point = nil
+                    })
+                    .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }) { menuFrame = $0 }
+                    .position(x: min(max(point.x, 90), max(frame.width - 90, 90)), y: max(point.y - 26, 18))
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
                 }
             }
             .animation(.easeOut(duration: 0.12), value: point == nil)
-            .onAppear {
-                install()
-                #if DEBUG
-                // KUVO_DEMO_SELECTION_MENU=<x>,<y>: shown there, as if text were selected.
-                if let spec = ProcessInfo.processInfo.environment["KUVO_DEMO_SELECTION_MENU"] {
-                    let xy = spec.split(separator: ",").compactMap { Double($0) }
-                    if xy.count == 2 { point = CGPoint(x: xy[0], y: xy[1]) }
-                }
-                #endif
-            }
+            .onAppear(perform: install)
             .onDisappear {
                 if let monitor { NSEvent.removeMonitor(monitor) }
                 monitor = nil
             }
-    }
-
-    private var menu: some View {
-        HStack(spacing: 2) {
-            Button {
-                if let text = pageSelection ?? Quoting.selection() { addToChat(text) }
-                point = nil
-            } label: {
-                Label("Add to Chat", systemImage: "text.quote")
-            }
-            .help("Reply to this part: it goes over the composer, to answer under")
-            Divider().frame(height: 14)
-            Button {
-                NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
-                point = nil
-            } label: {
-                Label("Copy", systemImage: "doc.on.doc")
-            }
-        }
-        .font(.callout)
-        .buttonStyle(TextButtonStyle())
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
-        .glassEffect(.regular, in: .capsule)
     }
 
     private func install() {
@@ -103,21 +104,16 @@ struct SelectionMenu: ViewModifier {
             let dragged = downAt.map { hypot($0.x - inWindow.x, $0.y - inWindow.y) > 4 } ?? false
             guard dragged || event.clickCount >= 2 else { return }
             let at = CGPoint(x: inWindow.x - frame.minX, y: inWindow.y - frame.minY)
-            // Once the text has its selection.
+            // Once the page has its selection: it's asked what it is, as it says it can copy
+            // whether or not anything is (a drag in a widget's drawing selects nothing).
             Task {
                 try? await Task.sleep(for: .milliseconds(60))
-                // A page says it can copy whether or not anything is selected (a drag in a
-                // widget's drawing selects nothing): it's asked what is.
-                if let page = Self.page(in: window) {
-                    let text = (try? await page.evaluateJavaScript("String(getSelection())", in: nil, contentWorld: .defaultClient) as? String)?
-                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    guard !text.isEmpty else { return }
-                    pageSelection = text
-                    point = at
-                } else if Self.hasSelection(in: window) {
-                    pageSelection = nil
-                    point = at
-                }
+                guard let page = Self.page(in: window) else { return }
+                let text = (try? await page.evaluateJavaScript("String(getSelection())", in: nil, contentWorld: .defaultClient) as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !text.isEmpty else { return }
+                pageSelection = text
+                point = at
             }
         default:
             point = nil
@@ -130,20 +126,6 @@ struct SelectionMenu: ViewModifier {
         var view = window.firstResponder as? NSView
         while let current = view, !(current is WKWebView) { view = current.superview }
         return view as? WKWebView
-    }
-
-    /// Text is selected in the conversation: what has the keyboard can copy (asked without
-    /// copying, so the clipboard is left alone), and it isn't a field you type in.
-    private static func hasSelection(in window: NSWindow) -> Bool {
-        guard let responder = window.firstResponder, responder !== window else { return false }
-        if let editor = responder as? NSTextView, editor.isEditable { return false }
-        guard let validator = responder as? NSUserInterfaceValidations, responder.responds(to: #selector(NSText.copy(_:))) else { return false }
-        return validator.validateUserInterfaceItem(CopyItem())
-    }
-
-    private final class CopyItem: NSObject, NSValidatedUserInterfaceItem {
-        var action: Selector? { #selector(NSText.copy(_:)) }
-        var tag: Int { 0 }
     }
 }
 

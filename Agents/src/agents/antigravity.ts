@@ -8,7 +8,7 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 import { providerID, type AgentAccount } from "../accounts"
 import type { Agent, AgentContext, Account, SignInAttempt, SubagentRun, Thread, SubagentTask, TurnHooks } from "../agent"
-import { accountName, failure, model } from "../agent"
+import { accountName, ContextWindows, failure, model } from "../agent"
 import { AcpThread } from "../acp"
 import { emit } from "../events"
 import { withOwnFolders } from "../machine"
@@ -614,17 +614,23 @@ export class AntigravityAgent implements Agent {
   async models(): Promise<Model[]> {
     try {
       const saved = JSON.parse(readFileSync(this.modelsFile, "utf8")) as { current?: string; models: { value: string; name: string }[] }
-      return saved.models.map((info, index) => model(this.providerID, info.value, info.name, { images: true, released: info.value === saved.current ? 2000 : 1000 - index, context: 1_000_000 }))
+      return saved.models.map((info, index) => model(this.providerID, info.value, info.name, { images: true, released: info.value === saved.current ? 2000 : 1000 - index, context: this.windows.get(info.value) ?? 1_000_000 }))
     } catch {
       return []
     }
   }
+
+  /** How much each model holds, as Antigravity says in a turn (its models aren't all Gemini's 1M). */
+  private windows = new ContextWindows()
 
   thread(session: Session, state: Record<string, unknown>): Thread {
     const agent = this
     const followers = new Map<string, AntigravityFollower>()
     return new AcpThread(
       {
+        noteContext(model, size) {
+          if (agent.windows.note(model, size)) emit("model.updated", {})
+        },
         fileSystem: true,
         authenticatesFirst: true,
         resumes: true,

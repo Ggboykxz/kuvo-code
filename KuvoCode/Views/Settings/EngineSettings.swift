@@ -5,6 +5,7 @@ import SwiftUI
 /// limits, files it ignores, plugins, and its settings file.
 struct EngineSettings: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.settingsBox) private var box
     @State private var shells: [ShellOption] = []
     @State private var searchProviders: [WebSearchProvider] = []
     @State private var plugins: [PluginInfo] = []
@@ -12,31 +13,51 @@ struct EngineSettings: View {
     @State private var addingKey: IntegrationRef?
     @Environment(Catalog.self) private var catalog
 
-    private var config: EngineConfig { app.engineConfig }
+    private var config: EngineConfig { app.config(for: box) }
+    /// The machine's, on a machine's tab.
+    private var machine: MachineEngine? { app.machines.engine(box.machine) }
+    /// Its engine is running and answering, here or there.
+    private var isReady: Bool { app.isReady(box) }
 
     var body: some View {
         ScrollingSettingsForm {
             Section {
-                LabeledContent("Engine", value: "opencode \(OpenCodeEngine.version)")
+                LabeledContent("Engine", value: "opencode \(machine?.engineVersion ?? OpenCodeEngine.version)")
                 // The dot carries the color; the words stay readable.
                 LabeledContent("Status") {
                     HStack(spacing: 12) {
-                        switch app.engine {
-                        case .ready: StatusText(app.isLive ? "Running" : "Reconnecting", color: app.isLive ? .green : .orange)
-                        case .failed: StatusText("Stopped", color: .red)
-                        default: Text("Starting…")
+                        if let machine {
+                            MachineStatus(engine: machine)
+                                .fixedSize()
+                            switch machine.state {
+                            case .ready: Button("Restart") { app.restartEngine(machine) }
+                            case .preparing where machine.isStopped: Button("Start") { app.startEngine(machine) }
+                            case .failed, .preparing: Button("Connect") { app.connect(machine) }
+                            default: EmptyView()
+                            }
+                        } else {
+                            switch app.engine {
+                            case .ready: StatusText(app.isLive ? "Running" : "Reconnecting", color: app.isLive ? .green : .orange)
+                            case .failed: StatusText("Stopped", color: .red)
+                            default: Text("Starting…")
+                            }
+                            Button("Restart") { Task { await app.restart() } }
                         }
-                        Button("Restart") { Task { await app.restart() } }
                     }
                 }
-                LabeledContent("Data folder") {
-                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([AppInfo.supportDirectory]) }
+                if let machine {
+                    LabeledContent("Data folder", value: "~/\(RemoteEngineInstaller.root) on \(machine.machine.name)")
+                } else {
+                    LabeledContent("Data folder") {
+                        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([AppInfo.supportDirectory]) }
+                    }
                 }
             } footer: {
                 Text("Sessions, accounts and settings are kept in the data folder, separate from any opencode you have installed.")
                     .foregroundStyle(.secondary)
             }
 
+            if let machine { MachineUpdates(engine: machine) }
             ConfigProblem()
             Section("Behavior") {
                 Toggle(isOn: config.bool(["compaction", "auto"], default: true)) {
@@ -151,17 +172,24 @@ struct EngineSettings: View {
             } header: {
                 Text("Plugins")
             } footer: {
-                Text("Plugins add tools and change how the engine works. They run code on your Mac, so add only ones you trust.")
+                Text(box.machine == nil
+                    ? "Plugins add tools and change how the engine works. They run code on your Mac, so add only ones you trust."
+                    : "Plugins add tools and change how the engine works. They run code on \(app.name(of: box)), so add only ones you trust.")
                     .foregroundStyle(.secondary)
             }
 
             Section {
-                LabeledContent("Settings file") {
-                    HStack {
-                        Button("Open") { NSWorkspace.shared.open(config.file) }
-                            .disabled(!FileManager.default.fileExists(atPath: config.file.path))
-                        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([config.file]) }
-                            .disabled(!FileManager.default.fileExists(atPath: config.file.path))
+                if let machine {
+                    LabeledContent("Settings file", value: "~/\(RemoteEngineInstaller.root)/box/opencode.json on \(machine.machine.name)")
+                        .textSelection(.enabled)
+                } else {
+                    LabeledContent("Settings file") {
+                        HStack {
+                            Button("Open") { NSWorkspace.shared.open(config.file) }
+                                .disabled(!FileManager.default.fileExists(atPath: config.file.path))
+                            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([config.file]) }
+                                .disabled(!FileManager.default.fileExists(atPath: config.file.path))
+                        }
                     }
                 }
             } footer: {
@@ -173,8 +201,8 @@ struct EngineSettings: View {
             ConnectDetail(integrationID: ref.id, note: "The agent can search the web with it now.") { addingKey = nil }
         }
         // Again once the engine is ready: opened while it starts, or after Restart.
-        .task(id: app.engine == .ready) {
-            guard let api = app.api else { return }
+        .task(id: isReady) {
+            guard let api = app.api(for: box) else { return }
             shells = (try? await api.shells()) ?? []
             searchProviders = (try? await api.webSearchProviders()) ?? []
             plugins = (try? await api.plugins()) ?? []
@@ -189,13 +217,13 @@ struct EngineSettings: View {
         return ids.compactMap { id in catalog.integrations.first { $0.id == id } }
     }
 
-    /// Removes a service's stored keys, so a wrong one can be added again: here, and the copies on
-    /// your machines.
+    /// Removes a service's stored keys from this computer's engine, so a wrong one can be added
+    /// again.
     private func removeKeys(_ ids: [String], of integration: String) {
-        guard let api = app.api else { return }
+        guard let api = app.api(for: box) else { return }
         Task {
             for id in ids { try? await api.removeCredential(id) }
-            app.forgetSignIn(integration)
+            app.forgetSignIn(integration, on: box)
             await catalog.refresh()
         }
     }
@@ -215,6 +243,88 @@ private struct StatusText: View {
         HStack(spacing: 6) {
             Circle().fill(color).frame(width: 8, height: 8)
             Text(title)
+        }
+    }
+}
+
+/// A machine's own updates (PROTOCOL.md, "Updates"): its Kuvo Code's version, whether it updates by
+/// itself at night, Update Now, and how the last went. Shown once updates are set up (a release
+/// key is pinned in what the machine runs).
+private struct MachineUpdates: View {
+    let engine: MachineEngine
+    @State private var status: MachineBox.UpdateStatus?
+    @State private var failure: String?
+
+    var body: some View {
+        Group {
+            if let status, status.setUp {
+                Section {
+                    LabeledContent("Kuvo Code", value: status.version ?? "Not marked yet")
+                    Toggle(isOn: Binding(get: { status.auto }, set: { auto in act { try await MachineBox.setAutoUpdate(auto, on: engine.machine.connection) } })) {
+                        Text("Update automatically")
+                        Text("At night where you are, while nothing runs there, a few days after a release is out.")
+                    }
+                    LabeledContent {
+                        Button("Update Now") { act { try await MachineBox.updateNow(on: engine.machine.connection) } }
+                            .disabled(status.updating != nil || status.blocked != nil)
+                    } label: {
+                        Text(Self.words(status))
+                    }
+                } header: {
+                    Text("Updates")
+                } footer: {
+                    if let words = failure ?? status.blocked {
+                        Text(words)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        // Read when it's connected, and again every few seconds while it's updating (its engine
+        // starts over meanwhile, and the connection with it).
+        .task(id: engine.isReady) {
+            guard engine.isReady else { return }
+            repeat {
+                if let read = try? await MachineBox.updateStatus(on: engine.machine.connection) { status = read }
+                guard status?.updating != nil else { break }
+                try? await Task.sleep(for: .seconds(3))
+            } while !Task.isCancelled && engine.isReady
+        }
+    }
+
+    private func act(_ work: @escaping () async throws -> MachineBox.UpdateStatus) {
+        Task {
+            do {
+                status = try await work()
+                failure = nil
+                while status?.updating != nil, engine.isReady, !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(3))
+                    if let read = try? await MachineBox.updateStatus(on: engine.machine.connection) { status = read }
+                }
+            } catch {
+                failure = error.localizedDescription
+            }
+        }
+    }
+
+    /// What it's doing, or how the last went.
+    static func words(_ status: MachineBox.UpdateStatus) -> String {
+        switch status.updating {
+        case "downloading": return "Downloading…"
+        case "downloading the engine": return "Downloading the engine…"
+        case "checking it", "installing", "starting": return "Installing…"
+        case .some: return "Checking for updates…"
+        case nil: break
+        }
+        guard let last = status.last else { return status.latest.map { "Version \($0) is the newest" } ?? "Not checked yet" }
+        let when = last.at.map { " " + Date(timeIntervalSince1970: $0 / 1000).formatted(.relative(presentation: .named)) } ?? ""
+        switch last.result {
+        case "updated": return "Updated to \(last.to ?? status.version ?? "")\(when)"
+        case "current": return "Up to date"
+        case "waiting": return "Version \(last.version ?? status.latest ?? "") comes a few days after its release"
+        case "busy": return "Waiting until nothing runs there"
+        case "failed": return "Couldn't update: \(last.message ?? "")"
+        default: return last.message ?? "Not checked yet"
         }
     }
 }

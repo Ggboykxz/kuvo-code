@@ -4,8 +4,9 @@ import SwiftUI
 /// Accounts' first sections: what you may already pay for, each signed in as you. The coding
 /// agents (Claude Code, Codex, Cursor, Grok, Antigravity) run as their makers built them, on this
 /// Mac or a machine, and each signs in to them on its own (picked in their section); the plans
-/// (GitHub Copilot, GitLab Duo, Poe, OpenCode) bring their models to Kuvo Code's own agent, and
-/// your machines get a copy of their sign-ins, as of every account on the page.
+/// (GitHub Copilot, GitLab Duo, Poe, OpenCode) bring their models to Kuvo Code's own agent, signed
+/// in to on this Mac or a machine too. A machine gets a copy of the keys and of GitHub Copilot's
+/// sign-in; a sign-in that renews itself can't be shared (AppModel.renewsItself).
 ///
 /// What you use is in a card, a product to a block: its name with what it needs from you on the
 /// right (an update), and under it your accounts with it, side by side (none is the main one). The
@@ -13,7 +14,7 @@ import SwiftUI
 struct SubscriptionsSection: View {
     enum Shows { case agents, plans }
     let shows: Shows
-    /// For the agents: the machine whose they are (nil: this Mac's).
+    /// The machine whose they are (nil: this Mac's).
     var machine: MachineEngine?
     /// Opens a sign-in, in the page's place.
     let connect: (Integration) -> Void
@@ -44,7 +45,6 @@ struct SubscriptionsSection: View {
                 }
                 Spacer(minLength: 12)
                 if shows == .agents {
-                    AccountsPlaceMenu()
                     // You installed one or signed in to one elsewhere: asked anew (so is
                     // everything when you come back to the app).
                     Button {
@@ -85,8 +85,7 @@ struct SubscriptionsSection: View {
                             }
                         }
                     }
-                    .background(Surface.cardFill(scheme, focused: false), in: .rect(cornerRadius: Metrics.cardRadius))
-                    .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
+                    .background(SettingsMetrics.groupFill(scheme), in: .rect(cornerRadius: SettingsMetrics.groupRadius))
                 }
                 if !more.isEmpty {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 200), spacing: 10)], spacing: 10) {
@@ -109,7 +108,8 @@ struct SubscriptionsSection: View {
             if let machine { return "Signed in on \(machine.machine.name) on its own. Signing in finishes in your browser here." }
             return app.machines.list.isEmpty ? "Sign in with a plan or account you already have." : "Sign in with a plan or account you already have. Each of your machines signs in to these on its own."
         case .plans:
-            return app.machines.list.isEmpty ? "Their models, in Kuvo Code's own agent." : "Their models, in Kuvo Code's own agent, on this Mac and your machines."
+            if let machine { return "Their models, in Kuvo Code's own agent on \(machine.machine.name), which signs in on its own. GitHub Copilot comes from this Mac, signed in to there." }
+            return app.machines.list.isEmpty ? "Their models, in Kuvo Code's own agent." : "Their models, in Kuvo Code's own agent. Your machines sign in to them on their own, but for GitHub Copilot, which they get from here."
         }
     }
 
@@ -120,16 +120,16 @@ struct SubscriptionsSection: View {
     /// A machine whose agents can't be asked now: why, and a way back.
     @ViewBuilder private func unavailable(_ engine: MachineEngine) -> some View {
         if engine.isReady {
-            ErrorCard(message: "The coding agents aren’t running on \(engine.machine.name). They start with its engine: when nothing runs there, disconnect it in Settings › Machines and connect it again.")
+            ErrorCard(message: "The coding agents aren’t running on \(engine.machine.name). They start with its engine: when nothing runs there, stop its engine in Settings › Machines and start it again.")
         } else {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("\(engine.machine.name) isn’t connected")
+                    Text(engine.isStopped ? "\(engine.machine.name)’s engine is stopped" : "\(engine.machine.name) isn’t connected")
                     MachineStatus(engine: engine)
                 }
                 Spacer()
                 if !engine.connection.isUnderWay {
-                    Button("Connect") { app.connect(engine) }
+                    Button(engine.isStopped ? "Start" : "Connect") { app.connectOrStart(engine) }
                         .buttonStyle(.glass)
                 }
             }
@@ -145,7 +145,8 @@ struct SubscriptionsSection: View {
             let added = accounts.filter { OutsideAgents.account($0.id) != nil }
             all.append(Product(kind: .agent(own: own, added: added)))
         }
-        for id in Catalog.planProviders where shows == .plans {
+        // GitHub Copilot's sign-in comes to a machine from this Mac, so it's signed in to here.
+        for id in Catalog.planProviders where shows == .plans && !(machine != nil && id == "github-copilot") {
             guard let plan = catalog.providers.first(where: { $0.id == id }) else { continue }
             all.append(Product(kind: .plan(plan)))
         }
@@ -335,8 +336,9 @@ private struct ProductBlock: View {
                 }
             }
             Button(action: addAccount) {
-                Label("Add Account", systemImage: "plus")
+                Label(product.hasAccounts ? "Add Another" : "Add Account", systemImage: "plus")
                     .font(.callout)
+                    .fixedSize()
             }
             .buttonStyle(TextButtonStyle())
             .disabled(isAgent && agents.api == nil)
@@ -416,11 +418,10 @@ private struct SubscriptionTile: View {
             Spacer(minLength: 0)
         }
         .padding(10)
-        .background(Surface.cardFill(scheme, focused: false), in: .rect(cornerRadius: Metrics.cardRadius))
-        .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
+        .background(SettingsMetrics.groupFill(scheme), in: .rect(cornerRadius: SettingsMetrics.groupRadius))
         // Under the pointer, an accent edge: the whole tile signs in.
         .overlay {
-            RoundedRectangle(cornerRadius: Metrics.cardRadius)
+            RoundedRectangle(cornerRadius: SettingsMetrics.groupRadius)
                 .strokeBorder(.tint, lineWidth: 1.5)
                 .opacity(isHovering ? 1 : 0)
         }
@@ -573,8 +574,13 @@ private struct PlanAccountRow: View {
     /// The agents shown: this Mac's, or a machine's (`agentsBridge`).
     @Environment(\.agentsBridge) private var bridge
     private var agents: OutsideAgents { bridge ?? app.agents }
+    /// Where it's signed in: this Mac's engine, or a machine's.
+    @Environment(Catalog.self) private var catalog
 
-    private var needsSignIn: Bool { connection.status?.status == "needs_auth" }
+    /// Its sign-in ended: the engine says so, or a run was refused it (the one in use).
+    private var needsSignIn: Bool {
+        connection.status?.status == "needs_auth" || (isInUse && catalog.hasEndedSignIn(plan.id))
+    }
 
     private var who: String {
         if connection.type == "env" { return "From \(connection.name ?? "the environment")" }
@@ -592,7 +598,7 @@ private struct PlanAccountRow: View {
             if connection.type == "credential" {
                 if !isInUse, let id = connection.credentialID {
                     Button("Use This Account") {
-                        Task { try? await app.api?.activateCredential(id) }
+                        Task { try? await catalog.api?.activateCredential(id) }
                         app.releaseLimit(plan.id)
                     }
                 }
@@ -605,13 +611,14 @@ private struct PlanAccountRow: View {
         }
     }
 
-    /// The last of your accounts with it goes from your machines too (they have a copy of it);
-    /// with others left, the machines get the one in use next (the sync knows which account each
-    /// machine's copy was made of).
+    /// Removes the account from the computer it's on: with it the last, that computer is signed
+    /// out of the plan.
     private func remove() {
         guard let id = connection.credentialID else { return }
         let accounts = plan.connections.filter { $0.type == "credential" }
-        if accounts.count <= 1 {
+        if catalog.machine != nil {
+            Task { try? await catalog.api?.removeCredential(id) }
+        } else if accounts.count <= 1 {
             app.forgetSignIn(plan.id)
         } else {
             Task { try? await app.api?.removeCredential(id) }

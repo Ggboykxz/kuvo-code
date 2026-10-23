@@ -66,6 +66,12 @@ jobs:
           bun run check
           bun test
 
+      - name: Check the bridge the app ships is built from its sources
+        run: ./scripts/build-agents.sh --check
+
+      - name: Test the app
+        run: ./scripts/test-app.sh
+
       # The same scripts the release workflow runs, signed ad hoc here.
       - name: Build the app
         run: ./scripts/build-app.sh

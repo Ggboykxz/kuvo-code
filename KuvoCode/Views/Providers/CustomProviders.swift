@@ -10,12 +10,13 @@ struct CustomProvidersSection: View {
     /// Opens a provider's settings in the page's place; nil for a new one.
     let edit: (String?) -> Void
     @Environment(AppModel.self) private var app
+    @Environment(\.settingsBox) private var box
     @Environment(Catalog.self) private var catalog
     @Environment(\.colorScheme) private var scheme
 
     static let path = ["providers"]
 
-    private var ids: [String] { (app.engineConfig.value(at: Self.path)?.object?.keys).map { $0.sorted() } ?? [] }
+    private var ids: [String] { (app.config(for: box).value(at: Self.path)?.object?.keys).map { $0.sorted() } ?? [] }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -34,8 +35,8 @@ struct CustomProvidersSection: View {
                         let integration = catalog.providers.first { $0.id == id }
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(app.engineConfig.value(at: Self.path + [id, "name"])?.string ?? id)
-                                Text(app.engineConfig.value(at: Self.path + [id, "settings", "baseURL"])?.string ?? "No address yet")
+                                Text(app.config(for: box).value(at: Self.path + [id, "name"])?.string ?? id)
+                                Text(app.config(for: box).value(at: Self.path + [id, "settings", "baseURL"])?.string ?? "No address yet")
                                     .font(.callout)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
@@ -62,8 +63,7 @@ struct CustomProvidersSection: View {
                         if id != ids.last { Divider().padding(.leading, 14) }
                     }
                 }
-                .background(Surface.cardFill(scheme, focused: false), in: .rect(cornerRadius: Metrics.cardRadius))
-                .specularRim(RoundedRectangle(cornerRadius: Metrics.cardRadius))
+                .background(SettingsMetrics.groupFill(scheme), in: .rect(cornerRadius: SettingsMetrics.groupRadius))
             }
         }
     }
@@ -86,13 +86,14 @@ struct CustomProviderEditor: View {
     /// Removes this entry, once it's closed.
     let remove: ([String]) -> Void
     @Environment(AppModel.self) private var app
+    @Environment(\.settingsBox) private var box
     @Environment(Catalog.self) private var catalog
     @State private var name = ""
     @State private var newModel = ""
     @State private var problem: String?
     @State private var confirmsRemoval = false
 
-    private var config: EngineConfig { app.engineConfig }
+    private var config: EngineConfig { app.config(for: box) }
 
     /// Which of the engine's built-in API kinds it speaks.
     static let kinds: [(package: String, title: String)] = [
@@ -107,8 +108,10 @@ struct CustomProviderEditor: View {
                 editor(id)
             } else {
                 Section {
-                    TextField("Name", text: $name, prompt: Text("My Company, or Local Server"))
-                        .onSubmit(create)
+                    SettingsTextRow(title: "Name") {
+                        TextField("Name", text: $name, prompt: Text("My Company, or Local Server"))
+                            .onSubmit(create)
+                    }
                 } footer: {
                     if let problem {
                         Text(problem).foregroundStyle(.red)

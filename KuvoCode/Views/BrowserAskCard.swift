@@ -225,6 +225,15 @@ struct BrowserAskCard: View {
         return false
     }
 
+    /// What answering a sign-in does with its password: saved when you asked to save a new one,
+    /// or when a saved account's password changed (or agents allowed to sign in on their own would
+    /// keep using the old one); and whether it's one you typed now, which allowing agents doesn't
+    /// ask your Touch ID for (one filled in from Passwords does).
+    static func handling(password: String, saving: Bool, secure: Bool, savedPassword: String?) -> (saves: Bool, typedNow: Bool) {
+        let typedNow = !password.isEmpty && password != savedPassword
+        return (secure && typedNow && (saving || savedPassword != nil), typedNow)
+    }
+
     private func use(_ login: Passwords.Login) {
         username = login.account
         password = Passwords.password(for: login) ?? ""
@@ -234,8 +243,10 @@ struct BrowserAskCard: View {
         switch ask.kind {
         case .signIn:
             guard !username.isEmpty || !password.isEmpty else { return }
-            let typed = saves && Self.isSecure(ask.host) && !password.isEmpty
-            if typed { _ = Passwords.save(host: ask.host, account: username, password: password) }
+            let savedPassword = saved.first { $0.account == username }.flatMap(Passwords.password(for:))
+            let handling = Self.handling(password: password, saving: saves, secure: Self.isSecure(ask.host), savedPassword: savedPassword)
+            if handling.saves { _ = Passwords.save(host: ask.host, account: username, password: password) }
+            let typed = handling.typedNow
             let answer = BrowserAsks.Answer.signIn(username: username.isEmpty ? nil : username, password: password.isEmpty ? nil : password)
             guard allowsAgents, Self.isSecure(ask.host), !password.isEmpty else {
                 app.browserAsks.answer(ask.id, answer)

@@ -8,9 +8,9 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 import { providerID, type AgentAccount } from "../accounts"
-import type { Agent, AgentContext, Account, OwnTurn, RunInput, RunResult, SignInAttempt, SubagentRun, Thread, TurnHooks, PromptFile } from "../agent"
+import type { Agent, AgentContext, Account, OwnTurn, RunInput, RunResult, SignInAttempt, SignInOptions, SubagentRun, Thread, TurnHooks, PromptFile } from "../agent"
 import type { Limit } from "../auto"
-import { accountName, failure, model } from "../agent"
+import { accountName, ContextWindows, failure, model } from "../agent"
 import { fileDiff, fromPatch } from "../diff"
 import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
 import { emit } from "../events"
@@ -164,12 +164,15 @@ export class ClaudeAgent implements Agent {
     }
   }
 
-  async signIn(methodID: string): Promise<SignInAttempt> {
+  /** Its page can end on a code to paste back, wherever it's opened. */
+  readonly signsInRemotely = true
+
+  async signIn(methodID: string, options: SignInOptions = {}): Promise<SignInAttempt> {
     // On a machine without it yet: installed first, said at once.
     if (onMachine && !this.executable()) {
       return afterInstall("Installing Claude Code on this machine…", "Finish signing in on Claude's page.", true, async () => {
         if (!(await this.installedProgram())) throw new Error("Claude Code couldn't be installed on this machine. Try again.")
-        return this.signIn(methodID)
+        return this.signIn(methodID, options)
       })
     }
     const executable = await this.installedProgram()
@@ -187,6 +190,8 @@ export class ClaudeAgent implements Agent {
       signedIn: async () => Boolean((await this.readStatus(true)).loggedIn),
       codePrompt: /Paste code here if prompted >\s*/g,
       onComplete: () => (this.authFailedAt = undefined),
+      // On another device: the page it prints, which ends on a code to paste here.
+      printedPage: options.remote,
     })
   }
 
@@ -250,26 +255,58 @@ export class ClaudeAgent implements Agent {
     })
     try {
       const init: any = await Promise.race([q.initializationResult(), Bun.sleep(30_000).then(() => undefined)])
-      const list = (init?.models ?? []) as { value: string; displayName: string; description?: string; supportedEffortLevels?: string[] }[]
+      const list = (init?.models ?? []) as ClaudeModelInfo[]
       if (list.length) {
-        this.modelList = {
-          at: Date.now(),
-          models: list.map((info, index) =>
-            model(this.providerID, info.value, modelName(info), {
-              family: family(modelName(info)),
-              variants: info.supportedEffortLevels,
-              images: true,
-              context: /1M/i.test(info.description ?? "") ? 1_000_000 : 200_000,
-              // Listed in Claude Code's order: the first is its default.
-              released: Date.now() - index,
-            }),
-          ),
-        }
-        emit("model.updated", {})
+        this.listModels(list)
+        // How much each holds, which its descriptions don't say (it depends on your plan): asked
+        // one by one, then listed again.
+        if (await this.askWindows(q, list)) this.listModels(list)
       }
     } finally {
       abort.abort()
     }
+  }
+
+  /** How much each model holds, as Claude Code said: by its value. */
+  private windows = new ContextWindows()
+
+  private listModels(list: ClaudeModelInfo[]) {
+    this.modelList = {
+      at: Date.now(),
+      models: list.map((info, index) =>
+        model(this.providerID, info.value, modelName(info), {
+          family: family(modelName(info)),
+          variants: info.supportedEffortLevels,
+          images: true,
+          context: this.windows.get(info.value) ?? (/1M/i.test(info.description ?? "") ? 1_000_000 : 200_000),
+          // Listed in Claude Code's order: the first is its default.
+          released: Date.now() - index,
+        }),
+      ),
+    }
+    emit("model.updated", {})
+  }
+
+  /** Each model's window, as Claude Code's /context says it, once a model (its aliases share it); true when one changed. An older Claude Code that doesn't say leaves them as they were. */
+  private async askWindows(q: any, list: ClaudeModelInfo[]): Promise<boolean> {
+    const said = new Map<string, number>()
+    let changed = false
+    for (const info of list) {
+      const key = info.resolvedModel ?? info.value
+      let window = said.get(key)
+      if (window === undefined) {
+        try {
+          await withTimeout(q.setModel(info.value), 5_000)
+          window = (await withTimeout(q.getContextUsage({ detail: "summary" }), 5_000) as any)?.maxTokens
+        } catch {
+          return changed
+        }
+        if (typeof window !== "number" || window <= 0) return changed
+        said.set(key, window)
+      }
+      if (this.windows.note(info.value, window)) changed = true
+    }
+    return changed
   }
 
   forgetModels() {
@@ -318,6 +355,20 @@ export class ClaudeAgent implements Agent {
       } catch {}
     }
   }
+}
+
+/** A model as Claude Code lists it. */
+interface ClaudeModelInfo {
+  value: string
+  /** The model an alias ("default", "opus") stands for now. */
+  resolvedModel?: string
+  displayName: string
+  description?: string
+  supportedEffortLevels?: string[]
+}
+
+function withTimeout<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
+  return Promise.race([promise, Bun.sleep(milliseconds).then(() => Promise.reject(new Error("Claude Code didn't answer in time.")))])
 }
 
 function modelName(info: { value: string; displayName: string; description?: string }): string {
@@ -1118,7 +1169,11 @@ class ClaudeThread implements Thread {
     await this.ownTaken()
     const hooks = this.active?.hooks ?? this.lastHooks
     if (!hooks) return {}
-    let verdict = hooks.check(permissionAsk(String(input.tool_name ?? ""), input.tool_input ?? {}), true)
+    const ask = permissionAsk(String(input.tool_name ?? ""), input.tool_input ?? {})
+    let verdict = hooks.check(ask, true)
+    // In plan mode its edits are its own to weigh: its plan, to its file, goes; any other edit it
+    // asks about, and that's refused. Asking first would refuse its plan too.
+    if (verdict === "ask" && ask.action === "edit" && this.opened?.plan) verdict = undefined
     // No one to ask between turns, but for a subagent in the background (it asks as its own).
     if (verdict === "ask" && !this.active && !this.backgroundLane(input.agent_id)) verdict = "deny"
     if (verdict === "deny") {
@@ -1166,14 +1221,17 @@ class ClaudeThread implements Thread {
       })
       return { behavior: "allow", updatedInput: { ...input, answers }, toolUseID }
     }
-    if (name === "ExitPlanMode") {
-      // The plan shows in the conversation; building starts when you switch to Build and say so.
+    // In Plan mode, the plan shows in the conversation, and building starts when you switch to
+    // Build and say so. In Build, a plan mode it went into on its own (its EnterPlanMode, for a big
+    // task) it leaves when its plan is done, and carries on.
+    if (name === "ExitPlanMode" && this.opened?.plan) {
       return {
         behavior: "deny",
         message: "The plan is shown to the user. Stop here and wait: they'll switch out of plan mode and ask you to build it when they're ready.",
         toolUseID,
       }
     }
+    if (name === "ExitPlanMode") return { behavior: "allow", updatedInput: input, toolUseID }
     return this.decide(name, input, options, background ? (ask) => background.run.permission(ask) : hooks.permission)
   }
 

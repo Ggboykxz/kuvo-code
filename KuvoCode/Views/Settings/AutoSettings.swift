@@ -4,8 +4,36 @@ import SwiftUI
 /// Auto: your lists of models (any coding agent's or provider's, each with its effort), one for
 /// bugfixes, one for features, each to go through in order when one reaches a usage limit. A
 /// session on Auto runs each message on the first of its list that isn't held back, and goes on
-/// with the next, with what was done, when one reaches its limit partway.
+/// with the next, with what was done, when one reaches its limit partway. This Mac and each
+/// machine have lists of their own, made from the models each has, each in its own tab.
 struct AutoSettings: View {
+    @Environment(AppModel.self) private var app
+    @Environment(\.settingsBox) private var box
+
+    /// The machine whose lists these are, on a machine's tab.
+    private var engine: MachineEngine? { app.machines.engine(box.machine) }
+
+    /// Where a list was picked to edit, in a session's model menu (or made there): "" for this
+    /// Mac, else a machine's ID; nil for none.
+    private var focusPlace: String? {
+        if app.agents.autoFocus != nil { return "" }
+        return app.machines.engines.values.first { $0.agents.autoFocus != nil }?.machine.id
+    }
+
+    var body: some View {
+        AutoLists(engine: engine)
+            // That place's lists, in its tab.
+            .onChange(of: focusPlace, initial: true) { _, place in
+                guard let place else { return }
+                let wanted = SidebarBox(machine: place.isEmpty ? nil : place)
+                if wanted != box { app.settingsTabs.show(.auto, on: wanted) }
+            }
+    }
+}
+
+/// One place's lists: this Mac's, or a machine's (`engine`).
+private struct AutoLists: View {
+    let engine: MachineEngine?
     @Environment(AppModel.self) private var app
     @Environment(Catalog.self) private var catalog
     @State private var failure: String?
@@ -14,7 +42,7 @@ struct AutoSettings: View {
     @State private var names: [String: String] = [:]
     @FocusState private var naming: String?
 
-    private var agents: OutsideAgents { app.agents }
+    private var agents: OutsideAgents { engine?.agents ?? app.agents }
     private var lists: [AutoList.Named] { agents.auto.all }
 
     var body: some View {
@@ -22,7 +50,7 @@ struct AutoSettings: View {
             ScrollingSettingsForm {
                 if agents.api == nil {
                     Section {
-                        Text(agents.failure.map { "Custom Auto runs with the coding agents, which couldn't start: \($0)" } ?? "Custom Auto runs with the coding agents, which are still starting.")
+                        Text(unavailable)
                             .foregroundStyle(.secondary)
                     }
                 } else {
@@ -42,18 +70,17 @@ struct AutoSettings: View {
                             Spacer()
                         }
                     } footer: {
-                        Text("When one reaches a limit on your whole account (a plan's 5-hour window), Custom Auto skips all of that account's models, in every list; when one model reaches its own limit, only that model. Each comes back once its limit resets.")
+                        Text("A model at its limit is skipped until the limit resets; an account at its limit skips all its models.")
                     }
                 }
-                if !agents.auto.limits.isEmpty || !machinesHolding.isEmpty {
+                if !agents.auto.limits.isEmpty {
                     Section {
                         LabeledContent {
                             Button("Try All Again") { clearLimits() }
                                 .disabled(isClearing)
                         } label: {
                             Text("Held back at a limit")
-                            // Each machine's agents have limits of their own (their accounts are theirs).
-                            Text("If a limit has reset sooner than its agent said, Custom Auto can try them all again" + (machinesHolding.isEmpty ? "." : (agents.auto.limits.isEmpty ? ", on " : ", here and on ") + machinesHolding.map(\.machine.name).formatted(.list(type: .and)) + "."))
+                            Text("If a limit has reset sooner than its agent said, Custom Auto can try them all again.")
                         }
                     }
                 }
@@ -79,6 +106,16 @@ struct AutoSettings: View {
         } message: {
             Text(failure ?? "")
         }
+    }
+
+    /// Why the lists can't be shown: the coding agents there aren't running, or the machine isn't
+    /// connected.
+    private var unavailable: String {
+        guard let engine else {
+            return agents.failure.map { "Custom Auto runs with the coding agents, which couldn't start: \($0)" } ?? "Custom Auto runs with the coding agents, which are still starting."
+        }
+        guard engine.isReady else { return "\(engine.machine.name) isn’t connected. Its lists show once it is." }
+        return "Custom Auto on \(engine.machine.name) runs with the coding agents there, which aren’t running. They start with its engine."
     }
 
     /// One list: its name (typed in place), its models in order, a way to add one, and a menu to
@@ -189,20 +226,11 @@ struct AutoSettings: View {
         }
     }
 
-    /// Your machines whose agents have models held back at a limit.
-    private var machinesHolding: [MachineEngine] {
-        app.machines.list.compactMap { app.machines.engine($0.id) }.filter { $0.isReady && !$0.agents.auto.limits.isEmpty }
-    }
-
     private func clearLimits() {
         isClearing = true
-        let machines = machinesHolding
         Task {
             defer { isClearing = false }
-            do {
-                if !agents.auto.limits.isEmpty { try await agents.clearAutoLimits() }
-                for engine in machines { try await engine.agents.clearAutoLimits() }
-            } catch { failure = error.localizedDescription }
+            do { try await agents.clearAutoLimits() } catch { failure = error.localizedDescription }
         }
     }
 }
@@ -228,7 +256,8 @@ private struct AutoEntryRow: View {
             let until = limit.known ? "until \(when)" : "for now (until about \(when))"
             return limit.isWholeAccount ? "Its account is at its limit \(until)" : "At its limit \(until)"
         }
-        if catalog.isLoaded, catalog.offeredModel(entry.ref) == nil {
+        // (Not while its agents are still loading.)
+        if catalog.isUnavailable(entry.ref) {
             // Its account signed in but the model gone, or the account signed out.
             let signedIn = catalog.integrations.first { $0.id == entry.providerID }?.isConnected ?? false
             return OutsideAgents.isAgent(entry.providerID) && !signedIn ? "Not signed in: Custom Auto passes it by" : "Not available now: Custom Auto passes it by"

@@ -47,6 +47,23 @@ open "build/Kuvo Code.app"
 Only these builds update themselves; debug builds have no update feed and hide
 the update controls.
 
+Releases come from the release workflow: an annotated `vX.Y.Z` tag on `main`,
+with that version's section of `CHANGELOG.md` as its notes. A beta, for trying
+what's next before it's released, is a `vX.Y.Z-beta.N` tag (the version it
+leads up to), with the Unreleased notes as they are: it's published as a
+prerelease, and only copies with **Settings › General › Get beta updates** on
+are offered it. Its build version is `X.Y.ZbN` (`scripts/build-version.sh`),
+which Sparkle orders before the release.
+
+A release also carries what remote machines run, for them to update themselves
+with, once the `KUVO_BOX_SIGNING_KEY` secret (an Ed25519 key) is set
+(`scripts/set-box-key.sh` makes it once, keeps it in your login keychain, uploads
+it and prints the public key to pin): the app writes those files
+(`"Kuvo Code" --write-box-files <folder>`), and `scripts/sign-box.mjs` signs
+`boxes.json`, which names them. Machines take only
+what a key pinned in `kuvo-link.js` (`UPDATE_KEYS`) signed; see
+`Packages/KuvoLink/PROTOCOL.md`, "Updates".
+
 Builds are signed ad hoc, so macOS treats every build as a new app and asks for
 privacy permissions (like access to Desktop) again. To keep one identity
 between builds, copy `Config/Signing.local.xcconfig.example` to
@@ -57,14 +74,27 @@ it, set `KUVO_OPENCODE_BINARY` to its path in the scheme's environment.
 
 ### Tests
 
-The engine client and the usage tracker have tests:
+The app, the engine client and the usage tracker have tests:
 
 ```sh
+./scripts/test-app.sh
 cd Packages/OpenCodeKit && swift test
 cd Packages/UsageKit && swift test
 cd Packages/KuvoLink && swift test && node --test Tests/Bridge/*.test.js
 cd Agents && bun install && bun test && bunx tsc --noEmit
 ```
+
+`KuvoCodeTests` tries what the app does on its own code, scenario by scenario:
+Discard in Changes on throwaway git repositories, say, checking what's on disk
+after. The app hosting them starts nothing (no window, engine or menu bar item),
+and the tests keep their repositories, data and Trash in the temporary folder.
+Run them with the script: it builds a copy of the app of their own
+(`run.kuvo.code.tests`), outside the checkout, and removes what that copy keeps
+(its settings, caches and website data) before and after each run. The app itself refuses to host them,
+as they'd use your settings, and a copy built under Desktop or Documents waits on a
+privacy prompt while tests run.
+`ONLY=KuvoCodeTests/ChangesDiscardTests` runs one suite. Test what people see
+happen, with the app's real parts; leave out what only restates the code.
 
 Recorded engine responses in `Tests/OpenCodeKitTests/Fixtures` drive most of
 OpenCodeKit's tests. `LiveServerTests` run against a real binary when
@@ -109,6 +139,9 @@ A machine's browser is Chrome for Testing, the full browser run in Chrome's own 
 - **mcp**, the agent's browser tools for the machine's engine, talking to the keeper.
 - **connect**, the Mac's live view of the pages, over SSH, also through the keeper.
 
+What agents ask you for there also goes to `run/browser-asks.json`, for the machine's phone link,
+which answers it for a phone with the Mac closed (`Kuvo.answer` on the keeper's socket).
+
 `KEEPER` at its top goes up with every change to the host side, so a newer copy replaces one
 that's running; `BrowserAgent`'s page scripts are shared with this Mac's browser tools.
 
@@ -119,6 +152,11 @@ end to end ([Noise](https://noiseprotocol.org), `Packages/KuvoLink/PROTOCOL.md`)
 is `PhoneLink`; on a machine, `kuvo-link.js` (KuvoLink's resource) runs with the engine's
 runtime in `~/.kuvo-code/bin`, set up by the Mac with the phones you've paired. The Swift and
 JavaScript sides check against the same vectors in `Packages/KuvoLink/Vectors`.
+
+Group chats that live on a machine run in the agents bridge there (`Agents/src/groups`), by the
+same rules as the Mac's `BotGroups`. After changing those rules on either side, run
+`./scripts/group-vectors.sh` (it writes `Agents/test/groups-vectors.json` from the Swift side),
+then `cd Agents && bun test`.
 
 It's off until the iPhone app is out: `defaults write run.kuvo.code phoneLink -bool true` (or
 `KUVO_DEMO_PHONE=1`) turns it on, with Settings › Phone, and `phoneLink.relay` points it at a
@@ -156,6 +194,7 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_PANEL` | Open tools in the panel, comma-separated: `terminal`, `browser=<address>`, `machine=<machine>` (its browser), `files`, `file=<path>`, `changes`, `run`, `expand`, `toggle=<seconds>` (expands and collapses it a few times) |
 | `KUVO_DEMO_WINDOW` | Window size, as `WIDTHxHEIGHT` |
 | `KUVO_DEMO_OFFSCREEN` | With `KUVO_DEMO_WINDOW`: the window past the screen's right edge, so the pointer can't hover over what you capture (`screencapture -l` still gets all of it) |
+| `KUVO_DEMO_BOX` | The sidebar's box in view, `mac` or a machine's name, a few seconds after launch |
 | `KUVO_DEMO_SEARCH` | Type this in the sidebar's search field |
 | `KUVO_DEMO_PALETTE` | Open the command palette with this typed in it (empty for none) |
 | `KUVO_DEMO_MENU` | Open the `mode` menu, the `model` picker (`list` on the model list, `models` with every model shown), or `location` in the New Project sheet |
@@ -163,16 +202,20 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_RAIL` | With the model picker open on its list: show this entry of its rail (`★`, `auto`, or a provider's ID such as `claude-code`) |
 | `KUVO_DEMO_PICK` | With the model picker open: pick this model (`provider/model`) a moment later, as a click would |
 | `KUVO_DEMO_USAGE` | Open the menu bar's usage panel on `dashboard`, `customize` or `settings`; `off` to leave the usage tracker out; `sample` to leave it out and give paired phones sample numbers |
-| `KUVO_DEMO_SETTINGS` | Open Settings on a page, by its `SettingsPage` name: `general`, `appearance`, `storage`, `accounts`, `agents`, `mcp`, `git`, `browser`, `passwords` and so on |
-| `KUVO_DEMO_SETTINGS_TABS` | With `KUVO_DEMO_SETTINGS`: these pages too, comma-separated, each in a tab of its own |
+| `KUVO_DEMO_SETTINGS` | Open Settings on a page, by its `SettingsPage` name: `general`, `appearance`, `storage`, `accounts`, `agents`, `mcp`, `git`, `browser`, `passwords` and so on; `permissions@<machine>` for a machine's |
+| `KUVO_DEMO_SETTINGS_TABS` | With `KUVO_DEMO_SETTINGS` and the tab bar on: these pages too, comma-separated, each in a tab of its own (`page@<machine>` for a machine's) |
+| `KUVO_DEMO_DISCONNECT` | Don't connect to this machine, as after Disconnect, so this copy reaches it only through the relay (set it up in an earlier launch) |
 | `KUVO_DEMO_ADD_MACHINE` | The Add Machine sheet, open, with `KUVO_DEMO_SETTINGS=machines` or over `KUVO_DEMO_NEW_PROJECT` |
-| `KUVO_DEMO_ACCOUNTS_MACHINE` | With `KUVO_DEMO_SETTINGS=accounts`: that machine's sign-ins picked |
+| `KUVO_DEMO_ALSO_APPLY` | With `KUVO_DEMO_SETTINGS` and machines: the page's Also Apply to… bar, for a change noted but not made |
+| `KUVO_DEMO_ACCOUNTS_MACHINE` | With `KUVO_DEMO_SETTINGS=accounts`: that machine's Accounts, in its own tab |
 | `KUVO_DEMO_WELCOME` | No tabs, so the welcome card shows |
 | `KUVO_DEMO_NEW_BOT` | The New Bot editor, open |
 | `KUVO_DEMO_BOT`, `KUVO_DEMO_BOT_PROMPT` | Make the bot `<name>\|<job>\|<its details>[\|<machine>[\|<project folder>]]` unless one has that name (the job written in its memory, as the bot would; leave it empty for a bot that asks for one, and the machine empty for this Mac), open it, and give it this task |
 | `KUVO_DEMO_OPEN_STEPS` | Every step in the conversation shows its details, opened, and so does the thinking |
 | `KUVO_DEMO_BOT_MODEL` | With `KUVO_DEMO_BOT`: the model a new bot gets, `<provider>/<model>` (a coding agent's, like `claude-code/haiku`, makes it run with the agents) |
 | `KUVO_DEMO_EDIT_BOT` | With `KUVO_DEMO_BOT`: that bot's editor, open (`bottom`: scrolled to its wake-ups and memory) |
+| `KUVO_DEMO_MOVE_BOT` | With `KUVO_DEMO_BOT`: once that bot is done (and its prompt with it), it moves to this machine, or to this Mac when empty, as Move to Computer does |
+| `KUVO_DEMO_MOVE_GROUP` | With `KUVO_DEMO_GROUP`: that group chat moves to this machine, or to this Mac when empty, as Move to Computer does, before its message goes |
 | `KUVO_DEMO_ADD_WAKE` | With `KUVO_DEMO_EDIT_BOT`: adding a wake-up, every day, with this note (`KUVO_DEMO_ADD_WAKE_NOW`: and adds it) |
 | `KUVO_DEMO_REPLY` | With `KUVO_DEMO_BOT`: sends this to the bot as a notification's Reply does |
 | `KUVO_DEMO_IMPORT_BOT` | A shared bot's file: New Bot opens from it, as File › Import Bot… does |
@@ -215,7 +258,7 @@ without clicking, for trying a change or taking screenshots:
 | `KUVO_DEMO_SAVE_DOWNLOADS` | Save each download from a machine's browser to this Mac, as Save to Mac does |
 | `KUVO_DEMO_PAGE_INPUT` | In a machine's browser tab, what you'd do on the page, steps separated by `;`: `wait:<s>`, `click:<x>,<y>`, `type:<text>`, `key:<code>`, `scroll:<x>,<y>,<dy>`, `selectAll`, `copy`, `paste`, `zoom:in`, `zoom:out`, `go:<address>`, `swipe:<x>,<y>,<dy>,<n>` (n scrolls 8 ms apart, as a trackpad sends them) |
 | `KUVO_DEMO_PHONE` | Turns on the phone link and Settings › Phone |
-| `KUVO_DEMO_PHONE_PAIR` | A file: Settings › Phone shows a pairing code once the relay answers and writes its link there, for pairing a simulator (launch the iPhone app with `KUVO_DEMO_PAIR` set to it) |
+| `KUVO_DEMO_PHONE_PAIR` | A file: once the relay answers, a pairing code starts (no window needed) and its link is written there, for pairing a simulator or a test (launch the iPhone app with `KUVO_DEMO_PAIR` set to it) |
 | `KUVO_DEMO_MACHINE_ROOT` | A folder of its own in machines' home folders (like `.kuvo-code-demo`), so the demo copy's engine and browser there never touch your own copy's |
 | `KUVO_DEMO_COMMENT` | Add a review comment to the session in view, as `<path in the project>:<line>:<text>` |
 | `KUVO_DEMO_QUOTES` | With `KUVO_DEMO_SESSION`: that many quotes to answer in its composer (a session's or a group chat's, as `group:<id>`) |
@@ -229,8 +272,12 @@ without clicking, for trying a change or taking screenshots:
 ### The icon
 
 `scripts/icon.py` generates the app icon as an Icon Composer file in
-`KuvoCode/AppIcon.icon`, which Xcode compiles with the app. Run it again after
-changing the icon there.
+`KuvoCode/AppIcon.icon`, which Xcode compiles with the app, and the README's
+`docs/images/icon.png`. It draws the five bot shapes as `BotShape` in
+`BotAvatar.swift` does, each softly shaded as its own image layer, so run it
+again after changing the icon there. With `--phone` and `--web` it also writes
+the iPhone app's copy and the website's `icon.png`, `icon-dark.png` and
+`apple-touch-icon.png`. It needs numpy, OpenCV and Xcode.
 
 ### The coding agents
 
@@ -252,7 +299,8 @@ the app's usual views; `Workspace` sends a session to it when its metadata names
 The SDKs are installed from npm the first time each is needed (`runtime/<agent>`), at the
 versions in the agents' files, and aren't part of the app. After changing `Agents/src`, run
 `./scripts/build-agents.sh` and commit `KuvoCode/Resources/kuvo-agents.js`, the bundle the app
-ships. In a debug build, `KUVO_AGENTS_SCRIPT=<checkout>/Agents/src/main.ts` runs the source
+ships; CI fails when it isn't built from the sources as they are (`build-agents.sh --check`). In a
+debug build, `KUVO_AGENTS_SCRIPT=<checkout>/Agents/src/main.ts` runs the source
 instead.
 
 ### Dependencies
@@ -265,7 +313,7 @@ replies are laid out in one pass (its README says what's different and how to
 bring in upstream's changes).
 
 If you add or update a package, or change code copied from another project
-(`prism-bundle.js`, `buildDomTree.js`, UsageKit, Textual), run
+(`prism-bundle.js`, `mermaid.min.js`, `buildDomTree.js`, UsageKit, Textual), run
 `./scripts/third-party-licenses.sh` and commit the updated
 `THIRD_PARTY_LICENSES.txt`; CI checks that it's current.
 

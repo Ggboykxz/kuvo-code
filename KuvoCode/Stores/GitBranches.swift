@@ -31,10 +31,13 @@ nonisolated extension Git {
         throw GitFailure(message: failure.isEmpty ? "Couldn't make a branch for the worktree." : failure)
     }
 
-    /// A branch name made from a title: "Trim note titles" is trim-note-titles.
+    /// A branch name made from a title: "Trim note titles" is trim-note-titles, "Giriş düzeltmesi"
+    /// giris-duzeltmesi (in Latin letters, without their marks, rather than without the letters).
     static func slug(_ title: String, limit: Int = 40) -> String {
+        let latin = (title.applyingTransform(.toLatin, reverse: false) ?? title)
+            .applyingTransform(.stripDiacritics, reverse: false)?.replacingOccurrences(of: "ı", with: "i") ?? title
         var name = ""
-        for word in title.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }) {
+        for word in latin.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }) {
             let ascii = word.filter(\.isASCII)
             guard !ascii.isEmpty else { continue }
             let next = name.isEmpty ? String(ascii) : name + "-" + ascii
@@ -83,7 +86,8 @@ nonisolated extension Git {
     /// taken back, so the folder is as it was.
     static func merge(_ branch: String, into directory: String, environment: [String: String]) -> MergeResult {
         guard let failure = report(["merge", "--no-edit", branch], in: directory, environment: environment) else { return .merged }
-        let conflicted = (run(["diff", "--name-only", "--diff-filter=U"], in: directory) ?? "").split(separator: "\n").map(String.init)
+        // By their names as they are: not quoted or escaped, whatever letters are in them.
+        let conflicted = (run(["-c", "core.quotepath=off", "diff", "--name-only", "-z", "--diff-filter=U"], in: directory) ?? "").split(separator: "\0").map(String.init)
         // Stopped partway for another reason (a hook, signing the commit): taken back too, or the
         // folder stays in the middle of a merge.
         if run(["rev-parse", "-q", "--verify", "MERGE_HEAD"], in: directory) != nil {
@@ -168,6 +172,38 @@ nonisolated extension Git {
         components.password = nil
         components.port = nil
         return components.url
+    }
+}
+
+/// Bringing a worktree session's work back: Merge in its Changes panel.
+nonisolated extension Workspace.Worktree {
+    enum MergeOutcome: Equatable, Sendable {
+        case merged(into: String)
+        /// Nothing changed: the merge stopped on these files.
+        case conflict([String], into: String)
+        case failed(String)
+    }
+
+    /// Merges what's committed on the worktree's branch (`directory` is the session's folder in
+    /// it) into the project's folder, on the branch it was made from.
+    func mergeBack(from directory: String, environment: [String: String]) -> MergeOutcome {
+        guard let target = Git.currentBranch(in: project) else { return .failed("The project’s folder isn’t on a branch.") }
+        if let base, target != base {
+            return .failed("The project’s folder is on \(target) now. Switch it back to \(base) to merge, or create a pull request.")
+        }
+        if let reason = unready(in: directory, against: target) { return .failed(reason) }
+        return switch Git.merge(branch, into: project, environment: environment) {
+        case .merged: .merged(into: target)
+        case .conflict(let files): .conflict(files, into: target)
+        case .failed(let message): .failed(message)
+        }
+    }
+
+    /// Why the work can't go anywhere yet, if it can't.
+    func unready(in directory: String, against target: String) -> String? {
+        if Git.hasUncommittedChanges(in: directory) { return "Commit the changes first. Only what’s committed goes." }
+        if Git.commitsAhead(of: target, in: directory) == 0 { return "\(branch) has nothing \(target) doesn’t have yet." }
+        return nil
     }
 }
 

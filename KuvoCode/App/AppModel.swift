@@ -24,6 +24,8 @@ final class AppModel {
     let catalog = Catalog(isMac: true)
     /// The right panel's tools; one window, so one set.
     let utilities = Utilities()
+    /// Terminals that are tabs of the window, in place of a conversation; they end with it.
+    let mainTerminals = MainTerminals()
     /// What the agent asks you for while it browses: sign-ins, codes, steps only you can do.
     let browserAsks = BrowserAsks()
     /// The panel's browser as MCP tools for the agent.
@@ -37,6 +39,14 @@ final class AppModel {
     /// Bots' and sessions' wake-ups and watches.
     let wakeUps = WakeUps()
     let groups = BotGroups()
+    /// Group chats that live on your machines, which their machines run.
+    let machineGroups = MachineGroups()
+    /// Every group chat, this Mac's and your machines', as the window and the phone show them.
+    @ObservationIgnored private(set) lazy var chats = GroupChats(mac: groups, machines: machineGroups)
+    /// What this Mac keeps, brought up to date with this version once, as it launches.
+    let calibration = Calibration()
+    /// Bots and chats moving to another computer.
+    let moves = Moves()
     /// Kuvo Code for iPhone's way in (off until it's switched on; see PhoneLink).
     let phoneLink = PhoneLink()
     /// The coding agents you already have (Claude Code, Codex, Cursor, Grok, Antigravity), run by
@@ -45,6 +55,8 @@ final class AppModel {
     @ObservationIgnored private var agentsActivation: (any NSObjectProtocol)?
     /// The engine's settings file, for Settings.
     @ObservationIgnored private(set) lazy var engineConfig = EngineConfig(file: engineFolders.configFile)
+    /// Machines taking settings changed here, a moment after the last change (`settingsSaved`).
+    @ObservationIgnored var settingsSync: Task<Void, Never>?
     /// Engines to start again with new settings once nothing's at work in them: "" for this Mac's,
     /// else a machine's ID (see `renewEngines`).
     @ObservationIgnored var renewals: Set<String> = []
@@ -53,24 +65,38 @@ final class AppModel {
     var skillsFolder: URL { engineFolders.configFile.deletingLastPathComponent().appending(path: "skills") }
     /// Brings the main window back (set by the window itself; the usage menu's "Open Kuvo Code").
     var openMainWindow: (() -> Void)?
+    /// Opened at login (Open at Login): this Mac's box runs in the background, its engine, bots and
+    /// phone link at work, and the window waits until you open Kuvo Code.
+    var startedAtLogin = false
+    /// A start under way, from launch or from the window: one at a time.
+    @ObservationIgnored private var isStarting = false
     /// Settings fill the main window in place of the sessions while this is on.
     var showsSettings = false
-    /// Whose coding agents Settings › Accounts shows: this Mac's (nil), or a machine's (each signs
-    /// in to them on its own), picked in the menu next to Coding Agents. The rest of the page is
-    /// this Mac's accounts, which your machines get a copy of.
-    var accountsPlace: String?
-
-    /// Settings › Accounts, showing `machine`'s sign-ins (nil: this Mac's).
+    /// Settings › Accounts of `machine` (nil: this Mac): each computer signs in on its own.
     func openAccounts(on machine: String?) {
-        accountsPlace = machine
-        openSettings(.accounts)
+        openSettings(.accounts, on: SidebarBox(machine: machine))
+    }
+
+    /// A conversation carried on with the coding agents (`Workspace.moveToAgents`): a bot's goes on
+    /// as the bot's, which keeps it (true); any other's panel goes with it, its terminals, pages
+    /// and files as they were.
+    func movedToAgents(from old: String, to new: Session) async -> Bool {
+        if await bots.movedToAgents(from: old, to: new) { return true }
+        utilities.handOver(from: old, to: new.id)
+        return false
+    }
+
+    /// Settings › Custom Auto of `machine` (nil: this Mac): each has its own lists.
+    func openAuto(on machine: String?) {
+        openSettings(.auto, on: SidebarBox(machine: machine))
     }
     /// Settings' tabs: the page, and the sites you're signing in to.
     let settingsTabs = SettingsTabs()
 
-    /// Shows Settings in the main window, on `page` if one is given (otherwise the last one open).
-    func openSettings(_ page: SettingsPage? = nil) {
-        if let page { settingsTabs.show(page) }
+    /// Shows Settings in the main window, on `page` of `box` if one is given (otherwise the last
+    /// one open).
+    func openSettings(_ page: SettingsPage? = nil, on box: SidebarBox = .mac) {
+        if let page { settingsTabs.show(page, on: box) }
         if page == .accounts { Analytics.shared.onboardingStep("accounts") }
         #if DEBUG
         let background = ProcessInfo.processInfo.environment["KUVO_DEMO_BACKGROUND"] != nil
@@ -123,6 +149,8 @@ final class AppModel {
     private var launch = UUID()
     /// The Mac waking from sleep, watched once for the machines (see `startMachines`).
     @ObservationIgnored var wakeWatch: (any NSObjectProtocol)?
+    /// Each minute: agents' letters by mail, again until they're there, and this Mac's agents told.
+    @ObservationIgnored var mailTick: Task<Void, Never>?
     /// This launch started the engine over once already for getting stuck starting.
     @ObservationIgnored var restartedStuckEngine = false
     private let log = Logger(subsystem: "run.kuvo.code", category: "engine")
@@ -141,6 +169,8 @@ final class AppModel {
 
     /// The engine this Mac runs (KUVO_OPENCODE_BINARY's, or the one installed), once it has started.
     private(set) var engineBinary: URL?
+    /// When the engine running now came up, for a phone to tell it from the one before a restart.
+    @ObservationIgnored private(set) var engineStarted: Date?
 
     /// A macOS prompt is on screen, like "would like to access files in your Desktop folder":
     /// those come from UserNotificationCenter, whose windows show only while it asks.
@@ -153,13 +183,21 @@ final class AppModel {
         EngineInstaller(root: AppInfo.supportDirectory.appending(path: "engine"))
     }
 
-    /// Downloads the engine if needed, starts it, and connects the stores.
+    /// Downloads the engine if needed, starts it, and connects the stores. At launch, whether or
+    /// not the window opens (this Mac is a box of its own, at work in the background too).
     func start() async {
         // Already on its way (restart stops it first).
         switch engine {
         case .ready, .starting, .downloading: return
         case .preparing, .failed: break
         }
+        // Asked twice before the first got as far as saying so (launch, and the window opening).
+        guard !isStarting else { return }
+        isStarting = true
+        defer { isStarting = false }
+        // What you keep here, up to date with this version (once, after an update), before the
+        // engine starts.
+        await calibration.run(self)
         let launch = UUID()
         self.launch = launch
         engineStoppedWhileRunning = false
@@ -272,25 +310,46 @@ final class AppModel {
             bots.app = self
             wakeUps.app = self
             groups.app = self
-            workspace.onMovedToAgents = { [weak bots] from, to in await bots?.movedToAgents(from: from, to: to) ?? false }
+            machineGroups.app = self
+            moves.app = self
+            // A move cut short (the app quit) is finished or taken back.
+            Task { await moves.recover() }
+            workspace.onMovedToAgents = { [weak self] from, to in await self?.movedToAgents(from: from, to: to) ?? false }
             workspace.runsOnAgents(bots.agentSessionIDs)
             workspace.botSessions = bots.sessionIDs
             // Bots' keys of their own, in their folders' settings as integrations are now.
             Task { await BotKeys.applyAll(on: nil, app: self) }
-            workspace.runsOnAgents(groups.agentSeatIDs)
-            workspace.seats = groups.seatIDs
+            workspace.runsOnAgents(groups.agentSeatIDs.union(machineGroups.agentSeatIDs))
+            workspace.seats = groups.seatIDs.union(machineGroups.seatIDs)
             usage.api = api
+            engineStarted = .now
             engine = .ready
             #if DEBUG
             E2E.note(server.endpoint)
             #endif
             phoneLink.readyMachines = { [weak self] in self?.machines.engines.values.filter(\.isReady) ?? [] }
+            // With machines, this Mac meets them at the relay, phone or not.
+            phoneLink.hasMachines = { [weak self] in !(self?.machines.list.isEmpty ?? true) }
+            phoneLink.movedSessions = { [weak self] in self?.moves.livePlaces ?? [:] }
+            Machines.linkKey = { [weak self] in self?.phoneLink.macKey }
             phoneLink.bots = bots
+            phoneLink.wakeUps = wakeUps
             phoneLink.browserAsks = browserAsks
-            phoneLink.groups = groups
+            phoneLink.groups = chats
             phoneLink.workspace = workspace
             phoneLink.machineName = { [weak self] id in self?.machines.list.first { $0.id == id }?.name }
             phoneLink.agents = agents
+            phoneLink.endedSignIns = { [weak self] in self?.catalog.endedProviders ?? [] }
+            phoneLink.forgetSignIn = { [weak self] provider in
+                // One of your plans, as Settings › Accounts lists them; never an integration's server.
+                guard let self, catalog.integrations.contains(where: { $0.id == provider && !$0.isMCP }) else { return false }
+                forgetSignIn(provider)
+                return true
+            }
+            phoneLink.isMoving = { [weak self] id in self?.moves.underWay[id] != nil || Moves.isFrozen(id) }
+            phoneLink.engineConfig = engineConfig
+            phoneLink.engineStarted = { [weak self] in self?.engineStarted }
+            phoneLink.restartEngine = { [weak self] in Task { await self?.restart() } }
             phoneLink.start(endpoint: server.endpoint)
             Analytics.shared.trackOnce("engine_ready", ["seconds": Int((SuspendingClock.now - began).components.seconds), "downloaded": downloaded])
             listen(to: api)
@@ -362,16 +421,7 @@ final class AppModel {
             Task {
                 await self?.catalog.refreshAgents()
                 await self?.workspace.refreshAgents()
-                // Your Custom Auto lists, as the machines connected meanwhile copy them.
-                guard let self, self.agents.isAutoLoaded else { return }
-                for engine in self.machines.engines.values where engine.isReady && !engine.isAnotherMacsEngine { await engine.agents.copyLists(self.agents.auto.all) }
             }
-        }
-        // Each machine's bridge has a copy of your Custom Auto lists.
-        agents.onListsChanged = { [weak self] lists in
-            guard let self else { return }
-            // (Not to an engine another Mac started: it keeps that Mac's.)
-            for engine in machines.engines.values where engine.isReady && !engine.isAnotherMacsEngine { Task { await engine.agents.copyLists(lists) } }
         }
         var environment = shellEnvironment
         // Bots' wake-up command by name, and where their folders are, for their sessions with the

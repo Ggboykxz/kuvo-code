@@ -171,7 +171,12 @@ public final class ServerProcess: @unchecked Sendable {
         let log = LogTail()
         stderr.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            if data.isEmpty { handle.readabilityHandler = nil } else { log.append(data) }
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+                log.close()
+            } else {
+                log.append(data)
+            }
         }
         process.terminationHandler = { process in onExit(process.terminationStatus) }
         try process.run()
@@ -219,8 +224,10 @@ public final class ServerProcess: @unchecked Sendable {
             line.append(byte)
         }
         guard !line.isEmpty else {
-            // stdout closed before the handshake: the server died while starting.
+            // stdout closed before the handshake: the server died while starting. What it said
+            // as it went, read to its end (not after a moment, if something it started keeps it).
             process.waitUntilExit()
+            log.waitUntilClosed(for: 1)
             throw ServerProcessError.exited(status: process.terminationStatus, output: log.text)
         }
         struct Handshake: Decodable { var url: URL }
@@ -256,14 +263,30 @@ extension Pipe {
 
 /// The last few kilobytes of a stream.
 final class LogTail: @unchecked Sendable {
-    private let lock = NSLock()
+    private let lock = NSCondition()
     private var buffer = Data()
     private let limit = 16 * 1024
+    private var isClosed = false
 
     func append(_ data: Data) {
         lock.withLock {
             buffer.append(data)
             if buffer.count > limit { buffer.removeFirst(buffer.count - limit) }
+        }
+    }
+
+    /// Everything's been read: the other end closed.
+    func close() {
+        lock.withLock {
+            isClosed = true
+            lock.broadcast()
+        }
+    }
+
+    func waitUntilClosed(for seconds: TimeInterval) {
+        let deadline = Date(timeIntervalSinceNow: seconds)
+        lock.withLock {
+            while !isClosed, lock.wait(until: deadline) {}
         }
     }
 

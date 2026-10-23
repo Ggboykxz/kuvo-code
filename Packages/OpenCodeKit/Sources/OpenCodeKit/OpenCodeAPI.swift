@@ -276,6 +276,21 @@ public struct OpenCodeAPI: Sendable {
         return page.data.map(appSession)
     }
 
+    /// Every session a session's agent started, newest first, page after page.
+    public func allChildren(of session: String) async throws -> [Session] {
+        let size = 100
+        var page: Page<Session> = try await get("api/session", query: ["limit": String(size), "order": "desc", "parentID": session])
+        var all = page.data
+        var seen = Set(all.map(\.id))
+        while page.data.count == size, let next = page.cursor?.next {
+            page = try await get("api/session", query: ["limit": String(size), "cursor": next])
+            let new = page.data.filter { seen.insert($0.id).inserted }
+            guard !new.isEmpty else { break }
+            all += new
+        }
+        return all.map(appSession)
+    }
+
     /// Every session (the root ones, unless `roots` is false), newest first, page after page.
     public func allSessions(directory: String? = nil, roots: Bool = true) async throws -> [Session] {
         let size = 100
@@ -322,6 +337,23 @@ public struct OpenCodeAPI: Sendable {
         struct Body: Encodable { var title: String?; var agent: String?; var model: ModelRef; var location: Location; var permissions: [PermissionRule]?; var messages: [Message]; var waiting: [WaitingPrompt] }
         let body = Body(title: title, agent: agent, model: model, location: Location(directory: enginePath(directory)), permissions: permissions, messages: messages, waiting: waiting)
         return appSession(try await send("POST", "api/session/import", body: body, as: DataEnvelope<Session>.self).data)
+    }
+
+    /// A conversation whole, as the engine keeps it (its session, with its metadata and
+    /// permissions, and every message), for another engine to carry on with
+    /// (`importSession(exported:directory:)`): a bot or chat moving to another computer. Kept as
+    /// the engine wrote it, so nothing is lost on the way.
+    public func exportSession(_ id: String) async throws -> JSONValue {
+        try await get("api/experimental/session/\(id.pathEscaped)/export", as: DataEnvelope<JSONValue>.self).data
+    }
+
+    /// A conversation another engine exported (`exportSession`), carried on here at `directory`
+    /// under the same ID. An engine that has one with that ID already refuses it (409).
+    public func importSession(exported: JSONValue, directory: String) async throws -> Session {
+        struct Body: Encodable { var info: JSONValue; var messages: JSONValue; var location: Location }
+        guard let info = exported["info"], let messages = exported["messages"] else { throw URLError(.cannotParseResponse) }
+        let body = Body(info: info, messages: messages, location: Location(directory: enginePath(directory)))
+        return appSession(try await send("POST", "api/experimental/session/import", body: body, as: DataEnvelope<Session>.self).data)
     }
 
     public func renameSession(_ id: String, title: String) async throws {

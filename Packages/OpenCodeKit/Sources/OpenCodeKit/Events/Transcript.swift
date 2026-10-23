@@ -96,11 +96,24 @@ public struct Transcript: Sendable, Equatable {
         pending.append(Pending(id: id, text: text, delivery: delivery, isLocal: true, files: files))
     }
 
-    /// Makes an undo final: the conversation from `to` on goes. What's waiting to be sent stays,
+    /// Makes an undo final: the conversation from `to` on goes, from where it is, as the engine
+    /// takes it back (a message that waited in the queue is older than the steps before it, which
+    /// stay). One not here is either before every message read, which all go, or gone already:
+    /// the engine's word of an undo this Mac made final as you sent comes after it, as does a
+    /// read made since, and what's left is from before it. What's waiting to be sent stays,
     /// newer as it is: sending a message is what makes an undo final, and that message is among it.
     public mutating func commitRevert(to: String) {
-        messages.removeAll { $0.id >= to }
+        guard to != committedRevert else { return }
+        committedRevert = to
+        if let index = messages.firstIndex(where: { $0.id == to }) {
+            messages.removeSubrange(index...)
+        } else if let first = messages.lazy.map(\.id).min(), to < first {
+            messages.removeAll()
+        }
     }
+
+    /// The undo made final last, so the engine's word of one made final here finds it done.
+    public var committedRevert: String?
 
     public mutating func removeLocal(id: String) {
         pending.removeAll { $0.id == id && $0.isLocal }
@@ -465,10 +478,17 @@ public struct Transcript: Sendable, Equatable {
         case "session.compaction.ended", "session.compaction.failed":
             struct Ended: Decodable { var text: String? }
             let ended = try event.payload(as: Ended.self)
-            if let index = messages.lastIndex(where: { if case .compaction = $0 { true } else { false } }), case .compaction(var message) = messages[index] {
-                message.status = event.type.hasSuffix("ended") ? "completed" : "failed"
+            let failed = event.type.hasSuffix("failed")
+            // The summary under way. One whose start was missed isn't an earlier summary's (that
+            // stays as it was): the engine's copy has it, a failed one too, and a read brings it;
+            // unless a read since has it whole already.
+            if let index = messages.lastIndex(where: { if case .compaction(let summary) = $0 { summary.status == "running" } else { false } }),
+               case .compaction(var message) = messages[index] {
+                message.status = failed ? "failed" : "completed"
                 message.summary = ended.text
                 messages[index] = .compaction(message)
+            } else if failed || !messages.contains(where: { if case .compaction(let summary) = $0 { summary.summary == ended.text } else { false } }) {
+                isStale = true
             }
 
         // History edits

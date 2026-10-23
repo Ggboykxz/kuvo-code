@@ -11,6 +11,7 @@ import type { Agent, AgentContext, Account, RunInput, RunResult, SignInAttempt, 
 import { accountName, failure, model } from "../agent"
 import type { Limit } from "../auto"
 import { fileDiff, fromPatch } from "../diff"
+import { kuvoTools } from "../kuvotools"
 import { pictureData, pictureFile, withPictures } from "../pictures"
 import { skillsFolder, skillsFor, turnedOff, upward } from "../skills"
 import type { Turn } from "../turn"
@@ -114,6 +115,9 @@ export class CursorAgent implements Agent {
     this.accountCache = { at: Date.now(), account }
     return account
   }
+
+  /** Cursor's page finishes by itself, wherever it's opened (its SDK waits on Cursor, not on this computer). */
+  readonly signsInRemotely = true
 
   async signIn(): Promise<SignInAttempt> {
     if (!this.instance.home && process.env.CURSOR_API_KEY) throw new Error("CURSOR_API_KEY is set in your environment: Kuvo Code uses that key.")
@@ -238,7 +242,8 @@ interface Active extends Lane {
   /** Tool calls it said it would make, and those it told: one its SDK leaves out is said. */
   listed: number
   told: number
-  reasoningTokens?: number
+  /** What its last turn sent and got back, as it said when the turn ended. */
+  usage?: any
 }
 
 class CursorThread implements Thread {
@@ -246,6 +251,8 @@ class CursorThread implements Thread {
   /** Whether it was started to run its tools without asking. */
   private startedApproving?: boolean
   private startedSkills?: string
+  /** Kuvo Code's tools as it was started with them: other ones (the app started again) start it again. */
+  private startedTools?: string
   private active?: Active
 
   constructor(
@@ -275,6 +282,9 @@ class CursorThread implements Thread {
     // Settings › Skills' skills, in a folder of the workspace's (`.cursor/skills` in it), but those
     // it reads itself.
     const skills = skillsFolder(await skillsFor(cwd, this.owner.ownSkillFolders(cwd), turnedOff(hooks)))
+    // Kuvo Code's own tools (the panel's browser, show_in_panel, messages to other agents), as the
+    // other agents have them: what they do goes to this conversation.
+    const tools = kuvoTools(this.session.id)
     return {
       model: selection,
       name: `Kuvo Code: ${this.session.title ?? "session"}`,
@@ -289,16 +299,24 @@ class CursorThread implements Thread {
         enableAgentRetries: true,
         store: this.owner.agentStore(sdk),
       },
+      ...(tools
+        ? {
+            mcpServers: {
+              [tools.name]: tools.kind === "http" ? { type: "http", url: tools.url, headers: tools.headers } : { type: "stdio", command: tools.command, args: tools.args, env: tools.env },
+            },
+          }
+        : {}),
     }
   }
 
   /** Cursor's agent for this session: the one it had, or a new one (said by `startedOver`). */
   private async ensureAgent(sdk: any, options: any, hooks: TurnHooks) {
     const approvesAll = hooks.approvesAll(false)
-    // Its sandbox, review and folders are set as it starts: another approval mode, or other
-    // skills, start it again.
+    // Its sandbox, review, folders and Kuvo Code's tools are set as it starts: another approval
+    // mode, other skills or other tools start it again.
     const skills = options.local?.dirs?.[0] as string | undefined
-    if (this.agent && (this.startedApproving !== approvesAll || this.startedSkills !== skills)) {
+    const tools = kuvoTools(this.session.id)?.key
+    if (this.agent && (this.startedApproving !== approvesAll || this.startedSkills !== skills || this.startedTools !== tools)) {
       try {
         this.agent.close?.()
       } catch {}
@@ -307,6 +325,7 @@ class CursorThread implements Thread {
     if (this.agent) return
     this.startedApproving = approvesAll
     this.startedSkills = skills
+    this.startedTools = tools
     const id = this.state.cursorAgent as string | undefined
     this.agent = id ? await sdk.Agent.resume(id, options).catch(() => undefined) : undefined
     if (!this.agent && id) {
@@ -383,13 +402,23 @@ class CursorThread implements Thread {
       await chain
       if (result?.status !== "error" || active.sawText || active.output.size) instructionsTaken()
       if (!active.sawText && typeof result?.result === "string" && result.result.trim()) turn.text(result.result)
-      const usage = result?.usage
+      // Its last turn's: the request that's in its context now, which the run's own count (all
+      // its turns added up) isn't.
+      const usage = active.usage ?? result?.usage
       // Tools its SDK didn't tell (it reports only the kinds it knows): said, so they aren't a mystery.
       if (active.listed > active.told) turn.notice(`Cursor used ${active.listed - active.told} more ${active.listed - active.told === 1 ? "tool" : "tools"} than it reports to Kuvo Code.`)
-      for (const lane of active.subagents.values()) lane.run.end(result?.status === "error" ? "interrupted" : "succeeded")
+      // Subagents still at work when it was stopped (or failed) were stopped with it.
+      const cut = hooks.signal.aborted || result?.status === "cancelled" || result?.status === "error"
+      for (const lane of active.subagents.values()) lane.run.end(cut ? "interrupted" : "succeeded")
       turn.endStep({
+        // (Its thinking is part of what it wrote, as Cursor counts it: told apart, counted once.)
         tokens: usage
-          ? { input: usage.inputTokens ?? 0, output: usage.outputTokens ?? 0, reasoning: active.reasoningTokens ?? 0, cache: { read: usage.cacheReadTokens ?? 0, write: usage.cacheWriteTokens ?? 0 } }
+          ? {
+              input: usage.inputTokens ?? 0,
+              output: Math.max(0, (usage.outputTokens ?? 0) - (usage.reasoningTokens ?? 0)),
+              reasoning: usage.reasoningTokens ?? 0,
+              cache: { read: usage.cacheReadTokens ?? 0, write: usage.cacheWriteTokens ?? 0 },
+            }
           : undefined,
       })
       if (hooks.signal.aborted || result?.status === "cancelled") return { outcome: "interrupted" }
@@ -488,7 +517,7 @@ class CursorThread implements Thread {
         turn.notice("Cursor summarized the conversation to make room.")
         return
       case "turn-ended":
-        if (lane === active && typeof update.usage?.reasoningTokens === "number") active.reasoningTokens = update.usage.reasoningTokens
+        if (lane === active && update.usage) active.usage = update.usage
         return
       case "tool-requests-listed":
         if (lane === active && typeof update.callCount === "number") active.listed += update.callCount

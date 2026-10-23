@@ -46,8 +46,15 @@ nonisolated enum SessionEdits {
             switch combined(edits, directory: directory) {
             case .changed(let file): return file
             case .unchanged: return nil
-            case nil: return FileDiff(file: name, patch: edits.map(\.patch).joined(separator: "\n"),
-                                      additions: edits.reduce(0) { $0 + $1.additions }, deletions: edits.reduce(0) { $0 + $1.deletions }, status: edits.last?.status)
+            case nil:
+                // One header, then each edit's hunks: another header after a hunk would read as
+                // lines of it.
+                let hunks = edits.map { edit in
+                    let lines = edit.patch.components(separatedBy: "\n").drop { !$0.hasPrefix("@@") }.joined(separator: "\n")
+                    return lines.hasSuffix("\n") || lines.isEmpty ? lines : lines + "\n"
+                }
+                return FileDiff(file: name, patch: "--- a/\(name)\n+++ b/\(name)\n" + hunks.joined(),
+                                additions: edits.reduce(0) { $0 + $1.additions }, deletions: edits.reduce(0) { $0 + $1.deletions }, status: edits.last?.status)
             }
         }
     }

@@ -80,8 +80,9 @@ struct ChangesPanel: View {
             // A worktree's work is all on its branch, committed or not.
             if old == new, worktree != nil, new != nil { changes.scope = .branch }
         }
-        // Git is quick to ask; look again every few seconds while the panel is open.
-        .task(id: "\(changes.directory)\n\(changes.scope)\n\(changes.base ?? "")") {
+        // Git is quick to ask; look again every few seconds while the panel is open. Started over
+        // for another session in the same folder: the loop reads the session it began with.
+        .task(id: "\(changes.directory)\n\(changes.scope)\n\(changes.base ?? "")\n\(model?.id ?? "")") {
             while !Task.isCancelled {
                 await changes.refresh(fallback: engineChanges, edits: editedFiles)
                 try? await Task.sleep(for: .seconds(3))
@@ -93,6 +94,8 @@ struct ChangesPanel: View {
                 highlighting[file.id] = await DiffHighlighting.make(for: file)
             }
         }
+        // A comment half written is the session's it was begun in: not saved to another's.
+        .onChange(of: model?.id) { draft = nil }
         .onChange(of: model?.isRunning) { Task { await changes.refresh(fallback: engineChanges, edits: editedFiles) } }
         .onChange(of: engineChanges) { Task { await changes.refresh(fallback: engineChanges, edits: editedFiles) } }
         .onChange(of: editedFiles) { Task { await changes.refresh(fallback: engineChanges, edits: editedFiles) } }
@@ -493,28 +496,15 @@ private struct BranchMenu: View {
         }
     }
 
-    /// Why the work can't go anywhere yet, if it can't.
-    nonisolated private static func unready(_ tree: Workspace.Worktree, in directory: String, against target: String) -> String? {
-        if Git.hasUncommittedChanges(in: directory) { return "Commit the changes first. Only what’s committed goes." }
-        if Git.commitsAhead(of: target, in: directory) == 0 { return "\(tree.branch) has nothing \(target) doesn’t have yet." }
-        return nil
-    }
-
     private func merge() {
         let tree = tree, directory = directory, environment = environment
         isWorking = true
         Task {
             outcome = await Task.detached { () -> Outcome in
-                let failed = { (message: String) in Outcome.failed(title: "Couldn’t Merge", message: message) }
-                guard let target = Git.currentBranch(in: tree.project) else { return failed("The project’s folder isn’t on a branch.") }
-                if let base = tree.base, target != base {
-                    return failed("The project’s folder is on \(target) now. Switch it back to \(base) to merge, or create a pull request.")
-                }
-                if let reason = Self.unready(tree, in: directory, against: target) { return failed(reason) }
-                return switch Git.merge(tree.branch, into: tree.project, environment: environment) {
-                case .merged: .merged(into: target)
-                case .conflict(let files): .conflict(files, into: target)
-                case .failed(let message): failed(message)
+                switch tree.mergeBack(from: directory, environment: environment) {
+                case .merged(let target): .merged(into: target)
+                case .conflict(let files, let target): .conflict(files, into: target)
+                case .failed(let message): .failed(title: "Couldn’t Merge", message: message)
                 }
             }.value
             isWorking = false
@@ -532,7 +522,7 @@ private struct BranchMenu: View {
         isWorking = true
         Task {
             let result = await Task.detached { () -> Result<URL?, GitFailure> in
-                if let base = tree.base, let reason = Self.unready(tree, in: directory, against: base) { return .failure(GitFailure(message: reason)) }
+                if let base = tree.base, let reason = tree.unready(in: directory, against: base) { return .failure(GitFailure(message: reason)) }
                 do {
                     return .success(try Git.pushForPullRequest(branch: tree.branch, base: tree.base, in: directory, environment: environment))
                 } catch {

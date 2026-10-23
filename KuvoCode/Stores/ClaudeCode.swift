@@ -41,11 +41,17 @@ nonisolated enum ClaudeCode {
         String(name.lowercased().map { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" ? $0 : "-" })
     }
 
-    /// The Markdown files in a folder, read.
-    static func files(in folder: URL) -> [(name: String, text: String)] {
-        let urls = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
-        return urls.filter { $0.pathExtension == "md" }
-            .compactMap { url in (try? String(contentsOf: url, encoding: .utf8)).map { (url.deletingPathExtension().lastPathComponent, $0) } }
+    /// The Markdown files in a folder, read. `nested`: in its folders too, each named with them
+    /// ("frontend/component" for frontend/component.md), as Claude Code names its commands.
+    static func files(in folder: URL, nested: Bool = false) -> [(name: String, text: String)] {
+        let urls = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
+        return urls.flatMap { url -> [(name: String, text: String)] in
+            if nested, (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true, !url.lastPathComponent.hasPrefix(".") {
+                return files(in: url, nested: true).map { (url.lastPathComponent + "/" + $0.name, $0.text) }
+            }
+            guard url.pathExtension == "md", let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+            return [(url.deletingPathExtension().lastPathComponent, text)]
+        }
     }
 
     private static func unquote(_ text: String) -> String {
@@ -94,8 +100,9 @@ nonisolated enum ClaudeCommands {
         var template: String
     }
 
+    /// Those in its folders too, by both names ("frontend-component"): Claude Code's /frontend:component.
     static func load(from folder: URL = ClaudeCode.folder.appending(path: "commands")) -> [Command] {
-        ClaudeCode.files(in: folder).compactMap { file in
+        ClaudeCode.files(in: folder, nested: true).compactMap { file in
             let (fields, body) = ClaudeCode.parse(file.text)
             let id = ClaudeCode.id(file.name)
             guard !id.isEmpty, !body.isEmpty else { return nil }

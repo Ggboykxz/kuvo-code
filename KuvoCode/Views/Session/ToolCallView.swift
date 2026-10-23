@@ -27,7 +27,7 @@ struct ToolCallView: View {
         if WidgetCard.isWidget(call), !call.state.isFailure {
             WidgetCard(call: call, send: answerAgent)
         } else if MadePictureRow.isMade(call) {
-            MadePictureRow(call: call)
+            MadePictureRow(call: call, directory: directory)
         } else {
             step
         }
@@ -165,6 +165,17 @@ struct ToolCallView: View {
         ToolCallView(call: call, directory: directory).summary
     }
 
+    /// What a step worked on, without the app's words for it ("Read", "Asked you a question"):
+    /// its files, its command, what it looked for, the page; for searching what's in a
+    /// conversation. Nil when it names none.
+    static func subject(of call: Message.ToolCall, in directory: String) -> String? {
+        let view = ToolCallView(call: call, directory: directory)
+        let parts = [view.relative(view.string("path"))] + ["command", "pattern", "query", "url", "description"].map(view.string)
+            + view.diffs.map { view.relative($0.file) ?? $0.file }
+        let named = parts.compactMap(\.self).filter { !$0.isEmpty }
+        return named.isEmpty ? nil : named.joined(separator: " ")
+    }
+
     private var summary: String {
         let path = relative(string("path"))
         // A bot's memory file goes by what it is.
@@ -188,6 +199,7 @@ struct ToolCallView: View {
         case "question": return isActive ? "Asking you a question" : "Asked you a question"
         case "subagent": return (string("description") ?? (isActive ? "Starting a subagent…" : "A subagent's task")) + (string("agent").map { " · \($0)" } ?? "")
         case "skill": return "Used a skill"
+        case "tool_search": return (isActive ? "Looking for a tool" : "Looked for a tool") + (string("query").map { ": “\($0)”" } ?? "")
         case "execute":
             // Code Mode: the agent wrote code that calls its tools.
             let calls = call.state.metadata?["toolCalls"]?.array?.count ?? 0
@@ -240,7 +252,7 @@ struct ToolCallView: View {
             let of = string("of").map { $0.hasPrefix("&") ? String($0.dropFirst()) : $0 } ?? "another agent"
             let about = string("query").map { " about “\($0)”" } ?? ""
             return (isActive ? "Reading " : "Read ") + of + "’s conversation" + about
-        case "show_in_panel": return (isActive ? "Showing " : "Showed ") + (relative(string("path")) ?? "a file")
+        case "show_in_panel", "show_file": return (isActive ? "Showing " : "Showed ") + (relative(string("path")) ?? "a file")
         case "start_session": return (isActive ? "Starting a session" : "Started a session") + (string("title").map { ": \($0)" } ?? "")
         // Kuvo Code's wake-up tools, worded as the kuvo-wake commands they run are.
         case "schedule_wake_up":
@@ -351,6 +363,7 @@ struct ToolCallView: View {
         case "list_wake_ups": "list.bullet"
         case "cancel_wake_up": "xmark.circle"
         case "show_in_panel": "sidebar.right"
+        case "show_file": "doc.richtext"
         default: "safari"
         }
     }

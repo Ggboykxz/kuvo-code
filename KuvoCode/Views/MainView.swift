@@ -9,7 +9,7 @@ struct MainView: View {
     @Environment(Catalog.self) private var catalog
     @Environment(Workspace.self) private var workspace
     @Environment(Bots.self) private var bots
-    @Environment(BotGroups.self) private var groups
+    @Environment(GroupChats.self) private var groups
 
     /// Open tabs, in order: session IDs, or `draft:<folder>` for a new session
     /// that doesn't exist on the server until its first message.
@@ -19,7 +19,7 @@ struct MainView: View {
     @SceneStorage("showsSidebar") private var showsSidebar = true
     /// The row at the top: the project, its branch and the tabs. Hidden, sessions are switched
     /// from the sidebar or ⌘K.
-    @AppStorage(TabBar.showsKey) private var showsTabBar = true
+    @AppStorage(TabBar.showsKey) private var showsTabBar = TabBar.showsByDefault
     /// The window is being resized.
     @State private var window = WindowStateReader.State()
     @SceneStorage("showsPanel") private var showsPanel = false
@@ -56,6 +56,8 @@ struct MainView: View {
     @State private var showsOpenQuickly = false
     /// The command palette (⌘K) is showing.
     @State private var showsPalette = false
+    /// Terminals open as tabs, standing in for a conversation.
+    private var terminals: MainTerminals { app.mainTerminals }
     /// A tab's session being renamed, and the title being typed.
     @State private var renaming: Session?
     /// The window's content width; the title bar is sized from it.
@@ -106,7 +108,7 @@ struct MainView: View {
     private var utilities: Utilities { app.utilities }
 
     private var sessionID: String? {
-        selection.flatMap { SidebarView.draftDirectory(from: $0) == nil && BotGroups.groupID(fromTab: $0) == nil ? $0 : nil }
+        selection.flatMap { SidebarView.draftDirectory(from: $0) == nil && BotGroups.groupID(fromTab: $0) == nil && !MainTerminals.isTerminal($0) ? $0 : nil }
     }
 
     /// The group chat in view.
@@ -173,7 +175,7 @@ struct MainView: View {
 
     /// The active tab's project folder.
     private var activeDirectory: String? {
-        activeModel?.session.location.directory ?? draftDirectory
+        activeModel?.session.location.directory ?? draftDirectory ?? selection.flatMap { terminals.entry($0)?.directory }
     }
 
     /// The active tab's folder when it's a project's: not the chats' folder or a bot's own.
@@ -320,8 +322,11 @@ struct MainView: View {
             .accessibilityHidden(app.showsSettings)
             .overlay {
                 if app.showsSettings {
+                    let widest = max(PaneLayout.sessionsRange.lowerBound, min(PaneLayout.sessionsRange.upperBound, proxy.size.width * 0.4))
                     SettingsView(
-                        sidebarWidth: min(max(layout.sessions ?? sessionsWidth, PaneLayout.sessionsRange.lowerBound), proxy.size.width * 0.4),
+                        sidebarWidth: min(max(layout.sessions ?? sessionsWidth, PaneLayout.sessionsRange.lowerBound), widest),
+                        sidebarRange: PaneLayout.sessionsRange.lowerBound...widest,
+                        resizeSidebar: { sessionsWidth = $0 },
                         topInset: keepsTitleBar ? 0 : Metrics.windowControlsHeight,
                         close: closeSettings
                     )
@@ -335,6 +340,8 @@ struct MainView: View {
         // Without the tab bar, the cards reach up into the title bar; the window's buttons sit
         // at the top of the sidebar.
         .padding(.top, keepsTitleBar ? 0 : Metrics.paneGap)
+        // The gaps around the cards move the window, as a title bar does.
+        .background { WindowGapDragArea() }
         .ignoresSafeArea(.container, edges: keepsTitleBar ? [] : .top)
         // Without the tab bar, the panel's button stays at the top right, on the rightmost card's
         // header row, so the panel can still be found.
@@ -368,11 +375,15 @@ struct MainView: View {
         // button stays, so the window's buttons keep a toolbar's height, centered on the cards'
         // header row, and the sidebar is a click away. The panel is still ⌥⌘0, and sessions ⌘K.
         .toolbar {
-            if app.showsSettings {
+            if app.showsSettings && showsTabBar {
                 // In Settings, the title bar has the way back, and the tabs once you sign in to a
                 // site: the page's, then each site's, from where the page's card starts.
                 ToolbarItem(placement: .navigation) { settingsTitleBar }
                 .sharedBackgroundVisibility(.hidden)
+            } else if app.showsSettings {
+                // Without the tab bar, only the way back, beside the window's buttons.
+                ToolbarItem(placement: .navigation) { SettingsBackButton(close: closeSettings) }
+                    .sharedBackgroundVisibility(.hidden)
             } else if showsTabBar {
                 titleBar
             } else {
@@ -478,6 +489,7 @@ struct MainView: View {
                 settings.name = given(settings.name) ?? existing.name
                 settings.folders = existing.folders + settings.folders.filter { !existing.folders.contains($0) }
                 settings.run = given(settings.run) ?? existing.run
+                settings.terminal = given(settings.terminal) ?? existing.terminal
             }
             let primary = workspace.saveProject(primary, settings: settings)
             if request.project == nil { newSession(in: primary) }
@@ -633,6 +645,9 @@ struct MainView: View {
             if let directory = SidebarView.draftDirectory(from: key) {
                 return TabItem(id: key, title: Workspace.isChat(directory) ? "New Chat" : "New Session", logo: nil, status: .idle)
             }
+            if let entry = terminals.entry(key) {
+                return TabItem(id: key, title: entry.session.title == "Terminal" ? entry.label : entry.session.title, logo: nil, status: .idle, symbol: "apple.terminal")
+            }
             if workspace.waitingMachine(for: key) != nil {
                 return TabItem(id: key, title: workspace.remoteTitle(key) ?? "Session", logo: nil, status: .idle)
             }
@@ -690,7 +705,7 @@ struct MainView: View {
         } content: {
             SidebarView(
                 selection: Binding(get: { selection }, set: { id in if let id { openTab(id) } }),
-                newSession: newSession,
+                newSession: { newSession(in: $0) },
                 newProject: { openProjectEditor(ProjectEditorRequest(project: nil)) },
                 editProject: { openProjectEditor(ProjectEditorRequest(project: $0)) },
                 showProviders: { app.openSettings(.accounts) },
@@ -698,6 +713,8 @@ struct MainView: View {
                 editBot: { openBotEditor(bot: $0) },
                 newGroup: { openGroupEditor(group: nil) },
                 editGroup: { openGroupEditor(group: $0) },
+                newConversation: { openTab(SidebarView.draftTag($0)) },
+                closeTerminal: { closeTab($0) },
                 stagedBots: stagedBots,
                 openBeside: besideOpener
             )
@@ -856,12 +873,23 @@ struct MainView: View {
                     }
                 }
                 .id(request.id)
+            } else if let key = selection, let entry = terminals.entry(key) {
+                Card(title: entry.session.title == "Terminal" ? entry.label : entry.session.title, detail: workspace.projectName(entry.directory), isFocused: focus == .conversation) {
+                    Image(systemName: "apple.terminal")
+                } actions: {
+                    Button("Close Tab", systemImage: "xmark") { closeTab(key) }
+                        .help("Close Tab")
+                } content: {
+                    TerminalHost(session: entry.session)
+                }
+                .id(key)
             } else if let id = groupID, let group = groups.group(id) {
                 Card(title: group.name, detail: groupDetail(group), isFocused: focus == .conversation) {
                     GroupAvatar(faces: faces(of: group), size: 20)
                 } actions: {
                     Button("Edit Group Chat", systemImage: "slider.horizontal.3") { openGroupEditor(group: group) }
                         .help("Edit Group Chat: its name, bots and lead")
+                        .disabled(app.moves.isMoving(group.id))
                     Button("Close Tab", systemImage: "xmark") { closeTab(BotGroups.tabKey(id)) }
                         .help("Close Tab")
                 } content: {
@@ -1082,14 +1110,16 @@ struct MainView: View {
         return names.isEmpty ? nil : names.joined(separator: ", ")
     }
 
-    /// Settings' tabs: its pages, and the sites you're signing in to; the last one left stays.
+    /// Settings' tabs: its pages (a machine's by its name), and the sites you're signing in to;
+    /// the last one left stays.
     private var settingsTabItems: [TabItem] {
         let tabs = app.settingsTabs
         let closes = tabs.tabs.count > 1
         return tabs.tabs.compactMap { tab -> TabItem? in
             switch tab.kind {
             case .page(let page):
-                return TabItem(id: tab.id, title: page.title, logo: nil, status: .idle, symbol: page.symbol, closes: closes, isPreview: tab.id == tabs.previewTab)
+                let title = tab.box.machine == nil ? page.title : "\(page.title) · \(app.name(of: tab.box))"
+                return TabItem(id: tab.id, title: title, logo: nil, status: .idle, symbol: page.symbol, closes: closes, isPreview: tab.id == tabs.previewTab)
             case .site(let id):
                 guard let site = tabs.site(id) else { return nil }
                 return TabItem(id: tab.id, title: site.service.title, logo: nil, status: .idle, symbol: site.service.symbol, closes: closes)
@@ -1104,10 +1134,16 @@ struct MainView: View {
         })
     }
 
-    /// The title bar keeps its row: with the tab bar, or in Settings, for its tabs (even when
-    /// you hid the tab bar, they need somewhere to be).
+    /// A page of Settings as the demo variables name it: `permissions`, or `permissions@<machine>`.
+    private static func demoPage(_ text: String) -> (SettingsPage?, SidebarBox) {
+        let parts = text.split(separator: "@", maxSplits: 1).map(String.init)
+        return (SettingsPage(rawValue: parts[0]), parts.count > 1 ? .machine(parts[1]) : .mac)
+    }
+
+    /// The title bar keeps its row with the tab bar; without it, the cards reach the top, in
+    /// Settings too (one page at a time, then).
     private var keepsTitleBar: Bool {
-        showsTabBar || app.showsSettings
+        showsTabBar
     }
 
     /// In Settings, the title bar has the way back, and Settings' tabs, from where the page's
@@ -1169,7 +1205,8 @@ struct MainView: View {
             Analytics.shared.sessionEnded(beside)
             splitPairs[key] = nil
         }
-        if remember { rememberClosed([ClosedTab(key: key, index: index, beside: beside)]) }
+        if remember && !MainTerminals.isTerminal(key) { rememberClosed([ClosedTab(key: key, index: index, beside: beside)]) }
+        terminals.close(key)
         withAnimation(.ui) {
             self.tabs = tabs
             if selection == key {
@@ -1182,9 +1219,10 @@ struct MainView: View {
     private func closeTabs(except key: String?) {
         // Reopened last first, so the leftmost comes back last.
         let pairs = splitPairs
-        rememberClosed(tabs.enumerated().filter { $0.element != key }.map { ClosedTab(key: $0.element, index: $0.offset, beside: pairs[$0.element]) }.reversed())
+        rememberClosed(tabs.enumerated().filter { $0.element != key && !MainTerminals.isTerminal($0.element) }.map { ClosedTab(key: $0.element, index: $0.offset, beside: pairs[$0.element]) }.reversed())
         for closed in tabs where closed != key {
             Analytics.shared.sessionEnded(closed)
+            terminals.close(closed)
             if let beside = splitPairs[closed] { Analytics.shared.sessionEnded(beside) }
         }
         withAnimation(.ui) {
@@ -1236,12 +1274,15 @@ struct MainView: View {
         }
     }
 
+    /// Where the panel's Add to Message goes: the session you work in, the one beside once you've
+    /// clicked into it (the panel is its), else the tab's.
+    private var messageTarget: String? { workedBesideID ?? selection }
+
     /// Adds a file's lines ("@src/App.swift:12-20") or a terminal's output to what's in the
-    /// composer of the tab in view, and puts the cursor there.
+    /// composer of the session you work in, and puts the cursor there.
     private func addToMessage(_ addition: String) {
-        // With no tab open, a new session gets it.
-        if selection == nil { newSession(in: nil) }
-        guard let key = selection else { return }
+        composerForAdding()
+        guard let key = messageTarget else { return }
         var text = Drafts.shared[key].text
         let isBlock = addition.hasPrefix("```")
         if !text.isEmpty {
@@ -1249,16 +1290,25 @@ struct MainView: View {
         }
         Drafts.shared[key].text = text + addition + (isBlock ? "\n" : " ")
         if SidebarView.draftDirectory(from: key) != nil { draftFocus += 1 } else { workspace.model(for: key)?.focusComposer() }
-        focus = .conversation
+        focus = worksBeside ? .split : .conversation
     }
 
-    /// Attaches files to the message in the composer of the tab in view, and puts the cursor there.
+    /// Attaches files to the message in the composer of the session you work in, and puts the
+    /// cursor there.
     private func attachToMessage(_ files: [URL]) {
-        if selection == nil { newSession(in: nil) }
-        guard let key = selection else { return }
+        composerForAdding()
+        guard let key = messageTarget else { return }
         Drafts.shared[key].files += files.filter { !Drafts.shared[key].files.contains($0) }
         if SidebarView.draftDirectory(from: key) != nil { draftFocus += 1 } else { workspace.model(for: key)?.focusComposer() }
-        focus = .conversation
+        focus = worksBeside ? .split : .conversation
+    }
+
+    /// With no composer in view to add to (no tab open, or a terminal's): a new conversation, in
+    /// the terminal's folder if one's in view, never a terminal (which would start the project's
+    /// command, and not have the text).
+    private func composerForAdding() {
+        guard selection == nil || messageTarget.map(MainTerminals.isTerminal) == true else { return }
+        newSession(in: selection.flatMap { terminals.entry($0)?.directory }, conversation: true)
     }
 
     /// A session that carries on in another: the new one takes its tab (or its place beside
@@ -1321,6 +1371,12 @@ struct MainView: View {
         // A machine's sessions wait for it to connect.
         func isGone(_ key: String) -> Bool { !known.contains(key) && workspace.waitingMachine(for: key) == nil }
         for key in tabs where SidebarView.draftDirectory(from: key) == nil && isGone(key) {
+            // A terminal's tab stays while its shell runs; one restored at launch has none.
+            if MainTerminals.isTerminal(key) {
+                if terminals.entry(key) != nil { continue }
+                closeTab(key, remember: false)
+                continue
+            }
             // A group chat's tab stays as long as the chat does.
             if let id = BotGroups.groupID(fromTab: key), groups.group(id) != nil { continue }
             if let beside = splitPairs[key], !isGone(beside), !tabs.contains(beside) {
@@ -1351,6 +1407,7 @@ struct MainView: View {
             canStop: model?.isRunning == true,
             canReopenTab: closedTabs.contains(where: canReopen),
             newSession: { newSession(in: nil) },
+            newTerminalTab: { openTerminalTab(command: nil) },
             openFolder: openFolder,
             newProject: { openProjectEditor(ProjectEditorRequest(project: nil)) },
             newBot: { openBotEditor(bot: nil) },
@@ -1423,6 +1480,7 @@ struct MainView: View {
             add("Run", "play.fill", "⌘R", detail: runCommand, actions.run)
         }
         add("New Terminal", "terminal", "⌃`", actions.newTerminal)
+        add("New Terminal Tab", "apple.terminal", "⌃⇧`", actions.newTerminalTab)
         add("New Browser Tab", "globe", "⌥⌘B", actions.newBrowser)
         add("Show Changes", "plusminus", "⌥⌘I", actions.showChanges)
         if actions.hasProject {
@@ -1488,10 +1546,25 @@ struct MainView: View {
     /// Starts a draft in `directory`, or in the current project (a worktree's, for a session in one).
     /// A new session in `directory`, or the project in view, or the latest one; with no project
     /// at all, a chat. A bot's own folder isn't a project: from its conversation, the latest one.
-    private func newSession(in directory: String?) {
+    /// `conversation`: one, even in a project whose sessions open its terminal command.
+    private func newSession(in directory: String?, conversation: Bool = false) {
         let inView = activeDirectory.map(workspace.projectDirectory).flatMap { Workspace.isBotFolder($0) ? nil : $0 }
         let directory = directory ?? inView ?? workspace.projects.first?.directory ?? Workspace.chatsFolder
+        // A project that has a terminal command for its sessions opens that, not a conversation.
+        if !conversation, let command = workspace.settings[workspace.projectDirectory(directory)]?.terminal {
+            openTerminalTab(command: command, in: directory)
+            return
+        }
         openTab(SidebarView.draftTag(directory))
+    }
+
+    /// A terminal as a tab, in the folder of the tab in view (or the one given), typing `command`
+    /// in it. Without one, a plain shell: where you start `omp` or any agent yourself.
+    private func openTerminalTab(command: String?, in directory: String? = nil) {
+        // A project's folder, not a bot's own or the chats' (their agents work there).
+        let directory = directory ?? activeProject ?? NSHomeDirectory()
+        Analytics.shared.track("terminal_tab_opened", ["kind": command == nil ? "shell" : "project"])
+        openTab(terminals.open(in: directory, command: command, environment: app.shellEnvironment))
     }
 
     private func openFolder() {
@@ -1565,10 +1638,12 @@ struct MainView: View {
         if workspace.isLoaded, let list = environment["KUVO_DEMO_NEW_PROJECT"] {
             openProjectEditor(ProjectEditorRequest(project: nil, folders: list.split(separator: ",").map(String.init)))
         }
-        // KUVO_DEMO_SETTINGS=<page> opens Settings on that page, by its SettingsPage name: general,
-        // appearance, storage, accounts, agents, mcp, git, browser, passwords and so on.
+        // KUVO_DEMO_SETTINGS=<page>[@<machine>] opens Settings on that page, by its SettingsPage
+        // name: general, appearance, storage, accounts, agents, mcp, git, browser, passwords and so
+        // on; with a machine, that machine's.
         if workspace.isLoaded, let tab = environment["KUVO_DEMO_SETTINGS"] {
-            app.openSettings(SettingsPage(rawValue: tab))
+            let (page, box) = Self.demoPage(tab)
+            app.openSettings(page, on: box)
         }
         guard workspace.isLoaded, !Self.ranDemo else { return }
         Self.ranDemo = true
@@ -1576,7 +1651,9 @@ struct MainView: View {
         // the first page (KUVO_DEMO_SETTINGS) stays in view.
         if let pages = environment["KUVO_DEMO_SETTINGS_TABS"] {
             let shown = app.settingsTabs.selectedID
-            for page in pages.split(separator: ",").compactMap({ SettingsPage(rawValue: String($0)) }) { app.settingsTabs.show(page, inNewTab: true) }
+            for (page, box) in pages.split(separator: ",").map({ Self.demoPage(String($0)) }) {
+                if let page { app.settingsTabs.show(page, on: box, inNewTab: true) }
+            }
             app.settingsTabs.select(shown)
         }
         // KUVO_DEMO_WELCOME: no tabs, so the welcome card shows.
@@ -1905,7 +1982,8 @@ struct MainView: View {
     }
 
     /// KUVO_DEMO_GROUP=<name>|<bot>,<bot>,…[|<message>] makes that group chat of those bots unless
-    /// one has the name, opens it, and sends it the message; KUVO_DEMO_EDIT_GROUP opens its editor.
+    /// one has the name, opens it, and sends it the message; KUVO_DEMO_EDIT_GROUP opens its editor,
+    /// and KUVO_DEMO_MOVE_GROUP=<machine> moves it there first.
     private func runDemoGroup(_ environment: [String: String]) async {
         if environment["KUVO_DEMO_NEW_GROUP"] != nil { openGroupEditor(group: nil) }
         guard let spec = environment["KUVO_DEMO_GROUP"] else { return }
@@ -1921,12 +1999,27 @@ struct MainView: View {
         if let wait = environment["KUVO_DEMO_GROUP_UNDO"].flatMap(Double.init) {
             try? await Task.sleep(for: .seconds(wait))
             if let last = groups.messages(in: group.id).last(where: { $0.author == nil && $0.kind != .note }),
-               let text = groups.undo(from: last.id, in: group.id) {
+               let text = await groups.undo(from: last.id, in: group.id) {
                 Drafts.shared[BotGroups.tabKey(group.id)].text = text
+            }
+        }
+        // KUVO_DEMO_MOVE_GROUP=<machine>: then it moves there (once the machines it moves between run
+        // group chats), or to this Mac when empty, before its message goes.
+        if let place = environment["KUVO_DEMO_MOVE_GROUP"], groups.machine(of: group.id) != (place.isEmpty ? nil : place) {
+            let machine = place.isEmpty ? nil : place
+            let ends = [machine, groups.machine(of: group.id)].compactMap { $0 }
+            for _ in 0..<180 where !ends.allSatisfy(app.machineGroups.running.contains) { try? await Task.sleep(for: .seconds(1)) }
+            do {
+                try await app.moves.move(group: group.id, to: machine)
+                print("KUVO_DEMO_MOVE_GROUP moved \(group.name)")
+            } catch {
+                print("KUVO_DEMO_MOVE_GROUP failed: \(error.localizedDescription)")
             }
         }
         guard parts.count > 2, !parts[2].isEmpty else { return }
         while app.api == nil { try? await Task.sleep(for: .seconds(1)) }
+        // One on a machine: once it's reached there, as its composer waits.
+        for _ in 0..<180 where groups.unreachable(group.id) != nil { try? await Task.sleep(for: .seconds(1)) }
         try? await Task.sleep(for: .seconds(2))
         groups.send(parts[2], to: group.id)
         // KUVO_DEMO_GROUP_LATER=<seconds>|<message>: another message, sent while they talk.
@@ -1977,6 +2070,21 @@ struct MainView: View {
         if let prompt = environment["KUVO_DEMO_BOT_PROMPT"], let model = workspace.model(for: bot.sessionID) {
             try? await Task.sleep(for: .seconds(1))
             model.submit(prompt, files: [], for: nil, queue: false, commands: [])
+        }
+        // KUVO_DEMO_MOVE_BOT=<machine, or nothing for this Mac>: once it's done, it moves there.
+        if let place = environment["KUVO_DEMO_MOVE_BOT"] {
+            let machine = place.isEmpty ? nil : place
+            if let machine, let engine = app.machines.engine(machine) {
+                while !engine.isReady { try? await Task.sleep(for: .seconds(1)) }
+            }
+            try? await Task.sleep(for: .seconds(3))
+            while workspace.isWorking(bot.sessionID) { try? await Task.sleep(for: .seconds(2)) }
+            do {
+                try await app.moves.move(bot: bot.id, to: machine)
+                print("KUVO_DEMO_MOVE_BOT moved \(bot.name)")
+            } catch {
+                print("KUVO_DEMO_MOVE_BOT failed: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -2090,7 +2198,7 @@ struct MainView: View {
             for _ in 0..<240 where !engine.isReady || engine.catalog.defaultModel == nil { try? await Task.sleep(for: .milliseconds(250)) }
         }
         let catalog = catalog(for: folder)
-        guard let session = try? await workspace.createSession(in: folder, model: model ?? catalog.defaultModel?.ref, agent: catalog.startingAgent(chosen: app.engineConfig.value(at: ["default_agent"])?.string), worktree: environment["KUVO_DEMO_WORKTREE"] != nil) else { return }
+        guard let session = try? await workspace.createSession(in: folder, model: model ?? catalog.defaultModel?.ref, agent: catalog.startingAgent(chosen: EngineConfig.of(catalog.machine)?.value(at: ["default_agent"])?.string), worktree: environment["KUVO_DEMO_WORKTREE"] != nil) else { return }
         openTab(session.id)
         // KUVO_DEMO_FILES: comma-separated paths to attach.
         let files = environment["KUVO_DEMO_FILES"]?.split(separator: ",").map { URL(filePath: String($0)) } ?? []
@@ -2210,13 +2318,15 @@ private struct MoveToProjectButton: View {
     var body: some View {
         NativeMenuButton(opensBelow: true) {
             let menu = NSMenu()
-            let projects = workspace.projects.filter { !RemoteFolder.isRemote($0.directory) }
+            // The projects on its computer (a chat moved to a machine, that machine's).
+            let machine = workspace.session(sessionID).flatMap { RemoteFolder.machine(of: $0.location.directory) }
+            let projects = workspace.projects.filter { RemoteFolder.machine(of: $0.directory) == machine }
             menu.addItem(.sectionHeader(title: "Move to Project"))
             for project in projects {
                 menu.addItem(ActionItem(project.name, image: NSImage(systemSymbolName: "folder", accessibilityDescription: nil)) { move(to: project.directory) })
             }
             if projects.isEmpty {
-                let none = NSMenuItem(title: "No projects on this Mac", action: nil, keyEquivalent: "")
+                let none = NSMenuItem(title: machine.map { "No projects on \($0)" } ?? "No projects on this Mac", action: nil, keyEquivalent: "")
                 none.isEnabled = false
                 menu.addItem(none)
             }

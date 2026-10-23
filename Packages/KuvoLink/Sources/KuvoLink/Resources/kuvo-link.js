@@ -16,18 +16,23 @@
 
 import crypto from "node:crypto";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 // Goes up with every change, so `setup` replaces a running bridge that's older.
-export const BRIDGE_VERSION = "0.5.2";
+export const BRIDGE_VERSION = "0.9.18";
 const K = process.env.KUVO_HOME || path.join(os.homedir(), ".kuvo-code");
 const RUN = path.join(K, "run");
 export const LINK_FILE = path.join(RUN, "link.json");
 const ENGINE_FILE = path.join(RUN, "engine.json");
+// The coding agents' bridge beside the engine (kuvo-agents.js): its port and password.
+const BRIDGE_FILE = path.join(RUN, "bridge.json");
 const PID_FILE = path.join(RUN, "link.pid");
+// While it's there, the box's keeper keeps this bridge running (`bin/kuvo-start keep`).
+const NEEDED_FILE = path.join(RUN, "link.needed");
 const VERSION_FILE = path.join(RUN, "link.version");
 const PAIRING_MINUTES = 10;
 
@@ -307,8 +312,9 @@ export class LinkHost {
   // { open, text, binary, end }) → a socket's { send, close } (PROTOCOL.md, "Sockets");
   // send(bytes) → to the relay; confirmed(phone) → its session proved its own: its first message
   // opened with the handshake's keys, which a replayed first handshake message can't do.
-  constructor({ key, hello, authorize, handle, connect, send, confirmed }) {
-    Object.assign(this, { key, hello, authorize, handle, connect, send, confirmed });
+  // mail(from, body) → a mail frame sent to this machine (its Mac's phone list).
+  constructor({ key, hello, authorize, handle, connect, send, confirmed, mail }) {
+    Object.assign(this, { key, hello, authorize, handle, connect, send, confirmed, mail });
     this.sessions = new Map();
   }
 
@@ -362,6 +368,9 @@ export class LinkHost {
       }
       case Frame.close:
         if (session) this.end(session, false);
+        return;
+      case Frame.mail:
+        return this.mail?.(from, parsed.body);
     }
   }
 
@@ -502,18 +511,6 @@ export class LinkHost {
 
 // ---- Forwarding to the engine ----
 
-// What a phone may ask the engine for: sessions and what's in them, live events, what it needs
-// to show them, and a project's files to read. Never accounts, keys or integrations, the
-// engine's settings, MCP servers or plugins.
-const ALLOWED = [
-  /^api\/session(\/|\?|$)/,
-  /^api\/experimental\/session\/[^/]+\/wait(\?|$)/,
-  /^api\/event(\?|$)/,
-  /^api\/(info|agent|command|model|provider|project|location|skill|vcs|worktree|permission|form)(\/|\?|$)/,
-  /^api\/fs\/(list|find)(\?|$)/,
-  /^api\/fs\/read\//,
-  /^api\/pty(\/|\?|$)/,
-];
 // The sockets a phone may open: a terminal's.
 const SOCKETS = [/^api\/pty\/[^/?]+\/connect(\?|$)/];
 const REQUEST_HEADERS = ["content-type", "accept", "x-opencode-directory", "last-event-id"];
@@ -522,39 +519,384 @@ const RESPONSE_HEADERS = ["content-type", "cache-control"];
 // No way out of the project, written plainly or percent-encoded ("%2E%2E"): the engine decodes
 // it, and lists a folder above the project if asked. Nor tabs, line breaks or other control
 // characters, which the URL parser drops (".\t." is ".." to it), nor a fragment ("#…"), which
-// isn't sent.
+// isn't sent, nor a space at either end, which it drops too (".../update " is ".../update").
 const leavesProject = path => {
   try {
-    if (/[\u0000-\u001f\u007f#]/.test(path)) return true;
+    if (/[\u0000-\u001f\u007f#]/.test(path) || path.startsWith(" ") || path.endsWith(" ")) return true;
     const decoded = decodeURIComponent(path);
-    return path.includes("..") || decoded.includes("..") || decoded.includes("\\");
+    return path.includes("..") || decoded.includes("..") || decoded.includes("\\") || joinsASign(path) || joinsASign(decoded);
   } catch {
     return true;
   }
 };
-// Commands the engine runs for agents: read only (the list, one, its output); never run one or
-// remove it.
-const SHELL = /^api\/shell(\/|\?|$)/;
-const SHELL_READ = /^api\/shell(\/[^/?]+(\/output)?)?(\?.*)?$/;
-export const allowed = (path, method = "GET") => {
-  if (leavesProject(path)) return false;
-  if (SHELL.test(path)) return ["GET", "HEAD"].includes(method.toUpperCase()) && SHELL_READ.test(path);
-  return ALLOWED.some(pattern => pattern.test(path));
+// A sign other than a letter or digit joined into one character with a mark after it, as the Mac
+// refuses it (its checks are made on characters, where "?\u0301" isn't "?").
+const characters = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const joinsASign = text => {
+  for (const { segment } of characters.segment(text)) {
+    if ([...segment].length > 1 && /[\u0000-\u002f\u003a-\u0040\u005b-\u0060\u007b-\u007f]/.test(segment)) return true;
+  }
+  return false;
 };
+// A paired phone is yours: the engine's whole API, as the app has it (sessions, files, terminals,
+// commands, accounts and keys, settings, MCP servers). Only a path that isn't what it seems
+// (`leavesProject`) is refused. As the Mac allows them (KuvoLink's EngineRoutes.allows).
+export const allowed = (path, method = "GET") => !leavesProject(path) && /^api(\/|\?|$)/.test(path);
 export const socketAllowed = path => !leavesProject(path) && SOCKETS.some(pattern => pattern.test(path));
 
+// `path` as the coding agents' bridge routes it: split into parts, without empty ones or "."
+// ones (which its URL parser drops, "%2e" too), each decoded ("%75pdate" is "update").
+export const routedPath = path => {
+  const at = path.indexOf("?");
+  const parts = (at < 0 ? path : path.slice(0, at)).split("/")
+    .filter(part => part !== "" && part !== "." && part.toLowerCase() !== "%2e")
+    .map(part => {
+      try {
+        return decodeURIComponent(part);
+      } catch {
+        return part;
+      }
+    });
+  return parts.join("/") + (at < 0 ? "" : path.slice(at));
+};
+
+// The same of the coding agents' bridge (`kuvo/agents/api/…`), but for the two routes only the
+// app wires things with: where the engine is, and its group chats' own steps (moves), which a
+// phone does through `kuvo/groups`. As the Mac allows them (EngineRoutes.allowsAgents; both are
+// checked against Vectors/link.json).
+export const agentsAllowed = (path, method = "GET") =>
+  allowed(path, method) && !/^api\/kuvo\/(engine|groups)(\/|\?|$)/.test(routedPath(path));
+
+// Where a sign-in's page sent the browser back to this machine, for it to load
+// (`kuvo/sign-in/return`), as the Mac's EngineRoutes.signInReturn: only its own address
+// (127.0.0.1, localhost, [::1]) over http, at a port, with what the page sent back (a query),
+// written plainly, in the characters an address may hold as it is (so it's loaded exactly as
+// written). The address without its fragment, which a browser doesn't send; null otherwise.
+const RETURN = /^(http:\/\/(?:127\.0\.0\.1|localhost|\[::1\]):([1-9][0-9]{0,4})(?:\/(?:[A-Za-z0-9\-._~!$&'()*+,;=:@/]|%[0-9A-Fa-f]{2})*)?\?(?:[A-Za-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9A-Fa-f]{2})+)(?:#.*)?$/;
+export const signInReturn = url => {
+  if (typeof url !== "string" || Buffer.byteLength(url) > 8192 || !/^[!-~]*$/.test(url) || url.includes("\\")) return null;
+  const match = url.match(RETURN);
+  return match && Number(match[2]) <= 65535 ? match[1] : null;
+};
+
 const readEngineFile = () => JSON.parse(fs.readFileSync(ENGINE_FILE, "utf8"));
+// The coding agents' bridge beside the engine, when it runs: its port and password.
+const readBridgeFile = () => JSON.parse(fs.readFileSync(BRIDGE_FILE, "utf8"));
+const AGENTS = "kuvo/agents/";
+
+// The block a prompt from a phone ends with, for the agent, in the Mac's words (FromPhone.swift):
+// the user is on their iPhone, where a file is shown with show_file. Never shown.
+export const FROM_PHONE = ["<from-phone>", "The user sent this from Kuvo Code on their iPhone.", "They read your reply on a small screen, and can't open file paths, links to files on the computer or Kuvo Code's side panel there. Keep your reply short and easy to read on a phone. To show them a file (a picture, a chart, a PDF, a document you made or found), use show_file: it puts the file in this conversation, where they see it.", "</from-phone>"].join("\n");
+
+// A prompt's body with the block at the end of its text, once; any other body as it is.
+export function fromPhone(body) {
+  let prompt;
+  try {
+    prompt = JSON.parse(Buffer.from(body ?? "").toString());
+  } catch {
+    return body;
+  }
+  if (typeof prompt?.text !== "string" || prompt.text.trimEnd().endsWith("</from-phone>")) return body;
+  return Buffer.from(JSON.stringify({ ...prompt, text: `${prompt.text}\n\n${FROM_PHONE}` }));
+}
+
+// Passes `path` to the engine or the agents' bridge on this machine, with its password, and
+// streams back what it answers. What's sent is checked with `allows` as the URL parser leaves it
+// too, so nothing it tidies up reaches what the path as written wouldn't.
+async function* forward(target, path, request, signal, allows) {
+  const method = request.method.toUpperCase();
+  let url;
+  try {
+    url = new URL(`http://127.0.0.1:${target.port}/${path}`);
+  } catch {
+    url = null;
+  }
+  if (!url || !allows(url.pathname.slice(1) + url.search, method)) {
+    yield { head: { status: 403, headers: { "content-type": "text/plain" } } };
+    yield { body: Buffer.from("That isn't available over the link.") };
+    return;
+  }
+  const headers = { authorization: `Basic ${Buffer.from(`opencode:${target.password}`).toString("base64")}` };
+  const given = Object.fromEntries(Object.entries(request.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v]));
+  for (const name of REQUEST_HEADERS) if (given[name]) headers[name] = given[name];
+  // A message the phone sends: that it's from the phone goes with it.
+  const prompt = method === "POST" && /^\/api\/session\/[^/]+\/prompt$/.test(url.pathname);
+  const response = await fetch(url, {
+    method,
+    headers,
+    body: method === "GET" || method === "HEAD" ? undefined : prompt ? fromPhone(request.body) : request.body,
+    signal,
+  });
+  const out = {};
+  for (const name of RESPONSE_HEADERS) {
+    const value = response.headers.get(name);
+    if (value) out[name] = value;
+  }
+  yield { head: { status: response.status, headers: out } };
+  if (!response.body) return;
+  const reader = response.body.getReader();
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      yield { body: Buffer.from(value) };
+    }
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+}
 
 // The handler LinkHost runs for each request.
-export function engineHandler(readEngine = readEngineFile, info = {}) {
+export function engineHandler(readEngine = readEngineFile, info = {}, readBridge = readBridgeFile, phonesChanged = () => {}) {
+  // The agents' bridge, while it runs: its record, while the process it names is still it.
+  const bridge = () => {
+    try {
+      const found = readBridge();
+      return found?.port && found?.password && runs(found.pid, "kuvo-agents") ? found : null;
+    } catch {
+      return null;
+    }
+  };
   return async function* (request, phone, signal) {
     const text = (status, words) => [{ head: { status, headers: { "content-type": "text/plain" } } }, { body: Buffer.from(words) }];
+    // A phone using this machine, whatever it asks.
+    phoneHere();
     if (request.path === "kuvo/info") {
       let engine = {};
       try { engine = readEngine(); } catch {}
+      // When the engine running now came up, in seconds since 1970 (each start writes its record):
+      // a restart changes it.
+      let started = null;
+      if (engine.pid) try { started = fs.statSync(ENGINE_FILE).mtimeMs / 1000; } catch {}
+      // Whether it runs now, and whether it's stopped on purpose (until it's started, from anywhere).
+      const running = Boolean(engine.pid && runs(engine.pid, `${K}/engine/`));
+      const stopped = fs.existsSync(path.join(RUN, "stopped"));
       yield { head: { status: 200, headers: { "content-type": "application/json" } } };
-      yield { body: Buffer.from(JSON.stringify({ kind: "machine", bridge: BRIDGE_VERSION, engine: engine.version ?? null, ...info })) };
+      yield { body: Buffer.from(JSON.stringify({ kind: "machine", bridge: BRIDGE_VERSION, engine: engine.version ?? null, started, running, stopped, agents: Boolean(bridge()), ...info })) };
       return;
+    }
+    const json = (status, value) => [{ head: { status, headers: { "content-type": "application/json" } } }, { body: Buffer.from(JSON.stringify(value)) }];
+    if (request.path.split("?")[0] === "kuvo/file") return yield* fileAt(request.path, json);
+    // This box's updates (PROTOCOL.md, "Updates"): how it stands, its switch, Update Now.
+    if (request.path.split("?")[0] === "kuvo/update") {
+      const method = request.method.toUpperCase();
+      if (method === "GET") return yield* json(200, updateStatus());
+      if (method === "PATCH") {
+        const auto = parsed(request.body)?.auto;
+        if (typeof auto !== "boolean") return yield* json(400, { message: "Say whether it updates by itself (auto)." });
+        setAutoUpdate(auto);
+        return yield* json(200, updateStatus());
+      }
+      if (method === "POST") {
+        if (parsed(request.body)?.now !== true) return yield* json(400, { message: "Say to update now (now)." });
+        if (!UPDATE_KEYS.length) return yield* json(409, { message: "Updates aren't set up for this machine yet." });
+        const blocked = updatesBlocked();
+        if (blocked) return yield* json(409, { message: blocked });
+        return yield* (startUpdate({ now: true }) ? json(202, updateStatus()) : json(409, { message: "It's updating already." }));
+      }
+      return yield* json(405, {});
+    }
+    // Its own settings, and its integrations' keys (PROTOCOL.md, "Settings per box").
+    if (/^kuvo\/(config|mcp\/catalog|keys)(\/|\?|$)/.test(request.path)) {
+      // Its own, once Kuvo Code has made them so; until then, as the Mac that started it has them.
+      if (!ownsSettings()) return yield* json(409, { message: "This machine's settings still come from your Mac. Connect it from Kuvo Code on your Mac once." });
+      const route = request.path.split("?")[0];
+      const method = request.method.toUpperCase();
+      const answered = ({ status, settings, message }) => json(status, message ? { message } : settings ?? {});
+      if (route === "kuvo/config") {
+        if (method === "GET") {
+          const { settings, problem } = readSettings();
+          return yield* (problem ? json(409, { message: `The engine's settings file can't be changed from here: ${problem}` }) : json(200, settings));
+        }
+        if (method === "PATCH") return yield* answered(changeSettings(parsed(request.body)?.changes));
+        return yield* json(405, {});
+      }
+      if (route === "kuvo/mcp/catalog") {
+        if (method !== "GET") return yield* json(405, {});
+        return yield* json(200, mcpCatalog(readSettings().settings ?? {}));
+      }
+      const adding = route.match(/^kuvo\/mcp\/catalog\/([^/]+)$/);
+      if (adding && method === "POST") return yield* answered(addFromCatalog(decodeURIComponent(adding[1])));
+      if (route === "kuvo/keys") return yield* (method === "GET" ? json(200, { keys: boxKeyNames() }) : json(405, {}));
+      const key = route.match(/^kuvo\/keys\/([^/]+)$/);
+      if (key) {
+        let name = "";
+        try { name = decodeURIComponent(key[1]); } catch {}
+        if (!/^KUVO_KEY_[A-Za-z0-9_]+$/.test(name) || name.includes("__")) return yield* json(400, { message: "That isn't a key's name." });
+        if (method === "GET") {
+          const value = boxKey(name);
+          return yield* (value == null ? json(404, {}) : json(200, { value }));
+        }
+        if (method === "PUT") {
+          const value = parsed(request.body)?.value;
+          if (typeof value !== "string" || !value) return yield* json(400, { message: "Send {\"value\": \"…\"}." });
+          return yield* answered(setBoxKey(name, value));
+        }
+        if (method === "DELETE") return yield* answered(setBoxKey(name, null));
+        return yield* json(405, {});
+      }
+      return yield* json(404, {});
+    }
+    // The phones paired with this machine, and removing some (a lost one, say), from any phone
+    // paired with it: what a removal takes off stays off (see `removePhones`).
+    if (request.path === "kuvo/phones") {
+      const link = readLink();
+      const asking = phone?.key?.toString("base64url");
+      return yield* json(200, {
+        phones: (link?.phones ?? []).map(each => ({ key: each.key, name: each.name, added: each.added ?? null, pairing: each.pairing ?? "", you: each.key === asking })),
+      });
+    }
+    if (request.path === "kuvo/phones/remove") {
+      if (request.method.toUpperCase() !== "POST") return yield* json(405, {});
+      const given = parsed(request.body);
+      const changed = updateLink(link => link && removePhones(link, phone?.key?.toString("base64url"), given?.phones) ? link : null);
+      if (!changed) return yield* json(400, { message: "Only phones paired here can be removed, and never your Mac." });
+      // Once this answer is on its way: a phone that removed itself gets it too.
+      setTimeout(() => phonesChanged(readLink() ?? changed), 200);
+      return yield* json(200, {});
+    }
+    // What agents ask for while they browse here: listed, followed (a line each time it changes,
+    // as a Mac's), and answered.
+    if (request.path === "kuvo/asks" || request.path === "kuvo/asks/events") {
+      if (request.method.toUpperCase() !== "GET") return yield* json(405, {});
+      const read = async () => ({
+        asks: await Promise.all(readAsks().map(async ask => {
+          const { ask: shown, asker } = await inConversation(ask, readEngine);
+          return listedAsk(shown, info.name ?? os.hostname(), asker);
+        })),
+      });
+      if (request.path === "kuvo/asks") return yield* json(200, await read());
+      yield { head: { status: 200, headers: { "content-type": "application/x-ndjson" } } };
+      let last = "";
+      while (!signal?.aborted) {
+        const line = JSON.stringify(await read());
+        if (line !== last) {
+          yield { body: Buffer.from(line + "\n") };
+          last = line;
+        }
+        await new Promise(done => setTimeout(done, 1000));
+      }
+      return;
+    }
+    const answering = request.path.match(/^kuvo\/asks\/([^/?]+)$/);
+    if (answering) {
+      if (request.method.toUpperCase() !== "POST") return yield* json(405, {});
+      const ask = readAsks().find(each => each.id === decodeURIComponent(answering[1]));
+      if (!ask) return yield* json(404, {});
+      const given = parsed(request.body);
+      const answer = askAnswer(ask, given);
+      if (!answer) return yield* json(400, given?.saved != null ? { message: "Saved passwords are on your Mac: type this one." } : {});
+      return yield* json((await answerAsk(ask.id, answer)) ? 200 : 503, {});
+    }
+    const control = request.path.match(/^kuvo\/engine\/(start|stop|restart)$/);
+    if (control) {
+      if (request.method.toUpperCase() !== "POST") return yield* json(405, {});
+      const { status, message } = await engineControl(control[1]);
+      return yield* json(status, message ? { message } : {});
+    }
+    if (request.path === "kuvo/sign-in/return") {
+      if (request.method.toUpperCase() !== "POST") return yield* json(405, {});
+      return yield* loadSignInReturn(request.body, signal);
+    }
+    // The coding agents' sessions, accounts and Auto, through their bridge, as the engine's go
+    // to it; never where the engine is, nor an agent's update.
+    if (request.path.startsWith(AGENTS)) {
+      const path = request.path.slice(AGENTS.length);
+      if (!agentsAllowed(path, request.method)) return yield* text(403, "That isn't available over the link.");
+      const target = bridge();
+      if (!target) {
+        yield { head: { status: 503, headers: { "content-type": "application/json" } } };
+        yield { body: Buffer.from(JSON.stringify({ message: "The coding agents aren't running on this machine." })) };
+        return;
+      }
+      return yield* forward(target, path, request, signal, agentsAllowed);
+    }
+    // This machine's sign-ins, listed (`api/credential` has what each is signed in with too).
+    if (request.path.split("?")[0] === "kuvo/accounts/credentials") {
+      if (!["GET", "HEAD"].includes(request.method.toUpperCase())) return yield* text(405, "Read them with GET.");
+      let engine;
+      try {
+        engine = readEngine();
+      } catch {
+        return yield* text(503, "The engine isn't running.");
+      }
+      let listed;
+      try {
+        const response = await fetch(`http://127.0.0.1:${engine.port}/api/credential`, {
+          headers: { authorization: `Basic ${Buffer.from(`opencode:${engine.password}`).toString("base64")}` },
+          signal,
+        });
+        if (!response.ok) return yield* text(502, "The engine didn't answer.");
+        listed = ((await response.json())?.data ?? []).map(credential => ({
+          id: String(credential.id), integrationID: String(credential.integrationID), label: String(credential.label ?? ""), active: Boolean(credential.active),
+        }));
+      } catch {
+        return yield* text(502, "The engine didn't answer.");
+      }
+      yield { head: { status: 200, headers: { "content-type": "application/json" } } };
+      yield { body: Buffer.from(JSON.stringify({ credentials: listed })) };
+      return;
+    }
+    // New bots and group chats, made here as New Bot and New Group Chat make them on the Mac,
+    // which takes them in when it next connects.
+    const route = request.path.split("?")[0];
+    // The personalities you make, this machine's copy of the library.
+    const personality = route.match(/^kuvo\/personalities(?:\/([^/]+))?$/);
+    if (personality) {
+      let id;
+      try { id = personality[1] === undefined ? undefined : decodeURIComponent(personality[1]); } catch { return yield* json(404, {}); }
+      const [status, value] = answerPersonalities(request.method.toUpperCase(), id, parsed(request.body));
+      return yield* json(status, value);
+    }
+    if (route === "kuvo/bots/templates") {
+      const kit = readKit();
+      if (!kit) return yield* json(409, { message: "Connect to this machine from your Mac once, then try again." });
+      return yield* json(200, botTemplates(kit, info.name));
+    }
+    if (request.method.toUpperCase() === "POST" && route === "kuvo/bots") {
+      const { status, value } = await makeBot(parsed(request.body), readEngine, bridge, info.name, signal);
+      return yield* json(status, value);
+    }
+    if (request.method.toUpperCase() === "POST" && route === "kuvo/groups") {
+      const target = bridge();
+      if (!target) return yield* json(503, { message: "Group chats run with the coding agents' bridge, which isn't running on this machine." });
+      const { status, value } = await makeGroup(parsed(request.body), target, signal);
+      return yield* json(status, value);
+    }
+    // The group chats that live here, as the Mac answers its own (`kuvo/groups`), from the
+    // coding agents' bridge, which runs them.
+    const group = request.path.split("?")[0].match(GROUP_ROUTE);
+    if (group) {
+      const target = bridge();
+      if (!target) {
+        yield { head: { status: 503, headers: { "content-type": "application/json" } } };
+        yield { body: Buffer.from(JSON.stringify({ message: "Group chats run with the coding agents' bridge, which isn't running on this machine." })) };
+        return;
+      }
+      return yield* answerGroups(target, group[1], group[2], request, signal);
+    }
+    // This machine's bots and wake-ups, from their folders.
+    if (request.path.split("?")[0] === "kuvo/bots") {
+      if (!["GET", "HEAD"].includes(request.method.toUpperCase())) return yield* text(405, "Read them with GET.");
+      yield { head: { status: 200, headers: { "content-type": "application/json" } } };
+      yield { body: Buffer.from(JSON.stringify({ bots: listBots(info.name) })) };
+      return;
+    }
+    if (request.path.split("?")[0] === "kuvo/wakes") {
+      if (!["GET", "HEAD"].includes(request.method.toUpperCase())) return yield* text(405, "Read them with GET.");
+      yield { head: { status: 200, headers: { "content-type": "application/json" } } };
+      yield { body: Buffer.from(JSON.stringify({ sessions: listWakes() })) };
+      return;
+    }
+    const wakes = request.path.split("?")[0].match(/^kuvo\/wakes\/([^/]+)(?:\/(cancel|now))?$/);
+    if (wakes) {
+      let session;
+      try {
+        session = decodeURIComponent(wakes[1]);
+      } catch {
+        return yield* text(404, "No such session.");
+      }
+      return yield* answerWakes(session, wakes[2], request, readEngine, bridge, signal);
     }
     const stop = request.path.match(/^kuvo\/shell\/([^/?]+)\/stop$/);
     if (!stop && !allowed(request.path, request.method)) return yield* text(403, "That isn't available over the link.");
@@ -564,39 +906,93 @@ export function engineHandler(readEngine = readEngineFile, info = {}) {
     } catch {
       return yield* text(503, "The engine isn't running.");
     }
-    touchAttached();
-    const headers = { authorization: `Basic ${Buffer.from(`opencode:${engine.password}`).toString("base64")}` };
-    const given = Object.fromEntries(Object.entries(request.headers).map(([k, v]) => [k.toLowerCase(), v]));
-    for (const name of REQUEST_HEADERS) if (given[name]) headers[name] = given[name];
     if (stop) {
       if (request.method.toUpperCase() !== "POST") return yield* text(405, "Stop it with POST.");
+      const headers = { authorization: `Basic ${Buffer.from(`opencode:${engine.password}`).toString("base64")}` };
+      const given = Object.fromEntries(Object.entries(request.headers).map(([k, v]) => [k.toLowerCase(), v]));
+      for (const name of REQUEST_HEADERS) if (given[name]) headers[name] = given[name];
       return yield* stopShell(decodeURIComponent(stop[1]), engine, headers, signal);
     }
-    const method = request.method.toUpperCase();
-    const response = await fetch(`http://127.0.0.1:${engine.port}/${request.path}`, {
-      method,
-      headers,
-      body: method === "GET" || method === "HEAD" ? undefined : request.body,
-      signal,
-    });
-    const out = {};
-    for (const name of RESPONSE_HEADERS) {
-      const value = response.headers.get(name);
-      if (value) out[name] = value;
-    }
-    yield { head: { status: response.status, headers: out } };
-    if (!response.body) return;
-    const reader = response.body.getReader();
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) return;
-        yield { body: Buffer.from(value) };
-      }
-    } finally {
-      reader.cancel().catch(() => {});
-    }
+    return yield* forward(engine, request.path, request, signal, allowed);
   };
+}
+
+// The engine here started, stopped or started over by the box's own tool (`bin/kuvo-start`, as
+// the Mac has it do): `start` after a stop, `stop` until it's started again (from anywhere), and
+// `restart`. This bridge stays up through each. A start or restart is answered at once (202), and
+// the phone sees it come up as `kuvo/info` says (`running`, `started`); a stop once it's done.
+export async function engineControl(command) {
+  const start = path.join(K, "bin", "kuvo-start");
+  if (!fs.existsSync(start)) return { status: 409, message: "Kuvo Code hasn't set this machine up yet." };
+  // Started from a Mac once, which keeps how (`run/launch.env`) and what starts it (`bin/kuvo-launch`).
+  if (command !== "stop" && ![path.join(K, "bin", "kuvo-launch"), path.join(RUN, "launch.env")].every(file => fs.existsSync(file))) {
+    return { status: 409, message: "Start it once from Kuvo Code on your Mac." };
+  }
+  // Not with what runs this bridge (the engine's runtime as Bun), which would make `opencode
+  // serve` a script to look for.
+  const environment = { ...process.env };
+  delete environment.BUN_BE_BUN;
+  delete environment.BUN_RUNTIME_TRANSPILER_CACHE_PATH;
+  const workspace = path.join(K, "workspace");
+  const options = { cwd: fs.existsSync(workspace) ? workspace : K, env: environment };
+  if (command === "stop") {
+    // Answered once it's down; one that takes over a minute (a start under way, which it waits
+    // for) goes on by itself, never cut off halfway.
+    let child;
+    try {
+      child = spawn("sh", [start, "stop"], { ...options, detached: true, stdio: ["ignore", "ignore", "pipe"] });
+    } catch {
+      return { status: 503, message: "It couldn't be stopped." };
+    }
+    let said = "";
+    child.stderr.on("data", data => { said += data; });
+    const status = await new Promise(resolve => {
+      const timer = setTimeout(() => resolve(null), 60_000);
+      child.on("exit", code => { clearTimeout(timer); resolve(code); });
+      child.on("error", () => { clearTimeout(timer); resolve(-1); });
+    });
+    if (status === null) {
+      child.stderr.destroy();
+      child.unref();
+      return { status: 202 };
+    }
+    return status === 0 ? { status: 200 } : { status: 503, message: said.trim() || "It couldn't be stopped." };
+  }
+  try {
+    const child = spawn("sh", [start, command], { ...options, detached: true, stdio: "ignore" });
+    child.unref();
+  } catch {
+    return { status: 503, message: "It couldn't be started." };
+  }
+  return { status: 202 };
+}
+
+// `kuvo/sign-in/return` with {"url"}: where a sign-in's page sent the browser back to this
+// machine (an MCP server's, or a coding agent's), which a phone can't load, loaded here as the
+// browser would have: only this machine's own address (`signInReturn`), and no further than it
+// answers (a redirect isn't followed). Answers with the status it got: 2xx or 3xx, it took it.
+async function* loadSignInReturn(body, signal) {
+  const json = (status, value) => [{ head: { status, headers: { "content-type": "application/json" } } }, { body: Buffer.from(JSON.stringify(value)) }];
+  let given = {};
+  try {
+    given = JSON.parse(Buffer.from(body ?? []).toString("utf8") || "{}");
+  } catch {}
+  const url = signInReturn(given?.url);
+  if (!url) return yield* json(400, { message: "That isn't an address a sign-in returns to on this computer." });
+  const stop = new AbortController();
+  const timer = setTimeout(() => stop.abort(), 15_000);
+  const cancel = () => stop.abort();
+  signal?.addEventListener("abort", cancel);
+  try {
+    const response = await fetch(url, { redirect: "manual", signal: stop.signal });
+    await response.arrayBuffer().catch(() => {});
+    return yield* json(200, { status: response.status });
+  } catch {
+    return yield* json(502, { message: "Nothing on this computer took it. Start the sign-in again." });
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", cancel);
+  }
 }
 
 // Stops a command the engine runs for an agent: SIGTERM to its process group, here on the
@@ -645,7 +1041,7 @@ export function engineConnect(readEngine = readEngineFile) {
     } catch {
       return refuse("The engine isn't running.");
     }
-    touchAttached();
+    phoneHere();
     const headers = { authorization: `Basic ${Buffer.from(`opencode:${engine.password}`).toString("base64")}` };
     const directory = Object.entries(request.headers ?? {}).find(([name]) => name.toLowerCase() === "x-opencode-directory")?.[1];
     if (directory) headers["x-opencode-directory"] = directory;
@@ -665,15 +1061,673 @@ export function engineConnect(readEngine = readEngineFile) {
   };
 }
 
-// The engine's watchdog stops it after a day without the app; a phone counts as the app.
-let touched = 0;
-function touchAttached() {
-  if (Date.now() - touched < 5 * 60_000) return;
-  touched = Date.now();
+// When a phone last used this machine, in `run/link.seen`: while one has in the last week, the
+// engine stays up for it (the bridge's timer, and the Mac leaving it running as it quits), so the
+// machine's sessions and bots are there whenever it asks; a phone lost or unpaired elsewhere
+// stops keeping it after that.
+export const SEEN_FILE = path.join(RUN, "link.seen");
+export const KEEP_FOR = 7 * 24 * 60 * 60_000;
+let seen = 0;
+function phoneHere() {
+  if (Date.now() - seen < 5 * 60_000) return;
+  seen = Date.now();
   try {
     const now = new Date();
-    fs.utimesSync(path.join(RUN, "attached"), now, now);
+    if (fs.existsSync(SEEN_FILE)) {
+      fs.utimesSync(SEEN_FILE, now, now);
+    } else {
+      fs.mkdirSync(RUN, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(SEEN_FILE, "", { mode: 0o600 });
+    }
   } catch {}
+}
+
+// No phone is paired any more: none keeps the engine up.
+export function forgetPhones() {
+  seen = 0;
+  try {
+    fs.rmSync(SEEN_FILE, { force: true });
+  } catch {}
+}
+
+export function phoneSeenLately(file = SEEN_FILE, now = Date.now()) {
+  try {
+    return now - fs.statSync(file).mtimeMs < KEEP_FOR;
+  } catch {
+    return false;
+  }
+}
+
+// ---- This machine's bots and wake-ups, from their folders ----
+
+// What the Mac answers for them (PROTOCOL.md, `kuvo/bots` and `kuvo/wakes`), answered here from
+// the folders the app keeps on the machine, so a phone has them with the Mac closed: a bot's
+// description (`bot.json`, which the app writes from its list), its session, and the wake-ups,
+// watches and pause that `kuvo-wake` keeps beside them.
+const BOTS = path.join(K, "bots");
+const SESSION_WAKES = path.join(K, "wakes");
+// The version of `bot.json` this reads (the app's `Bot.Descriptor`).
+const DESCRIPTION = 1;
+const WAKE_MARKER = "[Wake-up] ";
+
+const textOf = file => {
+  try {
+    return fs.readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+};
+const listOf = folder => {
+  try {
+    return fs.readdirSync(folder);
+  } catch {
+    return [];
+  }
+};
+// On one line, cut to `limit` characters, as the Mac lists a machine's.
+const oneLine = (text, limit) => Array.from(String(text).replace(/[\t\r\n]/g, " ")).slice(0, limit).join("");
+
+// How often a wake-up comes back, as its name says (the app's Wakes.Repeat): 30m, 2h, 1d, 1w or
+// weekdays, within a year; null for anything else.
+export function repeatText(text) {
+  if (text === "weekdays") return text;
+  const match = /^([1-9][0-9]{0,5})([mhdw])$/.exec(text ?? "");
+  if (!match) return null;
+  const count = Number(match[1]);
+  const fits = { m: count >= 5 && count <= 525_600, h: count <= 8_760, d: count <= 366, w: count <= 52 }[match[2]];
+  return fits ? text : null;
+}
+
+// A wake-up from its file's name (the app's Wakes.Pending): when it's due, in seconds since 1970,
+// the letters that name it for good, and how often it comes back; null for another file.
+export function wakeOf(name, note = "") {
+  const [due, letters = "", ...more] = name.split("-");
+  if (!/^[0-9]+(\.[0-9]+)?$/.test(due ?? "")) return null;
+  const repeating = more.join("-");
+  return { id: name, due: Number(due), note, every: repeating ? repeatText(repeating.split("@")[0]) : null, letters };
+}
+
+// The folder keeping a session's wake-ups: its bot's, or its own in `wakes`; null for none.
+export function wakeFolder(session) {
+  if (!/^[A-Za-z0-9_-]{1,100}$/.test(session)) return null;
+  for (const id of listOf(BOTS)) {
+    if ((textOf(path.join(BOTS, id, "session")) ?? "").trim() === session) return path.join(BOTS, id);
+  }
+  const own = path.join(SESSION_WAKES, session);
+  return textOf(path.join(own, "session")) === null ? null : own;
+}
+
+// Each session here with a wake-up or a watch, as the Mac lists them in `kuvo/wakes`: its soonest
+// wake-up and whether it watches. Bots' come with `kuvo/bots`.
+export function listWakes() {
+  const sessions = [];
+  for (const name of listOf(SESSION_WAKES)) {
+    const folder = path.join(SESSION_WAKES, name);
+    const session = (textOf(path.join(folder, "session")) ?? "").trim();
+    if (!session) continue;
+    const { wakes, watches } = readWakes(folder);
+    if (!wakes.length && !watches.length) continue;
+    sessions.push({ session, ...(wakes.length ? { next: wakes[0].due } : {}), watching: watches.length > 0 });
+  }
+  return sessions;
+}
+
+// A folder's waiting wake-ups (soonest first), its watches, and whether you paused them.
+export function readWakes(folder) {
+  const wakes = listOf(path.join(folder, "wakes"))
+    .map(name => wakeOf(name, oneLine(textOf(path.join(folder, "wakes", name)) ?? "", 400)))
+    .filter(Boolean)
+    .sort((a, b) => a.due - b.due);
+  const watches = listOf(path.join(folder, "watches")).sort().map(letters => {
+    const at = path.join(folder, "watches", letters);
+    const check = textOf(path.join(at, "check")) ?? "";
+    if (!check) return null;
+    return { letters, every: (textOf(path.join(at, "every")) ?? "").trim(), check: oneLine(check, 300), note: oneLine(textOf(path.join(at, "note")) ?? "", 400) };
+  }).filter(Boolean);
+  return { wakes, watches, paused: fs.existsSync(path.join(folder, "paused")) };
+}
+
+// ---- Group chats that live here ----
+
+// What a phone asks of them, as of a Mac's: the list and one chat (read, or followed as they
+// change), and what it does in one (writes to it, stops it, lets it keep going, looks at it, takes
+// a message back, starts the work a wrap-up split up).
+const GROUP_ROUTE = /^kuvo\/groups(?:\/(grp_[a-z0-9]+))?(?:\/(events|stop|keep-going|viewed|undo|start))?$/;
+
+// Times as the Mac sends them to a phone: seconds since 1970.
+const seconds = text => {
+  const time = Date.parse(text ?? "");
+  return Number.isFinite(time) ? time / 1000 : undefined;
+};
+
+// A message as the Mac sends it: its times in seconds, without the block naming agents (the
+// machine's own record of who you named) nor, in a list, what each bot did on its turn.
+export function phoneMessage(message, withSteps = true) {
+  if (!message) return undefined;
+  const { named: _, steps, time, tasks, ...rest } = message;
+  const out = { ...rest, time: seconds(time) };
+  if (withSteps && steps) out.steps = steps;
+  if (tasks) out.tasks = tasks.map(({ started, finished, ...task }) => ({ ...task, ...(started ? { started: seconds(started) } : {}), ...(finished ? { finished: seconds(finished) } : {}) }));
+  return out;
+}
+
+// A chat's bot as the Mac lists it: who it is, how it looks, its own conversation and folder.
+function groupMember(id) {
+  if (!/^bot_[A-Za-z0-9]+$/.test(id)) return null;
+  const folder = path.join(BOTS, id);
+  let described;
+  try {
+    described = JSON.parse(textOf(path.join(folder, "bot.json")) ?? "");
+  } catch {
+    return null;
+  }
+  const session = (textOf(path.join(folder, "session")) ?? "").trim();
+  if (!described?.name || !session) return null;
+  return {
+    id, name: described.name, look: described.look, session,
+    directory: (textOf(path.join(folder, "directory")) ?? "").trim() || path.join(folder, "workspace"),
+    agents: (textOf(path.join(folder, "via")) ?? "").trim() === "bridge",
+  };
+}
+
+async function askGroups(target, method, route, body, signal) {
+  const response = await fetch(`http://127.0.0.1:${target.port}/api/kuvo/groups${route}`, {
+    method,
+    headers: { authorization: `Basic ${Buffer.from(`opencode:${target.password}`).toString("base64")}`, ...(body ? { "content-type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+    signal,
+  });
+  const value = await response.json().catch(() => ({}));
+  return { status: response.status, value };
+}
+
+// The list, as the Mac's `kuvo/groups` has it; null when none run here. Throws when the bridge
+// couldn't be asked (it's there, but not answering now).
+export async function groupsList(target, signal) {
+  const { status, value } = await askGroups(target, "GET", "", undefined, signal);
+  if (status === 404) return null;
+  if (status !== 200) throw new Error(`The coding agents' bridge answered ${status}.`);
+  const groups = (value.data ?? []).filter(chat => chat.status === "active").map(({ group, state, said, fromBot }) => {
+    const meeting = group.meeting ? { ...group.meeting, next: seconds(group.meeting.next) } : undefined;
+    return {
+      id: group.id, name: group.name, purpose: group.purpose, members: group.members.map(groupMember).filter(Boolean),
+      speaking: state?.speaking, discussing: Boolean(state?.discussing), paused: Boolean(state?.paused),
+      unread: Boolean(fromBot && (!group.viewed || Date.parse(fromBot.time) > Date.parse(group.viewed))),
+      last: phoneMessage(said, false), meeting,
+    };
+  });
+  return { groups };
+}
+
+// One chat, as the Mac's `kuvo/groups/<id>/events` sends it; null once it's gone (or moving).
+// Throws when the bridge couldn't be asked.
+export async function groupChat(target, id, signal) {
+  const { status, value } = await askGroups(target, "GET", `/${id}`, undefined, signal);
+  if (status === 404) return null;
+  if (status !== 200) throw new Error(`The coding agents' bridge answered ${status}.`);
+  if (value.data?.status !== "active") return null;
+  const { messages, state } = value.data;
+  return {
+    messages: messages.slice(-300).map(message => phoneMessage(message)), speaking: state?.speaking, discussing: Boolean(state?.discussing), paused: Boolean(state?.paused),
+    ...(state?.activity?.length ? { activity: state.activity } : {}),
+  };
+}
+
+async function* answerGroups(target, id, action, request, signal) {
+  const method = request.method.toUpperCase();
+  const json = (status, value) => [{ head: { status, headers: { "content-type": "application/json" } } }, { body: Buffer.from(JSON.stringify(value)) }];
+  // Read, or followed: a line of JSON each time it changes, as a Mac's.
+  if (method === "GET" && (!action || action === "events")) {
+    const read = () => (id ? groupChat(target, id, signal) : groupsList(target, signal));
+    let now;
+    try {
+      now = await read();
+    } catch {
+      // There, but not answering now: asked again later, not taken as having none.
+      return yield* json(503, {});
+    }
+    if (!now) return yield* json(404, {});
+    if (!action) return yield* json(200, now);
+    yield { head: { status: 200, headers: { "content-type": "application/x-ndjson" } } };
+    // One chat's lines leave out its messages when they're as they were (who's talking, or
+    // what they're doing, changed): the phone keeps the ones it has.
+    let last = "";
+    let lastMessages = null;
+    while (!signal?.aborted && now) {
+      const line = JSON.stringify(now);
+      if (line !== last) {
+        const messages = id ? JSON.stringify(now.messages) : null;
+        const { messages: _, ...state } = now;
+        yield { body: Buffer.from((id && messages === lastMessages ? JSON.stringify(state) : line) + "\n") };
+        last = line;
+        lastMessages = messages;
+      }
+      await new Promise(done => setTimeout(done, 1000));
+      if (signal?.aborted) break;
+      now = await read().catch(() => now);
+    }
+    return;
+  }
+  // Its name, purpose, bots or meeting changed, as Edit Group Chat changes them: a meeting
+  // as you set it up, worked out by the bridge that runs it, on your clock.
+  if (method === "PATCH" && id && !action) {
+    const given = parsed(request.body);
+    if (!isObject(given)) return yield* json(400, { message: "That isn’t a change to a group chat." });
+    const edits = {};
+    if ("name" in given) {
+      const name = plainName(given.name);
+      if (!name) return yield* json(400, { message: "A group chat needs a name." });
+      edits.name = name;
+    }
+    if ("purpose" in given) edits.purpose = typeof given.purpose === "string" && given.purpose.trim() ? given.purpose.trim() : null;
+    if ("members" in given) {
+      if (!Array.isArray(given.members) || !given.members.every(each => typeof each === "string")) return yield* json(400, { message: "Those aren’t bots." });
+      const members = [...new Set(given.members)];
+      if (members.length < 2) return yield* json(400, { message: "A group chat needs at least two bots." });
+      const here = new Set(listBots().map(bot => bot.id));
+      const missing = members.find(member => !here.has(member));
+      if (missing) return yield* json(404, { message: `There’s no bot “${missing}”.` });
+      edits.members = members;
+    }
+    if ("meeting" in given) edits.meetingPlan = given.meeting;
+    const asked = await askGroups(target, "PATCH", `/${id}`, edits, signal).catch(error => ({ status: 503, value: { message: String(error?.message ?? error) } }));
+    if (asked.status !== 200) return yield* json(asked.status === 400 || asked.status === 404 || asked.status === 409 ? asked.status : 503, { message: asked.value?.message ?? "The group chat couldn’t be changed." });
+    const listed = await groupsList(target, signal).catch(() => null);
+    return yield* json(200, { group: listed?.groups.find(each => each.id === id) ?? null });
+  }
+  if (method !== "POST" || !id || action === "events") return yield* json(405, {});
+  let given = {};
+  try {
+    given = JSON.parse(Buffer.from(request.body ?? []).toString("utf8") || "{}");
+  } catch {}
+  let asked;
+  switch (action) {
+    case undefined:
+      if (typeof given.text !== "string" || !given.text.trim()) return yield* json(400, {});
+      asked = await askGroups(target, "POST", `/${id}/send`, { text: given.text }, signal);
+      break;
+    case "stop":
+    case "keep-going":
+      asked = await askGroups(target, "POST", `/${id}/${action}`, {}, signal);
+      break;
+    case "viewed":
+      asked = await askGroups(target, "PATCH", `/${id}`, { viewed: new Date().toISOString().replace(/\.\d{3}Z$/, "Z") }, signal);
+      break;
+    case "undo": {
+      if (typeof given.message !== "string") return yield* json(404, {});
+      asked = await askGroups(target, "POST", `/${id}/undo`, { message: given.message }, signal);
+      // Moving: 409, as for what you write.
+      if (asked.status !== 200) return yield* json(failed(asked.status), {});
+      return yield* json(200, { text: asked.value.data?.text ?? "" });
+    }
+    case "start":
+      if (typeof given.message !== "string") return yield* json(404, {});
+      asked = await askGroups(target, "POST", `/${id}/start-work`, { wrapUp: given.message }, signal);
+      break;
+  }
+  return yield* json(asked.status === 200 ? 200 : failed(asked.status), {});
+}
+
+// What a phone hears of a group chat's action the coding agents' bridge didn't take: moving (409),
+// there but not answering now (503: ask again), or no such chat or message (404).
+const failed = status => (status === 409 ? 409 : status >= 500 ? 503 : 404);
+
+// The biggest file `kuvo/file` sends.
+export const FILE_LIMIT = 25 * 1024 * 1024;
+
+const TYPES = {
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", heic: "image/heic",
+  svg: "image/svg+xml", pdf: "application/pdf", mp4: "video/mp4", mov: "video/quicktime", mp3: "audio/mpeg",
+  wav: "audio/wav", txt: "text/plain", md: "text/markdown", csv: "text/csv", json: "application/json",
+  html: "text/html", css: "text/css", js: "text/javascript",
+};
+
+// `kuvo/file?uri=<file:// URI>`: a file on this machine, as an agent's reply or tool names it:
+// its bytes with its type; 404 with a message for one that isn't there (or isn't a file), 413
+// over FILE_LIMIT.
+async function* fileAt(requestPath, json) {
+  const query = requestPath.includes("?") ? requestPath.slice(requestPath.indexOf("?") + 1) : "";
+  const uri = new URLSearchParams(query).get("uri");
+  let file;
+  try {
+    file = uri ? fileURLToPath(uri) : undefined;
+  } catch {}
+  if (!file) return yield* json(400, { message: "That isn’t a file:// address." });
+  let stat;
+  try {
+    stat = fs.statSync(file);
+  } catch {}
+  if (!stat?.isFile()) return yield* json(404, { message: "That file isn’t there anymore." });
+  if (stat.size > FILE_LIMIT) return yield* json(413, { message: "That file is too big to open here." });
+  const type = TYPES[path.extname(file).slice(1).toLowerCase()] ?? "application/octet-stream";
+  yield { head: { status: 200, headers: { "content-type": type, "content-length": String(stat.size) } } };
+  // In pieces, as the engine's bodies go.
+  for await (const piece of fs.createReadStream(file, { highWaterMark: 32 * 1024 })) yield { body: piece };
+}
+
+// This machine's bots, as the Mac lists them in `kuvo/bots`: each by its session, with its name,
+// look and job as the app last described it, and what its folder says now (paused, its next
+// wake-up, how many things it watches, whether it runs with the coding agents). One without a
+// description (made before them, until the Mac connects) or a session isn't listed.
+export function listBots(machine) {
+  const bots = [];
+  for (const id of listOf(BOTS)) {
+    if (!id.startsWith("bot_")) continue;
+    const folder = path.join(BOTS, id);
+    let described;
+    try {
+      described = JSON.parse(textOf(path.join(folder, "bot.json")) ?? "");
+    } catch {
+      continue;
+    }
+    const session = (textOf(path.join(folder, "session")) ?? "").trim();
+    if (described?.kuvo !== DESCRIPTION || described.id !== id || typeof described.name !== "string" || !session) continue;
+    const { wakes, watches, paused } = readWakes(folder);
+    bots.push({
+      created: String(described.created ?? ""),
+      bot: {
+        id,
+        session,
+        name: described.name,
+        look: described.look,
+        machine: machine || undefined,
+        job: typeof described.job === "string" ? described.job : "",
+        paused,
+        wakes: wakes.length ? Math.min(...wakes.map(wake => wake.due)) : undefined,
+        watching: watches.length,
+        agents: (textOf(path.join(folder, "via")) ?? "").trim() === "bridge",
+      },
+    });
+  }
+  // In the order they were made, as the Mac's list is.
+  return bots.sort((a, b) => a.created.localeCompare(b.created)).map(entry => entry.bot);
+}
+
+// ---- Bots and group chats made here ----
+
+// What New Bot needs here, which the Mac gives the machine as it connects (Bots.MachineKit).
+const KIT_FILE = path.join(BOTS, "kit.json");
+// The coding agents' providers (the Mac's OutsideAgents): a bot on one of theirs runs with them.
+const AGENT_PROVIDERS = ["claude-code", "codex-cli", "cursor", "grok-cli", "antigravity"];
+const runsWithAgents = model => model?.providerID === "auto" || AGENT_PROVIDERS.includes(String(model?.providerID ?? "").split("@")[0]);
+
+export function readKit() {
+  try {
+    const kit = JSON.parse(textOf(KIT_FILE) ?? "");
+    return kit?.kuvo === 1 && Array.isArray(kit.templates) && Array.isArray(kit.personalities) && typeof kit.instructions === "string" ? kit : null;
+  } catch {
+    return null;
+  }
+}
+
+const parsed = body => {
+  try {
+    return JSON.parse(Buffer.from(body ?? "").toString() || "{}");
+  } catch {
+    return undefined;
+  }
+};
+
+// As Swift writes dates: to the second.
+const stamp = () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+const newID = prefix => prefix + Array.from(crypto.randomBytes(10), byte => "abcdefghijklmnopqrstuvwxyz0123456789"[byte % 36]).join("");
+// A name as one line of plain text, as the Mac's name field has it.
+const plainName = text => String(text ?? "").replace(/[\u0000-\u001f\u007f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, " ").split(/\s+/).filter(Boolean).join(" ");
+
+// `kuvo/bots/templates`, as the Mac's: what New Bot offers, the model a bot starts on here (by
+// this machine's name, as its bots' `machine` has it), and its projects.
+export function botTemplates(kit, machine) {
+  return {
+    templates: kit.templates.map(({ firstMessage: _, ...template }) => template),
+    personalities: botPersonalities(kit).map(({ instruction: _, ...personality }) => personality),
+    looks: kit.looks,
+    startingModel: { [machine || "machine"]: kit.startingModel ?? null },
+    projects: (kit.projects ?? []).map(project => ({ ...project, machine: machine || undefined })),
+  };
+}
+
+async function call(target, method, route, body, signal) {
+  const response = await fetch(`http://127.0.0.1:${target.port}${route}`, {
+    method,
+    headers: { authorization: `Basic ${Buffer.from(`opencode:${target.password}`).toString("base64")}`, ...(body ? { "content-type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+    signal,
+  });
+  const value = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(value?.message || `It answered ${response.status}.`);
+  return value?.data ?? value;
+}
+
+// What a bot is told, from the kit's words with its own name, folder, personality and project.
+export function botInstructions(kit, name, folder, personality, project) {
+  let text = kit.instructions.replaceAll("⟦name⟧", name).replaceAll("⟦folder⟧", folder);
+  text = personality ? text.replace("⟦personality⟧", personality) : text.replace("\n⟦personality⟧\n", "");
+  if (project) text = text.replace(`\n\n${kit.identityNote}`, `\n\n${kit.projectNote}\n\n${kit.identityNote}`);
+  return text;
+}
+
+// `POST kuvo/bots`, as the Mac's: the bot made here, its folder, conversation and instructions,
+// and the template's job for your composer, or else its greeting, so it writes first.
+export async function makeBot(given, readEngine, readBridge, machine, signal) {
+  const no = (status, message) => ({ status, value: { message } });
+  const kit = readKit();
+  if (!kit) return no(409, "Connect to this machine from your Mac once, then try again.");
+  if (!given || typeof given !== "object") return no(400, "That isn’t a bot to make.");
+  const name = plainName(given.name);
+  if (!name) return no(400, "A bot needs a name.");
+  let template;
+  if (given.template !== undefined && given.template !== null) {
+    template = kit.templates.find(each => each.id === given.template);
+    if (!template) return no(400, `There’s no template “${given.template}”.`);
+  }
+  const personalityID = given.personality ?? template?.personality;
+  const personality = personalityID ? botPersonalities(kit).find(each => each.id === personalityID) : undefined;
+  if (personalityID && !personality) return no(400, `There’s no personality “${personalityID}”.`);
+  const project = given.project ?? undefined;
+  if (project !== undefined && !(kit.projects ?? []).some(each => each.directory === project)) return no(400, "That project isn’t in Kuvo Code.");
+  const looks = kit.looks;
+  const pick = list => list[crypto.randomInt(list.length)];
+  const fits = look => look && looks.colors.includes(look.color) && looks.shapes.includes(look.shape) && looks.faces.includes(look.face);
+  const look = fits(given.look) ? given.look : template?.look ?? { color: pick(looks.colors), shape: pick(looks.shapes), face: pick(looks.faces) };
+  const model = given.model && typeof given.model.id === "string" && typeof given.model.providerID === "string" ? given.model : kit.startingModel;
+  if (!model) return no(422, "There’s no model to start it on here: sign in to an account on this machine first.");
+  const agents = runsWithAgents(model);
+  let target;
+  try {
+    target = agents ? readBridge() : readEngine();
+  } catch {}
+  if (!target) return no(503, agents ? "The coding agents aren’t running on this machine." : "The engine isn’t running.");
+  // A model of the engine's whose account isn't signed in here: said now, as the engine would drop it.
+  if (!agents) {
+    const ready = await call(target, "GET", "/api/provider", undefined, signal).catch(() => undefined);
+    const ids = Array.isArray(ready) ? ready.map(each => each?.id) : [];
+    if (ids.length && !ids.includes(model.providerID)) return no(422, `${model.id} needs a sign-in on this machine: sign in to it in Settings › Accounts, or choose another model.`);
+  }
+
+  const id = newID("bot_");
+  const folder = path.join(BOTS, id);
+  const directory = project ?? path.join(folder, "workspace");
+  const discard = () => fs.rmSync(folder, { recursive: true, force: true });
+  let session;
+  try {
+    fs.mkdirSync(path.join(folder, "workspace"), { recursive: true });
+    fs.mkdirSync(path.join(folder, "wakes"), { recursive: true });
+    fs.writeFileSync(path.join(folder, "MEMORY.md"), kit.memory.replaceAll("⟦name⟧", name));
+    const rules = [...(kit.rules ?? []), { action: "external_directory", resource: path.join(folder, "*"), effect: "allow" }];
+    session = await call(target, "POST", "/api/session", { title: name, location: { directory }, model, permissions: rules }, signal);
+    if (!session?.id) throw new Error("No conversation was made.");
+    await call(target, "PATCH", `/api/session/${encodeURIComponent(session.id)}`, { metadata: { kuvo: { bot: id } } }, signal).catch(() => {});
+    const told = botInstructions(kit, name, folder, personality?.instruction, project);
+    await call(target, "PUT", `/api/experimental/session/${encodeURIComponent(session.id)}/instructions/entries/kuvo.bot`, { value: told }, signal);
+    fs.writeFileSync(path.join(folder, "session"), session.id);
+    fs.writeFileSync(path.join(folder, "directory"), directory);
+    if (kit.timeZone) fs.writeFileSync(path.join(folder, "timezone"), kit.timeZone);
+    if (kit.zoneinfo) fs.writeFileSync(path.join(folder, "zoneinfo"), Buffer.from(kit.zoneinfo, "base64"));
+    if (agents) fs.writeFileSync(path.join(folder, "via"), "bridge");
+    const now = stamp();
+    const described = { created: now, id, job: "", kuvo: DESCRIPTION, look, model, name, ...(personality ? { personality: personality.id } : {}), ...(project ? { project } : {}), updated: now };
+    fs.writeFileSync(path.join(folder, "bot.json"), JSON.stringify(described, null, 2));
+  } catch (error) {
+    if (session?.id) await call(target, "DELETE", `/api/session/${encodeURIComponent(session.id)}`, undefined, signal).catch(() => {});
+    discard();
+    return no(503, `The bot couldn’t be made: ${error?.message ?? error}`);
+  }
+  // Without a template's job for you to send, it writes first.
+  if (!template) await call(target, "POST", `/api/session/${encodeURIComponent(session.id)}/synthetic`, { text: kit.greeting, description: "A new bot's first message" }, signal).catch(() => {});
+  const bot = listBots(machine).find(each => each.id === id);
+  return { status: 201, value: { bot, firstMessage: template?.firstMessage ?? null } };
+}
+
+// `POST kuvo/groups`, as the Mac's: a group chat of this machine's bots, which lives here and runs
+// in the coding agents' bridge, as the others here do.
+export async function makeGroup(given, target, signal) {
+  const no = (status, message) => ({ status, value: { message } });
+  if (!given || typeof given !== "object") return no(400, "That isn’t a group chat to make.");
+  const name = plainName(given.name);
+  if (!name) return no(400, "A group chat needs a name.");
+  const members = [...new Set(Array.isArray(given.members) ? given.members.filter(each => typeof each === "string") : [])];
+  if (members.length < 2) return no(400, "A group chat needs at least two bots.");
+  const here = new Set(listBots().map(bot => bot.id));
+  const missing = members.find(member => !here.has(member));
+  if (missing) return no(404, `There’s no bot “${missing}”.`);
+  const purpose = typeof given.purpose === "string" && given.purpose.trim() ? given.purpose.trim() : undefined;
+  const id = newID("grp_");
+  const now = stamp();
+  const group = { id, name, ...(purpose ? { purpose } : {}), members, seats: {}, heard: {}, created: now, viewed: now };
+  const { status, value } = await askGroups(target, "PUT", `/${id}`, { group, messages: [], status: "active" }, signal).catch(error => ({ status: 503, value: { message: String(error?.message ?? error) } }));
+  if (status !== 200) return no(status === 409 ? 409 : 503, value?.message ?? "The group chat couldn’t be made.");
+  // Its meeting, worked out by the bridge that runs it, on your clock; one that can't be, and
+  // the chat with it, doesn't stay.
+  if (given.meeting !== undefined && given.meeting !== null) {
+    const planned = await askGroups(target, "PATCH", `/${id}`, { meetingPlan: given.meeting }, signal).catch(error => ({ status: 503, value: { message: String(error?.message ?? error) } }));
+    if (planned.status !== 200) {
+      await askGroups(target, "DELETE", `/${id}`, undefined, signal).catch(() => {});
+      return no(planned.status === 400 ? 400 : 503, planned.value?.message ?? "Its meeting couldn’t be set.");
+    }
+  }
+  const listed = await groupsList(target, signal).catch(() => null);
+  return { status: 201, value: { group: listed?.groups.find(each => each.id === id) ?? null } };
+}
+
+const LETTERS = /^[A-Za-z0-9]+$/;
+
+// Takes a wake-up off the schedule by its letters, which a repeating one keeps as its time moves on.
+function cancelWake(folder, letters) {
+  if (!LETTERS.test(letters)) return;
+  for (const name of listOf(path.join(folder, "wakes"))) {
+    if (wakeOf(name)?.letters === letters) fs.rmSync(path.join(folder, "wakes", name), { force: true });
+  }
+}
+
+// A message ID that sorts after earlier ones, as the engine's own do.
+let lastMessage = { time: 0, counter: 0 };
+export function messageID(now = Date.now()) {
+  lastMessage = lastMessage.time === now ? { time: now, counter: lastMessage.counter + 1 } : { time: now, counter: 1 };
+  const time = ((BigInt(now) * 0x1000n + BigInt(lastMessage.counter)) & 0xFFFFFFFFFFFFn).toString(16).padStart(12, "0");
+  const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+  return `msg_${time}${Array.from(crypto.randomBytes(14), byte => alphabet[byte % alphabet.length]).join("")}`;
+}
+
+// Until the MCP servers of the folder a conversation works in are connected, twenty seconds at
+// most, as the app and the engine's watchdog wait before a wake-up: one sent sooner reaches a
+// model without their tools.
+async function waitForTools(port, authorization, directory, signal) {
+  const started = Date.now();
+  let waited = false;
+  while (Date.now() - started < 20_000) {
+    let listed;
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/api/mcp`, { headers: { authorization, "x-opencode-directory": encodeURIComponent(directory) }, signal });
+      if (!response.ok) return;
+      listed = await response.text();
+    } catch {
+      return;
+    }
+    // A folder it has only just opened lists none for a moment before they're pending.
+    const none = !listed.includes('"status"');
+    if (!listed.includes('"pending"') && !(none && Date.now() - started < 3_000)) {
+      if (waited && !none) await sleep(1_500);
+      return;
+    }
+    waited = true;
+    await sleep(none ? 100 : 250);
+  }
+}
+
+// Wake-ups being sent with Wake Up Now, so a second tap doesn't send one twice.
+const wakingNow = new Set();
+
+// `kuvo/wakes/<session>`: its wake-ups, watches and pause; `…/cancel` with {"wake"} or {"watch"};
+// `…/now` with {"wake"}, sent at once (one that repeats still comes back at its time).
+async function* answerWakes(session, action, request, readEngine, bridge, signal) {
+  const json = (status, value) => [{ head: { status, headers: { "content-type": "application/json" } } }, { body: Buffer.from(JSON.stringify(value)) }];
+  const method = request.method.toUpperCase();
+  const folder = wakeFolder(session);
+  if (!action) {
+    if (method !== "GET" && method !== "HEAD") return yield* json(405, {});
+    if (!folder) return yield* json(200, { wakes: [], watches: [], paused: false });
+    const { wakes, watches, paused } = readWakes(folder);
+    return yield* json(200, { wakes: wakes.map(({ id, due, note, every }) => ({ id, due, note, every: every ?? undefined })), watches, paused });
+  }
+  if (method !== "POST") return yield* json(405, {});
+  if (!folder) return yield* json(404, {});
+  // On its way to another computer (a move holds its wake-ups, as the Mac's Moves.hold): nothing
+  // reaches it or changes here until it's there, as on the Mac.
+  if ((textOf(path.join(folder, "paused")) ?? "").trim() === "moving") {
+    return yield* json(409, { message: "It's moving to another computer. Try again once it's there." });
+  }
+  let given = {};
+  try {
+    given = JSON.parse(Buffer.from(request.body ?? []).toString("utf8") || "{}") ?? {};
+  } catch {}
+  const { wakes, watches } = readWakes(folder);
+  const wake = typeof given.wake === "string" ? wakes.find(each => each.id === given.wake || each.letters === given.wake) : undefined;
+  if (action === "cancel") {
+    if (wake && LETTERS.test(wake.letters)) {
+      cancelWake(folder, wake.letters);
+      return yield* json(200, {});
+    }
+    const watch = typeof given.watch === "string" ? watches.find(each => each.letters === given.watch) : undefined;
+    if (watch && LETTERS.test(watch.letters)) {
+      fs.rmSync(path.join(folder, "watches", watch.letters), { recursive: true, force: true });
+      return yield* json(200, {});
+    }
+    return yield* json(404, {});
+  }
+  if (!wake) return yield* json(404, {});
+  const key = `${folder}/${wake.id}`;
+  if (wakingNow.has(key)) return yield* json(200, {});
+  wakingNow.add(key);
+  try {
+    // The whole note, as its time would send it, not the line it's listed by.
+    const note = textOf(path.join(folder, "wakes", wake.id));
+    if (note === null) return yield* json(404, {});
+    const agents = (textOf(path.join(folder, "via")) ?? "").trim() === "bridge";
+    let target = null;
+    try {
+      target = agents ? bridge() : readEngine();
+    } catch {}
+    if (!target) return yield* json(503, { message: agents ? "The coding agents aren't running on this machine." : "The engine isn't running." });
+    const authorization = `Basic ${Buffer.from(`opencode:${target.password}`).toString("base64")}`;
+    const directory = textOf(path.join(folder, "directory"));
+    if (!agents && directory) await waitForTools(target.port, authorization, directory, signal);
+    let response;
+    try {
+      response = await fetch(`http://127.0.0.1:${target.port}/api/session/${encodeURIComponent(session)}/prompt`, {
+        method: "POST",
+        headers: { authorization, "content-type": "application/json" },
+        body: JSON.stringify({ id: messageID(), text: WAKE_MARKER + note, delivery: "queue" }),
+        signal,
+      });
+    } catch {
+      return yield* json(503, { message: "The wake-up couldn't be sent." });
+    }
+    if (!response.ok) return yield* json(503, { message: `The wake-up couldn't be sent (${response.status}).` });
+    if (!wake.every) cancelWake(folder, wake.letters);
+    return yield* json(200, {});
+  } finally {
+    wakingNow.delete(key);
+  }
 }
 
 // ---- Notifications ----
@@ -762,6 +1816,10 @@ export function describeForm(form) {
 
 const isBot = session => Boolean(session.metadata?.kuvo?.bot) || /\/bots\/bot_[^/]+\//.test(`${session.location?.directory ?? ""}/`);
 
+// An engine run a coding agents' session started (Auto on one of the engine's models), kept out
+// of sight: the agents' bridge tells its news, as its session's.
+const isHiddenRun = session => Boolean(session?.metadata?.kuvo?.engineFor);
+
 // Asks the engine for `route` (a path under its API), as JSON.
 function engineGet(engine, route) {
   return fetch(`http://127.0.0.1:${engine.port}/${route}`, { headers: { authorization: `Basic ${Buffer.from(`opencode:${engine.password}`).toString("base64")}` }, signal: AbortSignal.timeout(10_000) })
@@ -810,6 +1868,7 @@ export async function noticeFor(event, get) {
   switch (event.type) {
     case "permission.asked": {
       const where = await shown(data.sessionID);
+      if (isHiddenRun(where)) return null;
       return about(where, "permission", describePermission(data), { request: data.id, ...(where.id !== data.sessionID ? { requestSession: data.sessionID } : {}) });
     }
     case "form.created": {
@@ -818,6 +1877,7 @@ export async function noticeFor(event, get) {
       const asker = form.sessionID === "global" ? await waitingOn(form.metadata?.server, event.location?.directory) : form.sessionID;
       if (!asker) return null;
       const where = await shown(asker);
+      if (isHiddenRun(where)) return null;
       return about(where, "question", describeForm(form), { request: form.id, ...(where.id !== form.sessionID ? { requestSession: form.sessionID } : {}) });
     }
     case "session.execution.succeeded":
@@ -825,7 +1885,7 @@ export async function noticeFor(event, get) {
       const id = data.sessionID;
       const ended = await session(id);
       // A subagent's run is part of its parent's.
-      if (ended.parentID) return null;
+      if (ended.parentID || isHiddenRun(ended)) return null;
       if (event.type === "session.execution.failed") return about(ended, "failed", "Stopped with an error.");
       let reply = "";
       try {
@@ -867,29 +1927,527 @@ async function* serverEvents(body) {
   }
 }
 
-// The events that can be news.
+// The events that can be news: a session's (the engine's, or a coding agent's) and a group
+// chat's.
 const NEWS = new Set(["permission.asked", "form.created", "session.execution.succeeded", "session.execution.failed"]);
+const GROUP_NEWS = new Set(["kuvo.group.met", "kuvo.group.done"]);
 
-// Follows the engine's events for as long as the bridge runs, handing each one's notification to
-// `tell`, while no Mac is present.
-async function watchEngine(tell) {
+// A group chat's news, as the Mac tells it: its meeting held (who spoke last, or no one could take
+// part), or a bot done with the part it took on.
+export function groupNotice(event) {
+  const data = event.data ?? {};
+  if (typeof data.id !== "string") return null;
+  const about = { title: String(data.name ?? ""), category: "message", thread: data.id, data: { group: data.id } };
+  if (event.type === "kuvo.group.met") {
+    if (!data.last) return { ...about, body: "The meeting came, but no one could take part." };
+    const who = data.who ? (data.last.kind === "wrapUp" ? `${data.who}’s wrap-up` : String(data.who)) : undefined;
+    return { ...about, subtitle: who, body: cut(plain(data.last.text), 220) };
+  }
+  if (event.type === "kuvo.group.done") return { ...about, subtitle: `${data.who} finished its part`, body: cut(plain(data.text), 220) };
+  return null;
+}
+
+// Follows `source`'s events (the engine's, or the coding agents' bridge's: `read` gives its port
+// and password) for as long as the bridge runs, handing each one's notification to `tell`, while
+// no Mac is present.
+async function watchEvents(read, tell) {
   let attempt = 0;
   while (true) {
     try {
-      const engine = readEngineFile();
-      const response = await fetch(`http://127.0.0.1:${engine.port}/api/event`, {
-        headers: { authorization: `Basic ${Buffer.from(`opencode:${engine.password}`).toString("base64")}`, accept: "text/event-stream" },
+      const source = read();
+      const response = await fetch(`http://127.0.0.1:${source.port}/api/event`, {
+        headers: { authorization: `Basic ${Buffer.from(`opencode:${source.password}`).toString("base64")}`, accept: "text/event-stream" },
       });
       if (!response.ok || !response.body) throw new Error(`${response.status}`);
       attempt = 0;
       for await (const event of serverEvents(response.body)) {
-        if (!NEWS.has(event.type) || macPresent()) continue;
-        noticeFor(event, route => engineGet(engine, route)).then(notice => notice && tell(notice)).catch(() => {});
+        if ((!NEWS.has(event.type) && !GROUP_NEWS.has(event.type)) || macPresent()) continue;
+        if (GROUP_NEWS.has(event.type)) {
+          const notice = groupNotice(event);
+          if (notice) tell(notice);
+          continue;
+        }
+        noticeFor(event, route => engineGet(source, route)).then(notice => notice && tell(notice)).catch(() => {});
       }
     } catch {}
     attempt += 1;
     await sleep(Math.min(30_000, 1000 * 2 ** Math.min(attempt, 5)));
   }
+}
+
+// ---- What agents ask you for while they browse here (PROTOCOL.md, "kuvo/asks") ----
+// The browser on this machine keeps what's asked in run/browser-asks.json (kuvo-browser.js): a
+// phone answers it here as on the Mac, with the Mac closed too, and the answer goes to the
+// browser over its socket. Its sign-ins are typed on the phone: saved passwords are the Mac's.
+
+const ASKS_FILE = path.join(RUN, "browser-asks.json");
+const BROWSER_SOCKET = path.join(RUN, "browser.sock");
+const BROWSER_PID = path.join(RUN, "browser.pid");
+
+// What's asked now: none while the browser isn't running (what one that ended, or a restart, left
+// was asked of no one now).
+export function readAsks(browserRuns = () => runs(Number(fs.readFileSync(BROWSER_PID, "utf8")), "kuvo-browser")) {
+  try {
+    if (!browserRuns()) return [];
+    const asks = JSON.parse(fs.readFileSync(ASKS_FILE, "utf8")).asks;
+    return Array.isArray(asks) ? asks.filter(ask => typeof ask?.id === "string" && ["signIn", "code", "action"].includes(ask.kind)) : [];
+  } catch {
+    return [];
+  }
+}
+
+// One as the Mac's `kuvo/asks` lists it: this machine's name, who asks (`asker`, the asking
+// conversation's name), and no saved passwords to pick from.
+export function listedAsk(ask, machine, asker) {
+  const listed = { id: ask.id, kind: ask.kind, host: String(ask.host ?? ""), machine };
+  if (typeof ask.session === "string") listed.session = ask.session;
+  if (asker) listed.asker = asker;
+  if (ask.kind === "signIn") Object.assign(listed, { username: Boolean(ask.username), password: Boolean(ask.password), saved: [], offersToSave: false });
+  if (ask.kind === "code") listed.prompt = String(ask.prompt ?? "");
+  if (ask.kind === "action") listed.instruction = String(ask.instruction ?? "");
+  return listed;
+}
+
+// A phone's answer (`POST kuvo/asks/<id>`) as the browser takes it, by the Mac's rules; null for
+// one that doesn't fit the ask, or names a saved password (the Mac's alone).
+export function askAnswer(ask, given) {
+  const text = value => typeof value === "string" && value !== "" ? value : undefined;
+  switch (given?.answer) {
+    case "signIn": {
+      if (ask.kind !== "signIn" || given.saved != null) return null;
+      const username = text(given.username), password = text(given.password);
+      return username || password ? { type: "signIn", username, password } : null;
+    }
+    case "code": {
+      const code = typeof given.code === "string" ? given.code.trim() : "";
+      return ask.kind === "code" && code ? { type: "code", code } : null;
+    }
+    case "done":
+      return ask.kind === "action" ? { type: "done" } : null;
+    case "declined":
+      return { type: "declined" };
+    default:
+      return null;
+  }
+}
+
+// Gives the browser an answer over its socket; true once it took it.
+export function answerAsk(id, answer, socketPath = BROWSER_SOCKET) {
+  return new Promise(resolve => {
+    const socket = net.createConnection(socketPath);
+    let buffer = "";
+    const done = ok => {
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(ok);
+    };
+    const timer = setTimeout(() => done(false), 5000);
+    socket.on("error", () => done(false));
+    socket.on("connect", () => socket.write(JSON.stringify({ id: 1, method: "Kuvo.answer", params: { id, answer } }) + "\n"));
+    socket.on("data", chunk => {
+      buffer += chunk;
+      let end;
+      while ((end = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, end);
+        buffer = buffer.slice(end + 1);
+        try { if (JSON.parse(line).id === 1) return done(true); } catch {}
+      }
+    });
+  });
+}
+
+// The notification for an ask, as the Mac words it.
+export function askNotice(ask, asker) {
+  const host = String(ask.host ?? "");
+  const title = { signIn: `Sign in to ${host}`, code: `Code for ${host}`, action: `Your turn on ${host}` }[ask.kind];
+  const body = ask.kind === "signIn" ? "The agent needs your sign-in to go on."
+    : ask.kind === "code" ? (ask.prompt || "The agent needs a code to go on.") : String(ask.instruction ?? "");
+  const session = typeof ask.session === "string" ? ask.session : undefined;
+  return { title, subtitle: asker || undefined, body, category: "ask", thread: session ?? ask.id, data: { ...(session ? { session } : {}), ask: ask.id } };
+}
+
+// The conversation an ask goes to, as the Mac has it: a subagent's is the one it works for, which
+// shows it and waits on you; with its name. From the engine, kept a while.
+const conversations = new Map();
+async function conversationOf(session, readEngine = readEngineFile) {
+  if (!session) return null;
+  if (conversations.has(session)) return conversations.get(session);
+  try {
+    const engine = readEngine();
+    let current = (await engineGet(engine, `api/session/${encodeURIComponent(session)}`)).data;
+    for (let step = 0; step < 5 && current?.parentID; step++) current = (await engineGet(engine, `api/session/${encodeURIComponent(current.parentID)}`)).data;
+    const found = { id: current?.id ?? session, name: current?.title || null };
+    if (conversations.size > 200) conversations.clear();
+    conversations.set(session, found);
+    return found;
+  } catch {
+    return { id: session, name: null };
+  }
+}
+
+// An ask as it's listed and told: in its conversation, by its name.
+async function inConversation(ask, readEngine) {
+  const conversation = await conversationOf(ask.session, readEngine);
+  return { ask: conversation ? { ...ask, session: conversation.id } : ask, asker: conversation?.name ?? null };
+}
+
+// What's asked, as each comes, to your phones' notifications, while no Mac is here to tell them;
+// one that comes while a Mac is, once it's gone, if it's still asked. `tell` says whether it went.
+async function watchAsks(tell) {
+  const told = new Set();
+  while (true) {
+    try {
+      const asks = readAsks();
+      const open = new Set(asks.map(ask => ask.id));
+      for (const id of told) if (!open.has(id)) told.delete(id);
+      for (const ask of asks) {
+        if (told.has(ask.id) || macPresent()) continue;
+        const { ask: shown, asker } = await inConversation(ask);
+        if (tell(askNotice(shown, asker))) told.add(ask.id);
+      }
+    } catch {}
+    await sleep(2000);
+  }
+}
+
+// ---- Personalities you make (PROTOCOL.md, "Personalities") ----
+// One library on every computer: each keeps its copy, and copies meet as a Mac connects (or as a
+// phone changes each): per personality, the newest change wins, a removal too, which stays noted
+// so no copy brings it back. Kuvo Code's own presets aren't in it; they come with the kit.
+
+const PERSONALITIES_FILE = path.join(K, "bots", "personalities.json");
+const PERSONALITIES_LOCK = path.join(RUN, ".personalities.lock");
+const PERSONALITY_ID = /^custom\.[A-Za-z0-9._-]{1,80}$/;
+// Removals noted, the newest kept.
+const MOST_REMOVALS = 500;
+
+const changedAt = entry => Number(entry?.removed ?? entry?.updated ?? 0) || 0;
+const isRemoval = entry => entry?.removed !== undefined;
+
+// One personality as kept: what's needed, plain and of a sane length; null for what isn't one.
+function keptPersonality(entry) {
+  if (!isObject(entry) || !PERSONALITY_ID.test(String(entry.id))) return null;
+  if (isRemoval(entry)) return Number.isFinite(Number(entry.removed)) ? { id: entry.id, removed: Number(entry.removed) } : null;
+  const name = plainName(entry.name).slice(0, 80);
+  const description = String(entry.description ?? "").trim().slice(0, 2000);
+  if (!name || !description) return null;
+  return { id: entry.id, name, description, symbol: typeof entry.symbol === "string" && entry.symbol ? entry.symbol.slice(0, 80) : "person.crop.circle", updated: Number(entry.updated) || 0 };
+}
+
+// The newer of two takes of one personality: a removal over a change made at the same moment,
+// else the one whose words sort last, so every copy picks the same.
+function newerTake(a, b) {
+  const at = changedAt(a), bt = changedAt(b);
+  if (at !== bt) return at > bt ? a : b;
+  if (isRemoval(a) !== isRemoval(b)) return isRemoval(a) ? a : b;
+  return `${a.name ?? ""}\n${a.description ?? ""}` >= `${b.name ?? ""}\n${b.description ?? ""}` ? a : b;
+}
+
+// Libraries as one: `{personalities, removed}`, in the order they were first seen.
+export function mergePersonalities(...libraries) {
+  const byID = new Map();
+  for (const library of libraries) {
+    for (const entry of [...(Array.isArray(library?.personalities) ? library.personalities : []), ...(Array.isArray(library?.removed) ? library.removed : [])]) {
+      const kept = keptPersonality(entry);
+      if (!kept) continue;
+      const had = byID.get(kept.id);
+      byID.set(kept.id, had ? newerTake(had, kept) : kept);
+    }
+  }
+  const all = [...byID.values()];
+  return {
+    personalities: all.filter(entry => !isRemoval(entry)),
+    removed: all.filter(isRemoval).sort((a, b) => b.removed - a.removed).slice(0, MOST_REMOVALS),
+  };
+}
+
+export function readPersonalities(file = PERSONALITIES_FILE) {
+  try {
+    return mergePersonalities(JSON.parse(fs.readFileSync(file, "utf8")));
+  } catch {
+    return { personalities: [], removed: [] };
+  }
+}
+
+// Changes this computer's copy under its lock: `change` gets it and gives it back changed.
+export function changePersonalities(change, file = PERSONALITIES_FILE, lock = PERSONALITIES_LOCK) {
+  return locked(lock, () => {
+    const library = mergePersonalities(change(readPersonalities(file)));
+    writePrivate(file, JSON.stringify({ kuvo: 1, ...library }, null, 2) + "\n");
+    return library;
+  });
+}
+
+// What a phone asks of the library (`kuvo/personalities`): `[status, value]`.
+export function answerPersonalities(method, id, body, file = PERSONALITIES_FILE, lock = PERSONALITIES_LOCK) {
+  const now = Date.now();
+  if (id === undefined) {
+    if (method === "GET") return [200, { personalities: readPersonalities(file).personalities }];
+    if (method !== "POST") return [405, {}];
+    const made = keptPersonality({ id: `custom.${crypto.randomUUID().toLowerCase()}`, name: body?.name, description: body?.description, updated: now });
+    if (!made) return [400, { message: "A personality needs a name and a description." }];
+    changePersonalities(library => ({ ...library, personalities: [...library.personalities, made] }), file, lock);
+    return [200, made];
+  }
+  if (!PERSONALITY_ID.test(id)) return [404, {}];
+  let found = null;
+  if (method === "PATCH") {
+    let refused = false;
+    changePersonalities(library => {
+      const kept = library.personalities.find(each => each.id === id);
+      if (!kept) return library;
+      const changed = keptPersonality({ ...kept, name: body?.name ?? kept.name, description: body?.description ?? kept.description, updated: Math.max(now, kept.updated + 1) });
+      if (!changed) { refused = true; return library; }
+      found = changed;
+      return { ...library, personalities: library.personalities.map(each => each.id === id ? changed : each) };
+    }, file, lock);
+    if (refused) return [400, { message: "A personality needs a name and a description." }];
+    return found ? [200, found] : [404, {}];
+  }
+  if (method === "DELETE") {
+    changePersonalities(library => {
+      const kept = library.personalities.find(each => each.id === id);
+      if (!kept) return library;
+      found = kept;
+      return { personalities: library.personalities.filter(each => each.id !== id), removed: [...library.removed, { id, removed: Math.max(now, kept.updated + 1) }] };
+    }, file, lock);
+    return found ? [200, {}] : [404, {}];
+  }
+  return [405, {}];
+}
+
+// The personalities a bot made here can have: the kit's presets, then the library's, each with
+// what the bot is told (`personalityWords`, as the Mac words it).
+export function botPersonalities(kit, library = readPersonalities()) {
+  const words = typeof kit.personalityWords === "string" ? kit.personalityWords : "Your personality: ⟦name⟧. ⟦description⟧";
+  const told = each => words.replaceAll("⟦name⟧", each.name).replaceAll("⟦description⟧", each.description);
+  const presets = kit.personalities.filter(each => !each.custom);
+  // A kit from before the library: its own, until the library has them.
+  const older = kit.personalities.filter(each => each.custom && !library.personalities.some(mine => mine.id === each.id) && !library.removed.some(gone => gone.id === each.id));
+  return [...presets, ...older, ...library.personalities.map(each => ({ id: each.id, name: each.name, description: each.description, custom: true, instruction: told(each) }))];
+}
+
+// ---- This machine's own settings (PROTOCOL.md, "kuvo/config") ----
+// The engine's settings file here, which the engine reloads when it changes: this machine's own,
+// once Kuvo Code has made it so (`.kuvo-own` beside it), changed from a phone or a Mac by the
+// rules the Mac's own follows (`PhoneLink.answerConfig`). Each computer keeps its own; nothing
+// copies them between computers but you. Writes take `run/.config.lock`, as the Mac's do here.
+
+// The box's own settings and keys, in a folder of their own (`box`), which no older Kuvo Code
+// writes: the engine reads the file (`OPENCODE_CONFIG`, over the global one) and reloads it when it
+// changes. Before a Mac made them the machine's own (`adoptBox`), its Mac's.
+const BOX = path.join(K, "box");
+const CONFIG_FILE = path.join(BOX, "opencode.json");
+const BOX_KEYS = path.join(BOX, "keys");
+const OWN_MARK = CONFIG_FILE;
+const CONFIG_LOCK = path.join(RUN, ".config.lock");
+// What a Mac's start used to write: its settings in the global file, the rest beside its keys.
+const GLOBAL_FILE = path.join(K, "config", "opencode", "opencode.json");
+const MAC_SETTINGS = path.join(K, "keys", "settings.json");
+const MAC_KEYS = path.join(K, "keys");
+const LAUNCH_LOCK = path.join(RUN, ".launching");
+// Settings › MCP Servers' popular servers, as the Mac lists them, which it puts here as it connects.
+const CATALOG_FILE = path.join(K, "bin", "mcp-catalog.json");
+const SERVERS = ["mcp", "servers"];
+
+export const ownsSettings = (mark = OWN_MARK) => fs.existsSync(mark);
+
+const isObject = value => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+const sortedKeys = value => Array.isArray(value) ? value.map(sortedKeys)
+  : isObject(value) ? Object.fromEntries(Object.keys(value).sort().map(key => [key, sortedKeys(value[key])])) : value;
+
+// The file's settings: {settings}, or {problem} for one that isn't plain JSON (left alone).
+export function readSettings(file = CONFIG_FILE) {
+  let text;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return { settings: {} };
+  }
+  try {
+    const parsed = text.trim() ? JSON.parse(text) : {};
+    if (!isObject(parsed)) throw new Error("not an object");
+    return { settings: parsed };
+  } catch {
+    return { problem: "It isn't plain JSON, so Kuvo Code leaves it alone. (Comments aren't supported here.)" };
+  }
+}
+
+const valueAt = (object, keys) => keys.reduce((current, key) => isObject(current) ? current[key] : undefined, object);
+
+// `object` with `value` at `keys` (nil removes it, and an object it leaves empty).
+function settingAt(object, keys, value) {
+  const [key, ...rest] = keys;
+  const next = { ...object };
+  if (!rest.length) {
+    if (value === null || value === undefined) delete next[key]; else next[key] = value;
+    return next;
+  }
+  const inner = settingAt(isObject(next[key]) ? next[key] : {}, rest, value);
+  if (Object.keys(inner).length) next[key] = inner; else delete next[key];
+  return next;
+}
+
+// `PATCH kuvo/config`'s changes ({path, value, was?}), made in one write: {status, settings} or
+// {status, message}, as the Mac answers.
+export function changeSettings(changes, file = CONFIG_FILE, lock = CONFIG_LOCK) {
+  const fits = Array.isArray(changes) && changes.length >= 1 && changes.length <= 100 && changes.every(change =>
+    Array.isArray(change?.path) && change.path.length >= 1 && change.path.length <= 16
+    && change.path.every(key => typeof key === "string" && key.length >= 1 && key.length <= 200) && "value" in change);
+  if (!fits) return { status: 400, message: "Send {\"changes\": [{\"path\": [keys…], \"value\": …}]}." };
+  return locked(lock, () => {
+    const { settings, problem } = readSettings(file);
+    if (problem) return { status: 409, message: `The engine's settings file can't be changed from here: ${problem}` };
+    // Keys go through objects only: one through a list or a plain value would replace it whole.
+    if (changes.some(change => change.path.slice(0, -1).some((_, at) => {
+      const above = valueAt(settings, change.path.slice(0, at + 1));
+      return above !== undefined && !isObject(above);
+    }))) return { status: 400, message: "A path goes through objects only; send a list whole, at its own path." };
+    if (changes.some(change => "was" in change && sortedJSON(valueAt(settings, change.path) ?? null) !== sortedJSON(change.was))) {
+      return { status: 409, message: "It changed since you read it." };
+    }
+    let next = settings;
+    for (const change of changes) next = settingAt(next, change.path, change.value);
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+      const temporary = `${file}.${process.pid}.tmp`;
+      fs.writeFileSync(temporary, JSON.stringify(sortedKeys(next), null, 2) + "\n", { mode: 0o600 });
+      fs.renameSync(temporary, file);
+    } catch (error) {
+      return { status: 500, message: `It couldn't be saved: ${error.message}` };
+    }
+    return { status: 200, settings: next };
+  });
+}
+
+// Objects merged key by key, `over` winning; a list or a plain value is replaced whole.
+export function deepMerged(under, over) {
+  if (!isObject(under) || !isObject(over)) return over === undefined ? under : over;
+  const merged = { ...under };
+  for (const [key, value] of Object.entries(over)) merged[key] = key in under ? deepMerged(under[key], value) : value;
+  return merged;
+}
+
+// The box's folder as its settings name it: "~/.kuvo-code", as the Mac's start wrote key paths.
+const home = os.homedir();
+const shownRoot = K.startsWith(home + "/") ? "~" + K.slice(home.length) : K;
+
+// Key paths the Mac's start wrote (`<root>/keys/KUVO_KEY_…`), as the box keeps its keys now.
+function boxKeyPaths(value) {
+  if (typeof value === "string") {
+    return value.split(`{file:${shownRoot}/keys/KUVO_KEY_`).join(`{file:${shownRoot}/box/keys/KUVO_KEY_`)
+      .split(`{file:${K}/keys/KUVO_KEY_`).join(`{file:${shownRoot}/box/keys/KUVO_KEY_`);
+  }
+  if (Array.isArray(value)) return value.map(boxKeyPaths);
+  if (isObject(value)) return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, boxKeyPaths(inner)]));
+  return value;
+}
+
+const KEY_NAME = /^KUVO_KEY_[A-Za-z0-9_]+$/;
+
+function writePrivate(file, text) {
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  const temporary = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, text, { mode: 0o600 });
+  fs.renameSync(temporary, file);
+}
+
+// Makes the machine's settings its own, once (a box of its own: PROTOCOL.md, "Settings per box"):
+// what it runs with now, as its Mac's start left them (the global file under the Mac's own, which
+// wins), with the keys beside them, goes in its box; or, on a machine with none, `seed` ({settings,
+// keys}: the Mac's, as it would have sent them). The launch's lines for them go, so no start writes
+// them back. An engine running now keeps reading what it started with, untouched; the next start
+// reads the box, and clears what's below it (`global-adopted` says the global file came in whole).
+// Under the launch's lock and the settings' own, so no start or change comes between.
+// {status: "own" | "adopted", seeded, settings}.
+export function adoptBox(seed) {
+  return locked(LAUNCH_LOCK, () => locked(CONFIG_LOCK, () => {
+    if (fs.existsSync(CONFIG_FILE)) return { status: "own", settings: readSettings().settings ?? {} };
+    const global = readSettings(GLOBAL_FILE);
+    const mac = readSettings(MAC_SETTINGS);
+    const before = deepMerged(global.settings ?? {}, mac.settings ?? {});
+    const seeded = !Object.keys(before).length && isObject(seed?.settings);
+    const settings = boxKeyPaths(seeded ? seed.settings : before);
+    fs.mkdirSync(BOX_KEYS, { recursive: true, mode: 0o700 });
+    fs.chmodSync(BOX, 0o700);
+    if (seeded) {
+      for (const [name, value] of Object.entries(isObject(seed.keys) ? seed.keys : {})) {
+        if (KEY_NAME.test(name) && typeof value === "string") writePrivate(path.join(BOX_KEYS, name), value);
+      }
+    } else {
+      // The shared keys; a bot's own (`…__<bot>`) stay where its folder names them.
+      let names = [];
+      try { names = fs.readdirSync(MAC_KEYS); } catch {}
+      for (const name of names) {
+        if (!KEY_NAME.test(name) || name.includes("__")) continue;
+        try { writePrivate(path.join(BOX_KEYS, name), fs.readFileSync(path.join(MAC_KEYS, name), "utf8")); } catch {}
+      }
+    }
+    // What it was made from, kept beside it.
+    const kept = path.join(BOX, "adopted-from");
+    fs.mkdirSync(kept, { recursive: true, mode: 0o700 });
+    for (const [file, name] of [[GLOBAL_FILE, "opencode.json"], [MAC_SETTINGS, "settings.json"]]) {
+      try { writePrivate(path.join(kept, name), fs.readFileSync(file, "utf8")); } catch {}
+    }
+    writePrivate(CONFIG_FILE, JSON.stringify(sortedKeys(settings), null, 2) + "\n");
+    // The global file came in whole: the next start empties it (one you edited by hand, with
+    // comments, it leaves as it is).
+    if (!global.problem) writePrivate(path.join(BOX, "global-adopted"), "");
+    const launchEnv = path.join(RUN, "launch.env");
+    try {
+      const lines = fs.readFileSync(launchEnv, "utf8").split("\n").filter(line => !/^KUVO_(PRIVATE_)?SETTINGS=/.test(line));
+      writePrivate(launchEnv, lines.join("\n"));
+    } catch {}
+    return { status: "adopted", seeded, settings };
+  }, { stale: 300_000, wait: 120_000 }));
+}
+
+// The box's own keys, by name (a bot's own, which its folder keeps, aren't among them).
+export function boxKeyNames(folder = BOX_KEYS) {
+  let names = [];
+  try { names = fs.readdirSync(folder); } catch {}
+  return names.filter(name => KEY_NAME.test(name) && !name.includes("__")).sort();
+}
+
+// One of them, as it's kept; null for one there isn't.
+export function boxKey(name, folder = BOX_KEYS) {
+  if (!KEY_NAME.test(String(name)) || String(name).includes("__")) return null;
+  try { return fs.readFileSync(path.join(folder, name), "utf8"); } catch { return null; }
+}
+
+// A key of the box's own, set (`value`) or removed (null): integrations' servers read it there.
+export function setBoxKey(name, value) {
+  if (!KEY_NAME.test(String(name)) || String(name).includes("__")) return { status: 400, message: "That isn't a key's name." };
+  return locked(CONFIG_LOCK, () => {
+    if (value == null) fs.rmSync(path.join(BOX_KEYS, name), { force: true });
+    else writePrivate(path.join(BOX_KEYS, name), String(value));
+    return { status: 200 };
+  });
+}
+
+// The popular servers, as this machine has them: those that use the Mac's own apps left out.
+export function mcpCatalog(settings, file = CATALOG_FILE) {
+  let servers = [];
+  try { servers = JSON.parse(fs.readFileSync(file, "utf8")).servers ?? []; } catch {}
+  return {
+    servers: servers.filter(server => typeof server?.id === "string" && !server.macOnly).map(server => {
+      const added = valueAt(settings, [...SERVERS, server.id]) !== undefined;
+      return { id: server.id, title: String(server.title ?? ""), summary: String(server.summary ?? ""), access: String(server.access ?? "open"),
+        added, integration: added && Boolean(server.integration), macOnly: false };
+    }),
+  };
+}
+
+// One of them added, as its Add button does on the Mac; one already there stays as it is.
+export function addFromCatalog(id, file = CONFIG_FILE, catalog = CATALOG_FILE, lock = CONFIG_LOCK) {
+  let servers = [];
+  try { servers = JSON.parse(fs.readFileSync(catalog, "utf8")).servers ?? []; } catch {}
+  const server = servers.find(each => each?.id === id && !each.macOnly);
+  if (!server || !isObject(server.settings)) return { status: 404 };
+  const { settings, problem } = readSettings(file);
+  if (problem) return { status: 409, message: `The engine's settings file can't be changed from here: ${problem}` };
+  if (valueAt(settings, [...SERVERS, id]) !== undefined) return { status: 200, settings };
+  return changeSettings([{ path: [...SERVERS, id], value: { codemode: false, ...server.settings } }], file, lock);
 }
 
 // ---- State ----
@@ -907,36 +2465,1313 @@ export function writeLink(link) {
   const temporary = `${LINK_FILE}.${process.pid}.tmp`;
   fs.writeFileSync(temporary, JSON.stringify(link, null, 2), { mode: 0o600 });
   fs.renameSync(temporary, LINK_FILE);
+  // For the box's keeper, which keeps this bridge running while it's needed.
+  if (needed(link)) fs.writeFileSync(NEEDED_FILE, "", { mode: 0o600 });
+  else fs.rmSync(NEEDED_FILE, { force: true });
+}
+
+// One change to link.json at a time, here and from `setup` and `pair` (other processes): read,
+// changed and written under a lock (run/.link.lock), so none writes over another's (a removal,
+// say). `change` returns the link to write, or nothing to leave it. A lock left by one that was
+// cut off goes after ten seconds; one not had in three goes ahead all the same.
+const LOCK = path.join(RUN, ".link.lock");
+export function updateLink(change) {
+  return locked(LOCK, () => {
+    const changed = change(readLink());
+    if (changed) writeLink(changed);
+    return changed ?? null;
+  });
+}
+
+// `work` done holding `lock` (a folder, made while it's held): one process at a time. A lock left by
+// one that was cut off goes after `stale` ms (ten seconds); one not had in `wait` ms (three) goes
+// ahead all the same.
+function locked(lock, work, { stale = 10_000, wait = 3_000 } = {}) {
+  fs.mkdirSync(path.dirname(lock), { recursive: true, mode: 0o700 });
+  const nap = new Int32Array(new SharedArrayBuffer(4));
+  let held = false;
+  for (let i = 0; i < wait / 10 && !held; i++) {
+    try {
+      fs.mkdirSync(lock);
+      held = true;
+    } catch {
+      try { if (Date.now() - fs.statSync(lock).mtimeMs > stale) fs.rmdirSync(lock); } catch {}
+      Atomics.wait(nap, 0, 0, 10);
+    }
+  }
+  try {
+    return work();
+  } finally {
+    if (held) try { fs.rmdirSync(lock); } catch {}
+  }
+}
+
+// Nothing to answer any more (the last phone gone, a pairing run out, no link.json): the keeper
+// starts this bridge no more, unless a pairing began meanwhile.
+export function noLongerNeeded() {
+  try { fs.rmSync(NEEDED_FILE, { force: true }); } catch {}
+  if (needed(readLink())) try { fs.writeFileSync(NEEDED_FILE, "", { mode: 0o600 }); } catch {}
 }
 
 // Lets in phones in link.json, and a new one showing the pairing token (once, in time), noting
 // where it is on the relay, for its notifications. Where a paired one is changes once its session
 // proves its own (confirmPhone): the first handshake message can be replayed from elsewhere.
 export function authorizePhone(key, hello, address) {
-  const link = readLink();
-  if (!link) return false;
   const encoded = key.toString("base64url");
-  const where = address?.toString("base64url");
-  if (link.phones?.some(phone => phone.key === encoded)) return true;
-  const pairing = link.pairing;
-  if (!pairing || !hello.pair || Date.now() > pairing.expires) return false;
-  const given = Buffer.from(String(hello.pair), "base64url");
-  const expected = Buffer.from(pairing.token, "base64url");
-  if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return false;
-  link.phones = [...(link.phones ?? []), { key: encoded, name: String(hello.name ?? "").slice(0, 100), added: Math.floor(Date.now() / 1000), from: "pair", address: where }];
-  delete link.pairing;
-  writeLink(link);
+  if (!hello?.pair) return Boolean(readLink()?.phones?.some(phone => phone.key === encoded));
+  // Showing the token: a pairing of its own, paired before or not (one removed comes back).
+  let paired = false;
+  updateLink(link => {
+    const pairing = link?.pairing;
+    if (!pairing || Date.now() > pairing.expires) return null;
+    const given = Buffer.from(String(hello.pair), "base64url");
+    const expected = Buffer.from(pairing.token, "base64url");
+    if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return null;
+    pairPhone(link, { key: encoded, name: String(hello.name ?? "").slice(0, 100), added: Math.floor(Date.now() / 1000), from: "pair", address: address?.toString("base64url"), pairing: newPairing() });
+    delete link.pairing;
+    paired = true;
+    return link;
+  });
+  return paired || Boolean(readLink()?.phones?.some(phone => phone.key === encoded));
+}
+
+// ---- Paired phones (PROTOCOL.md, "Paired phones") ----
+// A pairing adds a phone; a removal, from a phone on the list or a Mac that set this machine up,
+// takes one off for good (`removed`, with the pairing it ended): only a pairing of its own, with a
+// new pairing id, lets it back in, and nobody removes a Mac. Each Mac's list adds and removes only
+// the phones it listed. The Mac's are the same rules (PairedPhones in KuvoLink), and both are held
+// to Vectors/link.json.
+
+const KEY = /^[A-Za-z0-9_-]{43}$/;
+const PAIRING = /^[A-Za-z0-9_-]{0,32}$/;
+// At most so many in one removal, and so many removals kept (the oldest go first).
+const MOST_AT_ONCE = 16;
+const MOST_KEPT = 256;
+
+// The Macs that set this machine up (`setup`), whose lists and mail it takes.
+export const macsOf = link => [...new Set([...(Array.isArray(link?.macs) ? link.macs : []), ...(typeof link?.mac === "string" ? [link.mac] : [])])];
+
+// When a Mac's last list came (its own clock, milliseconds).
+const lastFrom = (link, mac) => link.macAts?.[mac] ?? (mac === link.mac ? link.macAt ?? 0 : 0);
+
+// A Mac this machine hasn't heard from in 30 days, by its own clock (gone, or its key made anew):
+// it no longer sets the list, and the phones it listed are as ones from before Macs were named,
+// which another Mac's list takes off, not for good. One back sets the machine up again. `keep`,
+// heard from now.
+const MAC_GONE_AFTER = 30 * 24 * 3600 * 1000;
+export function forgetOldMacs(link, keep, now = Date.now()) {
+  link.macSeen ??= {};
+  for (const mac of macsOf(link)) link.macSeen[mac] ??= now;
+  if (keep) link.macSeen[keep] = now;
+  const gone = macsOf(link).filter(mac => mac !== keep && now - link.macSeen[mac] > MAC_GONE_AFTER);
+  if (!gone.length) return;
+  link.macs = macsOf(link).filter(mac => !gone.includes(mac));
+  if (gone.includes(link.mac)) link.mac = keep;
+  for (const mac of gone) {
+    delete link.macSeen[mac];
+    if (link.macAts) delete link.macAts[mac];
+    if (link.peersFrom) delete link.peersFrom[mac];
+  }
+  for (const phone of link.phones ?? []) if (gone.includes(phone.mac)) delete phone.mac;
+}
+
+const removedAlready = (link, key, pairing) => (link.removed ?? []).some(r => r.key === key && r.pairing === pairing);
+
+function noteRemoved(link, key, pairing) {
+  link.removed ??= [];
+  if (!removedAlready(link, key, pairing)) link.removed = [...link.removed, { key, pairing }].slice(-MOST_KEPT);
+}
+
+// A phone's key, and its pairing if given, as a removal or a list names it: never a Mac's.
+const fits = (entry, macs) => typeof entry?.key === "string" && KEY.test(entry.key) && !macs.includes(entry.key)
+  && (entry.pairing == null || (typeof entry.pairing === "string" && PAIRING.test(entry.pairing)));
+
+// `key`'s pairing `pairing` (the one it has here, when not given) taken off: one paired again
+// since, with another pairing, stays.
+function takeOff(link, key, pairing) {
+  const current = (link.phones ?? []).find(phone => phone.key === key);
+  const which = pairing == null ? (current?.pairing ?? "") : String(pairing);
+  noteRemoved(link, key, which);
+  if (current && (current.pairing ?? "") === which) link.phones = link.phones.filter(phone => phone.key !== key);
+}
+
+// A new pairing id, made where a phone pairs.
+export const newPairing = () => crypto.randomBytes(12).toString("base64url");
+
+// A phone paired here (its pairing token): in, with a pairing of its own, which nothing removed.
+// What removed its others still keeps them out.
+export function pairPhone(link, phone) {
+  link.phones = [...(link.phones ?? []).filter(each => each.key !== phone.key), phone];
+}
+
+// Phones `by` removes ({key, pairing}): only a phone on the list, or a Mac, removes, and only
+// phones, a few at a time. False, changing nothing, otherwise.
+export function removePhones(link, by, entries) {
+  const macs = macsOf(link);
+  const allowed = new Set([...(link.phones ?? []).map(phone => phone.key), ...macs]);
+  if (!allowed.has(by) || !Array.isArray(entries) || !entries.length || entries.length > MOST_AT_ONCE) return false;
+  if (!entries.every(entry => fits(entry, macs))) return false;
+  for (const entry of entries) takeOff(link, entry.key, entry.pairing);
   return true;
+}
+
+// The phones the Mac `by` has paired as it lists them now (from: "mac"), and the removals it heard
+// of, beside the ones paired with this machine itself (from: "pair") and other Macs', keeping when
+// each was added and where it is. One of its own it no longer lists is removed; one removed here
+// stays out, unless the Mac paired it again (another pairing). One from before Macs were named goes
+// off the list, not for good: another Mac may list it.
+export function takeMacList(link, given, removed, by = link.mac) {
+  const macs = macsOf(link);
+  const known = new Map((link.phones ?? []).map(phone => [phone.key, phone]));
+  const ADDRESS = /^[A-Za-z0-9_-]{22}$/;
+  const listed = [];
+  for (const phone of Array.isArray(given) ? given : []) {
+    if (!fits(phone, macs) || listed.some(each => each.key === phone.key)) continue;
+    const pairing = phone.pairing ?? "";
+    if (removedAlready(link, phone.key, pairing)) continue;
+    listed.push({
+      key: phone.key,
+      name: String(phone.name ?? "").slice(0, 100),
+      added: known.get(phone.key)?.added ?? Math.floor(Date.now() / 1000),
+      from: "mac",
+      mac: by,
+      address: ADDRESS.test(phone.address ?? "") ? phone.address : known.get(phone.key)?.address,
+      pairing,
+    });
+  }
+  const keys = new Set(listed.map(phone => phone.key));
+  const kept = [];
+  for (const phone of link.phones ?? []) {
+    if (keys.has(phone.key)) continue;
+    if (phone.from === "pair" || (phone.mac != null && phone.mac !== by)) kept.push(phone);
+    else if (by != null && phone.mac === by) noteRemoved(link, phone.key, phone.pairing ?? "");
+  }
+  link.phones = [...listed, ...kept];
+  for (const entry of Array.isArray(removed) ? removed : []) {
+    if (fits(entry, macs)) takeOff(link, entry.key, entry.pairing ?? "");
+  }
+}
+
+// A Mac's phone list, mailed through the relay (sealed with its key, which its setup gave): one
+// you removed there loses its way in here at once, though the Mac can't reach this machine
+// itself. Only a newer list from that Mac than its last one counts.
+export function phonesFromMac(body, host) {
+  const found = readLink();
+  if (!found?.key) return;
+  const opened = openMail(body, found);
+  if (opened?.sender.kind === "mac" && macsOf(found).includes(opened.sender.key)) takeFromMac(opened.payload, opened.sender.key, host);
+}
+
+// What a Mac that set this box up mails it: the phones you've paired, and its peers (PROTOCOL.md,
+// "Peers"), each list taken only if it's newer than that Mac's last.
+export function takeFromMac(given, by, host) {
+  if (typeof given?.at !== "number") return;
+  const changed = updateLink(link => {
+    if (!link) return null;
+    let took = false;
+    if (Array.isArray(given.phones) && given.at > lastFrom(link, by)) {
+      takeMacList(link, given.phones, given.removed, by);
+      link.macAts = { ...(link.macAts ?? {}), [by]: given.at };
+      took = true;
+    }
+    if (Array.isArray(given.peers)) took = takePeers(link, by, given.peers, given.at, given.moved) || took;
+    if (!took) return null;
+    forgetOldMacs(link, by);
+    return link;
+  });
+  if (changed) host?.keepOnly(new Set(changed.phones.map(phone => phone.key)));
+}
+
+// ---- Peers (PROTOCOL.md, "Peers") ----
+// The other boxes a Mac set this one up with: itself and its other machines, each kept as that Mac
+// last listed them (a newer list replaces its last), so one a Mac removed leaves every list it gives.
+// Only a Mac that set this box up lists them; mail is taken from them, and goes to them.
+
+const MOST_PEERS = 64;
+const fitsPeer = peer => isObject(peer) && typeof peer.key === "string" && /^[A-Za-z0-9_-]{43}$/.test(peer.key)
+  && typeof peer.address === "string" && /^[A-Za-z0-9_-]{22}$/.test(peer.address) && (peer.kind === "mac" || peer.kind === "machine");
+
+export function takePeers(link, by, peers, at, moved = []) {
+  if (!Array.isArray(peers) || typeof at !== "number") return false;
+  link.peersFrom ??= {};
+  if (at <= (link.peersFrom[by]?.at ?? 0)) return false;
+  link.peersFrom[by] = { at, peers: peers.filter(fitsPeer).slice(0, MOST_PEERS).map(({ key, address, name, kind, id }) => ({ key, address, kind, name: plainName(name).slice(0, 100), ...(typeof id === "string" ? { id: id.slice(0, 200) } : {}) })),
+    moved: (Array.isArray(moved) ? moved : []).filter(each => isObject(each) && typeof each.session === "string" && /^ses_[A-Za-z0-9]{1,60}$/.test(each.session) && typeof each.key === "string" && /^[A-Za-z0-9_-]{43}$/.test(each.key))
+      .slice(0, 500).map(({ session, key }) => ({ session, key })) };
+  return true;
+}
+
+// Conversations a Mac moved from one box to another, by where each lives now (its box's key): the
+// box it left may still list it, until it's back to let it go.
+export function movedOf(link) {
+  const macs = new Set(macsOf(link));
+  const moved = new Map();
+  for (const [mac, given] of Object.entries(link?.peersFrom ?? {})) {
+    if (!macs.has(mac)) continue;
+    for (const { session, key } of given?.moved ?? []) moved.set(session, key);
+  }
+  return moved;
+}
+
+// This box's peers now: from each of its Macs' lists, itself left out.
+export function peersOf(link) {
+  if (!link?.peersFrom || !Object.keys(link.peersFrom).length) return [];
+  let own = null;
+  try { own = publicOf(Buffer.from(link.key, "base64url")).toString("base64url"); } catch {}
+  const macs = new Set(macsOf(link));
+  const byKey = new Map();
+  for (const [mac, given] of Object.entries(link.peersFrom ?? {})) {
+    if (!macs.has(mac)) continue;
+    for (const peer of given?.peers ?? []) if (fitsPeer(peer) && peer.key !== own) byKey.set(peer.key, peer);
+  }
+  return [...byKey.values()];
+}
+
+// A mail frame's body opened: from one of this box's Macs, or one of its peers. `{sender, payload}`,
+// or null for one from anyone else (or that isn't one).
+export function openMail(body, link) {
+  if (!link?.key) return null;
+  const key = Buffer.from(link.key, "base64url");
+  const senders = [...macsOf(link).map(mac => ({ key: mac, kind: "mac" })), ...peersOf(link).filter(peer => !macsOf(link).includes(peer.key))];
+  for (const sender of senders) {
+    try {
+      const payload = JSON.parse(openOneWay(body, key, Buffer.from(sender.key, "base64url")).payload.toString("utf8"));
+      return isObject(payload) ? { sender: peersOf(link).find(peer => peer.key === sender.key) ?? sender, payload } : null;
+    } catch {}
+  }
+  return null;
+}
+
+// Mail for a peer, as the relay takes it, sealed for its key alone; null for one too big to go.
+export function mailFor(peer, payload, link) {
+  const sealed = frame(Frame.mail, 0, sealOneWay(Buffer.from(JSON.stringify(payload)), Buffer.from(link.key, "base64url"), Buffer.from(peer.key, "base64url")).message);
+  if (sealed.length > MAX_MAIL) return null;
+  return relaySend(Buffer.from(peer.address, "base64url"), sealed);
+}
+const MAX_MAIL = 65_600 - 17;
+
+// ---- Agents and letters between boxes (PROTOCOL.md, "Peers") ----
+// Each box tells its peers who its agents are (its bots, its latest titled sessions), and keeps
+// what each told it, for list_agents here (`run/agents.json`, which kuvo-browser.js reads). An
+// agent's message to one on another box (left in `run/outbox/sending` by kuvo-browser.js) goes to
+// that box by mail, until it says it has it; one that comes here is checked, delivered once, and
+// with `wait`, answered by a letter back.
+
+const PEER_AGENTS_FILE = path.join(RUN, "peer-agents.json");
+// What a Mac connected over SSH says its agents are (as it mails them), for when the relay can't
+// be reached.
+const MAC_AGENTS_FILE = path.join(RUN, "mac-agents.json");
+const AGENTS_FILE = path.join(RUN, "agents.json");
+const OUTBOX = path.join(RUN, "outbox");
+const SENDING = path.join(OUTBOX, "sending");
+const REPLIES = path.join(RUN, "replies");
+const LETTERS_SEEN = path.join(RUN, "letters-seen.json");
+const PEER_LOCK = path.join(RUN, ".peers.lock");
+// A letter older than a day isn't delivered; one is remembered two days (no doubles, no replays).
+const LETTER_LIFE = 86_400_000;
+const LETTER_MEMORY = 2 * 86_400_000;
+const LETTER_TEXT = 32_000;
+const LETTER_BYTES = 24_000;
+const MOST_AGENTS = 120;
+const LETTER_ID = /^[A-Za-z0-9_-]{6,80}$/;
+// Without the relay this long, this box's letters go to the Mac instead, which collects them
+// over SSH.
+const RELAY_GONE_AFTER = 5 * 60_000;
+
+const fitsAgent = agent => isObject(agent) && typeof agent.session === "string" && /^ses_[A-Za-z0-9]{1,60}$/.test(agent.session)
+  && typeof agent.name === "string" && (agent.kind === "bot" || agent.kind === "session");
+const keptAgent = ({ session, name, kind, project, about, machine }) => ({ session, name: plainName(name).slice(0, 200), kind,
+  ...(typeof project === "string" && project ? { project: project.slice(0, 200) } : {}), ...(typeof about === "string" && about ? { about: about.slice(0, 500) } : {}),
+  ...(typeof machine === "string" && machine ? { machine: machine.slice(0, 200) } : {}) });
+
+// What a peer said its agents are, the newest it said: false for an older list.
+export function takeAgents(sender, given, file = PEER_AGENTS_FILE, lock = PEER_LOCK) {
+  if (!isObject(given) || typeof given.at !== "number" || !Array.isArray(given.list)) return false;
+  return locked(lock, () => {
+    let all = {};
+    try { all = JSON.parse(fs.readFileSync(file, "utf8")); } catch {}
+    if (given.at <= (all[sender.key]?.at ?? 0)) return false;
+    all[sender.key] = { at: given.at, kind: sender.kind, ...(sender.id ? { id: sender.id } : {}), list: given.list.filter(fitsAgent).slice(0, MOST_AGENTS).map(keptAgent) };
+    writePrivate(file, JSON.stringify(all));
+    return true;
+  });
+}
+
+// What each peer told, by its key; a Mac's as it last said it, by mail or over SSH, whichever's newer.
+export function readPeerAgents(file = PEER_AGENTS_FILE, macFile = MAC_AGENTS_FILE, link = null) {
+  let all = {};
+  try { all = JSON.parse(fs.readFileSync(file, "utf8")) ?? {}; } catch {}
+  try {
+    const given = JSON.parse(fs.readFileSync(macFile, "utf8"));
+    const macs = macsOf(link ?? readLink() ?? {});
+    if (macs.includes(given?.key) && typeof given.at === "number" && Array.isArray(given.list) && given.at > (all[given.key]?.at ?? 0)) {
+      all[given.key] = { at: given.at, kind: "mac", list: given.list.filter(fitsAgent).slice(0, MOST_AGENTS).map(keptAgent) };
+    }
+  } catch {}
+  return all;
+}
+
+// The box a session is on, among the peers: the one a Mac says it moved to, else the one that
+// lists it. One listed by more than one is a Mac's when a Mac lists it, else nobody's (one of them
+// could be claiming another's).
+export function peerOf(session, peers, told, moved = new Map()) {
+  if (moved.has(session)) return peers.find(peer => peer.key === moved.get(session)) ?? null;
+  const listing = peers.filter(peer => (told[peer.key]?.list ?? []).some(agent => agent.session === session));
+  if (listing.length <= 1) return listing[0] ?? null;
+  const macs = listing.filter(peer => peer.kind === "mac");
+  return macs.length === 1 ? macs[0] : null;
+}
+
+// Everyone, for list_agents here: this box's own (`machine` its name on its Macs), then each peer's
+// it alone lists (`peerOf`): a machine's by its name; a Mac's its own (none), and the agents of
+// machines it speaks for (those whose link doesn't talk to other computers yet), by theirs.
+export function composeAgents(own, ownID, peers, told, moved = new Map()) {
+  const agents = own.map(agent => ({ ...keptAgent({ ...agent, machine: undefined }), ...(ownID ? { machine: ownID } : {}) }));
+  const seen = new Set(agents.map(agent => agent.session));
+  for (const peer of peers) {
+    for (const agent of told[peer.key]?.list ?? []) {
+      if (seen.has(agent.session) || peerOf(agent.session, peers, told, moved)?.key !== peer.key) continue;
+      seen.add(agent.session);
+      const { machine, ...rest } = agent;
+      agents.push(peer.kind === "machine" ? { ...rest, ...(peer.id ? { machine: peer.id } : {}) } : { ...rest, ...(machine ? { machine } : {}) });
+    }
+  }
+  return { machine: ownID ?? null, agents };
+}
+
+// This box's own agents: its bots, then its latest sessions, its engine's and its coding
+// agents' (not a bot's, a subagent's, a group chat's seat, nor one put away), as the Mac lists its
+// own. Null when its engine can't say (then what it last said stands).
+export async function ownAgents(readEngine, machine, kit = readKit(), readBridge = readBridgeFile) {
+  const bots = listBots(machine).map(bot => ({ session: bot.session, name: bot.name, kind: "bot", ...(bot.job ? { about: bot.job } : {}) }));
+  const botSessions = new Set(bots.map(bot => bot.session));
+  const sessionsOf = async target => {
+    const response = await fetch(`http://127.0.0.1:${target.port}/api/session?parentID=null&limit=100&order=desc`, { headers: { authorization: `Basic ${Buffer.from(`opencode:${target.password}`).toString("base64")}` }, signal: AbortSignal.timeout(10_000) });
+    if (!response.ok) throw new Error(`It answered ${response.status}.`);
+    return (await response.json())?.data ?? [];
+  };
+  let sessions;
+  try { sessions = await sessionsOf(readEngine()); } catch { return null; }
+  try {
+    const bridge = readBridge();
+    if (bridge?.port && bridge?.password && runs(bridge.pid, "kuvo-agents")) sessions = sessions.concat(await sessionsOf(bridge));
+  } catch {}
+  const projects = kit?.projects ?? [];
+  const named = directory => projects.find(project => project.directory === directory)?.name ?? (directory ? path.basename(directory) : undefined);
+  const recent = sessions
+    .filter(session => !session.parentID && !botSessions.has(session.id) && !session.metadata?.kuvo?.seat && !session.metadata?.kuvo?.archived && !session.time?.archived)
+    .sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0))
+    .slice(0, 40)
+    .map(session => ({ session: session.id, name: session.title || "New session", kind: "session", ...(named(session.location?.directory ?? session.directory) ? { project: named(session.location?.directory ?? session.directory) } : {}) }));
+  return [...bots, ...recent].map(keptAgent);
+}
+
+// Letters remembered, by id, with when: one seen again is said to be there, not delivered twice.
+function lettersSeen(now) {
+  let seen = {};
+  try { seen = JSON.parse(fs.readFileSync(LETTERS_SEEN, "utf8")); } catch {}
+  for (const [key, at] of Object.entries(seen)) if (now - at > LETTER_MEMORY) delete seen[key];
+  return seen;
+}
+const seenAlready = (id, now = Date.now()) => id in lettersSeen(now);
+function noteSeen(id, now = Date.now()) {
+  locked(PEER_LOCK, () => {
+    const seen = lettersSeen(now);
+    seen[id] = now;
+    writePrivate(LETTERS_SEEN, JSON.stringify(seen));
+  });
+}
+// Letters being delivered now: one that comes again meanwhile waits for that one's answer.
+const delivering = new Set();
+
+// Letters from each peer lately, a few at a time (as the Mac counts a machine's).
+const lettersFrom = new Map();
+function tooMany(key, now = Date.now()) {
+  const lately = (lettersFrom.get(key) ?? []).filter(at => now - at < 600_000);
+  if (lately.length >= 20) return true;
+  lettersFrom.set(key, [...lately, now]);
+  return false;
+}
+
+// What the receiving agent reads, as the Mac and kuvo-browser.js word it (AgentMail.compose).
+export const composeLetter = (name, session, words, waits) =>
+  `[Message from ${name} · ${session}] (${waits ? "They're waiting for your reply: just answer, in your words." : session === "unknown" ? "It can't be answered: who sent it isn't known." : `To answer, use send_message to ${session}.`})\n\n${words}`;
+
+// A session here, where it runs: the engine's or the coding agents' bridge's, by asking each, and
+// what it is. Null when each says there's no such session; it throws when one can't be asked (try
+// again later).
+async function placeOfSession(session, targets) {
+  if (!targets.length) throw new Error("Its engine isn't running.");
+  let unsure = null;
+  for (const target of targets) {
+    try {
+      const response = await fetch(`http://127.0.0.1:${target.port}/api/session/${encodeURIComponent(session)}`, { headers: { authorization: `Basic ${Buffer.from(`opencode:${target.password}`).toString("base64")}` }, signal: AbortSignal.timeout(10_000) });
+      if (response.ok) return { target, data: (await response.json().catch(() => null))?.data ?? {} };
+      if (response.status !== 404) unsure = new Error(`It answered ${response.status}.`);
+    } catch (error) {
+      unsure = error;
+    }
+  }
+  if (unsure) throw unsure;
+  return null;
+}
+
+async function asked(target, method, route, body) {
+  const response = await fetch(`http://127.0.0.1:${target.port}/${route}`, {
+    method,
+    headers: { authorization: `Basic ${Buffer.from(`opencode:${target.password}`).toString("base64")}`, ...(body ? { "content-type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) throw new Error(`It answered ${response.status}.`);
+  const text = await response.text();
+  return text ? JSON.parse(text) : null;
+}
+
+// Its answer to message `id`, as kuvo-browser.js's replyTo waits for it: what it wrote after,
+// once it's done, ten minutes at most; null for none.
+async function answerTo(target, session, id, wait = 2000) {
+  const began = Date.now();
+  let started = false;
+  while (Date.now() - began < 600_000) {
+    await sleep(wait);
+    const active = (await asked(target, "GET", "api/session/active").catch(() => null))?.data ?? {};
+    if (Array.isArray(active) ? active.includes(session) : active[session]) {
+      started = true;
+      continue;
+    }
+    if (!started && Date.now() - began < 3 * wait) continue;
+    const page = await asked(target, "GET", `api/session/${encodeURIComponent(session)}/message?limit=20&order=desc`).catch(() => null);
+    const replies = (page?.data ?? [])
+      .filter(message => message.type === "assistant" && message.id > id)
+      .reverse()
+      .map(message => (message.content ?? []).filter(part => part.type === "text").map(part => part.text).join("\n"))
+      .filter(Boolean);
+    if (replies.length) return replies.join("\n\n").slice(0, 8000);
+    if (started) break;
+  }
+  return null;
+}
+
+// A letter from a peer: delivered once, said to be there (or why not, and whether to try again),
+// and with `wait`, answered by a letter back. Who it's from is the sending box's own agent, by the
+// name that box gave it, only when that box alone lists it and it isn't one of this box's own;
+// otherwise "an agent on" that box, with no address to answer (anything there could claim
+// another's). It goes to a conversation here that an agent could be (not a subagent's, a group
+// chat's seat, nor one put away); an answer (`answers`) to a letter a tool here waits for goes to
+// that tool. `send(peer, payload)` mails the peer; `answer(letter)` sends this box's answer back.
+export async function takeLetter(sender, letter, { send, targets, answer = () => {}, told = readPeerAgents(), peers = peersOf(readLink()), moved = movedOf(readLink()), now = Date.now(), wait } = {}) {
+  if (!isObject(letter) || typeof letter.id !== "string" || !LETTER_ID.test(letter.id)) return;
+  const { id } = letter;
+  const no = (why, again = false) => send(sender, { delivered: { id, ok: false, why, ...(again ? { retry: true } : {}) } });
+  if (typeof letter.at !== "number" || Math.abs(now - letter.at) > LETTER_LIFE) return no("It's too old to deliver.");
+  if (typeof letter.to !== "string" || !/^ses_[A-Za-z0-9]{1,60}$/.test(letter.to) || typeof letter.text !== "string" || !letter.text.trim()) return no("That isn't a letter.");
+  if (delivering.has(id)) return;
+  if (seenAlready(id, now)) return send(sender, { delivered: { id, ok: true } });
+  // An answer a tool here waits for (from the box its letter went to): to it.
+  if (typeof letter.answers === "string" && LETTER_ID.test(letter.answers) && answered(sender, letter.answers, letter.text, now)) {
+    noteSeen(id, now);
+    return send(sender, { delivered: { id, ok: true } });
+  }
+  if (tooMany(sender.key, now)) return no("It's sent a lot of messages in the last few minutes.", true);
+  delivering.add(id);
+  let place, prompt, fromAgent = null;
+  try {
+    place = await placeOfSession(letter.to, targets);
+    if (!place) return no("There's no such conversation here.");
+    const kuvo = place.data?.metadata?.kuvo ?? {};
+    if (place.data?.parentID || kuvo.seat || kuvo.archived || place.data?.time?.archived) return no("That conversation doesn't take messages.");
+    // Its sender: that box's own agent, as it named it; one of this box's own claimed from there isn't.
+    const listed = peerOf(letter.from, peers, told, moved)?.key === sender.key ? (told[sender.key]?.list ?? []).find(agent => agent.session === letter.from) : null;
+    if (listed && !(await placeOfSession(letter.from, targets).catch(() => ({})))) fromAgent = listed;
+    const name = fromAgent?.name ?? `an agent on ${plainName(sender.name) || "another computer"}`;
+    prompt = messageID();
+    const waits = letter.wait === true && Boolean(fromAgent);
+    await asked(place.target, "POST", `api/session/${encodeURIComponent(letter.to)}/prompt`, { id: prompt, text: composeLetter(name, fromAgent ? letter.from : "unknown", letter.text.slice(0, LETTER_TEXT), waits), delivery: "steer" });
+  } catch (error) {
+    return no(`It didn't reach it: ${String(error?.message ?? error)}`, true);
+  } finally {
+    delivering.delete(id);
+  }
+  noteSeen(id, now);
+  // Waiting for an answer it can't have (its sender couldn't be told): it hears no answer's coming.
+  if (letter.wait === true && !fromAgent) return send(sender, { delivered: { id, ok: true, answer: false, why: "Its answer can't come back to you: it doesn't know who you are." } });
+  send(sender, { delivered: { id, ok: true } });
+  if (letter.wait !== true) return;
+  const text = await answerTo(place.target, letter.to, prompt, wait);
+  if (text) answer({ from: letter.to, to: letter.from, text, answers: id, peer: sender.key });
+}
+
+// What peers tell each other: their agents, letters, and how letters went (PROTOCOL.md, "Peers").
+export function peerMail(sender, payload, host, targets = () => []) {
+  const send = (peer, message) => {
+    const link = readLink();
+    const bytes = link && mailFor(peer, { ...message, at: Date.now() }, link);
+    if (bytes) try { host?.send(bytes); } catch {}
+  };
+  if (isObject(payload.agents)) {
+    if (takeAgents(sender, payload.agents)) writeAgents();
+  }
+  // It's just connected, and may have missed what this box told it (the relay keeps nothing):
+  // told again at the next round.
+  if (payload.ask === "agents") toldPeers.delete(sender.key);
+  if (isObject(payload.letter)) takeLetter(sender, payload.letter, { send, targets: targets(), answer: leaveAnswer }).catch(() => {});
+  if (isObject(payload.delivered) && typeof payload.delivered.id === "string") letterWent(sender, payload.delivered);
+}
+
+// This box's own agents, as last worked out (`refreshOwn`), for `run/agents.json`.
+let ownList = null;
+let ownMachine = null;
+
+// Writes `run/agents.json`: this box's agents and its peers'.
+export function writeAgents(link = readLink()) {
+  const composed = composeAgents(ownList ?? [], ownMachine ?? link?.id ?? null, peersOf(link), readPeerAgents(undefined, undefined, link), movedOf(link));
+  try {
+    const text = JSON.stringify(composed);
+    if (textOf(AGENTS_FILE) !== text) writePrivate(AGENTS_FILE, text);
+  } catch {}
+}
+
+// This box's own agents, worked out again, and `run/agents.json` with them, relay or not.
+export async function refreshOwn(readEngine, link = readLink()) {
+  if (!link?.key) return ownList;
+  ownMachine = link.id ?? null;
+  const list = await ownAgents(readEngine, link.id);
+  if (list) ownList = list;
+  writeAgents(link);
+  return ownList;
+}
+
+// Tells each peer this box's agents: when they change, and every ten minutes. `told` remembers
+// what went to whom, and when. `ask`: just connected, so each is told, and asked for theirs.
+const toldPeers = new Map();
+export async function announce(host, readEngine, link = readLink(), now = Date.now(), ask = false) {
+  if (!link?.key) return;
+  await refreshOwn(readEngine, link);
+  if (!ownList) return;
+  const json = JSON.stringify(ownList);
+  for (const peer of peersOf(link)) {
+    const last = toldPeers.get(peer.key);
+    if (!ask && last && last.json === json && now - last.at < 600_000) continue;
+    // As many as fit in one mail: the first (bots, then the latest sessions) first.
+    let bytes = null, sent = [];
+    for (const count of [ownList.length, Math.floor(ownList.length / 2), Math.floor(ownList.length / 4)]) {
+      sent = ownList.slice(0, count);
+      bytes = mailFor(peer, { agents: { at: now, list: sent }, at: now, ...(ask ? { ask: "agents" } : {}) }, link);
+      if (bytes) break;
+    }
+    if (!bytes) continue;
+    try {
+      host.send(bytes);
+      toldPeers.set(peer.key, { json, at: now, sessions: new Set(sent.map(agent => agent.session)) });
+    } catch {}
+  }
+}
+
+// ---- The outbox: letters this box's agents leave for agents elsewhere ----
+// Each goes by mail to the box its agent is on, again each minute until that box says it has it
+// (or why not), for two days. A waiting tool reads its answer from `run/replies/<id>.json`.
+
+const letterTries = new Map();
+// Senders being told of to their letters' boxes first (one made a moment ago, which those boxes
+// don't know yet): its letter goes the round after.
+const introducing = new Map();
+
+function reply(id, value) {
+  try {
+    fs.mkdirSync(REPLIES, { recursive: true, mode: 0o700 });
+    writePrivate(path.join(REPLIES, `${id}.json`), JSON.stringify(value));
+  } catch {}
+}
+
+// A letter for the outbox, from this box (an answer, say).
+function leaveLetter(letter, now = Date.now()) {
+  try {
+    fs.mkdirSync(SENDING, { recursive: true, mode: 0o700 });
+    const id = "ltr_" + crypto.randomBytes(16).toString("base64url");
+    writePrivate(path.join(SENDING, `${id}.json`), JSON.stringify({ ...letter, wait: false, at: now }));
+  } catch {}
+}
+const leaveAnswer = letter => leaveLetter(letter);
+
+// How a letter went, from the box it went to (anyone else's word is dropped): there, so it's not
+// sent again, and with `wait`, its answer awaited (`replies/<id>.wait`, whose box it's from), or
+// none to wait for; not now, so it's sent again; or why not, for a waiting tool.
+export function letterWent(sender, { id, ok, why, retry, answer }) {
+  if (!LETTER_ID.test(id)) return;
+  const file = path.join(SENDING, `${id}.json`);
+  let letter = null;
+  try { letter = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return; }
+  if (letter?.sentTo !== sender.key) return;
+  if (!ok && retry === true && Date.now() - (letter.at ?? 0) < LETTER_MEMORY) return;
+  letterTries.delete(id);
+  const words = typeof why === "string" ? why.slice(0, 500) : null;
+  if (ok && letter.wait === true && answer !== false) {
+    try {
+      fs.mkdirSync(REPLIES, { recursive: true, mode: 0o700 });
+      fs.renameSync(file, path.join(REPLIES, `${id}.wait`));
+      return;
+    } catch {}
+  }
+  fs.rmSync(file, { force: true });
+  // Only a tool waiting for its answer reads how it went.
+  if (letter.wait !== true) return;
+  if (!ok) reply(id, { failed: words ?? "It wasn't delivered." });
+  else if (answer === false) reply(id, { note: words ?? "It got your message, but its answer can't come back to you here." });
+}
+
+// The answer to letter `id`, from the box it went to, for the tool waiting for it here: true when
+// one still waits (it notes it does, `<id>.alive`, every two seconds as it looks); else it comes
+// as a message.
+function answered(sender, id, text, now = Date.now()) {
+  const waiting = path.join(REPLIES, `${id}.wait`);
+  let letter = null;
+  try { letter = JSON.parse(fs.readFileSync(waiting, "utf8")); } catch { return false; }
+  if (letter?.sentTo !== sender.key) return false;
+  fs.rmSync(waiting, { force: true });
+  let alive = 0;
+  try { alive = fs.statSync(path.join(REPLIES, `${id}.alive`)).mtimeMs; } catch {}
+  if (now - alive > 10_000) return false;
+  reply(id, { text: String(text).slice(0, 8000) });
+  return true;
+}
+
+// A letter as mail for `peer`, its words cut to fit what the relay takes (UTF-8, and escaped as
+// JSON, they can be several times as many bytes as characters); null if even a short one won't.
+export function letterMail(peer, letter, link, now = Date.now()) {
+  const words = String(letter.text ?? "");
+  for (const most of [LETTER_BYTES, LETTER_BYTES / 4, 2000]) {
+    const bytes = mailFor(peer, { letter: { ...letter, text: prefixBytes(words, most) }, at: now }, link);
+    if (bytes) return bytes;
+  }
+  return null;
+}
+
+// The outbox, sent: each letter the tool left for this link (in `outbox/sending`; the Mac collects
+// the rest over SSH) goes to the box its agent is on (an answer, to the box it answers), again
+// each minute until that box says it has it (or why not), for two days. A tool that gave up
+// waiting (`replies/<id>.gaveup`) has its letter go on without waiting, and an answer that comes
+// later reaches its conversation as a message. Without the relay for a while (`offline`), letters
+// not yet sent go to the Mac instead.
+export function sendOutbox(host, link = readLink(), now = Date.now(), offline = 0) {
+  if (!link?.key) return;
+  const peers = peersOf(link);
+  const told = readPeerAgents(undefined, undefined, link);
+  const moved = movedOf(link);
+  // The relay back: letters given to the Mac it hasn't taken come back. (Not one a Mac took to
+  // deliver, `.mac-…`: each goes one way, by whichever renames it first.)
+  if (!offline) {
+    for (const name of listOf(OUTBOX)) {
+      if (!name.endsWith(".json") || name.startsWith(".")) continue;
+      try {
+        const letter = JSON.parse(fs.readFileSync(path.join(OUTBOX, name), "utf8"));
+        if (typeof letter?.handed !== "number") continue;
+        fs.mkdirSync(SENDING, { recursive: true, mode: 0o700 });
+        fs.renameSync(path.join(OUTBOX, name), path.join(SENDING, name));
+      } catch {}
+    }
+  }
+  for (const name of listOf(REPLIES)) {
+    if (!name.endsWith(".gaveup")) continue;
+    const id = name.slice(0, -7);
+    fs.rmSync(path.join(REPLIES, name), { force: true });
+    fs.rmSync(path.join(REPLIES, `${id}.wait`), { force: true });
+    const file = path.join(SENDING, `${id}.json`);
+    try { writePrivate(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), wait: false })); } catch {}
+  }
+  const listed = new Set();
+  for (const name of listOf(SENDING)) {
+    if (!name.endsWith(".json")) continue;
+    const id = name.slice(0, -5);
+    const file = path.join(SENDING, name);
+    let letter;
+    try { letter = JSON.parse(fs.readFileSync(file, "utf8")); } catch { continue; }
+    listed.add(id);
+    const made = typeof letter.at === "number" ? letter.at : now;
+    const peer = typeof letter.peer === "string" ? peers.find(each => each.key === letter.peer) ?? null : peerOf(letter.to, peers, told, moved);
+    if (now - made > LETTER_MEMORY) {
+      fs.rmSync(file, { force: true });
+      if (letter.wait === true) reply(id, { failed: "Its agent couldn't be reached." });
+      continue;
+    }
+    // No box lists its agent now (lists change as boxes come and go): it waits.
+    if (!peer) continue;
+    // No relay for a while: one never sent goes to the Mac, which takes it on over SSH.
+    if (offline > RELAY_GONE_AFTER && !letter.sentTo && !letter.answers) {
+      try {
+        const { via, sentTo, peer: _, ...rest } = letter;
+        writePrivate(path.join(OUTBOX, `${id}.json`), JSON.stringify({ ...rest, wait: false, handed: now }));
+        fs.rmSync(file, { force: true });
+        if (letter.wait === true) reply(id, { note: "Your other computers can't be reached through the relay now: it goes through your Mac instead, and its answer comes to you as a message." });
+      } catch {}
+      continue;
+    }
+    if (offline || now - (letterTries.get(id) ?? 0) < 60_000) continue;
+    // Its sender, told of to that box first, so it's taken for one of this box's agents.
+    if (letter.from && !toldPeers.get(peer.key)?.sessions?.has(letter.from) && !introducing.has(id)) {
+      introducing.set(id, now);
+      announce(host, readEngineFile, link).catch(() => {});
+      continue;
+    }
+    letterTries.set(id, now);
+    const bytes = letterMail(peer, { id, from: letter.from, to: letter.to, text: String(letter.text ?? "").slice(0, LETTER_TEXT), wait: letter.wait === true, at: made,
+      ...(letter.answers ? { answers: letter.answers } : {}) }, link, now);
+    if (!bytes) {
+      fs.rmSync(file, { force: true });
+      if (letter.wait === true) reply(id, { failed: "It's too long to send." });
+      continue;
+    }
+    // Which box it went to: only that one's word on how it went counts.
+    if (letter.sentTo !== peer.key) try { writePrivate(file, JSON.stringify({ ...letter, sentTo: peer.key })); } catch {}
+    try { host.send(bytes); } catch {}
+  }
+  for (const id of letterTries.keys()) if (!listed.has(id)) letterTries.delete(id);
+  for (const id of introducing.keys()) if (!listed.has(id)) introducing.delete(id);
+  // Answers no tool came for (it gave up waiting), and ones never answered, after a day.
+  for (const name of listOf(REPLIES)) {
+    try {
+      if (now - fs.statSync(path.join(REPLIES, name)).mtimeMs > LETTER_LIFE) fs.rmSync(path.join(REPLIES, name), { force: true });
+    } catch {}
+  }
+}
+
+// What came by mail, from a Mac or a peer: a Mac's lists, or what peers tell each other
+// (`peerMail`, its agents and their letters).
+export function receiveMail(body, host, peerMail = () => {}) {
+  const link = readLink();
+  const opened = openMail(body, link);
+  if (!opened) return;
+  const { sender, payload } = opened;
+  if (macsOf(link).includes(sender.key) && (Array.isArray(payload.phones) || Array.isArray(payload.peers))) takeFromMac(payload, sender.key, host);
+  peerMail(sender, payload);
 }
 
 // A phone's session proved its own: its notifications go where it is now.
 export function confirmPhone(phone) {
-  const link = readLink();
-  const known = link?.phones?.find(each => each.key === phone.key.toString("base64url"));
   const where = phone.address?.toString("base64url");
+  const known = readLink()?.phones?.find(each => each.key === phone.key.toString("base64url"));
   if (!known || !where || known.address === where) return;
-  known.address = where;
-  writeLink(link);
+  updateLink(link => {
+    const known = link?.phones?.find(each => each.key === phone.key.toString("base64url"));
+    if (!known || !where || known.address === where) return null;
+    known.address = where;
+    return link;
+  });
+}
+
+// ---- Updates (PROTOCOL.md, "Updates") ----
+// A box updates itself to a newer Kuvo Code's release: at night (02:00 to 05:00 where you are) when
+// nothing runs on it, or now (Update Now, from a Mac or a phone). Never to an older one, only what
+// a key pinned here signed, only in a machine's own ~/.kuvo-code (not a test's or a demo's), and
+// only while every Mac that started its engine lately leaves a newer box as it is. It checks what
+// it got, tries the new engine and bridge, keeps what it had, swaps its files one by one and
+// starts again; if that doesn't come up well, or the new bridge never says it's well (the keeper
+// waits twenty minutes), it goes back to what it had.
+
+// The releases' public keys (scripts/set-box-key.sh, scripts/sign-box.mjs), base64: with none, no
+// box updates itself.
+export const UPDATE_KEYS = ["iLSFoygG8wg+r2yj+/qnoMHpZIhPKRNLlf9vpEKmx0A="];
+const UPDATE_URL = "https://github.com/serhatandic/kuvo-code/releases/latest/download/boxes.json";
+const UPDATE_SETTINGS = path.join(BOX, "update.json");
+const UPDATE_STATE = path.join(RUN, "update.json");
+const UPDATE_TRIAL = path.join(RUN, "update-trial");
+const UPDATE_LOCK = path.join(RUN, ".updating");
+const UPDATES = path.join(K, "updates");
+const ROLLBACK = path.join(UPDATES, "rollback");
+const LAUNCHERS = path.join(RUN, "launchers.json");
+const ED25519_SPKI = Buffer.from("302a300506032b6570032100", "hex");
+// A release this old before a box takes it by itself (most Macs have updated by then, and a bad
+// one doesn't reach every box the night it's out).
+const RELEASE_AGE = 3 * 86_400_000;
+const MAC_MEMORY = 30 * 86_400_000;
+const BOX_FILE = /^(bin\/[A-Za-z0-9._-]+|bin\/runtime\/[A-Za-z0-9._-]+|config\/opencode\/plugins\/[A-Za-z0-9._-]+)$/;
+const RELEASE_VERSION = /^\d+\.\d+\.\d+(-beta\.\d+)?$/;
+
+// A version as versions are ordered (a beta before its release), or null for one that isn't.
+export function versionOrder(version) {
+  const found = /^(\d+)\.(\d+)\.(\d+)(?:-beta\.(\d+))?$/.exec(version ?? "");
+  return found ? [+found[1], +found[2], +found[3], found[4] == null ? Infinity : +found[4]] : null;
+}
+
+// Whether `version` is newer than `than` (none: any is).
+export function newerVersion(version, than) {
+  const a = versionOrder(version), b = versionOrder(than);
+  if (!a) return false;
+  if (!b) return true;
+  for (let i = 0; i < 4; i++) if (a[i] !== b[i]) return a[i] > b[i];
+  return false;
+}
+
+// A release's manifest, from boxes.json as the release workflow signs it: only with a key that's
+// pinned, its signature over "kuvo-box v1\n" and its bytes. It throws for anything else.
+export function verifyBoxes(text, keys = UPDATE_KEYS) {
+  let given;
+  try { given = JSON.parse(text); } catch { throw new Error("That isn't a release."); }
+  if (typeof given?.manifest !== "string" || typeof given.signature !== "string" || typeof given.key !== "string") throw new Error("That isn't a release.");
+  const key = keys.map(each => Buffer.from(each, "base64")).find(each => each.length === 32 && each.equals(Buffer.from(given.key, "base64")));
+  if (!key) throw new Error("It isn't signed with a key this machine trusts.");
+  const bytes = Buffer.from(given.manifest, "base64");
+  const publicKey = crypto.createPublicKey({ key: Buffer.concat([ED25519_SPKI, key]), format: "der", type: "spki" });
+  if (!crypto.verify(null, Buffer.concat([Buffer.from("kuvo-box v1\n"), bytes]), publicKey, Buffer.from(given.signature, "base64"))) throw new Error("Its signature doesn't match.");
+  const manifest = JSON.parse(bytes.toString("utf8"));
+  if (manifest?.kuvo !== "box/1" || !RELEASE_VERSION.test(manifest.version ?? "") || typeof manifest.engine !== "string" || !/^[0-9][0-9A-Za-z.-]*$/.test(manifest.engine)
+    || !isObject(manifest.pack) || typeof manifest.pack.url !== "string" || !/^[0-9a-f]{64}$/.test(manifest.pack.sha256 ?? "")) throw new Error("That isn't a release.");
+  return manifest;
+}
+
+// This box's version, as the Kuvo Code that put its files there marked it (`bin/box-version`).
+export const boxVersion = () => {
+  const version = textOf(path.join(K, "bin", "box-version"))?.trim();
+  return versionOrder(version) ? version : null;
+};
+
+export function updateSettings() {
+  try { return { auto: JSON.parse(fs.readFileSync(UPDATE_SETTINGS, "utf8"))?.auto !== false }; } catch { return { auto: true }; }
+}
+
+export function setAutoUpdate(auto) {
+  fs.mkdirSync(BOX, { recursive: true, mode: 0o700 });
+  writePrivate(UPDATE_SETTINGS, JSON.stringify({ auto: auto !== false }));
+}
+
+const updateState = () => { try { return JSON.parse(fs.readFileSync(UPDATE_STATE, "utf8")) ?? {}; } catch { return {}; } };
+function noteUpdate(change) {
+  const state = { ...updateState(), ...change };
+  for (const [key, value] of Object.entries(change)) if (value == null) delete state[key];
+  try { writePrivate(UPDATE_STATE, JSON.stringify(state)); } catch {}
+  return state;
+}
+
+// Who started this box's engine lately: each Mac by its ID (in its launches' notes), with when.
+export function noteLauncher(readEngine = readEngineFile, now = Date.now()) {
+  let mac = null;
+  try { mac = readEngine()?.notes?.mac; } catch {}
+  if (typeof mac !== "string" || !mac || mac.length > 100) return;
+  let all = {};
+  try { all = JSON.parse(fs.readFileSync(LAUNCHERS, "utf8")) ?? {}; } catch {}
+  if (now - (all[mac] ?? 0) < 3600_000) return;
+  all[mac] = now;
+  for (const [key, at] of Object.entries(all)) if (now - at > MAC_MEMORY) delete all[key];
+  try { writePrivate(LAUNCHERS, JSON.stringify(all)); } catch {}
+}
+
+// Why this box doesn't update itself now, or null: it isn't a machine's own folder, or a Mac that
+// started its engine lately would put back older versions (one that didn't say it leaves a newer
+// box as it is).
+export function updatesBlocked(link = readLink(), now = Date.now(), root = K) {
+  if (path.resolve(root) !== path.join(os.homedir(), ".kuvo-code")) return "Only a machine's own Kuvo Code folder updates itself.";
+  let launchers = {};
+  try { launchers = JSON.parse(fs.readFileSync(LAUNCHERS, "utf8")) ?? {}; } catch {}
+  const behind = Object.entries(launchers).filter(([mac, at]) => now - at < MAC_MEMORY && link?.tolerantIDs?.[mac] !== true);
+  if (behind.length) return "A Mac that connects to this machine has an older Kuvo Code, which would put back older versions: update Kuvo Code there first.";
+  return null;
+}
+
+// Whether something runs on the box: a conversation working (the engine's, the coding agents'),
+// or an agent's browser waiting on you.
+async function boxBusy(readEngine = readEngineFile, readBridge = readBridgeFile) {
+  for (const read of [readEngine, readBridge]) {
+    let target = null;
+    try { target = read(); } catch {}
+    if (!target?.port || !target?.password) continue;
+    const active = (await asked(target, "GET", "api/session/active").catch(() => null))?.data;
+    if (Array.isArray(active) ? active.length : isObject(active) && Object.keys(active).length) return true;
+  }
+  try { if ((JSON.parse(fs.readFileSync(ASKS_FILE, "utf8")) ?? []).length) return true; } catch {}
+  return false;
+}
+
+// `url`'s body, at most `most` bytes, within `timeout` ms.
+async function fetched(url, most, timeout) {
+  const response = await fetch(url, { signal: AbortSignal.timeout(timeout), redirect: "follow" });
+  if (!response.ok) throw new Error(`It answered ${response.status}.`);
+  const data = Buffer.from(await response.arrayBuffer());
+  if (data.length > most) throw new Error("It's larger than a release can be.");
+  return data;
+}
+
+const hexSHA256 = data => crypto.createHash("sha256").update(data).digest("hex");
+
+// `command` with `args`, in the box's folder, its environment the bridge's: its exit status and
+// output, within `timeout` ms.
+function ran(command, args, env = {}, timeout = 120_000) {
+  const result = spawnSync(command, args, { cwd: K, env: { ...process.env, ...env }, encoding: "utf8", timeout });
+  return { status: result.status, output: `${result.stdout ?? ""}${result.stderr ?? ""}`.trim() };
+}
+
+const quote = text => `'${String(text).replace(/'/g, `'\\''`)}'`;
+
+// An update under way, by its process (`run/.updating/pid`): one at a time, and one whose process
+// went isn't one.
+export function isUpdating() {
+  if (!fs.existsSync(UPDATE_LOCK)) return false;
+  let pid = null;
+  try { pid = Number(fs.readFileSync(path.join(UPDATE_LOCK, "pid"), "utf8")); } catch {}
+  if (pid) return runs(pid, "kuvo-link");
+  // Just made, its process not written yet.
+  try { return Date.now() - fs.statSync(UPDATE_LOCK).mtimeMs < 60_000; } catch { return false; }
+}
+
+function takeUpdateLock() {
+  try {
+    fs.mkdirSync(UPDATE_LOCK);
+  } catch {
+    if (isUpdating()) return false;
+    fs.rmSync(UPDATE_LOCK, { recursive: true, force: true });
+    try { fs.mkdirSync(UPDATE_LOCK); } catch { return false; }
+  }
+  fs.writeFileSync(path.join(UPDATE_LOCK, "pid"), String(process.pid), { mode: 0o600 });
+  return true;
+}
+
+// Keeps what's there now of each of a release's files, and with another engine version the
+// engine's data (stopped), with `restore.sh`, which puts them back: run by the update when the new
+// version doesn't come up, or by the keeper once the update's trial runs out (not while an update
+// runs). Each step checked: one that fails leaves what was kept, for the next try.
+function keepForRollback(files, withData) {
+  fs.rmSync(ROLLBACK, { recursive: true, force: true });
+  fs.mkdirSync(path.join(ROLLBACK, "files"), { recursive: true, mode: 0o700 });
+  const lines = [
+    "#!/bin/sh",
+    `K=${quote(K)}; B=${quote(ROLLBACK)}`,
+    `p=$(cat "$K/run/.updating/pid" 2>/dev/null)`,
+    `if [ -n "$p" ] && [ "$p" != "\${KUVO_UPDATER:-}" ] && kill -0 "$p" 2>/dev/null && { [ ! -d /proc ] || grep -q kuvo-link "/proc/$p/cmdline" 2>/dev/null; }; then exit 0; fi`,
+    `sh "$K/bin/kuvo-start" stop >/dev/null 2>&1 || exit 1`,
+  ];
+  for (const file of files) {
+    const from = path.join(K, file);
+    if (fs.existsSync(from)) {
+      fs.mkdirSync(path.dirname(path.join(ROLLBACK, "files", file)), { recursive: true, mode: 0o700 });
+      fs.copyFileSync(from, path.join(ROLLBACK, "files", file));
+      fs.chmodSync(path.join(ROLLBACK, "files", file), fs.statSync(from).mode & 0o777);
+      lines.push(`cp -p "$B/files/"${quote(file)} "$K/"${quote(file)}.new && mv -f "$K/"${quote(file)}.new "$K/"${quote(file)} || exit 1`);
+    } else {
+      lines.push(`rm -f "$K/"${quote(file)} || exit 1`);
+    }
+  }
+  if (withData) {
+    // The database as it was kept, moved back (on the same disk: no room needed), with its own
+    // journal and index (none, when it was closed cleanly), never the new engine's beside it. Only
+    // once it was kept (the update may have stopped before).
+    lines.push(
+      `D="$K/data/opencode"`,
+      `if [ -f "$B/data/opencode.db" ]; then`,
+      `  rm -f "$D/opencode.db-wal" "$D/opencode.db-shm" || exit 1`,
+      `  for n in opencode.db opencode.db-wal opencode.db-shm; do if [ -f "$B/data/$n" ]; then mv -f "$B/data/$n" "$D/$n" || exit 1; fi; done`,
+      `fi`,
+    );
+  }
+  lines.push(`sh "$K/bin/kuvo-start" start >/dev/null 2>&1`, `rm -f "$K/run/update-trial" "$K/run/update-restore"`, `rm -rf "$B"`);
+  writePrivate(path.join(ROLLBACK, "restore.sh"), lines.join("\n") + "\n");
+}
+
+// The engine's data as it is, the engine stopped, beside what's put back: whole or not at all (a
+// copy cut short is never put back).
+function keepData() {
+  const folder = path.join(K, "data", "opencode"), partial = path.join(ROLLBACK, "data.partial");
+  fs.rmSync(partial, { recursive: true, force: true });
+  fs.mkdirSync(partial, { recursive: true, mode: 0o700 });
+  for (const name of ["opencode.db", "opencode.db-wal", "opencode.db-shm"]) {
+    if (fs.existsSync(path.join(folder, name))) fs.copyFileSync(path.join(folder, name), path.join(partial, name));
+  }
+  fs.renameSync(partial, path.join(ROLLBACK, "data"));
+}
+
+// Whether there's room to keep the engine's data beside it, with some to spare.
+function roomForData() {
+  let size = 0;
+  for (const name of ["opencode.db", "opencode.db-wal"]) try { size += fs.statSync(path.join(K, "data", "opencode", name)).size; } catch {}
+  const free = ran("df", ["-Pk", K]).output.split("\n").pop()?.trim().split(/\s+/)[3];
+  return !free || Number(free) * 1024 > size * 1.1 + 200_000_000;
+}
+
+// Whether the engine came up as `version` and answers, and the coding agents' bridge with it when
+// it ran before, within `timeout` ms.
+async function cameUp(version, withAgents, timeout = 120_000, readEngine = readEngineFile, readBridge = readBridgeFile) {
+  const began = Date.now();
+  while (Date.now() - began < timeout) {
+    await sleep(Math.min(2000, timeout / 10));
+    let engine = null;
+    try { engine = readEngine(); } catch {}
+    if (engine?.version !== version) continue;
+    if (!(await asked(engine, "GET", "api/session?limit=1").then(() => true, () => false))) continue;
+    if (!withAgents) return true;
+    let bridge = null;
+    try { bridge = readBridge(); } catch {}
+    if (bridge?.port && (await asked(bridge, "GET", "api/session/active").then(() => true, () => false))) return true;
+  }
+  return false;
+}
+
+// The box's tools that an older Kuvo Code on a Mac (0.7 and before) puts its own over as it
+// connects: the box keeps copies of its own (`bin/.own`), which its keeper puts back.
+const OWN_TOOLS = ["kuvo-agents.js", "kuvo-browser.js", "kuvo-wake", "kuvo-npx"];
+
+// The order files go in: its version first (a Mac connecting meanwhile leaves the box as it is),
+// the keeper's mark last (the keeper starts its new script only once the script is there).
+const installOrder = files => [...files].sort((a, b) => (a === "bin/box-version" ? -1 : b === "bin/box-version" ? 1 : a === "bin/.kuvo-boot" ? 1 : b === "bin/.kuvo-boot" ? -1 : a < b ? -1 : 1));
+
+// Updates the box to the newest release, when it's newer: `now` (Update Now) takes it whatever its
+// age. What happened: `{result: "updated" | "current" | "waiting" | "busy" | "off" | "blocked" |
+// "failed", version?, message?}`; once "updated", the bridge goes for the keeper to start the new
+// one. `keys` and `url`: a test's (a test's folder only).
+export async function update({ now = false, keys = UPDATE_KEYS, url = UPDATE_URL, blocked = updatesBlocked(), clock = Date.now, step = () => {}, upWithin = 120_000 } = {}) {
+  if (!keys.length) return { result: "off", message: "Updates aren't set up for this machine yet." };
+  if (blocked) return { result: "blocked", message: blocked };
+  if (fs.existsSync(path.join(RUN, "stopped"))) return { result: "blocked", message: "Its engine is stopped: start it to update it." };
+  const before = boxVersion();
+  if (!before) return { result: "blocked", message: "This machine's version isn't known: connect to it from Kuvo Code on your Mac once." };
+  if (!takeUpdateLock()) return { result: "busy", message: "It's updating already." };
+  let trial = false, stopped = false, swapped = false, stage = null;
+  try {
+    step("checking");
+    let released;
+    try {
+      released = await fetched(url, 1_000_000, 30_000);
+    } catch (error) {
+      // The newest release has none for machines (one from before them): nothing newer for it.
+      if (/answered 404/.test(String(error?.message))) return { result: "current", version: before };
+      throw error;
+    }
+    const manifest = verifyBoxes(released.toString("utf8"), keys);
+    noteUpdate({ latest: manifest.version, checked: clock() });
+    if (!newerVersion(manifest.version, before)) return { result: "current", version: before };
+    if (!now && clock() - (Date.parse(manifest.released) || clock()) < RELEASE_AGE) return { result: "waiting", version: manifest.version, message: "It takes a release a few days after it's out." };
+    if (await boxBusy()) return { result: "busy", message: "Something is running there now." };
+
+    step("downloading");
+    stage = path.join(UPDATES, manifest.version);
+    fs.rmSync(stage, { recursive: true, force: true });
+    fs.mkdirSync(path.join(stage, "files"), { recursive: true, mode: 0o700 });
+    const pack = await fetched(manifest.pack.url, 100_000_000, 300_000);
+    if (hexSHA256(pack) !== manifest.pack.sha256) throw new Error("The release's files aren't what it says.");
+    fs.writeFileSync(path.join(stage, "pack.tgz"), pack, { mode: 0o600 });
+    if (ran("tar", ["xzf", path.join(stage, "pack.tgz"), "-C", path.join(stage, "files")]).status !== 0) throw new Error("The release's files couldn't be unpacked.");
+    const box = JSON.parse(fs.readFileSync(path.join(stage, "files", "box.json"), "utf8"));
+    if (box?.version !== manifest.version || box.engine !== manifest.engine || !isObject(box.files)) throw new Error("The release's files aren't what it says.");
+    const files = installOrder(Object.keys(box.files));
+    for (const file of files) {
+      if (!BOX_FILE.test(file) || file.split("/").includes("..")) throw new Error("The release names a file outside the box.");
+      if (hexSHA256(fs.readFileSync(path.join(stage, "files", file))) !== box.files[file]) throw new Error("The release's files aren't what it says.");
+    }
+    if (!files.includes("bin/box-version") || fs.readFileSync(path.join(stage, "files", "bin", "box-version"), "utf8").trim() !== manifest.version) throw new Error("The release's files aren't what it says.");
+    // Its tools kept as the box's own too (and put back with the rest, if it goes back).
+    for (const tool of OWN_TOOLS) {
+      if (!files.includes(`bin/${tool}`)) continue;
+      const from = path.join(stage, "files", "bin", tool), own = path.join(stage, "files", "bin", ".own", tool);
+      fs.mkdirSync(path.dirname(own), { recursive: true, mode: 0o700 });
+      fs.copyFileSync(from, own);
+      fs.chmodSync(own, fs.statSync(from).mode & 0o777);
+      files.push(`bin/.own/${tool}`);
+    }
+    files.splice(0, files.length, ...installOrder(files));
+
+    // Its engine, unless it's here already.
+    const engineFolder = path.join(K, "engine", manifest.engine);
+    let staged = null;
+    if (!fs.existsSync(path.join(engineFolder, "opencode"))) {
+      const kind = { x64: "x86_64", arm64: "aarch64" }[os.arch()];
+      const build = manifest.linux?.[kind];
+      if (!build?.url || !/^sha512-/.test(build.integrity ?? "")) throw new Error("The release has no engine for this machine.");
+      step("downloading the engine");
+      const tarball = await fetched(build.url, 400_000_000, 900_000);
+      if (crypto.createHash("sha512").update(tarball).digest("base64") !== build.integrity.slice(7)) throw new Error("The engine isn't what the release says.");
+      fs.writeFileSync(path.join(stage, "engine.tgz"), tarball, { mode: 0o600 });
+      fs.mkdirSync(path.join(stage, "engine"), { mode: 0o700 });
+      if (ran("tar", ["xzf", path.join(stage, "engine.tgz"), "-C", path.join(stage, "engine"), "package/bin/opencode"]).status !== 0) throw new Error("The engine couldn't be unpacked.");
+      staged = path.join(stage, "engine", "package", "bin", "opencode");
+      fs.chmodSync(staged, 0o755);
+    }
+
+    // Tried before anything's swapped: the engine runs, the new bridge works with it, the keeper reads.
+    step("checking it");
+    const engine = staged ?? path.join(engineFolder, "opencode");
+    if (ran(engine, ["--version"]).status !== 0) throw new Error("The new engine doesn't run here.");
+    const tried = ran(engine, [path.join(stage, "files", "bin", "kuvo-link.js"), "selftest"], { BUN_BE_BUN: "1", BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0", KUVO_HOME: K });
+    if (tried.status !== 0 || !tried.output.includes("ok")) throw new Error("The new link doesn't work with it here.");
+    if (ran("sh", ["-n", path.join(stage, "files", "bin", "kuvo-start")]).status !== 0) throw new Error("The new keeper doesn't read.");
+    if (!now && await boxBusy()) return { result: "busy", message: "Something is running there now." };
+
+    // Stopped, for sure, before anything's copied; what's there kept; then the new in its place,
+    // one file at a time, and started again.
+    step("installing");
+    let previous = {};
+    try { previous = readEngineFile(); } catch {}
+    const withAgents = Boolean(previous?.agentsPort) && fs.existsSync(path.join(stage, "files", "bin", "kuvo-agents.js"));
+    const otherEngine = previous?.version !== manifest.engine;
+    if (otherEngine && !roomForData()) throw new Error("There isn't room on it to keep its data while it updates.");
+    // What's there kept, and how to put it back, before the engine stops: a stop the update
+    // doesn't get past (the machine going down) is put back too, its engine started again.
+    keepForRollback(files, otherEngine);
+    noteUpdate({ trial: { from: before, to: manifest.version, at: clock() }, running: null });
+    fs.writeFileSync(UPDATE_TRIAL, manifest.version, { mode: 0o600 });
+    trial = true;
+    stopped = true;
+    const stop = ran("sh", [path.join(K, "bin", "kuvo-start"), "stop"], {}, 300_000);
+    if (stop.status !== 0 || (previous?.pid && alive(previous.pid))) throw new Error("Its engine couldn't be stopped to update it.");
+    if (otherEngine) keepData();
+    swapped = true;
+    if (staged) {
+      fs.mkdirSync(engineFolder, { recursive: true, mode: 0o700 });
+      fs.renameSync(staged, path.join(engineFolder, "opencode"));
+    }
+    for (const file of files) {
+      const from = path.join(stage, "files", file), to = path.join(K, file);
+      fs.mkdirSync(path.dirname(to), { recursive: true, mode: 0o700 });
+      fs.copyFileSync(from, `${to}.new`);
+      fs.chmodSync(`${to}.new`, fs.statSync(from).mode & 0o777);
+      fs.renameSync(`${to}.new`, to);
+    }
+    ran("sh", [path.join(K, "bin", "kuvo-start"), "start"]);
+    step("starting");
+    if (!(await cameUp(manifest.engine, withAgents, upWithin))) throw new Error("The new version didn't come up.");
+    // What it put there, for telling later whether an older Mac put its own back (`checkDrift`).
+    writePrivate(path.join(UPDATES, "installed.json"), JSON.stringify({ version: box.version, files: box.files }));
+    noteUpdate({ trial: { from: before, to: manifest.version, at: clock(), healthy: true } });
+    return { result: "updated", version: manifest.version };
+  } catch (error) {
+    const message = String(error?.message ?? error).slice(0, 300);
+    // Room first: what was downloaded goes before anything's put back.
+    if (stage) fs.rmSync(stage, { recursive: true, force: true });
+    if (swapped) {
+      ran("sh", [path.join(ROLLBACK, "restore.sh")], { KUVO_UPDATER: String(process.pid) }, 600_000);
+    } else {
+      // Nothing changed: what was kept goes, and the engine starts again if it was stopped.
+      if (trial) {
+        fs.rmSync(UPDATE_TRIAL, { force: true });
+        fs.rmSync(ROLLBACK, { recursive: true, force: true });
+      }
+      if (stopped) ran("sh", [path.join(K, "bin", "kuvo-start"), "start"]);
+    }
+    if (trial) noteUpdate({ trial: null });
+    noteUpdate({ last: { at: clock(), result: "failed", message, from: before } });
+    return { result: "failed", message };
+  } finally {
+    for (const name of listOf(UPDATES)) if (name !== "rollback" && name !== "installed.json") fs.rmSync(path.join(UPDATES, name), { recursive: true, force: true });
+    fs.rmSync(UPDATE_LOCK, { recursive: true, force: true });
+  }
+}
+
+// The new bridge, once an update put it there: well, the update's done. What was kept goes, and
+// engines but this one.
+export function confirmUpdate(clock = Date.now) {
+  const state = updateState();
+  if (!state.trial?.healthy || boxVersion() !== state.trial.to || isUpdating()) return false;
+  let engine = null;
+  try { engine = readEngineFile()?.version; } catch {}
+  fs.rmSync(UPDATE_TRIAL, { force: true });
+  fs.rmSync(ROLLBACK, { recursive: true, force: true });
+  if (engine) for (const name of listOf(path.join(K, "engine"))) if (name !== engine && !name.startsWith(".")) fs.rmSync(path.join(K, "engine", name), { recursive: true, force: true });
+  noteUpdate({ trial: null, last: { at: clock(), result: "updated", from: state.trial.from, to: state.trial.to } });
+  return true;
+}
+
+// An older Mac (Kuvo Code 0.7 and before) to hold updates back for, from now: it would put back
+// its own files.
+function noteOlderMac(at) {
+  let launchers = {};
+  try { launchers = JSON.parse(fs.readFileSync(LAUNCHERS, "utf8")) ?? {}; } catch {}
+  if ((launchers["an older Mac"] ?? 0) >= at) return;
+  launchers["an older Mac"] = at;
+  try { writePrivate(LAUNCHERS, JSON.stringify(launchers)); } catch {}
+}
+
+// An older Kuvo Code on a Mac touches `run/attached` each time it connects, and this one never
+// does: one that did lately holds this box's updates back (it would put back its own files). Not
+// a touch from before a Kuvo Code that marks the box last put its files there: that was most
+// likely the same Mac before it updated, and an older one still around touches it again.
+export function noteOlderMacs() {
+  let at = 0, marked = 0;
+  try {
+    at = fs.statSync(path.join(RUN, "attached")).mtimeMs;
+    marked = fs.statSync(path.join(K, "bin", "box-version")).mtimeMs;
+  } catch {}
+  if (at <= marked) at = 0;
+  // One a Mac's mark saw since the last check (`run/older-mac`), which marking hides.
+  try { at = Math.max(at, fs.statSync(path.join(RUN, "older-mac")).mtimeMs); } catch {}
+  if (!at || Date.now() - at > MAC_MEMORY) return false;
+  noteOlderMac(at);
+  return true;
+}
+
+// Whether a Mac that doesn't leave a newer box as it is (an older Kuvo Code) put its own files back
+// since the box updated itself (seen twice, ten minutes apart, and not while a Mac says it puts its
+// files in place): then the box doesn't update itself for a while, as that Mac would undo it, and
+// says why. Its version mark stays, so no other older Mac takes it further back.
+export function checkDrift(now = Date.now()) {
+  const record = path.join(UPDATES, "installed.json"), pending = path.join(RUN, "update-drift");
+  // Not while the box updates itself, or tries what it updated to: its files and version change then.
+  if (isUpdating() || fs.existsSync(UPDATE_TRIAL)) return false;
+  let installed = null;
+  try { installed = JSON.parse(fs.readFileSync(record, "utf8")); } catch { return false; }
+  // A Mac marked it since (its own files, as they should be).
+  if (installed?.version !== boxVersion() || !isObject(installed.files)) {
+    fs.rmSync(record, { force: true });
+    fs.rmSync(pending, { force: true });
+    return false;
+  }
+  const changed = Object.entries(installed.files).some(([file, sha]) => {
+    try { return hexSHA256(fs.readFileSync(path.join(K, file))) !== sha; } catch { return true; }
+  });
+  let installing = 0;
+  try { installing = fs.statSync(path.join(RUN, "mac-installing")).mtimeMs; } catch {}
+  if (!changed || isUpdating() || now - installing < 3600_000) {
+    fs.rmSync(pending, { force: true });
+    return false;
+  }
+  if (textOf(pending)?.trim() !== installed.version) {
+    try { writePrivate(pending, installed.version); } catch {}
+    return false;
+  }
+  noteOlderMac(now);
+  noteUpdate({ last: { at: now, result: "failed", message: "An older Kuvo Code on a Mac put its own files back here: update Kuvo Code on your Macs." } });
+  return true;
+}
+
+// Whether it's the night's window where you are (02:00 to 05:00, `KUVO_TZ`), and which night.
+export function updateNight(date = new Date(), zone = process.env.KUVO_TZ) {
+  let parts;
+  try {
+    parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: zone || undefined, year: "numeric", month: "2-digit", day: "2-digit", hour: "numeric", hourCycle: "h23" })
+      .formatToParts(date).map(part => [part.type, part.value]));
+  } catch {
+    return null;
+  }
+  const hour = Number(parts.hour);
+  return hour >= 2 && hour < 5 ? `${parts.year}-${parts.month}-${parts.day}` : null;
+}
+
+// What `kuvo/update` says: whether updates are set up, the switch, this version and the newest
+// heard of, how the last went, whether one runs now, and why not, when it can't.
+export function updateStatus() {
+  const state = updateState();
+  let engine = null;
+  try { engine = readEngineFile()?.version ?? null; } catch {}
+  return {
+    setUp: UPDATE_KEYS.length > 0,
+    auto: updateSettings().auto,
+    version: boxVersion(),
+    engine,
+    latest: state.latest ?? null,
+    last: state.last ?? null,
+    updating: isUpdating() ? state.running ?? "checking" : null,
+    blocked: updatesBlocked(),
+  };
+}
+
+// An update run by the bridge (a phone's or a Mac's Update Now, or the night's): one at a time;
+// once it's "updated", the bridge goes, for the keeper to start the new one.
+let updating = null;
+export function startUpdate(options = {}) {
+  if (updating || isUpdating()) return null;
+  updating = update({ ...options, step: running => noteUpdate({ running }) })
+    .then(outcome => {
+      noteUpdate({ running: null, ...(outcome.result === "updated" ? {} : { last: { at: Date.now(), ...outcome } }) });
+      if (outcome.result === "updated") setTimeout(() => process.exit(0), 1000);
+      return outcome;
+    }, () => null)
+    .finally(() => { updating = null; });
+  return updating;
 }
 
 // ---- The relay connection ----
@@ -968,6 +3803,7 @@ export function connectOnce(relay, secret, host) {
       try { socket.close(); } catch {}
       host.reset();
       host.send = () => {};
+      host.welcomed = false;
       resolve(welcomed);
     };
     const opening = setTimeout(() => { if (!welcomed) finish(); }, 15_000);
@@ -980,6 +3816,11 @@ export function connectOnce(relay, secret, host) {
         if (message.kind !== "welcome" || !message.address.equals(self)) return socket.close();
         welcomed = true;
         host.send = bytes => { if (socket.readyState === 1) socket.send(bytes); };
+        host.welcomed = true;
+        // Your other computers hear who's here at once, and tell who's there.
+        announce(host, readEngineFile, undefined, undefined, true).catch(() => {});
+        // A new bridge an update put here: it reached the relay, so it's well.
+        try { confirmUpdate(); } catch {}
         return;
       }
       if (message.kind === "deliver" && !message.address.equals(self)) host.receive(message.address, message.payload);
@@ -1013,21 +3854,47 @@ function commandLineOf(pid, platform = process.platform) {
   }
 }
 
-// A bridge, not whatever took its number after a crash: its command line says so. Where no
-// command line can be had the old answer stands on macOS (yes — the bridge only ever runs on
-// a machine reached over SSH, where /proc is there); on Windows, where an unreadable number
-// could be anyone's, it's no, so nothing is ever stopped on a guess.
-export function isBridge(pid, platform = process.platform, commandLine = commandLineOf) {
-  if (!pid || pid === process.pid || !alive(pid)) return false;
+// Whether `pid` runs `name`, not whatever took its number after a crash: its command line says
+// so. Where no command line can be had the old answer stands on macOS (yes — the bridge only
+// ever runs on a machine reached over SSH, where /proc is there); on Windows, where an
+// unreadable number could be anyone's, it's no, so nothing is ever stopped on a guess.
+function runs(pid, name, platform = process.platform, commandLine = commandLineOf) {
+  if (!Number.isInteger(pid) || pid <= 1 || !alive(pid)) return false;
   try {
     const line = commandLine(pid, platform);
-    if (line !== null) return line.includes("kuvo-link.js");
+    if (line !== null) return line.includes(name);
   } catch {}
   return platform !== "win32" && !fs.existsSync("/proc");
 }
 
-// Something to answer: a paired phone, or a pairing code waiting.
-const needed = link => Boolean(link && ((link.phones ?? []).length || (link.pairing && Date.now() < link.pairing.expires)));
+// Another bridge.
+export function isBridge(pid, platform = process.platform, commandLine = commandLineOf) {
+  return pid !== process.pid && runs(pid, "kuvo-link.js", platform, commandLine);
+}
+
+// The box's keeper (`bin/kuvo-start`), started again if it went: it keeps the engine and this
+// bridge running.
+export function keepKeeper() {
+  let start = path.join(K, "bin", "kuvo-start");
+  if (!fs.existsSync(start)) return;
+  // An older Kuvo Code on a Mac (0.7 and before) put its own kuvo-start here, which only starts
+  // the engine after a restart: the box's keeper, from the copy it keeps of itself (which puts
+  // itself back).
+  const copy = path.join(K, "bin", ".kuvo-start-keeper");
+  if (!/\nkeep\)/.test(textOf(start) ?? "") && fs.existsSync(copy)) start = copy;
+  let keeper = null;
+  try { keeper = Number(fs.readFileSync(path.join(RUN, "box.pid"), "utf8")); } catch {}
+  if (keeper && runs(keeper, "kuvo-start")) return;
+  const environment = { ...process.env };
+  delete environment.BUN_BE_BUN;
+  delete environment.BUN_RUNTIME_TRANSPILER_CACHE_PATH;
+  try {
+    spawn("sh", [start], { cwd: K, env: environment, detached: true, stdio: "ignore" }).unref();
+  } catch {}
+}
+
+// Something to answer: a paired phone, a pairing code waiting, or other boxes of yours to talk to.
+const needed = link => Boolean(link && ((link.phones ?? []).length || (link.pairing && Date.now() < link.pairing.expires) || peersOf(link).length));
 
 async function run() {
   // One bridge at a time: a newer one (the engine restarted) takes over.
@@ -1051,32 +3918,79 @@ async function run() {
   // the next bridge doesn't take a stale number for a running one.
   process.on("exit", forgetOwnPid);
 
-  // Stops with the engine, when nothing's paired any more, or when another bridge took over;
-  // phones removed since lose what they have open.
+  // Stops when nothing's paired any more, or when another bridge took over; up while the engine
+  // is down too, so a phone can start it. Phones removed since lose what they have open, and the
+  // box's keeper, if it went, starts again (it keeps this bridge, and the engine, running).
   let current = null;
   setInterval(() => {
-    let engine;
-    try { engine = readEngineFile(); } catch {}
     let owner = null;
     try { owner = Number(fs.readFileSync(PID_FILE, "utf8")); } catch {}
     const link = readLink();
-    if (!engine || !alive(engine.pid) || !needed(link) || owner !== process.pid) return cleanUp();
+    if (!needed(link)) {
+      forgetPhones();
+      noLongerNeeded();
+    }
+    if (!needed(link) || owner !== process.pid) return cleanUp();
     current?.keepOnly(new Set((link.phones ?? []).map(phone => phone.key)));
+    keepKeeper();
   }, 30_000);
 
-  // Your phones' notifications, on whichever relay connection is up.
-  watchEngine(notice => {
+  // Your phones' notifications, on whichever relay connection is up: the engine's news, and what
+  // agents ask for as they browse.
+  const tellPhones = notice => {
     const link = readLink();
-    if (!current || !link?.key) return;
+    if (!current || !link?.key) return false;
     const json = noticeJSON(notice);
     const key = Buffer.from(link.key, "base64url");
-    for (const phone of link.phones ?? []) if (phone.address) current.send(pushTo(phone, json, key));
-  });
+    let sent = false;
+    for (const phone of link.phones ?? []) {
+      if (!phone.address) continue;
+      try {
+        current.send(pushTo(phone, json, key));
+        sent = true;
+      } catch {}
+    }
+    return sent;
+  };
+  watchEvents(readEngineFile, tellPhones);
+  // The coding agents here (their sessions, and group chats that live here), through their bridge.
+  watchEvents(readBridgeFile, tellPhones);
+  watchAsks(tellPhones);
+  // Your other computers: this box's agents told to them while the relay connection is up (and
+  // listed here, relay or not), and its agents' letters sent; without the relay a while, those
+  // not sent yet go to the Mac.
+  let lastWelcomed = Date.now();
+  refreshOwn(readEngineFile).catch(() => {});
+  // Updates: the new bridge, once one put it here, says it's well (after the relay's welcome, or
+  // three minutes); each night's window, one, when it's on and nothing runs (PROTOCOL.md, "Updates").
+  setTimeout(() => { try { confirmUpdate(); } catch {} }, 180_000);
+  const nightly = () => {
+    noteLauncher();
+    noteOlderMacs();
+    try { checkDrift(); } catch {}
+    const night = updateNight();
+    if (!night || !updateSettings().auto || updateState().night === night || !UPDATE_KEYS.length) return;
+    startUpdate({})?.then(outcome => { if (outcome && outcome.result !== "busy") noteUpdate({ night }); });
+  };
+  setTimeout(nightly, 60_000);
+  setInterval(nightly, 600_000);
+  setInterval(() => {
+    if (current?.welcomed) announce(current, readEngineFile).catch(() => {});
+    else refreshOwn(readEngineFile).catch(() => {});
+  }, 60_000);
+  setInterval(() => {
+    if (current?.welcomed) lastWelcomed = Date.now();
+    try { sendOutbox(current ?? { send() {} }, undefined, Date.now(), current?.welcomed ? 0 : Date.now() - lastWelcomed); } catch {}
+  }, 3_000);
 
   let attempt = 0;
   while (true) {
     const link = readLink();
-    if (!needed(link)) return cleanUp();
+    if (!needed(link)) {
+      forgetPhones();
+      noLongerNeeded();
+      return cleanUp();
+    }
     let engine = {};
     try { engine = readEngineFile(); } catch {}
     const host = new LinkHost({
@@ -1084,7 +3998,8 @@ async function run() {
       hello: { v: 1, kind: "machine", name: link.name || os.hostname(), app: BRIDGE_VERSION, engine: engine.version ?? null },
       authorize: authorizePhone,
       confirmed: confirmPhone,
-      handle: engineHandler(readEngineFile, { name: link.name || os.hostname() }),
+      mail: (_from, body) => receiveMail(body, host, (sender, payload) => peerMail(sender, payload, host, peerTargets)),
+      handle: engineHandler(readEngineFile, { name: link.name || os.hostname() }, readBridgeFile, changed => host.keepOnly(new Set((changed.phones ?? []).map(phone => phone.key)))),
       connect: engineConnect(readEngineFile),
       send: () => {},
     });
@@ -1124,6 +4039,76 @@ function startBridge() {
 // leaving it) and phones paired with the machine itself, starts the bridge or restarts it (on
 // another relay, or a newer one), and prints the machine's address and public key for the Mac
 // to tell your phones. Nothing left to answer: the bridge stops, and the keys stay.
+// `kuvo-link.js box <command>`: a Mac's way to a machine's own settings, over SSH, the same way a
+// phone's goes (one answer, JSON, on stdout). `adopt` (a seed on stdin), `read`, `change`
+// ({changes} on stdin), `key <name>` (its value on stdin; none removes it).
+async function box(command) {
+  const input = async () => {
+    const chunks = [];
+    for await (const chunk of process.stdin) chunks.push(chunk);
+    return Buffer.concat(chunks).toString("utf8");
+  };
+  const say = value => console.log(JSON.stringify(value));
+  switch (command) {
+    case "adopt": {
+      let seed = null;
+      try { seed = JSON.parse((await input()) || "null"); } catch {}
+      return say(adoptBox(seed));
+    }
+    case "read": {
+      const { settings, problem } = readSettings();
+      return say(problem ? { status: 409, message: problem } : { status: 200, settings, own: ownsSettings() });
+    }
+    case "change": {
+      let given = {};
+      try { given = JSON.parse(await input()); } catch {}
+      return say(ownsSettings() ? changeSettings(given?.changes) : { status: 409, message: "This machine's settings aren't its own yet." });
+    }
+    case "key": {
+      const name = process.argv[4];
+      const value = await input();
+      return say(setBoxKey(name, value.length ? value : null));
+    }
+    case "update-status":
+      return say({ status: 200, ...updateStatus() });
+    case "update-auto": {
+      const value = (await input()).trim();
+      if (value !== "true" && value !== "false") return say({ status: 400, message: "Say true or false." });
+      setAutoUpdate(value === "true");
+      return say({ status: 200, ...updateStatus() });
+    }
+    case "update-now": {
+      // On its own, outliving this command: what it does shows in update-status.
+      if (!UPDATE_KEYS.length) return say({ status: 409, message: "Updates aren't set up for this machine yet." });
+      const blocked = updatesBlocked();
+      if (blocked) return say({ status: 409, message: blocked });
+      if (isUpdating()) return say({ status: 409, message: "It's updating already." });
+      spawn(process.execPath, [fileURLToPath(import.meta.url), "update", "--now"], { detached: true, stdio: "ignore", cwd: K, env: process.env }).unref();
+      return say({ status: 202, ...updateStatus(), updating: "checking" });
+    }
+    case "personalities": {
+      // A Mac's copy met with this one's: both end up as one.
+      let given = null;
+      try { given = JSON.parse((await input()) || "null"); } catch {}
+      return say({ status: 200, ...changePersonalities(library => mergePersonalities(library, given)) });
+    }
+    default:
+      console.error("Usage: kuvo-link.js box adopt | read | change | key <name> | personalities | update-status | update-auto | update-now");
+      process.exit(2);
+  }
+}
+
+// Where a letter's agent can be here: the engine, and the coding agents' bridge while it runs.
+function peerTargets() {
+  const targets = [];
+  try { targets.push(readEngineFile()); } catch {}
+  try {
+    const bridge = readBridgeFile();
+    if (bridge?.port && bridge?.password && runs(bridge.pid, "kuvo-agents")) targets.push(bridge);
+  } catch {}
+  return targets;
+}
+
 async function setup() {
   let input;
   try {
@@ -1134,51 +4119,105 @@ async function setup() {
     console.error("setup takes JSON on stdin: {relay, name, phones: [{key, name, address}]}");
     process.exit(2);
   }
-  const phones = Array.isArray(input.phones) ? input.phones.filter(p => typeof p?.key === "string") : [];
+  const phones = Array.isArray(input.phones) ? input.phones : [];
+  const mac = typeof input.mac === "string" ? input.mac : undefined;
   const running = runningBridge();
   const old = readLink();
-  const own = (old?.phones ?? []).filter(phone => phone.from === "pair");
-  if (!phones.length && !own.length) {
-    if (old) writeLink({ ...old, phones: [] });
+  let link = null;
+  updateLink(current => {
+    const next = current ?? { secret: crypto.randomBytes(32).toString("base64url"), key: newKey().toString("base64url"), phones: [] };
+    // The Mac's key, which a phone list it mails later must come from, and its list, unless one it
+    // sent later came first (by mail, as this was on its way).
+    const at = typeof input.at === "number" ? input.at : 0;
+    const by = mac ?? next.mac;
+    // Its phones, when it gives them (with the phone link off it gives none, and changes none).
+    if (Array.isArray(input.phones) && (!by || at > lastFrom(next, by))) {
+      takeMacList(next, phones, input.removed, by);
+      if (by) next.macAts = { ...(next.macAts ?? {}), [by]: at };
+    }
+    if (mac) {
+      next.mac = mac;
+      next.macs = [...new Set([...macsOf(next), mac])];
+      forgetOldMacs(next, mac);
+      // Its peers: itself and its other machines.
+      if (Array.isArray(input.peers)) takePeers(next, mac, input.peers, typeof input.peersAt === "number" ? input.peersAt : at, input.moved);
+    }
+    if (typeof input.id === "string") next.id = input.id.slice(0, 200);
+    // Whether this Mac leaves a newer box as it is, by its ID (as its engine launches name it): the
+    // box updates itself only while every Mac that started its engine lately does (PROTOCOL.md, "Updates").
+    if (typeof input.macID === "string" && /^[A-Za-z0-9-]{1,100}$/.test(input.macID)) next.tolerantIDs = { ...(next.tolerantIDs ?? {}), [input.macID]: input.tolerates === 1 };
+    if (!next.phones.length && !peersOf(next).length) return current ? next : null;
+    next.relay = String(input.relay);
+    next.name = String(input.name || next.name || os.hostname()).slice(0, 100);
+    link = next;
+    return next;
+  });
+  // None paired any more (each removed for good, as one at a time would be): no bridge.
+  if (!link) {
     if (running) process.kill(running, "SIGTERM");
+    forgetPhones();
     console.log("{}");
     return;
   }
-  const link = old ?? { secret: crypto.randomBytes(32).toString("base64url"), key: newKey().toString("base64url"), phones: [] };
-  link.relay = String(input.relay);
-  link.name = String(input.name || link.name || os.hostname()).slice(0, 100);
-  const known = new Map((old?.phones ?? []).map(p => [p.key, p]));
-  const ADDRESS = /^[A-Za-z0-9_-]{22}$/;
-  const fromMac = phones.map(p => ({
-    key: p.key,
-    name: String(p.name ?? "").slice(0, 100),
-    added: known.get(p.key)?.added ?? Math.floor(Date.now() / 1000),
-    from: "mac",
-    address: ADDRESS.test(p.address ?? "") ? p.address : known.get(p.key)?.address,
-  }));
-  link.phones = [...fromMac, ...own.filter(phone => !fromMac.some(p => p.key === phone.key))];
-  writeLink(link);
   // A new relay or name needs a new connection, and a newer bridge replaces an older one.
   let runningVersion = null;
   try { runningVersion = fs.readFileSync(VERSION_FILE, "utf8").trim(); } catch {}
   const restart = old?.relay !== link.relay || old?.name !== link.name || runningVersion !== BRIDGE_VERSION;
-  if (running && restart) process.kill(running, "SIGTERM");
-  if (!running || restart) startBridge();
+  // Not while the box updates itself: the bridge running it would end, and the keeper starts the
+  // new one once it's done.
+  if (!isUpdating()) {
+    if (running && restart) process.kill(running, "SIGTERM");
+    if (!running || restart) startBridge();
+  }
   console.log(JSON.stringify({
     address: addressOf(Buffer.from(link.secret, "base64url")).toString("base64url"),
     key: publicOf(Buffer.from(link.key, "base64url")).toString("base64url"),
+    // Talks to other boxes itself (PROTOCOL.md, "Peers").
+    peers: true,
   }));
 }
 
+// `leave <mac>`: Mac `mac` removed this machine. It's no longer one of its Macs: its lists of
+// peers and phones no longer count here, and what peers only it named told goes. Another Mac's
+// stay; with no peers or phones left, the bridge stops.
+export function leave(mac) {
+  if (typeof mac !== "string" || !KEY.test(mac)) return false;
+  const link = updateLink(link => {
+    if (!link || !macsOf(link).includes(mac)) return null;
+    link.macs = macsOf(link).filter(each => each !== mac);
+    if (link.mac === mac) {
+      if (link.macs.length) link.mac = link.macs[0];
+      else delete link.mac;
+    }
+    for (const field of ["macSeen", "macAts", "peersFrom"]) if (link[field]) delete link[field][mac];
+    for (const phone of link.phones ?? []) if (phone.mac === mac) delete phone.mac;
+    return link;
+  });
+  if (!link) return false;
+  const keep = new Set(peersOf(link).map(peer => peer.key));
+  locked(PEER_LOCK, () => {
+    let all = {};
+    try { all = JSON.parse(fs.readFileSync(PEER_AGENTS_FILE, "utf8")); } catch { return; }
+    for (const key of Object.keys(all)) if (!keep.has(key)) delete all[key];
+    writePrivate(PEER_AGENTS_FILE, JSON.stringify(all));
+  });
+  try { if (JSON.parse(fs.readFileSync(MAC_AGENTS_FILE, "utf8"))?.key === mac) fs.rmSync(MAC_AGENTS_FILE, { force: true }); } catch {}
+  writeAgents(link);
+  return true;
+}
+
 function pair(relay) {
-  const link = readLink() ?? { secret: crypto.randomBytes(32).toString("base64url"), key: newKey().toString("base64url"), name: os.hostname(), phones: [] };
-  if (relay) link.relay = relay;
-  if (!link.relay) {
+  const link = updateLink(current => {
+    const next = current ?? { secret: crypto.randomBytes(32).toString("base64url"), key: newKey().toString("base64url"), name: os.hostname(), phones: [] };
+    if (relay) next.relay = relay;
+    if (!next.relay) return null;
+    next.pairing = { token: crypto.randomBytes(16).toString("base64url"), expires: Date.now() + PAIRING_MINUTES * 60_000 };
+    return next;
+  });
+  if (!link) {
     console.error("Give the relay's address: kuvo-link.js pair wss://…");
     process.exit(1);
   }
-  link.pairing = { token: crypto.randomBytes(16).toString("base64url"), expires: Date.now() + PAIRING_MINUTES * 60_000 };
-  writeLink(link);
   const query = new URLSearchParams({
     v: "1",
     relay: link.relay,
@@ -1213,12 +4252,30 @@ if (main) {
   if (mode === "run") await run();
   else if (mode === "setup") await setup();
   else if (mode === "pair") pair(argument);
+  else if (mode === "box") await box(argument);
+  else if (mode === "leave") leave(argument);
+  else if (mode === "update") {
+    // `update [--now]`, and for a test's folder only, `--url <boxes.json> --key <public key>`. Once
+    // it's updated, the running bridge goes, for the keeper to start the new one.
+    const args = process.argv.slice(3);
+    const option = name => (args.indexOf(name) >= 0 ? args[args.indexOf(name) + 1] : undefined);
+    const test = option("--url") && option("--key") && path.resolve(K) !== path.join(os.homedir(), ".kuvo-code");
+    const outcome = await update({ now: args.includes("--now"), step: running => noteUpdate({ running }), ...(test ? { url: option("--url"), keys: [option("--key")], blocked: null } : {}) });
+    noteUpdate({ running: null, ...(outcome.result === "updated" ? {} : { last: { at: Date.now(), ...outcome } }) });
+    if (outcome.result === "updated") {
+      const pid = runningBridge();
+      if (pid) process.kill(pid, "SIGTERM");
+      // No bridge to start again (nothing for it to answer): the new version came up, so it's done.
+      if (!needed(readLink())) confirmUpdate();
+    }
+    console.log(JSON.stringify(outcome));
+  }
   else if (mode === "selftest") {
     const ok = selftest();
     console.log(ok ? "ok" : "failed");
     process.exit(ok ? 0 : 1);
   } else {
-    console.error("Usage: kuvo-link.js run | setup | pair [relay] | selftest");
+    console.error("Usage: kuvo-link.js run | setup | pair [relay] | box <command> | leave <mac> | update [--now] | selftest");
     process.exit(2);
   }
 }

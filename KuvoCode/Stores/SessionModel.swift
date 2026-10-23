@@ -94,6 +94,10 @@ final class SessionModel {
         if permissions != transcript.permissions {
             permissions = transcript.permissions
             permissionCommands = Self.commands(of: permissions, in: transcript.messages)
+        } else if permissions.contains(where: { $0.action == "shell" && permissionCommands[$0.id] == nil }) {
+            // Asked before the step's word of its command came (a step read again): once it has.
+            let commands = Self.commands(of: permissions, in: transcript.messages)
+            if commands != permissionCommands { permissionCommands = commands }
         }
         if forms != transcript.forms { forms = transcript.forms }
         let inline = Self.inlineShells(in: transcript.messages)
@@ -593,8 +597,14 @@ final class SessionModel {
             if transcript.isStale { scheduleReload() }
             // A queue left waiting (the app quit mid-run, say) waits for Resume rather than
             // starting on its own. Read again later (a reconnect), it carries on.
-            if !isLoaded, !isRunning, hasQueue {
+            // One for the next step of a run that ended with the app is held too, ahead of the
+            // queue, as Stop holds one: it showed nowhere, and Resume went past it. Not one you've
+            // just sent from here (as the session was read), nor while it's unknown whether the
+            // engine runs it, mid-run on a machine say: the agent would miss it at its next step.
+            let leftForNextStep = running != nil && transcript.pending.contains { $0.delivery == .steer && !$0.isLocal && !sentIDs.contains($0.id) }
+            if !isLoaded, !isRunning, hasQueue || leftForNextStep {
                 isQueuePaused = true
+                if leftForNextStep { await holdWaiting() }
             } else if isLoaded, !isRunning, hasQueue, !isQueuePaused {
                 scheduleDrain()
             }
@@ -801,6 +811,8 @@ final class SessionModel {
                     holdOnArrival.remove(id)
                     return
                 }
+                // Moving to another computer: back in the composer, to send once it's there.
+                if Moves.isFrozen(self.id) { throw Moves.Failure.moving }
                 // Held while it was on its way: to the queue, not the next step.
                 let held = holdOnArrival.remove(id) != nil
                 let steering = !held && delivery == .steer
@@ -833,9 +845,15 @@ final class SessionModel {
     }
 
     /// Sends the composer's draft as it is (its text, files and what it replies to), emptying it
-    /// first: what can't be sent comes back to it.
-    func submitDraft(for model: Model?, queue: Bool, commands: [Command]) {
+    /// first: what can't be sent comes back to it. `unavailable`: why the session's model can't
+    /// run (its account signed out of, `Catalog.unavailable`), said instead, the draft kept: the
+    /// engine would take the message and drop it without a word. A "!" command needs no model.
+    func submitDraft(for model: Model?, queue: Bool, commands: [Command], unavailable: String? = nil) {
         failure = nil
+        if let unavailable, Self.shellCommand(in: draftText) == nil {
+            failure = unavailable
+            return
+        }
         // A "!" or "/" command runs as typed; what you were replying to waits for a message.
         let isCommand = Self.shellCommand(in: draftText) != nil || SlashCommands.parse(draftText, commands: commands) != nil
         let text = isCommand ? draftText : Quoting.message(quotes: draftQuotes, text: draftText)
@@ -878,7 +896,13 @@ final class SessionModel {
         let previous = sending
         sending = Task {
             await previous?.value
-            do { try await api.runShell(session: id, command: command) } catch { notRun(written, because: error) }
+            do {
+                // Moving to another computer: back in the composer, to run once it's there.
+                if Moves.isFrozen(id) { throw Moves.Failure.moving }
+                try await api.runShell(session: id, command: command)
+            } catch {
+                notRun(written, because: error)
+            }
         }
     }
 
@@ -902,6 +926,7 @@ final class SessionModel {
             do {
                 let machine = RemoteFolder.machine(of: session.location.directory)
                 let prepared = await Task.detached { machine.map { Attachments.prepare(files, for: model, machine: $0) } ?? Attachments.prepare(files, for: model) }.value
+                if Moves.isFrozen(id) { throw Moves.Failure.moving }
                 try await api.runCommand(session: id, name: name, arguments: Attachments.text(arguments, for: prepared), files: prepared.files, delivery: delivery)
             } catch {
                 runningCommands.removeAll { $0.id == running.id }
@@ -1143,7 +1168,7 @@ final class SessionModel {
         }
     }
 
-    private var undone: (before: ComposerState, after: ComposerState)?
+    private var undone: (before: ComposerState, after: ComposerState, put: String)?
 
     /// A sent message's attached files that are still on this Mac.
     static func files(of message: Message.User) -> [URL] {
@@ -1185,10 +1210,21 @@ final class SessionModel {
                 session.revert = try await api.stageRevert(session: id, messageID: copy.id)
                 // Undone further back before Redo: Redo takes them all back, so it puts back the
                 // composer as it was before the first undo (with each undo's text gone, rather
-                // than left to be sent again).
-                let before = undone?.before ?? composerState
+                // than left to be sent again). Written in since the last undo, it's yours: Redo
+                // puts it back as it is now, as it would have left it, less the last undo's text
+                // if that's still at its start as it was put there.
+                let now = composerState
+                var before = now
+                if let undone, undone.after == now {
+                    before = undone.before
+                } else if let undone, !undone.put.isEmpty, now.text == undone.put || now.text.hasPrefix(undone.put + "\n\n") {
+                    before.text = String(now.text.dropFirst(min(now.text.count, undone.put.count + 2)))
+                }
                 restoreDraft(CommandMessages.shared.text(of: copy), files: Self.files(of: message, stored: copy))
-                undone = (before, composerState)
+                let after = composerState
+                // The text this undo put ahead of what was there.
+                let put = after.text == now.text ? "" : now.text.isEmpty ? after.text : String(after.text.dropLast(now.text.count + 2))
+                undone = (before, after, put)
             } catch {
                 fail(error)
             }
@@ -1206,9 +1242,14 @@ final class SessionModel {
             var sentID: String?
             var user = message
             do {
+                if Moves.isFrozen(self.id) { throw Moves.Failure.moving }
                 user = await stored(message)
+                // Each as the engine kept it: by where it is, or (sent inline: a machine's, a photo
+                // from the phone) with what's in it.
                 let files = (user.files ?? []).compactMap { file -> OpenCodeAPI.PromptFile? in
-                    if case .uri(let uri) = file.source { .init(uri: uri, name: file.name) } else { nil }
+                    if case .uri(let uri) = file.source { return .init(uri: uri, name: file.name) }
+                    guard let data = file.data else { return nil }
+                    return .init(uri: "data:\(file.mime);base64,\(data)", name: file.name)
                 }
                 _ = try await api.stageRevert(session: id, messageID: user.id)
                 if let command = CommandMessages.shared[user.id], let (name, arguments) = SlashCommands.split(command) {
@@ -1368,7 +1409,7 @@ final class SessionModel {
         guard canReach else { return }
         // The rules for particular things (the project's folders, a bot's folder and its
         // wake-ups) stay, after the approval rules and what Settings › Permissions asks of them.
-        let settings = EngineConfig.current?.permissionRules ?? []
+        let settings = EngineConfig.rules(on: RemoteFolder.machine(of: session.location.directory))
         let rules = approval.rules(settings: settings) + (session.permissions ?? []).filter(ToolApproval.isParticular)
         session.permissions = rules
         Task {
@@ -1381,9 +1422,12 @@ final class SessionModel {
     func syncFolders() async {
         // As the engine knows them: a machine's folders are plain paths there.
         let folders = projectFolders().map(api.enginePath)
+        let machine = RemoteFolder.machine(of: session.location.directory)
+        // Its computer's rules not known yet: once they are (they're read as it's reached).
+        guard EngineConfig.knowsRules(on: machine) else { return }
         var current = session.permissions ?? []
-        // Its approval with Settings › Permissions as they are now, too.
-        var rules = ProjectFolders.permissions(ToolApproval.refreshed(current, settings: EngineConfig.current?.permissionRules ?? []), folders: folders)
+        // Its approval with Settings › Permissions as they are now on its computer, too.
+        var rules = ProjectFolders.permissions(ToolApproval.refreshed(current, settings: EngineConfig.rules(on: machine)), folders: folders)
         guard rules != current else { return }
         do {
             try await api.setPermissions(session: id, rules: rules)
@@ -1391,7 +1435,7 @@ final class SessionModel {
             // last word is yours with the folders, not these from before it.
             for _ in 0..<3 where (session.permissions ?? []) != current {
                 current = session.permissions ?? []
-                rules = ProjectFolders.permissions(ToolApproval.refreshed(current, settings: EngineConfig.current?.permissionRules ?? []), folders: folders)
+                rules = ProjectFolders.permissions(ToolApproval.refreshed(current, settings: EngineConfig.rules(on: machine)), folders: folders)
                 try await api.setPermissions(session: id, rules: rules)
             }
             session.permissions = rules

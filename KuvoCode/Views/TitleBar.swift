@@ -2,9 +2,16 @@ import AppKit
 import OpenCodeKit
 import SwiftUI
 
-/// The tab bar in the title bar can be hidden (View › Hide Tab Bar, or Settings › General).
+/// The tab bar in the title bar, off until you turn it on (View › Show Tab Bar, or Settings ›
+/// General). Without it, sessions are switched in the sidebar or with ⌘K, and Settings shows one
+/// page at a time.
 enum TabBar {
     static let showsKey = "showsTabBar"
+    static let showsByDefault = false
+
+    static var isShown: Bool {
+        UserDefaults.standard.object(forKey: showsKey) as? Bool ?? showsByDefault
+    }
 }
 
 /// An open tab: a session, or a new one being written (`draft:<folder>`).
@@ -213,11 +220,11 @@ struct TabStrip: View {
 
     private func menu(for tab: TabItem) -> [NSMenuItem] {
         var items: [NSMenuItem] = []
-        if let openBeside, tab.id != selection, SidebarView.draftDirectory(from: tab.id) == nil, BotGroups.groupID(fromTab: tab.id) == nil {
+        if let openBeside, tab.id != selection, SidebarView.draftDirectory(from: tab.id) == nil, BotGroups.groupID(fromTab: tab.id) == nil, !MainTerminals.isTerminal(tab.id) {
             items += [ActionItem("Open Beside") { openBeside(tab.id) }]
         }
         // A bot or a group chat is renamed in its editor, not here.
-        if let rename, SidebarView.draftDirectory(from: tab.id) == nil, tab.bot == nil, BotGroups.groupID(fromTab: tab.id) == nil {
+        if let rename, SidebarView.draftDirectory(from: tab.id) == nil, tab.bot == nil, BotGroups.groupID(fromTab: tab.id) == nil, !MainTerminals.isTerminal(tab.id) {
             items += [ActionItem("Rename…") { rename(tab.id) }, .separator()]
         }
         let others = ActionItem("Close Other Tabs") { closeAll(tab.id) }

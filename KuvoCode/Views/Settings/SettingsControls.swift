@@ -40,11 +40,12 @@ struct ConfigTextField: View {
     /// written in it, so all of it shows.
     var multiline = false
     @Environment(AppModel.self) private var app
+    @Environment(\.settingsBox) private var box
     @Environment(\.editedConfig) private var edited
     @State private var field = SettingField()
     @FocusState private var isFocused: Bool
 
-    private var config: EngineConfig { edited ?? app.engineConfig }
+    private var config: EngineConfig { edited ?? app.config(for: box) }
 
     var body: some View {
         if multiline {
@@ -55,7 +56,7 @@ struct ConfigTextField: View {
                     .lineLimit(1...10)
             }
         } else {
-            text
+            SettingsTextRow(title: title) { text }
         }
     }
 
@@ -85,16 +86,20 @@ struct ConfigNumberField: View {
     let path: [String]
     var prompt = "Default"
     @Environment(AppModel.self) private var app
+    @Environment(\.settingsBox) private var box
     @Environment(\.editedConfig) private var edited
     @State private var field = SettingField()
     @FocusState private var isFocused: Bool
 
-    private var config: EngineConfig { edited ?? app.engineConfig }
+    private var config: EngineConfig { edited ?? app.config(for: box) }
 
     var body: some View {
         let stored = config.value(at: path)?.int.map(String.init) ?? ""
+        SettingsTextRow(title: title) { numberField(stored) }
+    }
+
+    private func numberField(_ stored: String) -> some View {
         TextField(title, text: $field.text, prompt: Text(prompt))
-            .multilineTextAlignment(.trailing)
             .focused($isFocused)
             .onSubmit(commit)
             .onChange(of: isFocused) { if !isFocused { commit() } }
@@ -114,18 +119,19 @@ struct ConfigNumberField: View {
 }
 
 /// Longer text, like an agent's instructions: saved when you leave it. Monospaced, like a
-/// skill's instructions, and on the row's own background rather than a box of its own.
+/// skill's instructions, and on the group's own background: the group is the text area.
 struct ConfigTextEditor: View {
     let path: [String]
     var minHeight: CGFloat = 120
     /// Grey words in it while it's empty, like a text field's.
     var prompt = ""
     @Environment(AppModel.self) private var app
+    @Environment(\.settingsBox) private var box
     @Environment(\.editedConfig) private var edited
     @State private var field = SettingField()
     @FocusState private var isFocused: Bool
 
-    private var config: EngineConfig { edited ?? app.engineConfig }
+    private var config: EngineConfig { edited ?? app.config(for: box) }
 
     var body: some View {
         let stored = config.value(at: path)?.string ?? ""
@@ -184,12 +190,17 @@ struct ConfigModelPicker: View {
     let path: [String]
     var defaultTitle = "Default"
     @Environment(AppModel.self) private var app
+    @Environment(\.settingsBox) private var box
     @Environment(Catalog.self) private var catalog
     @Environment(\.editedConfig) private var edited
 
-    private var config: EngineConfig { edited ?? app.engineConfig }
+    private var config: EngineConfig { edited ?? app.config(for: box) }
 
     var body: some View {
+        LabeledContent(title) { picker.labelsHidden().fixedSize() }
+    }
+
+    private var picker: some View {
         Picker(title, selection: config.string(path)) {
             Text(defaultTitle).tag(String?.none)
             ForEach(catalog.modelsByProvider, id: \.provider) { group in
@@ -215,15 +226,16 @@ struct ConfigStringList: View {
     let path: [String]
     let prompt: String
     @Environment(AppModel.self) private var app
+    @Environment(\.settingsBox) private var box
     @State private var newItem = ""
 
     var body: some View {
-        let value = app.engineConfig.value(at: path)
+        let value = app.config(for: box).value(at: path)
         if let value, value.array == nil {
             Text("Set up by hand in the settings file.")
                 .foregroundStyle(.secondary)
         } else {
-            let items = app.engineConfig.items(path)
+            let items = app.config(for: box).items(path)
             ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                 HStack {
                     Text(item.string ?? item["package"]?.string ?? "Set up in the settings file")
@@ -235,7 +247,7 @@ struct ConfigStringList: View {
                     Button {
                         var items = items
                         items.remove(at: index)
-                        app.engineConfig.setItems(items, at: path)
+                        app.config(for: box).setItems(items, at: path)
                     } label: {
                         Image(systemName: "minus.circle.fill")
                     }
@@ -248,7 +260,7 @@ struct ConfigStringList: View {
                 .onSubmit {
                     let item = newItem.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !item.isEmpty, !items.contains(.string(item)) else { return }
-                    app.engineConfig.setItems(items + [.string(item)], at: path)
+                    app.config(for: box).setItems(items + [.string(item)], at: path)
                     newItem = ""
                 }
         }
@@ -263,19 +275,26 @@ struct ConfigKeyValueList: View {
     var keyPrompt = "Name"
     var valuePrompt = "Value"
     @Environment(AppModel.self) private var app
+    @Environment(\.settingsBox) private var box
     @State private var newKey = ""
     @State private var newValue = ""
+    /// The kind of what the list is in (an MCP server's "local" or "remote") as it appeared: one
+    /// switched since has put these aside, and what a row still holds isn't written into the other.
+    @State private var kind: JSONValue?
+
+    private var kindNow: JSONValue? { app.config(for: box).value(at: Array(path.dropLast()) + ["type"]) }
 
     /// The names' column, the same in every row so the values line up.
     static let keyWidth: CGFloat = 210
 
     var body: some View {
-        let items = (app.engineConfig.value(at: path)?.object ?? [:]).compactMapValues(\.string).sorted { $0.key < $1.key }
+        let items = (app.config(for: box).value(at: path)?.object ?? [:]).compactMapValues(\.string).sorted { $0.key < $1.key }
         ForEach(items, id: \.key) { item in
             KeyValueRow(key: item.key, value: item.value, prompt: valuePrompt) { value in
-                app.engineConfig.set(.string(value), at: path + [item.key])
+                guard kindNow == kind else { return }
+                app.config(for: box).set(.string(value), at: path + [item.key])
             } remove: {
-                app.engineConfig.set(nil, at: path + [item.key])
+                app.config(for: box).set(nil, at: path + [item.key])
             }
         }
         HStack {
@@ -290,13 +309,14 @@ struct ConfigKeyValueList: View {
             Button("Add", action: add)
                 .disabled(newKey.trimmingCharacters(in: .whitespaces).isEmpty)
         }
+        .onAppear { kind = kindNow }
         .onDisappear(perform: add)
     }
 
     private func add() {
         let key = newKey.trimmingCharacters(in: .whitespaces)
-        guard !key.isEmpty else { return }
-        app.engineConfig.set(.string(newValue), at: path + [key])
+        guard !key.isEmpty, kindNow == kind else { return }
+        app.config(for: box).set(.string(newValue), at: path + [key])
         newKey = ""
         newValue = ""
     }
@@ -355,49 +375,302 @@ private struct KeyValueRow: View {
     }
 }
 
-/// When the settings file can't be used: why, and a way to open it.
+/// When the settings file can't be used: why, and a way to open it; and a machine's change that
+/// didn't get there.
 struct ConfigProblem: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.settingsBox) private var box
 
     var body: some View {
-        if let problem = app.engineConfig.problem {
+        let config = app.config(for: box)
+        if let problem = config.problem {
             Section {
                 Label {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("The engine's settings file can't be changed here")
+                        Text(config.remote == nil ? "The engine's settings file can't be changed here" : "\(app.name(of: box))’s settings can't be changed here")
                         Text(problem).foregroundStyle(.secondary)
                     }
                 } icon: {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                 }
                 HStack {
-                    Button("Open Settings File") { NSWorkspace.shared.open(app.engineConfig.file) }
-                    Button("Try Again") { app.engineConfig.reload() }
+                    if config.remote == nil {
+                        Button("Open Settings File") { NSWorkspace.shared.open(config.file) }
+                    }
+                    Button("Try Again") { config.reload() }
+                }
+            }
+        } else if let failure = config.notSaved {
+            Section {
+                Label {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Your last change didn’t reach \(app.name(of: box))")
+                        Text(failure).foregroundStyle(.secondary)
+                    }
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                 }
             }
         }
     }
 }
 
-/// A page of settings: a grouped form on the page's card, lined up with its title, that
-/// opens at its top. (Shown, a form can land elsewhere, under the toolbar or at its end, so it's
-/// taken to its top edge once it's laid out.)
+/// A page of settings: its sections as groups on the page's card, lined up with its title, that
+/// opens at its top.
 struct ScrollingSettingsForm<Content: View>: View {
     @ViewBuilder var content: Content
     @State private var position = ScrollPosition(edge: .top)
+    @Environment(\.settingsInset) private var inset
 
     var body: some View {
-        Form { content }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
-            .contentMargins(.horizontal, 0, for: .scrollContent)
-            .scrollPosition($position)
-            .onAppear {
-                Task {
-                    await Task.yield()
-                    position.scrollTo(edge: .top)
+        ScrollView {
+            SettingsGroups { content }
+                .padding(.horizontal, inset)
+                .padding(.top, 18)
+                .padding(.bottom, 28)
+        }
+        .scrollPosition($position)
+        .scrollBounceBehavior(.basedOnSize)
+    }
+}
+
+/// Sections as Settings draws them: each a heading over one quiet group of rows, the rows split by
+/// hairlines, and its footer under it, with the same room between every section. Toggles and
+/// labeled rows put their title on the left (and a line under it, in secondary text) and their
+/// control on the right; text fields with a title get it the same way (see `SettingsTextRow`).
+struct SettingsGroups<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: SettingsMetrics.sectionSpacing) {
+            ForEach(sections: content) { section in
+                if !section.content.isEmpty || !section.header.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        if !section.header.isEmpty {
+                            section.header
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(.primary)
+                                .textCase(nil)
+                                .padding(.horizontal, SettingsMetrics.rowPadding)
+                        }
+                        if !section.content.isEmpty {
+                            SettingsGroupBox { section.content }
+                        }
+                        if !section.footer.isEmpty {
+                            section.footer
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .settingsText()
+                                .fixedSize(horizontal: false, vertical: true)
+                                .padding(.horizontal, SettingsMetrics.rowPadding)
+                                .padding(.top, -2)
+                        }
+                    }
                 }
             }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .toggleStyle(SettingsToggleStyle())
+        .labeledContentStyle(SettingsLabeledStyle())
+        .textFieldStyle(.plain)
+        .pickerStyle(.menu)
+    }
+}
+
+/// One group of rows: a quiet fill a step off the card, hairlines between its rows.
+private struct SettingsGroupBox<Content: View>: View {
+    @ViewBuilder var content: Content
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        Group(subviews: content) { rows in
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(rows) { row in
+                    row
+                        .frame(maxWidth: .infinity, minHeight: SettingsMetrics.rowHeight - 2 * SettingsMetrics.rowVerticalPadding, alignment: .leading)
+                        .padding(.horizontal, SettingsMetrics.rowPadding)
+                        .padding(.vertical, SettingsMetrics.rowVerticalPadding)
+                        .overlay(alignment: .top) {
+                            if row.id != rows.first?.id {
+                                Rectangle()
+                                    .fill(Surface.hairline(scheme))
+                                    .frame(height: 1)
+                                    .padding(.horizontal, SettingsMetrics.rowPadding)
+                            }
+                        }
+                }
+            }
+        }
+        .background(SettingsMetrics.groupFill(scheme), in: .rect(cornerRadius: SettingsMetrics.groupRadius))
+    }
+}
+
+extension View {
+    /// Text in Settings: its secondary and tertiary levels a step brighter than the system's, so
+    /// descriptions read at 4.5:1 or better on a group in either mode. Only for text: controls
+    /// draw their fills from these levels, and turned pale under it.
+    func settingsText() -> some View {
+        modifier(SettingsTextInk())
+    }
+}
+
+private struct SettingsTextInk: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+
+    func body(content: Content) -> some View {
+        content.foregroundStyle(.primary, SettingsMetrics.secondaryInk(scheme), SettingsMetrics.tertiaryInk(scheme))
+    }
+}
+
+/// A setting's title, and the line under it in secondary text: what a toggle's or a labeled row's
+/// label holds, as its first text and the rest. A disabled one stays readable.
+struct SettingsRowLabel<Label: View>: View {
+    let label: Label
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Group(subviews: label) { parts in
+            VStack(alignment: .leading, spacing: 3) {
+                if let title = parts.first {
+                    title
+                        .font(.system(size: 13))
+                        .foregroundStyle(.primary)
+                }
+                ForEach(parts.dropFirst()) { line in
+                    line
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .settingsText()
+        }
+        .opacity(isEnabled ? 1 : 0.6)
+    }
+}
+
+/// A toggle as a settings row: its title on the left, a switch on the right.
+struct SettingsToggleStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        SettingsRowLayout {
+            SettingsRowLabel(label: configuration.label)
+            Toggle("", isOn: configuration.$isOn)
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .controlSize(.small)
+        }
+        .contentShape(.rect)
+    }
+}
+
+/// A labeled row: its title on the left, what it holds (a button, a menu, a value) on the right.
+struct SettingsLabeledStyle: LabeledContentStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        SettingsRowLayout {
+            SettingsRowLabel(label: configuration.label)
+            configuration.content
+        }
+    }
+}
+
+/// A row's title and its control: side by side, the control at the trailing edge at its own
+/// width; in a window too narrow to leave the title room beside it, the control goes under the
+/// title instead of squeezing it (or itself) into a column of single words.
+struct SettingsRowLayout: Layout {
+    /// The least the title keeps beside the control before the control goes under it.
+    var titleRoom: CGFloat = 150
+    var spacing: CGFloat = 16
+
+    private func control(_ subviews: Subviews, width: CGFloat) -> CGSize {
+        let ideal = subviews[1].sizeThatFits(.unspecified)
+        return subviews[1].sizeThatFits(ProposedViewSize(width: min(ideal.width, width), height: nil))
+    }
+
+    private func isSideBySide(_ subviews: Subviews, width: CGFloat) -> Bool {
+        width - subviews[1].sizeThatFits(.unspecified).width - spacing >= titleRoom
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        // A title with nothing beside it (a control that's only there sometimes).
+        if subviews.count == 1 {
+            let title = subviews[0].sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+            return CGSize(width: proposal.width ?? title.width, height: title.height)
+        }
+        guard subviews.count == 2 else { return .zero }
+        let width = proposal.width ?? 10_000
+        let control = control(subviews, width: width)
+        if isSideBySide(subviews, width: width) {
+            let title = subviews[0].sizeThatFits(ProposedViewSize(width: width - control.width - spacing, height: nil))
+            return CGSize(width: proposal.width ?? title.width + spacing + control.width, height: max(title.height, control.height))
+        }
+        let title = subviews[0].sizeThatFits(ProposedViewSize(width: width, height: nil))
+        return CGSize(width: proposal.width ?? max(title.width, control.width), height: title.height + 8 + control.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        if subviews.count == 1 {
+            subviews[0].place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
+            return
+        }
+        guard subviews.count == 2 else { return }
+        let control = control(subviews, width: bounds.width)
+        if isSideBySide(subviews, width: bounds.width) {
+            let titleWidth = bounds.width - control.width - spacing
+            let title = subviews[0].sizeThatFits(ProposedViewSize(width: titleWidth, height: nil))
+            subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.midY - title.height / 2), proposal: ProposedViewSize(width: titleWidth, height: title.height))
+            subviews[1].place(at: CGPoint(x: bounds.maxX - control.width, y: bounds.midY - control.height / 2), proposal: ProposedViewSize(control))
+        } else {
+            let title = subviews[0].sizeThatFits(ProposedViewSize(width: bounds.width, height: nil))
+            subviews[0].place(at: bounds.origin, proposal: ProposedViewSize(width: bounds.width, height: title.height))
+            subviews[1].place(at: CGPoint(x: bounds.minX, y: bounds.minY + title.height + 8), proposal: ProposedViewSize(control))
+        }
+    }
+}
+
+/// A text setting with its title, as a row: the title (and a line under it) on the left, the
+/// field on the right in a well of its own, so it reads as a place to type.
+struct SettingsTextRow<Field: View, Label: View>: View {
+    @ViewBuilder var field: Field
+    @ViewBuilder var label: Label
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        LabeledContent {
+            field
+                .labelsHidden()
+                .settingsFieldWell()
+                .frame(minWidth: 160, idealWidth: 260, maxWidth: 300)
+        } label: {
+            label
+        }
+    }
+}
+
+extension View {
+    /// A one-line text field in a row: in a well a step below its group, so it reads as a place
+    /// to type beside the row's title. (A text area is the group itself, with no well.)
+    func settingsFieldWell(padding: CGFloat = 5) -> some View {
+        modifier(SettingsFieldWell(padding: padding))
+    }
+}
+
+private struct SettingsFieldWell: ViewModifier {
+    let padding: CGFloat
+    @Environment(\.colorScheme) private var scheme
+
+    func body(content: Content) -> some View {
+        content
+            .textFieldStyle(.plain)
+            .focusEffectDisabled()
+            .padding(.horizontal, 8)
+            .padding(.vertical, padding)
+            .background(Surface.well(scheme), in: .rect(cornerRadius: 6))
+    }
+}
+
+extension SettingsTextRow where Label == Text {
+    init(title: String, @ViewBuilder field: () -> Field) {
+        self.init(field: field) { Text(title) }
     }
 }
 

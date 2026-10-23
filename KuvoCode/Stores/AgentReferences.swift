@@ -120,14 +120,23 @@ nonisolated enum AgentReferences {
 
     // MARK: The block
 
-    private static let heading = "Agents the user named with & in this message. Read one's conversation with read_conversation, or write to it with send_message, by its address:"
-    private static let block = MessageBlock(start: "<named-agents>", end: "</named-agents>", headings: [heading])
+    /// What the agent is told of them: who they are, and that it decides whether what's asked needs
+    /// their conversation, a word with them, or neither (a name that only comes up).
+    private static let heading = "Agents the user named with & in this message, by their address. Read one's conversation with read_conversation only when what the user asks needs what it knows or did, and write to it with send_message only to ask it something or hand it work; when the user only mentions one, do neither:"
+    /// (What earlier messages said, still read as the block.)
+    private static let earlierHeading = "Agents the user named with & in this message. Read one's conversation with read_conversation, or write to it with send_message, by its address:"
+    private static let block = MessageBlock(start: "<named-agents>", end: "</named-agents>", headings: [heading, earlierHeading])
 
     /// `text` with the block that says who each agent it names with "&" is, as the agent in a
     /// conversation `here` (nil: on this Mac) reads it; not naming the conversation `excluding`.
     @MainActor static func text(_ text: String, excluding session: String?, here machine: String?) -> String {
+        Self.text(text, excludingAll: Set([session].compactMap { $0 }), here: machine)
+    }
+
+    /// The same, leaving out each of `sessions` (a group chat's own bots, already there).
+    @MainActor static func text(_ text: String, excludingAll sessions: Set<String>, here machine: String?) -> String {
         let text = block.escaping(text)
-        guard let note = note(naming: named(in: [text], excluding: Set([session].compactMap { $0 })), here: machine) else { return text }
+        guard let note = note(naming: named(in: [text], excluding: sessions), here: machine) else { return text }
         return (text.isEmpty ? "" : text + "\n\n") + note
     }
 
@@ -135,10 +144,15 @@ nonisolated enum AgentReferences {
     /// at its end, where `SentMessage.split` reads it: after its words, before its comments on the
     /// changes and its note of attached files.
     @MainActor static func naming(in message: String, excluding session: String?, here machine: String?) -> String {
+        // From a phone again: that it's from one is said afresh too.
+        let message = FromPhone.split(message).text
         let (withComments, _) = Attachments.split(message)
         let (words, _) = ReviewComments.split(withComments)
-        guard words.contains(trigger) else { return message }
-        let named = text(words, excluding: session, here: machine)
+        // Sent again (Retry, Edit) with the block it had: that goes, and its agents are named afresh.
+        let bare = split(words).text
+        // (One edited to name nobody now still loses the block it had.)
+        guard bare.contains(trigger) || bare != words else { return message }
+        let named = text(bare, excluding: session, here: machine)
         guard named != words, let range = message.range(of: words) else { return message }
         return message.replacingCharacters(in: range, with: named)
     }
@@ -168,11 +182,12 @@ nonisolated enum AgentReferences {
 }
 
 /// A message you sent, as the app wrote it for the agent: your words, then the blocks it adds
-/// (the agents you named with "&", your comments on the changes, the note of attached files),
-/// taken apart again for wherever it shows: its bubble, a draft, the export, a title.
+/// (the agents you named with "&", your comments on the changes, the note of attached files, and
+/// last that it came from your phone), taken apart again for wherever it shows: its bubble, a
+/// draft, the export, a title.
 nonisolated enum SentMessage {
     static func split(_ message: String) -> (text: String, comments: [ReviewComment], paths: [String], references: [AgentReferences.Reference]) {
-        let (withComments, paths) = Attachments.split(message)
+        let (withComments, paths) = Attachments.split(FromPhone.split(message).text)
         let (withReferences, comments) = ReviewComments.split(withComments)
         let (text, references) = AgentReferences.split(withReferences)
         return (text, comments, paths, references)

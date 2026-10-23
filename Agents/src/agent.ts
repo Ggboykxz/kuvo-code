@@ -37,6 +37,14 @@ export interface SignInAttempt {
   /** For `code`, or `auto` with `acceptsCode`: the code the sign-in page gave you. */
   complete?(code: string): Promise<void>
   cancel(): void
+  /** A device code's: the code to enter on its page (shown beside it, to copy). */
+  userCode?: string
+}
+
+/** How a sign-in is asked for. `remote`: its page is opened on another device (a phone), so it
+ * can't come back to this computer's `localhost`: it ends on a code to paste, or a device code. */
+export interface SignInOptions {
+  remote?: boolean
 }
 
 export interface PromptFile {
@@ -205,10 +213,17 @@ export interface Agent {
   install?: string
   methods(): IntegrationMethod[]
   account(fresh?: boolean): Promise<Account>
-  signIn?(methodID: string): Promise<SignInAttempt>
+  signIn?(methodID: string, options?: SignInOptions): Promise<SignInAttempt>
+  /** Whether its sign-in can finish on another device (`SignInOptions.remote`). */
+  signsInRemotely?: boolean
   signInWithKey?(key: string): Promise<void>
   signOut?(): Promise<void>
   models(): Promise<Model[]>
+  /**
+   * Known to be signed out of, for an agent whose models run somewhere that drops a request it
+   * can't send without a word (the engine): said first, rather than sent. Unknown is not.
+   */
+  signedOut?(): Promise<boolean>
   /** Forgets the models it listed: the account changed. */
   forgetModels?(): void
   /** The account it runs as: the agent's own sign-in, or one you added (with a folder of its own). */
@@ -235,6 +250,25 @@ export interface Agent {
   generate?(prompt: string, model?: ModelRef): Promise<string>
   /** A session here was deleted: its conversation where the agent keeps it goes too. */
   forgetConversation?(state: Record<string, unknown>): Promise<void>
+}
+
+/**
+ * How much each model holds, as its agent says (its model list doesn't): the window its models
+ * list, so the context ring counts against the model's real room.
+ */
+export class ContextWindows {
+  private sizes = new Map<string, number>()
+
+  get(model: string): number | undefined {
+    return this.sizes.get(model)
+  }
+
+  /** What the agent said `model` holds; true when that's news (its models are listed again). */
+  note(model: string, size: unknown): boolean {
+    if (typeof size !== "number" || !(size > 0) || this.sizes.get(model) === size) return false
+    this.sizes.set(model, size)
+    return true
+  }
 }
 
 /** A model as the app lists it, from the little an agent says about one. */

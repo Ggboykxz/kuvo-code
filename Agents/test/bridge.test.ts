@@ -12,13 +12,13 @@ import { messageID, newID } from "../src/ids"
 import { compareVersions, homebrewKeg, npmGlobalPrefix, versionIn } from "../src/maintenance"
 import { evaluate, matches } from "../src/rules"
 import { handover } from "../src/handover"
-import { EngineLink } from "../src/engine"
+import { EngineAgent, EngineLink } from "../src/engine"
 import { generatedImages } from "../src/agents/antigravity"
 import { kuvoToolName, loadKuvoTools, setToolServer } from "../src/kuvotools"
 import { pictureData, pictureFile, withPictures } from "../src/pictures"
 import { expandCommand } from "../src/server"
 import { commandParts, parseCommands, withTextFiles } from "../src/sessions"
-import { commandSignIn } from "../src/signin"
+import { afterInstall, commandSignIn } from "../src/signin"
 
 describe("diffs", () => {
   test("a changed line, with the lines around it", () => {
@@ -171,7 +171,7 @@ exit 1
     return script
   }
 
-  async function attempt(folder: string, options: { signedInBefore?: boolean; onComplete?: () => void } = {}) {
+  async function attempt(folder: string, options: { signedInBefore?: boolean; onComplete?: () => void; remote?: boolean } = {}) {
     return commandSignIn({
       command: fakeLogin(folder),
       args: [],
@@ -182,8 +182,59 @@ exit 1
       signedIn: async () => options.signedInBefore || existsSync(join(folder, "account")),
       codePrompt: /Paste code here if prompted >\s*/g,
       onComplete: options.onComplete,
+      printedPage: options.remote,
     })
   }
+
+  test("on another device, the printed page, which ends on a code to paste here", async () => {
+    const folder = mkdtempSync(join(process.env.KUVO_TEST_ROOT ?? tmpdir(), "kuvo-signin-"))
+    try {
+      const sign = await attempt(folder, { remote: true })
+      expect(sign.url).toBe("https://example.com/printed?redirect=code")
+      expect(sign.acceptsCode).toBe(true)
+      await sign.complete!("good")
+      expect((await settled(sign)).status).toBe("complete")
+    } finally {
+      rmSync(folder, { recursive: true, force: true })
+    }
+  })
+
+  test("a device code printed with its page is given with it", async () => {
+    const folder = mkdtempSync(join(process.env.KUVO_TEST_ROOT ?? tmpdir(), "kuvo-signin-"))
+    try {
+      const script = join(folder, "device")
+      writeFileSync(script, `#!/bin/sh\necho "Open https://accounts.x.ai/device and enter the code:"\nsleep 0.3\necho "  WDJB-MJHT"\nsleep 0.5\necho signed > "${join(folder, "account")}"\n`)
+      chmodSync(script, 0o755)
+      const sign = await commandSignIn({
+        command: script,
+        args: [],
+        home: folder,
+        temporary: folder,
+        instructions: "",
+        signedIn: async () => existsSync(join(folder, "account")),
+        printedPage: true,
+        userCode: /\b([A-Z0-9]{4,}(?:-[A-Z0-9]{4,})+)\b/,
+      })
+      expect(sign.url).toBe("https://accounts.x.ai/device")
+      expect(sign.userCode).toBe("WDJB-MJHT")
+      expect((await settled(sign)).status).toBe("complete")
+    } finally {
+      rmSync(folder, { recursive: true, force: true })
+    }
+  })
+
+  test("a device code still reaches the other device when its agent is installed first", async () => {
+    let installed!: () => void
+    const done = new Promise<void>((resolve) => (installed = resolve))
+    const sign = afterInstall("Installing Codex…", "Finish signing in with ChatGPT in your browser.", false, async () => {
+      await done
+      return { url: "https://auth.openai.com/codex/device", instructions: "Enter the code on that page.", mode: "auto", userCode: "ABCD-1234", status: () => ({ status: "pending" }), cancel: () => {} }
+    })
+    expect(sign.status()).toEqual({ status: "pending", message: "Installing Codex…" })
+    installed()
+    await Bun.sleep(10)
+    expect(sign.status()).toMatchObject({ status: "pending", url: "https://auth.openai.com/codex/device", instructions: "Enter the code on that page.", userCode: "ABCD-1234" })
+  })
 
   async function settled(sign: Awaited<ReturnType<typeof attempt>>) {
     for (let waited = 0; waited < 10_000 && sign.status().status === "pending"; waited += 100) await Bun.sleep(100)
@@ -368,6 +419,36 @@ describe("a command line's commands", () => {
     const heredoc = commands("cat > notes <<'EOF'\ngit push\nEOF\necho hi")
     expect(heredoc).not.toContain("git push")
     expect(heredoc).toContain("echo hi")
+  })
+})
+
+describe("the engine's models", () => {
+  test("one is signed out of only when the engine lists its providers without it; an engine not up, or listing none yet, isn't known", async () => {
+    let providers: { id: string }[] = []
+    const server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const path = new URL(request.url).pathname
+        if (path === "/api/provider") return Response.json({ data: providers })
+        if (path === "/api/model") return Response.json({ data: [] })
+        return new Response("", { status: 404 })
+      },
+    })
+    const link = new EngineLink()
+    try {
+      expect(await new EngineAgent(link, "openai").signedOut()).toBe(false)
+      link.configure(`http://127.0.0.1:${server.port}`, "pw")
+      expect(await new EngineAgent(link, "openai").signedOut()).toBe(false)
+      providers = [{ id: "opencode" }]
+      expect(await new EngineAgent(link, "openai").signedOut()).toBe(true)
+      expect(await new EngineAgent(link, "opencode").signedOut()).toBe(false)
+      // Signed in since the engine was last asked: it's asked again rather than turned away.
+      providers = [{ id: "opencode" }, { id: "openai" }]
+      expect(await new EngineAgent(link, "openai").signedOut()).toBe(false)
+    } finally {
+      link.configure(undefined, undefined)
+      server.stop(true)
+    }
   })
 })
 

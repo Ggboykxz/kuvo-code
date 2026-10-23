@@ -247,8 +247,11 @@ export interface OAuthAttempt {
 export interface OAuthStatus {
   status: "pending" | "complete" | "failed" | "expired"
   message?: string
-  /** The sign-in page, when it comes after the attempt started (an agent downloaded first). */
+  /** The sign-in page, when it comes after the attempt started (an agent downloaded first), with
+   * what to do there and its device code, if it has one. */
   url?: string
+  instructions?: string
+  userCode?: string
 }
 
 export interface ServerEvent {

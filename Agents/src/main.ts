@@ -24,6 +24,9 @@ import { cancelSignIns, handler } from "./server"
 import { Sessions } from "./sessions"
 import { setSkillSource } from "./skills"
 import { Store } from "./store"
+import { server as requester } from "./groups/api"
+import { GroupRunner } from "./groups/runner"
+import { GroupStore } from "./groups/store"
 
 const version = "1"
 const home = process.env.KUVO_AGENTS_HOME
@@ -79,6 +82,8 @@ process.on("uncaughtException", (error) => {
 })
 
 const deps = new Deps(join(home, "runtime"), join(home, "cache"))
+// What an earlier bridge left of its downloads (it kept them on this Mac): nothing installs yet.
+rmSync(join(home, "cache", "install"), { recursive: true, force: true })
 const context = { home, temporary, deps }
 const roster = new Roster(new Accounts(home), context)
 const store = new Store(join(home, "sessions"))
@@ -106,13 +111,26 @@ const sessions = new Sessions(
   (directory) => link.titleModel(directory),
 )
 
+// On a machine, the group chats that live there, run here (on the Mac, the app runs its own). One
+// that fails to start leaves the rest of the bridge as it is.
+let self: ReturnType<typeof requester> | undefined
+let groups: { runner: GroupRunner; store: GroupStore } | undefined
+if (onMachine) {
+  try {
+    const store = new GroupStore(join(machineHome!, "groups"), process.env.KUVO_BOTS ?? join(machineHome!, "bots"))
+    groups = { store, runner: new GroupRunner({ store, engine: link, bridge: () => self, trash: join(machineHome!, "trash") }) }
+  } catch (error) {
+    console.error("group chats:", error)
+  }
+}
+
 let server: ReturnType<typeof Bun.serve>
 try {
   server = Bun.serve({
     hostname: "127.0.0.1",
     port,
     idleTimeout: 0,
-    fetch: handler({ roster, sessions, auto, link, password, version }),
+    fetch: handler({ roster, sessions, auto, link, password, version, groups }),
   })
 } catch (error: any) {
   console.error("couldn't listen:", error?.message ?? error)
@@ -120,6 +138,12 @@ try {
   process.exit(onMachine && /in use|EADDRINUSE/i.test(String(error?.code ?? error?.message ?? error)) ? 98 : 1)
 }
 console.log(JSON.stringify({ url: `http://127.0.0.1:${server.port}` }))
+self = requester(`http://127.0.0.1:${server.port}`, password)
+try {
+  groups?.runner.start()
+} catch (error) {
+  console.error("group chats:", error)
+}
 // On a machine, where it's reached, for kuvo-wake and Kuvo Code's tools there (as the engine's
 // launch writes engine.json): only this user can read it, and it goes when the bridge does.
 const record = onMachine ? join(machineHome!, "run", "bridge.json") : undefined

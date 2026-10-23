@@ -5,8 +5,9 @@ import { homedir } from "node:os"
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { providerID, type AgentAccount } from "../accounts"
-import type { Agent, AgentContext, Account, SignInAttempt, Thread } from "../agent"
-import { accountName, model } from "../agent"
+import type { Agent, AgentContext, Account, SignInAttempt, SignInOptions, Thread } from "../agent"
+import { accountName, ContextWindows, model } from "../agent"
+import { emit } from "../events"
 import { AcpThread, questionFields } from "../acp"
 import { grokProgram, installGrok, managedNote, onMachine, withOwnFolders } from "../machine"
 import { maintenance, update, type MaintenanceDefinition } from "../maintenance"
@@ -144,22 +145,30 @@ export class GrokAgent implements Agent {
     return { installed: true, signedIn: true, label: process.env.XAI_API_KEY ? "xAI API key" : "grok.com" }
   }
 
-  async signIn(): Promise<SignInAttempt> {
+  /** Its device code works wherever its page is opened. */
+  readonly signsInRemotely = true
+
+  async signIn(_methodID = "grok", options: SignInOptions = {}): Promise<SignInAttempt> {
     // On a machine without it yet: installed first, said at once.
     if (onMachine && !this.executable()) return afterInstall("Installing Grok's CLI on this machine…", "Finish signing in to Grok in your browser.", false, async () => {
       if (!(await this.installedProgram())) throw new Error("Grok's CLI couldn't be installed on this machine. Try again.")
-      return this.signIn()
+      return this.signIn(_methodID, options)
     })
     const executable = await this.installedProgram()
     if (!executable) throw new Error("Install Grok's CLI first: npm install -g @xai-official/grok")
+    // On another device: a device code, as `grok login --device-auth` has it.
     return commandSignIn({
       command: executable,
-      args: ["login"],
+      args: options.remote ? ["login", "--device-auth"] : ["login"],
       env: this.env(),
       home: this.context.home,
       temporary: this.context.temporary,
-      instructions: "Finish signing in to Grok in your browser. Grok's CLI keeps the sign-in, as when you run grok login.",
+      instructions: options.remote
+        ? "Open Grok's page, sign in, and enter the code it shows here. Grok's CLI keeps the sign-in, as when you run grok login."
+        : "Finish signing in to Grok in your browser. Grok's CLI keeps the sign-in, as when you run grok login.",
       signedIn: async () => (await this.read(true)).signedIn,
+      printedPage: options.remote,
+      userCode: options.remote ? /\b([A-Z0-9]{4,}(?:-[A-Z0-9]{4,})+)\b/ : undefined,
     })
   }
 
@@ -167,13 +176,19 @@ export class GrokAgent implements Agent {
     const status = await this.read(false)
     const efforts = this.efforts()
     // (Before a session has said, the efforts every Grok model has.)
-    return status.models.map((info, index) => model(this.providerID, info.id, info.name, { released: info.isDefault ? 1000 : 500 - index, context: 256_000, variants: efforts[info.id]?.values ?? ["low", "medium", "high"] }))
+    return status.models.map((info, index) => model(this.providerID, info.id, info.name, { released: info.isDefault ? 1000 : 500 - index, context: this.windows.get(info.id) ?? 256_000, variants: efforts[info.id]?.values ?? ["low", "medium", "high"] }))
   }
+
+  /** How much each model holds, as Grok says in a turn. */
+  private windows = new ContextWindows()
 
   thread(session: Session, state: Record<string, unknown>): Thread {
     const agent = this
     return new AcpThread(
       {
+        noteContext(model, size) {
+          if (agent.windows.note(model, size)) emit("model.updated", {})
+        },
         fileSystem: false,
         initializeMeta: { clientType: "extension" },
         authMethod: () => (process.env.XAI_API_KEY ? "xai.api_key" : "cached_token"),

@@ -88,6 +88,8 @@ export interface AcpFlavor {
   madeFiles?(call: any, sessionId: string, since: number): { type: "file"; uri: string; mime: string; name?: string }[]
   /** Changes when the agent's program was updated: a process started before starts again. */
   program?(): number
+  /** How much the model holds, as the agent said (a usage update's size). */
+  noteContext?(model: string, size: number): void
 }
 
 export interface AcpContext {
@@ -567,8 +569,9 @@ export class AcpThread implements Thread {
         return this.tool(active, update)
       case "usage_update":
         if (typeof update.used === "number") active.used = update.used
+        if (typeof update.size === "number") this.flavor.noteContext?.(turn.currentModel.id, update.size)
         // What it cost, when it says (in dollars).
-        if (typeof update.cost?.amount === "number" && (update.cost.currency ?? "USD") === "USD") turn.addUsage(undefined, update.cost.amount)
+        if (typeof update.cost?.amount === "number" && (update.cost.currency ?? "USD") === "USD") this.cost(turn, update.cost.amount)
         return
       case "current_mode_update":
         if (this.setup && update.currentModeId) this.setup.kuvoMode = update.currentModeId
@@ -733,6 +736,18 @@ export class AcpThread implements Thread {
     return active.used === undefined ? undefined : { input: active.used, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
   }
 
+  /**
+   * What the conversation has cost so far, as the agent says (ACP's cost is the session's whole,
+   * said again as it grows): what's new since it last said is this turn's. (Less than before: a
+   * conversation it started counting again.)
+   */
+  private cost(turn: Turn, total: number) {
+    const kept = this.state.acpCost as { session?: string; amount?: number } | undefined
+    const before = kept?.session === this.sessionID ? (kept?.amount ?? 0) : 0
+    this.state.acpCost = { session: this.sessionID, amount: total }
+    turn.addUsage(undefined, total >= before ? total - before : total)
+  }
+
   private tool(active: Active, update: any) {
     const turn = active.turn
     const id = update.toolCallId
@@ -836,6 +851,9 @@ export class AcpThread implements Thread {
         // Refused by your settings, not by you: the agent stops for any no, and is told to carry on.
         const automatic = active.hooks.check(ask) === "deny"
         const decision: Decision = await active.hooks.permission(ask)
+        // Stopped meanwhile: told to cancel, it hears its ask was cancelled (as ACP has it), not
+        // that you said no; the step shows stopped, not declined.
+        if (active.hooks.signal.aborted) return { outcome: { outcome: "cancelled" } }
         if (decision === "reject") {
           // A no of yours stops it, as you meant (none of your settings' before it is told now).
           active.refused = automatic ? refusedWhat(ask.action, ask.resources) : undefined
@@ -928,6 +946,10 @@ function kuvoTool(call: any): { name: string; input: Record<string, unknown> } {
   const raw = call.rawInput ?? {}
   const path = call.locations?.[0]?.path ?? raw.path ?? raw.file_path ?? raw.filePath
   const command = Array.isArray(raw.command) ? raw.command.join(" ") : raw.command ?? raw.CommandLine ?? raw.command_line ?? raw.commandLine
+  // Grok looking through the tools it has for one that does something (its SearchTool): the
+  // app's tool search, by what it looked for, not a tool named after its words, nor a search of
+  // the files, whatever kind it gives it.
+  if (raw.variant === "SearchTool") return { name: "tool_search", input: { query: raw.query } }
   switch (call.kind) {
     case "execute":
       return { name: "shell", input: { command: command ?? backticked(call.title) ?? call.title, description: raw.description } }
@@ -946,20 +968,24 @@ function kuvoTool(call: any): { name: string; input: Record<string, unknown> } {
   }
   // One of Kuvo Code's, named with its server ("kuvo-browser/show_widget", "mcp__kuvo-browser__…",
   // "Tool: kuvo-browser.show_widget", or server and tool in its input): the app's name for it.
+  // Its own arguments, where the agent wraps them in its call (Grok: {variant: "UseTool",
+  // tool_name, tool_input}), or the input as it is.
   const server = raw.server ?? raw.server_name ?? raw.serverName
   const tool = raw.tool ?? raw.tool_name ?? raw.toolName
+  const wrapped = raw.arguments ?? raw.args ?? raw.input ?? raw.tool_input ?? raw.toolInput
+  const args = typeof wrapped === "object" && wrapped && !Array.isArray(wrapped) ? wrapped : raw
   if (server === toolServerName && typeof tool === "string" && /^[a-z0-9_]+$/i.test(tool) && isKuvoTool(tool) !== false) {
-    const args = raw.arguments ?? raw.args ?? raw.input
-    return { name: `${toolServerName}_${tool}`, input: typeof args === "object" && args ? args : raw }
+    return { name: `${toolServerName}_${tool}`, input: args }
   }
-  const prefixed = new RegExp(`(?:^|[\\s:])(?:mcp__)?${toolServerName}(?:/|__|\\.|:|_)([a-z0-9_]+)\\s*$`, "i").exec(String(call.title ?? "").trim())?.[1]
-  if (prefixed && isKuvoTool(prefixed.toLowerCase()) !== false) return { name: `${toolServerName}_${prefixed.toLowerCase()}`, input: raw }
+  const named = (text: unknown) => new RegExp(`(?:^|[\\s:])(?:mcp__)?${toolServerName}(?:/|__|\\.|:|_)([a-z0-9_]+)\\s*$`, "i").exec(String(text ?? "").trim())?.[1]
+  const prefixed = named(call.title) ?? named(tool)
+  if (prefixed && isKuvoTool(prefixed.toLowerCase()) !== false) return { name: `${toolServerName}_${prefixed.toLowerCase()}`, input: args }
   // Antigravity names a tool only in its title ("Running show_widget"): one of Kuvo Code's goes by
   // the app's name for it, so it shows as it does for the engine's models (a widget, drawn).
-  const named = /^(?:running\s+|tool:\s*|calling\s+)?([a-z0-9_.-]+)$/i.exec(String(call.title ?? "").trim())?.[1]
-  const own = named && typeof raw === "object" && raw ? kuvoToolName(named, raw) : undefined
+  const titled = /^(?:running\s+|tool:\s*|calling\s+)?([a-z0-9_.-]+)$/i.exec(String(call.title ?? "").trim())?.[1]
+  const own = titled && typeof raw === "object" && raw ? kuvoToolName(titled, raw) : undefined
   if (own) return { name: own, input: raw }
-  return { name: (named ?? call.title ?? "tool").toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_|_$/g, "") || "tool", input: raw }
+  return { name: (titled ?? call.title ?? "tool").toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_|_$/g, "") || "tool", input: raw }
 }
 
 /** The kinds of access Kuvo Code knows an agent's ask by (and Kuvo Code's own tools, by name). */

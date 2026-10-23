@@ -31,6 +31,10 @@ struct Card<Icon: View, Actions: View, Content: View>: View {
         framedContent
             // Opaque fills inside the card (the terminal, pinned rows) match the card's own.
             .environment(\.cardIsFocused, isFocused)
+            // On a solid card, text in its own colors: vibrant (as the window's glass makes it),
+            // black came out a washed-out gray on white. Without a surface it's on the glass,
+            // and stays vibrant, as a sidebar's is.
+            .transformEnvironment(\.backgroundMaterial) { if showsSurface { $0 = nil } }
             .clipShape(shape)
             // The shadow comes from the fill alone, so it's drawn from one shape rather than
             // worked out again from everything in the card each time it scrolls.
@@ -183,6 +187,27 @@ struct WindowDragArea: View {
             .allowsWindowActivationEvents(true)
             // The title bar moves the window only while the pointer is on it (see TitleBarMoveGate).
             .background(TitleBarMoveGateInstaller())
+    }
+}
+
+/// The window's own glass, around and between the cards: dragging it moves the window, and a
+/// double-click does what a title bar's does, wherever the gap is (the top, the sides, the bottom).
+/// Behind the cards, so it only gets the clicks nothing else takes.
+struct WindowGapDragArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { GapView() }
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    private final class GapView: NSView {
+        override func mouseDown(with event: NSEvent) {
+            guard let window else { return }
+            if event.clickCount == 2 {
+                TitleBarDoubleClick.perform()
+            } else {
+                TitleBarMoveGate.drag(window, with: event)
+            }
+        }
+
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     }
 }
 

@@ -28,6 +28,9 @@ final class CommandMessages {
     }
 
     func note(_ id: String, command: String) {
+        // Noted again (its events read twice): its newest place, once, so the oldest going doesn't
+        // take it.
+        if commands[id] != nil { entries.removeAll { $0.first == id } }
         commands[id] = command
         entries.append([id, command])
         if entries.count > Self.limit {

@@ -19,12 +19,16 @@ struct SidebarView: View {
     let editBot: (Bot) -> Void
     let newGroup: () -> Void
     let editGroup: (BotGroup) -> Void
+    /// A conversation in the project, where its new sessions open a terminal instead.
+    let newConversation: (String) -> Void
+    /// Ends a terminal tab.
+    let closeTerminal: (String) -> Void
     /// Bots moving in the main card; their rows hold still.
     var stagedBots: Set<String> = []
     /// Shows a session beside the one in view (split view).
     var openBeside: ((String) -> Void)?
     @Environment(Bots.self) private var bots
-    @Environment(BotGroups.self) private var groups
+    @Environment(GroupChats.self) private var groups
     /// The group chat waiting for the user to confirm its deletion.
     @State private var deletingGroup: BotGroup?
 
@@ -32,6 +36,8 @@ struct SidebarView: View {
     @AppStorage("collapsedProjects") private var collapsedStorage = ""
     /// Sections the user folded away: "pinned", "bots", "chats", "projects", "recents" (newline-separated).
     @AppStorage("collapsedSections") private var foldedStorage = ""
+    /// The box in view, by id ("mac", or a machine's), each a page of its own.
+    @AppStorage("sidebarBox") private var boxID = "mac"
     /// Projects showing all their sessions instead of the latest few.
     @State private var showsAll: Set<String> = []
     /// Where sessions were picked from. A session shows in its project and in Recents; only
@@ -72,150 +78,54 @@ struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 1) {
-                    SidebarRow(isSelected: false, action: { newSession(nil) }) {
-                        Image(systemName: "square.and.pencil")
-                    } title: {
-                        Text("New Session")
-                    }
-                    .help("New Session (⌘N)")
-
-                    SidebarSearchRow(text: $search)
-
-                    if !search.isEmpty {
-                        // Not those already found by name, nor one deleted since the search.
-                        let inConversations = conversationResults.filter { found in !results.contains { $0.id == found.session.id } && workspace.session(found.session.id) != nil }
-                        if !results.isEmpty || inConversations.isEmpty {
-                            SectionHeader(title: "Results") { EmptyView() }
-                        }
-                        if results.isEmpty && inConversations.isEmpty && !isSearchingConversations {
-                            Text("No sessions match.")
-                                .font(.system(size: 13))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                        }
-                        ForEach(results) { session in
-                            sessionRow(session, in: .recents)
-                        }
-                        if !inConversations.isEmpty || isSearchingConversations {
-                            SectionHeader(title: "In Conversations") {
-                                if isSearchingConversations { Spinner(size: 11).padding(.trailing, 6) }
-                            }
-                            ForEach(inConversations, id: \.session.id) { found in
-                                ConversationResultRow(title: found.session.title ?? "New Session", snippet: found.snippet, isSelected: selection == found.session.id) {
-                                    selection = found.session.id
-                                    workspace.model(for: found.session.id)?.showFind(search.trimmingCharacters(in: .whitespaces))
-                                }
-                                .contextMenu { menu(for: found.session) }
-                            }
-                        }
-                    } else {
-                    if !pinned.isEmpty {
-                        SectionHeader(title: "Pinned", isFolded: folded("pinned")) { EmptyView() }
-                        if !isFolded("pinned") {
-                            ForEach(pinned) { session in
-                                sessionRow(session, in: .pinned)
-                            }
-                        }
-                    }
-                    SectionHeader(title: "Bots", isFolded: folded("bots")) {
-                        // With bots enough for one, a group chat is made from here too.
-                        if bots.list.count >= 2 {
-                            NativeMenuButton(opensBelow: true) {
-                                let menu = NSMenu()
-                                menu.addItem(ActionItem("New Bot…", image: NSImage(systemSymbolName: "face.smiling", accessibilityDescription: nil)) { newBot() })
-                                menu.addItem(ActionItem("New Group Chat…", image: NSImage(systemSymbolName: "person.2", accessibilityDescription: nil)) { newGroup() })
-                                return menu
-                            } label: {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .frame(width: 22, height: 22)
-                                    .hoverHighlight(in: RoundedRectangle(cornerRadius: 6), mutesInk: true)
-                            }
-                            .help("New Bot or Group Chat")
-                            .accessibilityLabel("New Bot or Group Chat")
-                        } else {
-                            Button(action: newBot) {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 12, weight: .semibold))
-                            }
-                            .buttonStyle(IconButtonStyle(width: 22, height: 22))
-                            .help("New Bot…")
-                            .accessibilityLabel("New Bot")
-                        }
-                    }
-                    if !isFolded("bots") {
-                    if bots.list.isEmpty {
-                        SidebarRow(isSelected: false, action: newBot) {
-                            Image(systemName: "plus.circle")
-                        } title: {
-                            Text("Make a Bot")
-                                .foregroundStyle(.secondary)
-                        }
-                        .help("A teammate with one job, that keeps working while you're away")
-                    }
-                    ForEach(bots.list) { bot in
-                        BotRow(bot: bot, isSelected: selection == bot.sessionID, animates: !stagedBots.contains(bot.id)) {
-                            selection = bot.sessionID
-                        }
-                        .contextMenu {
-                            Button("Edit Bot…") { editBot(bot) }
-                        }
-                    }
-                    // Group chats, under the bots they're with.
-                    ForEach(groups.list) { group in
-                        let key = BotGroups.tabKey(group.id)
-                        GroupRow(group: group, isSelected: selection == key) {
-                            selection = key
-                        }
-                        .contextMenu {
-                            Button("Edit Group Chat…") { editGroup(group) }
-                            Divider()
-                            Button("Delete Group Chat…", role: .destructive) { deletingGroup = group }
-                        }
-                    }
-                    }
-                    chatsSection
-                    SectionHeader(title: "Projects", isFolded: folded("projects")) {
-                        Button(action: newProject) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 12, weight: .semibold))
-                        }
-                        .buttonStyle(IconButtonStyle(width: 22, height: 22))
-                        .help("New Project… (⇧⌘N)")
-                        .accessibilityLabel("New Project")
-                    }
-                    if !isFolded("projects") {
-                        if workspace.isLoaded && workspace.projects.isEmpty {
-                            Text("Open a folder for the agent to work in.")
-                                .font(.system(size: 13))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                        }
-                        ForEach(workspace.projects) { project in
-                            projectSection(project)
-                        }
-                    }
-
-                    if !recents.isEmpty {
-                        SectionHeader(title: "Recents", isFolded: folded("recents")) { EmptyView() }
-                        if !isFolded("recents") {
-                            ForEach(recents) { session in
-                                sessionRow(session, in: .recents)
-                            }
-                        }
-                    }
-                    }
+            // Above the boxes' pages: a new session on the box in view, and a search of them all.
+            VStack(alignment: .leading, spacing: 1) {
+                SidebarRow(isSelected: false, action: newSessionHere) {
+                    Image(systemName: "square.and.pencil")
+                } title: {
+                    Text("New Session")
                 }
-                // No inset of its own: on the glass, the window's 8pt gap is the sidebar's edge,
-                // as it is the cards', and the rows' icons line up under the window's buttons.
-                .padding(.vertical, 10)
+                .help("New Session (⌘N)")
+
+                SidebarSearchRow(text: $search)
+
+                if boxSwitcher == .track, boxes.count > 1, search.isEmpty {
+                    BoxNameTrack(boxes: boxes, selected: boxBinding, name: boxName, connection: boxConnection)
+                        .padding(.top, 8)
+                        .padding(.bottom, 2)
+                }
             }
-            .scrollIndicators(.never)
-            .fadingScrollEdges()
+            .padding(.top, 10)
+
+            if !search.isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 1) {
+                        searchResults
+                    }
+                    .padding(.vertical, 10)
+                }
+                .scrollIndicators(.never)
+                .fadingScrollEdges()
+            } else {
+                BoxPager(boxes: boxes, selected: boxBinding) { box in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 1) {
+                            page(box)
+                        }
+                        // No inset of its own: on the glass, the window's 8pt gap is the sidebar's
+                        // edge, as it is the cards', and the rows' icons line up under the window's
+                        // buttons.
+                        .padding(.vertical, 10)
+                    }
+                    .scrollIndicators(.never)
+                    .fadingScrollEdges()
+                }
+            }
+
+            if boxSwitcher == .dock, boxes.count > 1, search.isEmpty {
+                BoxDock(boxes: boxes, selected: boxBinding, name: boxName, connection: boxConnection)
+                    .padding(.bottom, 8)
+            }
 
             if !Analytics.shared.noticeShown {
                 AnalyticsNotice()
@@ -240,7 +150,18 @@ struct SidebarView: View {
             AccountsRow(showProviders: showProviders)
                 .padding(.top, 6)
         }
+        // Rows mark what's on a machine only in search results, which cover every computer.
+        .environment(\.marksMachines, !search.isEmpty)
         #if DEBUG
+        // KUVO_DEMO_BOX: the box in view (`mac`, or a machine's name), once what was open has
+        // opened (it brings its own box first).
+        .task {
+            guard let wanted = ProcessInfo.processInfo.environment["KUVO_DEMO_BOX"] else { return }
+            try? await Task.sleep(for: .seconds(5))
+            if let box = boxes.first(where: { $0.id == wanted || boxName($0) == wanted }) {
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.9)) { boxID = box.id }
+            }
+        }
         // KUVO_DEMO_SEARCH: text in the sidebar's search field.
         .onAppear { if let text = ProcessInfo.processInfo.environment["KUVO_DEMO_SEARCH"] { search = text } }
         // KUVO_DEMO_RENAME=sidebar: the session in view, renamed in its row.
@@ -254,6 +175,11 @@ struct SidebarView: View {
         #endif
         // Only the open session's place is remembered; picked elsewhere, it shows in its project.
         .onChange(of: selection) { pickedIn = pickedIn.filter { $0.key == selection } }
+        // A tab on another box: its page slides in, so what's in view has its row in sight.
+        .onChange(of: selection) { _, tag in
+            guard let tag, let shown = box(of: tag), shown != box, boxes.contains(shown) else { return }
+            withAnimation(.spring(response: 0.38, dampingFraction: 0.9)) { boxID = shown.id }
+        }
         // Another session picked: a rename in another row ends, keeping what was typed.
         .onChange(of: selection) { if renaming?.id != selection { renaming = nil } }
         // Titles match as you type; conversations once you pause.
@@ -309,6 +235,212 @@ struct SidebarView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             if let session = archiving { Text(worktreeNote(session)) }
+        }
+    }
+
+    // MARK: Boxes
+
+    /// How the boxes are switched besides the swipe (Settings › Appearance).
+    @AppStorage(BoxSwitcher.key) private var boxSwitcher = BoxSwitcher.dock
+
+    /// This Mac, then your machines, each a page of its own.
+    private var boxes: [SidebarBox] { app.boxes }
+
+    /// The box in view: the one last picked, while it's still there.
+    private var box: SidebarBox {
+        let picked = SidebarBox(id: boxID)
+        return boxes.contains(picked) ? picked : .mac
+    }
+
+    private var boxBinding: Binding<SidebarBox> {
+        Binding { box } set: { boxID = $0.id }
+    }
+
+    private func boxName(_ box: SidebarBox) -> String { app.name(of: box) }
+
+    /// A machine's connection, for its mark; none for this Mac.
+    private func boxConnection(_ box: SidebarBox) -> MachineEngine.Connection? {
+        app.machines.engine(box.machine)?.connection
+    }
+
+    /// The box what's in view (a tab: a session, a bot, a group chat, a draft, a terminal) is on;
+    /// nil for what's on none.
+    private func box(of tag: String) -> SidebarBox? {
+        if let directory = Self.draftDirectory(from: tag) { return SidebarBox(directory: directory) }
+        if let session = workspace.session(tag) { return SidebarBox(directory: session.location.directory) }
+        if let bot = bots.list.first(where: { $0.sessionID == tag }) { return SidebarBox(machine: bot.machine) }
+        if let group = groups.list.first(where: { BotGroups.tabKey($0.id) == tag }) { return SidebarBox(machine: groups.machine(of: group.id)) }
+        if let terminal = app.mainTerminals.opened.first(where: { $0.key == tag }) { return SidebarBox(directory: terminal.entry.directory) }
+        return nil
+    }
+
+    /// One box's page: what's on that computer.
+    @ViewBuilder private func page(_ box: SidebarBox) -> some View {
+        if boxes.count > 1 { BoxHeading(box: box, switcher: boxSwitcher) }
+        let pinned = pinned(on: box)
+        if !pinned.isEmpty {
+            SectionHeader(title: "Pinned", isFolded: folded("pinned")) { EmptyView() }
+            if !isFolded("pinned") {
+                ForEach(pinned) { session in
+                    sessionRow(session, in: .pinned)
+                }
+            }
+        }
+        botsSection(box)
+        chatsSection(box)
+        let loose = terminals(in: nil).filter { SidebarBox(directory: $0.entry.directory) == box }
+        if !loose.isEmpty {
+            SectionHeader(title: "Terminals") { EmptyView() }
+            terminalRows(loose, indented: false)
+        }
+        let projects = workspace.projects.filter { SidebarBox(directory: $0.directory) == box }
+        SectionHeader(title: "Projects", isFolded: folded("projects")) {
+            Button(action: newProject) {
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .buttonStyle(IconButtonStyle(width: 22, height: 22))
+            .help("New Project… (⇧⌘N)")
+            .accessibilityLabel("New Project")
+        }
+        if !isFolded("projects") {
+            if workspace.isLoaded && projects.isEmpty {
+                Text(box.machine == nil ? "Open a folder for the agent to work in." : "Open a folder on \(boxName(box)) for the agent to work in.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+            }
+            ForEach(projects) { project in
+                projectSection(project)
+            }
+        }
+        let recents = recents(on: box)
+        if !recents.isEmpty {
+            SectionHeader(title: "Recents", isFolded: folded("recents")) { EmptyView() }
+            if !isFolded("recents") {
+                ForEach(recents) { session in
+                    sessionRow(session, in: .recents)
+                }
+            }
+        }
+    }
+
+    /// A page's name, where the dock shows none (the track names them), and for a machine that
+    /// isn't connected, where it is and the way back.
+    /// Bots, and the group chats they're in, on `box`.
+    @ViewBuilder private func botsSection(_ box: SidebarBox) -> some View {
+        let botsHere = bots.list.filter { SidebarBox(machine: $0.machine) == box }
+        let groupsHere = groups.list.filter { SidebarBox(machine: groups.machine(of: $0.id)) == box }
+        SectionHeader(title: "Bots", isFolded: folded("bots")) {
+            // With bots enough for one, a group chat is made from here too.
+            if bots.list.count >= 2 {
+                NativeMenuButton(opensBelow: true) {
+                    let menu = NSMenu()
+                    menu.addItem(ActionItem("New Bot…", image: NSImage(systemSymbolName: "face.smiling", accessibilityDescription: nil)) { newBot() })
+                    menu.addItem(ActionItem("New Group Chat…", image: NSImage(systemSymbolName: "person.2", accessibilityDescription: nil)) { newGroup() })
+                    return menu
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(width: 22, height: 22)
+                        .hoverHighlight(in: RoundedRectangle(cornerRadius: 6), mutesInk: true)
+                }
+                .help("New Bot or Group Chat")
+                .accessibilityLabel("New Bot or Group Chat")
+            } else {
+                Button(action: newBot) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .buttonStyle(IconButtonStyle(width: 22, height: 22))
+                .help("New Bot…")
+                .accessibilityLabel("New Bot")
+            }
+        }
+        if !isFolded("bots") {
+            if botsHere.isEmpty {
+                SidebarRow(isSelected: false, action: newBot) {
+                    Image(systemName: "plus.circle")
+                } title: {
+                    Text("Make a Bot")
+                        .foregroundStyle(.secondary)
+                }
+                .help("A teammate with one job, that keeps working while you're away")
+            }
+            ForEach(botsHere) { bot in
+                BotRow(bot: bot, isSelected: selection == bot.sessionID, animates: !stagedBots.contains(bot.id)) {
+                    selection = bot.sessionID
+                }
+                .contextMenu {
+                    Button("Edit Bot…") { editBot(bot) }
+                        .disabled(app.moves.isMoving(bot.id))
+                    MoveToComputerMenu(thing: .bot(bot))
+                }
+            }
+            // Group chats, under the bots they're with.
+            ForEach(groupsHere) { group in
+                let key = BotGroups.tabKey(group.id)
+                GroupRow(group: group, isSelected: selection == key) {
+                    selection = key
+                }
+                .contextMenu {
+                    Button("Edit Group Chat…") { editGroup(group) }
+                        .disabled(app.moves.isMoving(group.id))
+                    MoveToComputerMenu(thing: .group(group))
+                    Divider()
+                    Button("Delete Group Chat…", role: .destructive) { deletingGroup = group }
+                        .disabled(app.moves.isMoving(group.id))
+                }
+            }
+        }
+    }
+
+    /// Sessions, and conversations' words, that have the search, on every box.
+    @ViewBuilder private var searchResults: some View {
+        // Not those already found by name, nor one deleted since the search.
+        let inConversations = conversationResults.filter { found in !results.contains { $0.id == found.session.id } && workspace.session(found.session.id) != nil }
+        if !results.isEmpty || inConversations.isEmpty {
+            SectionHeader(title: "Results") { EmptyView() }
+        }
+        if results.isEmpty && inConversations.isEmpty && !isSearchingConversations {
+            Text("No sessions match.")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+        }
+        ForEach(results) { session in
+            sessionRow(session, in: .recents)
+        }
+        if !inConversations.isEmpty || isSearchingConversations {
+            SectionHeader(title: "In Conversations") {
+                if isSearchingConversations { Spinner(size: 11).padding(.trailing, 6) }
+            }
+            ForEach(inConversations, id: \.session.id) { found in
+                ConversationResultRow(title: found.session.title ?? "New Session", snippet: found.snippet, isSelected: selection == found.session.id) {
+                    selection = found.session.id
+                    workspace.model(for: found.session.id)?.showFind(search.trimmingCharacters(in: .whitespaces))
+                }
+                .contextMenu { menu(for: found.session) }
+            }
+        }
+    }
+
+    /// A new session on the box in view: on this Mac, in the project in view, as ⌘N; on a machine,
+    /// in its first project, or a chat there when it has none.
+    private func newSessionHere() {
+        guard let machine = box.machine else { return newSession(nil) }
+        if let project = workspace.projects.first(where: { SidebarBox(directory: $0.directory) == box }) { return newSession(project.directory) }
+        newChat(on: machine)
+    }
+
+    /// A new chat on `machine`, in Kuvo Code's chats folder there (`Moves`): found over SSH the
+    /// first time.
+    private func newChat(on machine: String) {
+        Task {
+            guard let home = try? await app.moves.transport.home(on: machine) else { return }
+            newSession(RemoteFolder.folder(home.chats, on: machine))
         }
     }
 
@@ -378,11 +510,15 @@ struct SidebarView: View {
         }
         .contextMenu {
             Button("New Session") { newSession(project.directory) }
+            if workspace.settings[project.directory]?.terminal != nil {
+                // Its sessions open a terminal; this still starts a conversation.
+                Button("New Conversation") { newConversation(project.directory) }
+            }
             Button("Edit Project…") { editProject(project) }
             if let engine = app.machines.engine(RemoteFolder.machine(of: project.directory)) {
                 if !engine.isReady {
                     Divider()
-                    Button("Connect to \(engine.machine.name)") { app.connect(engine) }
+                    Button(engine.isStopped ? "Start \(engine.machine.name)" : "Connect to \(engine.machine.name)") { app.connectOrStart(engine) }
                 }
             } else {
                 Divider()
@@ -402,6 +538,7 @@ struct SidebarView: View {
                     Text("New Session")
                 }
             }
+            terminalRows(terminals(in: project.directory), indented: true)
             let all = showsAll.contains(project.directory)
             ForEach(all ? project.sessions : Array(project.sessions.prefix(Self.sessionsPerProject))) { session in
                 sessionRow(session, in: .project)
@@ -421,12 +558,37 @@ struct SidebarView: View {
         }
     }
 
-    /// Conversations of no project: a row for each, the newest few until you ask for the rest.
-    @ViewBuilder private var chatsSection: some View {
-        let chats = workspace.chats
-        let draft = Self.draftTag(Workspace.chatsFolder)
+    /// The terminal tabs of the project at `directory`, or (nil) of no project, each a row that
+    /// shows it, so one is never out of reach with the tab bar hidden.
+    private func terminals(in directory: String?) -> [(key: String, entry: MainTerminals.Entry)] {
+        let known = Set(workspace.projects.map(\.directory))
+        return app.mainTerminals.opened.filter { terminal in
+            let project = workspace.projectDirectory(terminal.entry.directory)
+            return directory.map { project == $0 } ?? !known.contains(project)
+        }
+    }
+
+    @ViewBuilder private func terminalRows(_ terminals: [(key: String, entry: MainTerminals.Entry)], indented: Bool) -> some View {
+        ForEach(terminals, id: \.key) { terminal in
+            TerminalRow(
+                title: terminal.entry.session.title == "Terminal" ? terminal.entry.label : terminal.entry.session.title,
+                isSelected: selection == terminal.key,
+                indented: indented,
+                action: { selection = terminal.key },
+                end: { closeTerminal(terminal.key) }
+            )
+        }
+    }
+
+    /// Conversations of no project on `box`: a row for each, the newest few until you ask for the
+    /// rest.
+    @ViewBuilder private func chatsSection(_ box: SidebarBox) -> some View {
+        let chats = workspace.chats.filter { SidebarBox(directory: $0.location.directory) == box }
+        let isDraft = selection.flatMap(Self.draftDirectory).map { Workspace.isChat($0) && SidebarBox(directory: $0) == box } ?? false
+        let more = box.machine.map { "chats:" + $0 } ?? Workspace.chatsFolder
+        let newChat = { if let machine = box.machine { self.newChat(on: machine) } else { newSession(Workspace.chatsFolder) } }
         SectionHeader(title: "Chats", isFolded: folded("chats")) {
-            Button { newSession(Workspace.chatsFolder) } label: {
+            Button { newChat() } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .semibold))
             }
@@ -435,14 +597,14 @@ struct SidebarView: View {
             .accessibilityLabel("New Chat")
         }
         if !isFolded("chats") {
-            if selection == draft {
+            if isDraft {
                 SidebarRow(isSelected: true, action: {}) {
                     EmptyView()
                 } title: {
                     Text("New Chat")
                 }
             } else if chats.isEmpty {
-                SidebarRow(isSelected: false, action: { newSession(Workspace.chatsFolder) }) {
+                SidebarRow(isSelected: false, action: newChat) {
                     Image(systemName: "plus.circle")
                 } title: {
                     Text("Start a Chat")
@@ -450,14 +612,14 @@ struct SidebarView: View {
                 }
                 .help("A conversation of no project. You can move it into one later.")
             }
-            let all = showsAll.contains(Workspace.chatsFolder)
+            let all = showsAll.contains(more)
             ForEach(all ? chats : Array(chats.prefix(Self.sessionsPerProject))) { session in
                 sessionRow(session, in: .chats)
             }
             if chats.count > Self.sessionsPerProject {
                 SidebarRow(isSelected: false, action: {
                     withAnimation(.ui) {
-                        if all { showsAll.remove(Workspace.chatsFolder) } else { showsAll.insert(Workspace.chatsFolder) }
+                        if all { showsAll.remove(more) } else { showsAll.insert(more) }
                     }
                 }) {
                     EmptyView()
@@ -506,13 +668,15 @@ struct SidebarView: View {
         .sorted { $0.time.updated > $1.time.updated }
     }
 
-    /// Pinned ones are already at the top.
-    private var recents: [Session] {
-        Array((workspace.projects.flatMap(\.sessions) + workspace.chats).filter { !Workspace.isPinned($0) }.sorted { $0.time.updated > $1.time.updated }.prefix(Self.recentCount))
+    /// `box`'s latest; pinned ones are already at the top.
+    private func recents(on box: SidebarBox) -> [Session] {
+        Array((workspace.projects.flatMap(\.sessions) + workspace.chats).filter { !Workspace.isPinned($0) && SidebarBox(directory: $0.location.directory) == box }
+            .sorted { $0.time.updated > $1.time.updated }.prefix(Self.recentCount))
     }
 
-    private var pinned: [Session] {
-        (workspace.projects.flatMap(\.sessions) + workspace.chats).filter(Workspace.isPinned).sorted { $0.time.updated > $1.time.updated }
+    private func pinned(on box: SidebarBox) -> [Session] {
+        (workspace.projects.flatMap(\.sessions) + workspace.chats).filter { Workspace.isPinned($0) && SidebarBox(directory: $0.location.directory) == box }
+            .sorted { $0.time.updated > $1.time.updated }
     }
 
     /// Highlighted where it was picked; picked elsewhere (a tab, a new session), in its project.
@@ -550,6 +714,15 @@ struct SidebarView: View {
                     .foregroundStyle(.tertiary)
             } else {
                 HStack(spacing: 6) {
+                    if let destination = app.moves.underWay[session.id] {
+                        Spinner(size: 12)
+                            .help("Moving to \(destination ?? "this Mac")…")
+                    } else if !search.isEmpty, Workspace.isChat(session.location.directory), let machine = RemoteFolder.machine(of: session.location.directory) {
+                        Image(systemName: "server.rack")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                            .help("On \(machine)")
+                    }
                     if let tree = workspace.worktrees[session.location.directory] {
                         Image(systemName: "arrow.triangle.branch")
                             .font(.system(size: 11))
@@ -587,10 +760,10 @@ struct SidebarView: View {
             Button("Edit Bot…") { editBot(bot) }
         } else if let engine = app.machines.engine(workspace.waitingMachine(for: session.id)) {
             // On a machine that's away, the session is as last seen: what it does waits for it.
-            Text("\(engine.machine.name) isn’t connected")
+            Text(engine.isStopped ? "\(engine.machine.name)’s engine is stopped" : "\(engine.machine.name) isn’t connected")
             switch engine.state {
             case .starting, .downloading: Text("Connecting…")
-            default: Button("Connect Now") { app.reconnectNow(engine) }
+            default: Button(engine.isStopped ? "Start" : "Connect Now") { app.reconnectNow(engine) }
             }
         } else {
             liveMenu(for: session, in: place)
@@ -608,13 +781,18 @@ struct SidebarView: View {
         if let openBeside, session.id != selection {
             Button("Open Beside") { openBeside(session.id) }
         }
+        // Moving to another computer: what would change it waits until it's there.
+        let moving = app.moves.isMoving(session.id)
         if let place {
             Button("Rename…") {
                 renaming = RenameTarget(id: session.id, place: place)
             }
+            .disabled(moving)
         }
         if Workspace.isChat(session.location.directory) {
             MoveToProjectMenu(session: session)
+                .disabled(moving)
+            MoveToComputerMenu(thing: .chat(session))
         } else if !RemoteFolder.isRemote(session.location.directory) {
             Button("Show in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: session.location.directory) }
         }
@@ -638,8 +816,10 @@ struct SidebarView: View {
             Button("Archive") {
                 if hasOwnWorktree(session) { confirm(session) { archiving = $0 } } else { Task { await workspace.setArchived(session.id, true) } }
             }
+            .disabled(moving)
         }
         Button("Delete…", role: .destructive) { confirm(session) { deleting = $0 } }
+            .disabled(moving)
     }
 }
 
@@ -831,6 +1011,8 @@ private struct ProjectRow: View {
     @State private var isHovering = false
     @Environment(AppModel.self) private var app
 
+    @Environment(\.marksMachines) private var marksMachines
+
     /// The machine the project is on, when it's not this Mac.
     private var machine: MachineEngine? {
         app.machines.engine(RemoteFolder.machine(of: project.directory))
@@ -846,7 +1028,7 @@ private struct ProjectRow: View {
                     .font(.system(size: 14))
                     .lineLimit(1)
                     .layoutPriority(1)
-                if let machine {
+                if let machine, marksMachines {
                     MachineLabel(engine: machine)
                 }
                 Spacer(minLength: 6)
@@ -876,6 +1058,42 @@ private struct ProjectRow: View {
     }
 }
 
+/// A terminal tab in the sidebar: its name, with a way to end it under the pointer.
+private struct TerminalRow: View {
+    let title: String
+    let isSelected: Bool
+    let indented: Bool
+    let action: () -> Void
+    let end: () -> Void
+    @State private var isHovering = false
+
+    var body: some View {
+        SidebarRow(isSelected: isSelected, indented: indented, action: action) {
+            EmptyView()
+        } title: {
+            HStack(spacing: 6) {
+                Image(systemName: "apple.terminal")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                Text(title)
+            }
+        }
+        .overlay(alignment: .trailing) {
+            Button(action: end) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .buttonStyle(IconButtonStyle(width: 22, height: 22))
+            .padding(.trailing, 4)
+            .opacity(isHovering ? 1 : 0)
+            .help("End Terminal")
+            .accessibilityLabel("End Terminal")
+        }
+        .onHover { isHovering = $0 }
+        .contextMenu { Button("End Terminal", action: end) }
+    }
+}
+
 /// Which machine a project is on, small after its name, with a dot when it isn't connected.
 private struct MachineLabel: View {
     let engine: MachineEngine
@@ -899,28 +1117,42 @@ private struct GroupRow: View {
     let group: BotGroup
     let isSelected: Bool
     let action: () -> Void
+    @Environment(\.marksMachines) private var marksMachines
     @Environment(Bots.self) private var bots
-    @Environment(BotGroups.self) private var groups
+    @Environment(GroupChats.self) private var groups
+    @Environment(AppModel.self) private var app
 
     var body: some View {
         let speaker = groups.speaking[group.id].flatMap { bots.bot($0) }
         let isUnread = groups.isUnread(group) && !isSelected
+        let machine = groups.machine(of: group.id)
         FaceRow(title: group.name, isUnread: isUnread, isSelected: isSelected, action: action) {
             GroupAvatar(faces: group.members.compactMap { id in
                 bots.bot(id).map { GroupAvatar.Face(look: $0.look, mood: $0.id == speaker?.id ? .working : .idle) }
             }, size: 28)
         } subtitle: {
-            if let speaker {
-                ShimmerText(text: "\(speaker.name) is typing…")
+            if let destination = app.moves.underWay[group.id] {
+                ShimmerText(text: "Moving to \(destination.flatMap { place in app.machines.engine(place)?.machine.name ?? place } ?? "this Mac")…")
+            } else if let speaker {
+                ShimmerText(text: "\(speaker.name) is thinking…")
             } else if groups.discussing.contains(group.id) {
                 ShimmerText(text: "Talking it over…")
             } else {
                 Text(lastLine)
             }
         } trailing: {
-            if isUnread {
-                Circle().fill(.tint).frame(width: 7, height: 7)
-                    .help("New messages")
+            HStack(spacing: 6) {
+                // One that lives on a machine, which talks there while this Mac is off.
+                if let machine, marksMachines {
+                    Image(systemName: "server.rack")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                        .help("Lives on \(app.machines.engine(machine)?.machine.name ?? machine)")
+                }
+                if isUnread {
+                    Circle().fill(.tint).frame(width: 7, height: 7)
+                        .help("New messages")
+                }
             }
         }
     }
@@ -981,6 +1213,7 @@ private struct BotRow: View {
     @Environment(Workspace.self) private var workspace
     @Environment(Bots.self) private var bots
     @Environment(AppModel.self) private var app
+    @Environment(\.marksMachines) private var marksMachines
     @State private var isHovering = false
 
     private var session: Session? { workspace.session(bot.sessionID) }
@@ -989,7 +1222,7 @@ private struct BotRow: View {
         FaceRow(title: bot.name, isUnread: session?.isUnread == true, isSelected: isSelected, action: action) {
             BotAvatar(look: bot.look, size: 28, mood: bots.mood(of: bot, in: workspace), noticed: isHovering, animates: animates)
                 .overlay(alignment: .bottomTrailing) {
-                    if let machine = bot.machine { MachineBadge(machine: machine).offset(x: 4, y: 3) }
+                    if let machine = bot.machine, marksMachines { MachineBadge(machine: machine).offset(x: 4, y: 3) }
                 }
         } subtitle: {
             status
@@ -1013,7 +1246,9 @@ private struct BotRow: View {
     /// wakes next, or its job. What it's set to do (wake up, watch) and how it's set (paused)
     /// stand apart from what it said, with their sign.
     @ViewBuilder private var status: some View {
-        if workspace.needsAttention(bot.sessionID) {
+        if let destination = app.moves.underWay[bot.id] {
+            ShimmerText(text: "Moving to \(destination ?? "this Mac")…")
+        } else if workspace.needsAttention(bot.sessionID) {
             Text("Needs you")
                 .foregroundStyle(.orange)
         } else if workspace.running.contains(bot.sessionID) {
@@ -1118,19 +1353,20 @@ private struct SectionHeader<Trailing: View>: View {
     }
 }
 
-/// "Move to Project ›": a chat's way into one of this Mac's projects.
+/// "Move to Project ›": a chat's way into one of the projects on its computer.
 private struct MoveToProjectMenu: View {
     let session: Session
     @Environment(Workspace.self) private var workspace
 
     var body: some View {
-        let projects = workspace.projects.filter { !RemoteFolder.isRemote($0.directory) }
+        let machine = RemoteFolder.machine(of: session.location.directory)
+        let projects = workspace.projects.filter { RemoteFolder.machine(of: $0.directory) == machine }
         Menu("Move to Project") {
             ForEach(projects) { project in
                 Button(project.name) { move(to: project.directory) }
             }
             if projects.isEmpty {
-                Text("No projects on this Mac")
+                Text(machine.map { "No projects on \($0)" } ?? "No projects on this Mac")
             }
         }
     }
@@ -1139,6 +1375,120 @@ private struct MoveToProjectMenu: View {
         Task {
             do {
                 try await workspace.move(session.id, toProject: directory)
+            } catch {
+                Modal.show(error)
+            }
+        }
+    }
+}
+
+/// "Move to Computer ›": a bot's or chat's way to this Mac or another of your machines, where it
+/// carries on (`Moves`). Asked first, as the original goes to the trash where it was.
+private struct MoveToComputerMenu: View {
+    enum Thing {
+        case bot(Bot)
+        case chat(Session)
+        case group(BotGroup)
+    }
+
+    let thing: Thing
+    @Environment(AppModel.self) private var app
+
+    private var id: String {
+        switch thing {
+        case .bot(let bot): bot.id
+        case .chat(let session): session.id
+        case .group(let group): group.id
+        }
+    }
+
+    private var here: String? {
+        switch thing {
+        case .bot(let bot): bot.machine
+        case .chat(let session): RemoteFolder.machine(of: session.location.directory)
+        case .group(let group): app.chats.machine(of: group.id)
+        }
+    }
+
+    /// Where a group chat can go: from a machine, this Mac; from this Mac, the machine its bots
+    /// all live on, if they do.
+    private func groupPlaces(_ group: BotGroup) -> [String?] {
+        if here != nil { return [nil] }
+        let homes = Set(group.members.compactMap { app.bots.bot($0) }.map(\.machine))
+        guard homes.count == 1, let machine = homes.first ?? nil else { return [] }
+        return [machine]
+    }
+
+    var body: some View {
+        Menu("Move to Computer") {
+            if case .bot(let bot) = thing, bot.project != nil {
+                Text("It works in one of your projects, which stays where it is")
+            } else if case .bot(let bot) = thing, bot.agents == true {
+                Text("It talks with a coding agent, which can’t move yet")
+            } else if case .group(let group) = thing, groupPlaces(group).isEmpty {
+                // A chat whose bots live on different computers, or all here, is this Mac's.
+                Text(Set(group.members.compactMap { app.bots.bot($0)?.machine }).isEmpty
+                     ? "Move its bots to a machine first; then it can go there too" : "Its bots live on different computers, so it stays on this Mac")
+            } else if case .group(let group) = thing {
+                ForEach(groupPlaces(group), id: \.self) { place in
+                    if let place, app.machines.engine(place)?.isReady != true {
+                        Text("\(place), not connected")
+                    } else {
+                        Button(place ?? "This Mac") { move(to: place) }
+                    }
+                }
+            } else {
+                ForEach(app.moves.destinations(from: here), id: \.self) { place in
+                    if let place, app.machines.engine(place)?.isReady != true {
+                        Text("\(place), not connected")
+                    } else {
+                        Button(place ?? "This Mac") { move(to: place) }
+                    }
+                }
+            }
+        }
+        .disabled(app.moves.isMoving(id))
+    }
+
+    private func move(to place: String?) {
+        let name: String
+        let what: String
+        switch thing {
+        case .bot(let bot):
+            name = bot.name
+            what = "Its memory, files, wake-ups and conversation go there, and it carries on there; its seats in group chats start afresh there."
+        case .chat(let session):
+            name = (session.title ?? "").isEmpty ? "this chat" : "“\(session.title ?? "")”"
+            what = "Its conversation and wake-ups go there, and it carries on there."
+        case .group(let group):
+            name = "“\(group.name)”"
+            what = place == nil
+                ? "Its messages and meeting come here, and it carries on here while this Mac is on; its bots stay where they are."
+                : "Its messages and meeting go there, and it carries on there, also while this Mac is off."
+        }
+        let trash = here.map { "Kuvo Code’s trash folder on \($0)" } ?? "the Trash"
+        let leaves: String
+        if case .group = thing {
+            leaves = "Nothing goes to it while it moves. What it leaves here goes to \(trash)."
+        } else {
+            leaves = "Nothing goes to it while it moves. Its folder here goes to \(trash), with a copy of its conversation in it."
+        }
+        Task {
+            let confirmed = await Modal.run {
+                let alert = NSAlert()
+                alert.messageText = "Move \(name) to \(place ?? "this Mac")?"
+                alert.informativeText = "\(what) \(leaves)"
+                alert.addButton(withTitle: "Move")
+                alert.addButton(withTitle: "Cancel")
+                return alert.runModal() == .alertFirstButtonReturn
+            }
+            guard confirmed else { return }
+            do {
+                switch thing {
+                case .bot(let bot): try await app.moves.move(bot: bot.id, to: place)
+                case .chat(let session): try await app.moves.move(chat: session.id, to: place)
+                case .group(let group): try await app.moves.move(group: group.id, to: place)
+                }
             } catch {
                 Modal.show(error)
             }
@@ -1293,7 +1643,7 @@ private struct AccountsRow: View {
         for engine in app.machines.list.compactMap({ app.machines.engine($0.id) }) {
             submenu.addItem(ActionItem(engine.machine.name, subtitle: engine.statusText, image: Self.symbol("server.rack")) {
                 switch engine.state {
-                case .preparing, .failed: app.connect(engine)
+                case .preparing, .failed: app.connectOrStart(engine)
                 default: app.openSettings(.machines)
                 }
             })

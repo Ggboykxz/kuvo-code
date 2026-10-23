@@ -750,6 +750,21 @@ export class Sessions {
   /** Sessions whose files are being kept or put back: a message waits for that as for a turn. */
   private busy = new Set<string>()
 
+  /**
+   * Until the files are kept, when that's all the session is doing (a turn just ended, or one a
+   * quit cut short is read after a restart): an undo waits for it, rather than being told to
+   * stop an agent that isn't working. (Called only then: otherwise an undo marks the session busy
+   * before anything else can start.)
+   */
+  private async filesKept(id: string) {
+    const working = () => {
+      const turn = this.live.get(id)?.turn
+      return Boolean(turn && !turn.isEnded)
+    }
+    const start = Date.now()
+    while (this.busy.has(id) && !working() && Date.now() - start < 30_000) await Bun.sleep(25)
+  }
+
   /** What's kept of the project's files around each of your messages, by message. */
   private notes(record: Record_): Record<string, SnapshotNote> {
     const kept = (record.agent.snapshots as Record<string, SnapshotNote | string> | undefined) ?? {}
@@ -1062,6 +1077,7 @@ export class Sessions {
    */
   async stageRevert(id: string, messageID: string): Promise<NonNullable<Session["revert"]>> {
     const record = this.record(id)
+    if (this.busy.has(id)) await this.filesKept(id)
     if (this.isRunning(id)) throw new BadRequest("Stop the agent first.")
     const at = record.messages.findIndex((message) => message.id === messageID && message.type === "user")
     if (at < 0) throw new NotFound("No such message of yours.")
@@ -1132,6 +1148,7 @@ export class Sessions {
   async clearRevert(id: string) {
     const record = this.record(id)
     if (!record.session.revert) return
+    if (this.busy.has(id)) await this.filesKept(id)
     if (this.isRunning(id)) throw new BadRequest("Stop the agent first.")
     const directory = record.session.location.directory
     const now = record.agent.revertNow as string | undefined
@@ -1648,6 +1665,15 @@ export class Sessions {
     if (!agent) {
       turnAway()
       return { outcome: "failed", error: { type: "agent", message: "This model's agent isn't available: sign in to it in Settings › Accounts, or pick another model." } }
+    }
+    // Its account signed out of, where a request on it would be dropped without a word: said.
+    if (!input.adopt && (await Promise.race([agent.signedOut?.().catch(() => false), Bun.sleep(10_000).then(() => false)]))) {
+      turnAway()
+      const machine = onMachine ? process.env.KUVO_MACHINE_NAME || "this machine" : undefined
+      const message = machine
+        ? `${agent.name} isn't signed in on ${machine}, where this conversation runs (each machine signs in on its own). Sign in to it there in Settings › Accounts, with ${machine} picked, or pick another model.`
+        : `${agent.name} isn't signed in. Sign in to it in Settings › Accounts, or pick another model.`
+      return { outcome: "failed", error: { type: "provider.auth", message } }
     }
     if (signal.aborted) {
       turnAway()

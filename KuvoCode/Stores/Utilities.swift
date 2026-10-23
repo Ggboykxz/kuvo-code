@@ -750,6 +750,21 @@ final class Utilities {
         if let tab = chosen.removeValue(forKey: chosenKey("", place)) { chosen[chosenKey(panel, place)] = tab }
     }
 
+    /// A conversation that carries on in another (moved to the coding agents): its panel's tabs,
+    /// the one you'd chosen there, and those its agent worked in go with it.
+    func handOver(from old: String, to new: String) {
+        let from = panelOf(old), to = panelOf(new)
+        guard from != to else { return }
+        for index in tabs.indices where tabs[index].owner == from { tabs[index].owner = to }
+        for (key, tab) in chosen where key.hasPrefix(from + "|") {
+            chosen[key] = nil
+            chosen[to + key.dropFirst(from.count)] = tab
+        }
+        if let file = kept.removeValue(forKey: from) { kept[to] = file }
+        for (id, claim) in agentClaims where claim.session == old { agentClaims[id] = (new, claim.at) }
+        if let picked = picks.removeValue(forKey: old) { picks[new] = picked }
+    }
+
     /// Closes a conversation's panel: the bot or session was deleted.
     func closeTabs(of owner: String) {
         for tab in tabs where tab.owner == owner { close(tab.id, refills: false) }
@@ -795,8 +810,9 @@ final class Utilities {
         chosen = [:]
         selection = nil
         let place = place
+        // Back on this Mac for the start tab (going there may have made it already).
         self.place = nil
-        startOver()
+        if !visibleTabs.contains(where: { $0.owner == panelKey }) { startOver() }
         self.place = place
     }
 

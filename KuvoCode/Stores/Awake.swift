@@ -15,6 +15,9 @@ final class Awake {
     private var isWorking = false
     private var activity: NSObjectProtocol?
 
+    /// Whether it keeps this Mac awake now.
+    var isHolding: Bool { activity != nil }
+
     func agentsWork(_ working: Bool) {
         guard working != isWorking else { return }
         isWorking = working

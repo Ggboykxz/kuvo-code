@@ -7,10 +7,45 @@ import os
 /// Mac's: a host from `~/.ssh/config` or `user@host`. Its projects are folders on it.
 nonisolated struct Machine: Codable, Hashable, Identifiable {
     var destination: String
+    /// The same computer's other addresses (its name on the local network and over Tailscale,
+    /// say): whichever answers is used, under `destination`, its name here.
+    var otherAddresses: [String]?
+    /// What the computer calls itself, kept in Kuvo Code's folder there, once read: two
+    /// addresses that reach the same one are one machine.
+    var identity: String?
+    /// The address that answered last, tried first next time (after a relaunch too).
+    var reachedAt: String?
 
     var id: String { destination }
     var name: String { destination }
+    /// Every address it has, its name first.
+    var addresses: [String] { [destination] + (otherAddresses ?? []) }
+    /// To it, at the address in use (see `SSHConnection.route`).
     var connection: SSHConnection { SSHConnection(destination: destination) }
+
+    /// The computer at `address` as it calls itself: a name made once, in Kuvo Code's folder there
+    /// (an account's own, as that folder is), the same whichever address reaches it. Nil when it
+    /// can't be asked. Two connections asking at once for the first time get the same one: each
+    /// writes its own, and only the first to link it in place counts.
+    static func identity(at address: String) async -> String? {
+        guard let output = try? await SSHConnection.direct(address).run(identityScript) else { return nil }
+        let identity = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return identity.count == 32 && identity.allSatisfy(\.isHexDigit) ? identity : nil
+    }
+
+    static var identityScript: String {
+        """
+            F="$HOME/\(RemoteEngineInstaller.root)/machine-id"
+            if [ ! -s "$F" ]; then
+              mkdir -p "${F%/*}" || exit 1
+              T="$F.$$"
+              (umask 077; od -An -N16 -tx1 /dev/urandom | tr -d ' \\n' >"$T") || exit 1
+              ln "$T" "$F" 2>/dev/null || [ -s "$F" ] || mv -f "$T" "$F"
+              rm -f "$T"
+            fi
+            cat "$F"
+            """
+    }
 }
 
 /// One machine's engine: installed and started over SSH when Kuvo Code connects (or found still
@@ -18,14 +53,28 @@ nonisolated struct Machine: Codable, Hashable, Identifiable {
 /// there), and its live events.
 @Observable
 final class MachineEngine {
-    let machine: Machine
+    private(set) var machine: Machine
     private(set) var state = AppModel.EngineState.preparing
     private(set) var api: OpenCodeAPI?
     /// False while the live event feed is down.
     private(set) var isLive = false
     /// Waiting to try again by itself, after the connection dropped.
     var isRetrying = false
+    /// Its engine is stopped on purpose (Stop, here or from anywhere): it stays so until Start.
+    private(set) var isStopped = false
+    /// It started with this Mac's settings just now, having none of its own: your accounts go
+    /// too, once (`AppModel.syncSignIns`).
+    @ObservationIgnored var seededNow = false
+    /// Start was pressed here: the next connection starts it if it's stopped, until one does (one
+    /// that fails, the machine away, carries it to Try Again), or it's stopped or disconnected.
+    var startWanted = false
+    /// The box there was set up by a newer Kuvo Code than this app (`BoxVersion`): its engine and
+    /// files are left as they are.
+    private(set) var boxIsNewer = false
     let catalog = Catalog()
+    /// Its engine's settings, its own (`MachineBox`): read as it's started, and again as they
+    /// change there.
+    let config: EngineConfig
     /// The coding agents there: the agents bridge beside its engine, through the same tunnel.
     let agents: OutsideAgents
     /// Its engine started with the agents bridge beside it (an older one didn't).
@@ -35,7 +84,6 @@ final class MachineEngine {
 
     @ObservationIgnored private var server: RemoteServer?
     @ObservationIgnored private var eventTask: Task<Void, Never>?
-    @ObservationIgnored private var heartbeatTask: Task<Void, Never>?
     @ObservationIgnored private var isStopping = false
     /// Keeps its sign-ins in step with this Mac's while it's connected (`AppModel.syncSignIns`).
     @ObservationIgnored var signInSync: Task<Void, Never>?
@@ -44,6 +92,8 @@ final class MachineEngine {
     @ObservationIgnored var signInTurn: Task<Void, Never>?
     /// Starts it over with this Mac's settings once they've changed (`AppModel.keepSettingsCurrent`).
     @ObservationIgnored var settingsUpdate: Task<Void, Never>?
+    /// Your personalities met with its copy, a moment after one changes elsewhere.
+    @ObservationIgnored var personalitiesSync: Task<Void, Never>?
     /// Keeps its agents' list of everyone current, and brings their messages for agents
     /// elsewhere (`AgentMail`).
     @ObservationIgnored var agentSync: Task<Void, Never>?
@@ -53,6 +103,9 @@ final class MachineEngine {
     @ObservationIgnored var onReconnect: () async -> Void = {}
     /// The connection closed without being asked to (the machine restarted, the network went).
     @ObservationIgnored var onExit: () -> Void = {}
+    /// Stopped, then started from elsewhere (a phone, another Mac): connect to it.
+    @ObservationIgnored var onStartedElsewhere: () -> Void = {}
+    @ObservationIgnored private var stoppedWatch: Task<Void, Never>?
     private let log = Logger(subsystem: "run.kuvo.code", category: "machine")
 
     init(machine: Machine) {
@@ -61,13 +114,75 @@ final class MachineEngine {
         agents = OutsideAgents(machine: machine.id)
         catalog.outsideAgents = agents
         catalog.machine = machine.id
+        config = EngineConfig(remote: MachineBox.Store(connection: machine.connection))
+    }
+
+    /// The machine as it's kept now: another address, or what it calls itself, learned.
+    func update(_ machine: Machine) {
+        guard machine.id == self.machine.id, machine != self.machine else { return }
+        self.machine = machine
+    }
+
+    /// What the computer calls itself, as first read (see `Machine.identity`): the app keeps it,
+    /// and tells one machine reached at two addresses from two.
+    @ObservationIgnored var onIdentity: (String) -> Void = { _ in }
+    /// Another of its addresses answered: the app keeps it, to try first next time.
+    @ObservationIgnored var onReached: (String) -> Void = { _ in }
+
+    /// Of its addresses, the one that answers as this computer, the one in use (or that answered
+    /// last) first: its connections go there from now on. One that answers as another computer (a
+    /// local name handed to another one since) isn't used. None answering as it, but its name
+    /// answering: the computer there calls itself something new (its Kuvo Code folder was made
+    /// again), and is still this machine. With one address, nothing to choose.
+    func reach() async {
+        let addresses = machine.addresses
+        guard addresses.count > 1 else {
+            // (Removed and added again at one address: not where it was reached before.)
+            SSHConnection.route(machine.id, to: nil)
+            return
+        }
+        let routed = machine.connection.address
+        let first = routed != machine.destination ? routed : machine.reachedAt.flatMap { addresses.contains($0) ? $0 : nil } ?? routed
+        var atName: String?
+        for address in [first] + addresses.filter({ $0 != first }) {
+            guard let identity = await Machine.identity(at: address) else { continue }
+            if let known = machine.identity, known != identity {
+                if address == machine.destination { atName = identity }
+                continue
+            }
+            settle(at: address, identity: identity)
+            return
+        }
+        // Nowhere it answers as itself: at its name, as a machine with one address would be.
+        SSHConnection.route(machine.id, to: nil)
+        if let atName { settle(at: machine.destination, identity: atName) }
+    }
+
+    private func settle(at address: String, identity: String) {
+        SSHConnection.route(machine.id, to: address)
+        if machine.identity != identity { onIdentity(identity) }
+        if machine.reachedAt != address { onReached(address) }
+    }
+
+    /// What it calls itself, read once it's connected (with several addresses, `reach` read it):
+    /// new if its Kuvo Code folder there was made again, so its other addresses are still known
+    /// as its own.
+    private func learnIdentity() {
+        guard machine.identity == nil || machine.addresses.count == 1 else { return }
+        let address = machine.connection.address
+        Task { [weak self] in
+            guard let identity = await Machine.identity(at: address), identity != self?.machine.identity else { return }
+            self?.onIdentity(identity)
+        }
     }
 
     var isReady: Bool { state == .ready }
+    /// The engine's version running there (a newer box's may be newer than this app's).
+    var engineVersion: String? { server?.engine.version }
 
     /// Where its connection is, as every view says it.
     enum Connection: Equatable {
-        case notConnected, connecting, reconnecting, installing, connected, failed
+        case notConnected, connecting, reconnecting, installing, connected, failed, stopped
 
         /// It's getting there by itself (a spinner), nothing to do.
         var isUnderWay: Bool { [.connecting, .reconnecting, .installing].contains(self) }
@@ -75,7 +190,7 @@ final class MachineEngine {
 
     var connection: Connection {
         switch state {
-        case .preparing: .notConnected
+        case .preparing: isStopped ? .stopped : .notConnected
         // At 0 it's only checking the engine it has.
         case .downloading(let progress) where progress > 0: .installing
         case .downloading, .starting: isRetrying ? .reconnecting : .connecting
@@ -94,6 +209,7 @@ final class MachineEngine {
         case .installing: "Installing the engine…"
         case .connected: "Connected"
         case .failed: "Couldn’t connect"
+        case .stopped: "Stopped"
         }
     }
 
@@ -110,6 +226,7 @@ final class MachineEngine {
         case .installing: "Installing the engine on \(name)…"
         case .connected: "Connected to \(name)"
         case .failed: "Couldn’t connect to \(name)"
+        case .stopped: "\(name)’s engine is stopped"
         }
     }
 
@@ -121,19 +238,27 @@ final class MachineEngine {
 
     /// What a new engine on the machine gets from this Mac.
     struct Launch {
-        /// Accounts and settings (the browser tools' among them), as environment variables.
+        /// What this Mac starts it with, as environment variables: never its settings or keys,
+        /// which are its own (`MachineBox`), but its time zone, its name, and the browser tools.
         var environment: [String: String]
         /// The browser helper the engine runs for the browser tools (`kuvo-browser.js`).
         var helper: (text: String, hash: String)
         /// The agents bridge that starts beside it (`kuvo-agents.js`), for the coding agents there.
         var agents: (text: String, hash: String)?
+        /// What a machine with no settings yet gets (this Mac's), asked for only then.
+        var seed: () async -> MachineBox.Seed = { .init(settings: [:], keys: [:]) }
+        /// What it starts with from its own settings: its integrations' sites, for the browser
+        /// tools. Filled in as it starts (`boxEnvironment`).
+        var fromBox: ([String: JSONValue]) -> [String: String] = { _ in [:] }
+        var boxEnvironment: [String: String] = [:]
 
-        /// Changes when the settings do, so an engine started with older ones is known.
-        /// The launch script's, the watchdog's and the browser helper's versions count too: an
-        /// engine running older ones is started over the next time it's idle. (The launch script's
-        /// goes up when what it sets up changes: its folders, `kuvo-npx`, the commands' plugin.)
+        /// Changes when what this Mac starts it with does, so an engine started with older
+        /// things is started over the next time it's idle: the launch script's, the watchdog's,
+        /// the browser helper's and the agents bridge's versions too. (The launch script's goes
+        /// up when what it sets up changes: its folders, `kuvo-npx`, the commands' plugin, where
+        /// its settings are.) Not its own settings, which it reloads as they change.
         var fingerprint: String {
-            let text = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n") + "\nlaunch=9\nwatchdog=wakes\nbrowser=\(helper.hash)\nagents=\(agents?.hash ?? "none")"
+            let text = environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "\n") + "\nlaunch=12\nwatchdog=groups\nbrowser=\(helper.hash)\nagents=\(agents?.hash ?? "none")"
             return SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
         }
     }
@@ -147,9 +272,12 @@ final class MachineEngine {
         return id
     }()
 
-    /// This Mac started the engine running there with other settings than `launch`'s.
+    /// This Mac started the engine running there with other settings than `launch`'s, or an older
+    /// Mac did, with its own.
     func isBehind(_ launch: Launch) -> Bool {
-        guard let engine = server?.engine, !isAnotherMacs(engine) else { return false }
+        guard let engine = server?.engine else { return false }
+        if isOlderMacs(engine) { return !boxIsNewer }
+        guard !isAnotherMacs(engine) else { return false }
         return engine.notes["settings"] != launch.fingerprint
     }
 
@@ -162,12 +290,20 @@ final class MachineEngine {
         engine.notes["mac"].map { $0 != Self.macID } ?? false
     }
 
+    /// Started by a Kuvo Code from before boxes kept their own settings (0.7 and before, on this
+    /// Mac or another), with that Mac's: replaced as this Mac's own older ones are, once nothing's
+    /// running, so the box's run.
+    private func isOlderMacs(_ engine: RemoteServer.Engine) -> Bool {
+        engine.notes["box"] == nil
+    }
+
     /// Connects to the machine's engine: the one already running there (from an earlier launch,
     /// maybe still working on something), or a new one, installed first if needed. One this Mac
     /// started with an older version, or older settings while nothing is running, is
-    /// replaced. One another Mac started is used as it is, unless it's an older version: two Macs
-    /// with different settings would otherwise take turns starting it over, each dropping the
-    /// other's connection, and an older app would put back an older engine.
+    /// replaced, in the same start. One another Mac started is used as it is, unless it's an older
+    /// version: two Macs with different settings would otherwise take turns starting it over, each
+    /// dropping the other's connection, and an older app would put back an older engine. One
+    /// stopped on purpose stays stopped (`isStopped`), unless Start was pressed (`startWanted`).
     func start(_ launch: Launch, cache: URL) async {
         // Once at a time.
         switch state {
@@ -175,17 +311,65 @@ final class MachineEngine {
         case .downloading, .starting, .ready: return
         }
         isStopping = false
-        let connection = machine.connection
         // Disconnecting (Connect Now) or a newer attempt ends this one at its next step.
         let attempt = connections
         let check = { if self.connections != attempt { throw Superseded() } }
         var attached: RemoteServer?
         do {
             state = .starting
-            var engine = try await RemoteServer.running(on: connection)
+            // At whichever of its addresses answers.
+            await reach()
             try check()
+            let connection = machine.connection
+            // A box a newer Kuvo Code set up (it updated itself, or another Mac's newer app did):
+            // what's there runs as it is, and nothing of this app's goes over it.
+            boxIsNewer = BoxVersion.isNewer(try await BoxVersion.read(on: connection))
+            try check()
+            // What follows puts this app's files there: the box doesn't take them for an older Mac's.
+            if !boxIsNewer { try? await BoxVersion.installing(on: connection) }
+            // The box's own tool and keeper first, which what follows counts on.
+            try await RemoteServer.installBoot(on: connection)
+            var found = try await RemoteServer.find(on: connection)
+            try check()
+            let starting = startWanted
+            if found == .stopped, !starting {
+                if !boxIsNewer { try? await BoxVersion.notInstalling(on: connection) }
+                isStopped = true
+                state = .preparing
+                watchWhileStopped()
+                return
+            }
+            isStopped = false
+            // A newer box's engine isn't running: its own keeper starts the one it has.
+            if boxIsNewer, found.engine == nil {
+                if found == .stopped { try await RemoteServer.startEngine(on: connection) }
+                for _ in 0..<15 where found.engine == nil {
+                    try await Task.sleep(for: .seconds(2))
+                    try check()
+                    found = try await RemoteServer.find(on: connection)
+                }
+                guard found.engine != nil else { throw NewerBox() }
+            }
+            var engine = found.engine
             let isNewer = engine.map { $0.version.compare(OpenCodeEngine.version, options: .numeric) == .orderedDescending } ?? false
-            if engine?.version != OpenCodeEngine.version, !(isNewer && engine.map(isAnotherMacs) == true) {
+            var updates = !boxIsNewer && engine?.version != OpenCodeEngine.version && !(isNewer && engine.map(isAnotherMacs) == true)
+            // An engine of another version still at work (a session left running when the app
+            // quit or updated): kept, with its work, until a connection finds it with none.
+            var busy: RemoteServer?
+            // (One that can't be reached to ask is updated, as before.)
+            if updates, let old = engine, let probe = try? await attach(old, launch) {
+                attached = probe
+                try check()
+                let api = OpenCodeAPI(endpoint: probe.endpoint, folderPrefix: RemoteFolder.prefix(for: machine.id))
+                if (try? await api.activeSessions())?.isEmpty == false {
+                    busy = probe
+                    updates = false
+                } else {
+                    probe.disconnect()
+                    attached = nil
+                }
+            }
+            if updates {
                 state = .downloading(progress: 0)
                 try await RemoteEngineInstaller(connection: connection, cache: cache).install { progress in
                     Task { @MainActor in
@@ -194,40 +378,64 @@ final class MachineEngine {
                 }
                 try check()
                 state = .starting
-                if engine != nil { try await RemoteServer.stop(on: connection) }
-                engine = nil
             }
+            // Its own settings, a box of its own: made so once (from what it runs with, or this
+            // Mac's on one with none), then read, for what its engine starts with.
+            try await MachineBox.install(on: connection)
+            var launch = launch
+            let box = try await MachineBox.adopt(on: connection, seed: launch.seed)
+            config.took(box.settings)
+            // As Kuvo Code brings this Mac's up to date as its engine starts: its integrations as
+            // they're set up now, its servers' tools plain tools (not a newer box's, which knows
+            // newer ones).
+            if !boxIsNewer {
+                Integrations.upgrade(config, on: machine.id)
+                MCPSettings.upgrade(config)
+            }
+            launch.boxEnvironment = launch.fromBox(config.settings)
+            if box.seeded { seededNow = true }
+            try check()
             // The browser tools' helper, and the agents bridge, which an engine starts with.
             try await MachineBrowserInstaller.installHelper(launch.helper, on: connection)
             if let agents = launch.agents { try await Self.installAgents(agents, on: connection) }
             try check()
             let running: RemoteServer.Engine
-            if let engine { running = engine } else { running = try await launchEngine(launch) }
+            // One of another version is replaced in the same start, so its keeper starts no other.
+            if let engine, !updates { running = engine } else { running = try await launchEngine(launch, replace: engine?.pid, starting: starting) }
             try check()
-            var server = try await attach(running, launch)
+            var server: RemoteServer
+            if let busy { server = busy } else { server = try await attach(running, launch) }
             attached = server
             try check()
             let api = OpenCodeAPI(endpoint: server.endpoint, folderPrefix: RemoteFolder.prefix(for: machine.id))
-            if server.engine.notes["settings"] != launch.fingerprint, !isAnotherMacs(server.engine), (try? await api.activeSessions())?.isEmpty == true {
-                // Started with older settings, and nothing to interrupt: start it over.
+            if !boxIsNewer, isOlderMacs(server.engine) || server.engine.notes["settings"] != launch.fingerprint && !isAnotherMacs(server.engine), (try? await api.activeSessions())?.isEmpty == true {
+                // Started with older settings (or an older Mac's), and nothing to interrupt: start it over.
                 try check()
                 server.disconnect()
                 attached = nil
-                try await RemoteServer.stop(on: connection)
-                server = try await attach(launchEngine(launch), launch)
+                server = try await attach(launchEngine(launch, replace: server.engine.pid), launch)
                 attached = server
                 try check()
             }
             try check()
+            // What this app put there runs: the box is this version's.
+            if !boxIsNewer {
+                var marks = ["kuvo-browser.js": "// kuvo-browser \(launch.helper.hash)"]
+                if let agents = launch.agents { marks["kuvo-agents.js"] = "// kuvo-agents \(agents.hash)" }
+                try? await BoxVersion.mark(on: connection, marks: marks)
+            }
             self.server = server
             let current = OpenCodeAPI(endpoint: server.endpoint, folderPrefix: RemoteFolder.prefix(for: machine.id))
             self.api = current
             catalog.api = current
             agents.connect(server.agentsEndpoint, folderPrefix: RemoteFolder.prefix(for: machine.id))
+            // An engine started without its agents bridge (an older one): none to wait for.
+            if server.agentsEndpoint == nil { catalog.forgetAgents() }
+            startWanted = false
             state = .ready
+            learnIdentity()
             Analytics.shared.trackOnce("machine_connected")
             listen(to: current)
-            keepAlive()
             // The browser, in the background: the first time, a download and an upload. A browser
             // tab in view comes back live.
             Task { await browser.prepare() }
@@ -239,6 +447,12 @@ final class MachineEngine {
         } catch where connections != attempt {
             // Failed after a newer attempt began: that one's state isn't this one's to change.
             if let attached, attached !== server { attached.disconnect() }
+        } catch RemoteEngineError.stopped {
+            // Stopped from elsewhere as this connected.
+            if let attached, attached !== server { attached.disconnect() }
+            isStopped = true
+            state = .preparing
+            watchWhileStopped()
         } catch {
             log.error("\(self.machine.destination, privacy: .public) didn't start: \(error.localizedDescription, privacy: .public)")
             server?.disconnect()
@@ -249,8 +463,14 @@ final class MachineEngine {
 
     private struct Superseded: Error {}
 
-    private func launchEngine(_ launch: Launch) async throws -> RemoteServer.Engine {
-        try await RemoteServer.launch(on: machine.connection, environment: launch.environment, notes: ["settings": launch.fingerprint, "mac": Self.macID], withAgents: launch.agents != nil)
+    /// A newer box whose engine didn't come up by itself: this app won't start an older one there.
+    struct NewerBox: LocalizedError {
+        var errorDescription: String? { "This machine has a newer Kuvo Code than this Mac, and its engine didn't start. Update Kuvo Code on this Mac to start it from here." }
+    }
+
+    private func launchEngine(_ launch: Launch, replace: Int? = nil, starting: Bool = false) async throws -> RemoteServer.Engine {
+        try await RemoteServer.launch(on: machine.connection, environment: launch.environment.merging(launch.boxEnvironment) { $1 }, notes: ["settings": launch.fingerprint, "mac": Self.macID, "box": BoxVersion.mine],
+                                      withAgents: launch.agents != nil, replace: replace, start: starting)
     }
 
     /// `kuvo-agents.js` as it goes to a machine: the bundle, with a last line naming its contents,
@@ -270,7 +490,7 @@ final class MachineEngine {
         let file = FileManager.default.temporaryDirectory.appending(path: "kuvo-agents-\(UUID().uuidString).js")
         try Data(bridge.text.utf8).write(to: file)
         defer { try? FileManager.default.removeItem(at: file) }
-        try await connection.run("""
+        try await connection.run(BoxVersion.guardScript + "\n" + """
             set -e
             mkdir -p "$HOME/\(RemoteEngineInstaller.root)/bin"
             cat >"\(path).new"
@@ -292,26 +512,61 @@ final class MachineEngine {
         connections += 1
         eventTask?.cancel()
         eventTask = nil
-        heartbeatTask?.cancel()
-        heartbeatTask = nil
+        stoppedWatch?.cancel()
+        stoppedWatch = nil
         server?.disconnect()
         server = nil
         api = nil
         catalog.api = nil
         agents.disconnect()
-        catalog.forgetAgents()
+        catalog.forgetAgents(untilBack: true)
         isLive = false
         state = .preparing
     }
 
-    /// Closes the connection and stops the engine on the machine.
+    /// Stops the engine on the machine until it's started again, from here or anywhere (Stop).
+    /// Its keeper and phone link stay, so a phone can start it.
     func stopEngine() async {
+        startWanted = false
+        disconnect()
+        let attempt = connections
+        let stopped = (try? await RemoteServer.stopEngine(on: machine.connection)) != nil
+        // Unless it was connected again meanwhile.
+        guard stopped, attempt == connections, case .preparing = state else { return }
+        isStopped = true
+        watchWhileStopped()
+    }
+
+    /// While it's stopped, each minute: started from elsewhere (a phone, another Mac), it connects.
+    private func watchWhileStopped() {
+        stoppedWatch?.cancel()
+        let connection = machine.connection
+        stoppedWatch = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                guard !Task.isCancelled, self?.isWaitingStopped == true else { return }
+                guard case .running? = try? await RemoteServer.find(on: connection) else { continue }
+                guard !Task.isCancelled, let self, self.isWaitingStopped else { return }
+                self.onStartedElsewhere()
+                return
+            }
+        }
+    }
+
+    private var isWaitingStopped: Bool {
+        guard isStopped, case .preparing = state else { return false }
+        return true
+    }
+
+    /// Closes the connection and stops everything Kuvo Code runs there, for good (the machine
+    /// removed, or a demo or test copy's, which leaves nothing running).
+    func shutDown() async {
         disconnect()
         try? await RemoteServer.stop(on: machine.connection)
     }
 
-    /// Signs out of every account the machine's engine has (copied from this Mac), and deletes
-    /// what integrations' servers kept there (a sign-in's tokens).
+    /// Signs out of every account the machine's engine has (copied from this Mac) and of its coding
+    /// agents, and deletes what integrations' servers kept there (a sign-in's tokens).
     /// In its turn after a copying of sign-ins under way (which could store one after these went),
     /// and with no more after it. Whether they all went.
     @discardableResult
@@ -325,25 +580,14 @@ final class MachineEngine {
             guard let credentials = try? await api.credentials() else { return false }
             var removed = true
             for credential in credentials where (try? await api.removeCredential(credential.id)) == nil { removed = false }
-            let kept = "\"$HOME/\(RemoteEngineInstaller.root)/integrations\""
+            // What integrations kept there, and the coding agents' sign-ins.
+            let script = "K=\"$HOME/\(RemoteEngineInstaller.root)\"\nrm -rf \"$K/integrations\"\n" + Machines.agentsSignOut
             let machine = machine.id
-            let cleared = await Task.detached { RemoteShell.run("rm -rf \(kept)", on: machine) }.value != nil
+            let cleared = await Task.detached { RemoteShell.run(script, on: machine) }.value != nil
             return removed && cleared
         }
         signInTurn = Task { _ = await turn.value }
         return await turn.value
-    }
-
-    /// The machine's engine stops by itself after a day without the app: say it's still here.
-    private func keepAlive() {
-        heartbeatTask?.cancel()
-        let connection = machine.connection
-        heartbeatTask = Task {
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(600))
-                await RemoteServer.heartbeat(on: connection)
-            }
-        }
     }
 
     private func listen(to api: OpenCodeAPI) {
@@ -369,6 +613,8 @@ final class MachineEngine {
                     isLive = false
                     checkWhileDown(api)
                 case .event(let event):
+                    // Its settings changed there (from here, a phone, another Mac, by hand).
+                    if event.type == "config.updated" { config.reload() }
                     catalog.handle(event)
                     onEvent(event)
                 }
@@ -436,7 +682,7 @@ final class Machines {
     private static let key = "machines"
 
     init() {
-        for machine in list { engines[machine.id] = MachineEngine(machine: machine) }
+        for machine in list { engines[machine.id] = makeEngine(machine) }
         // What waits for a machine to answer: tried a little after launch, then every 15 minutes.
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(30))
@@ -481,11 +727,10 @@ final class Machines {
     }
 
     /// Drops the clean-ups marked `mark` (whatever they were for came back), on every machine.
-    func dropWaiting(marked mark: String) {
-        for (machine, scripts) in Self.waiting {
-            let kept = scripts.filter { !$0.hasPrefix(mark) }
-            if kept.count != scripts.count { setWaiting(kept, on: machine) }
-        }
+    func dropWaiting(marked mark: String, on machine: String) {
+        guard let scripts = Self.waiting[machine] else { return }
+        let kept = scripts.filter { !$0.hasPrefix(mark) }
+        if kept.count != scripts.count { setWaiting(kept, on: machine) }
     }
 
     private func setWaiting(_ scripts: [String], on machine: String) {
@@ -566,12 +811,53 @@ final class Machines {
         if [ -x "$E" ] && [ -f "$K/data/opencode/opencode.db" ]; then
           KUVO_DB="$K/data/opencode/opencode.db" BUN_BE_BUN=1 "$E" -e 'const { Database } = require("bun:sqlite"); const db = new Database(process.env.KUVO_DB); db.run("DELETE FROM credential"); db.close()' || exit 1
         fi
-        rm -rf "$K/integrations" "$K/keys"
-        # The coding agents' sign-ins there (their conversations stay, as the engine's sessions do).
-        [ -d "$K/agents" ] && find "$K/agents" -path "$K/agents/runtime" -prune -o \\( -name .credentials.json -o -name auth.json -o -name 'auth.json.*' -o -name acp_token.json -o -name 'acp_token.json.*' -o -name 'oauth-token.json*' \\) -type f -exec rm -f {} + 2>/dev/null
+        rm -rf "$K/integrations"
+        \(leftovers)
+        \(agentsSignOut)
+        """
+    }
+
+    /// What a machine keeps to work on its own (`RemoteServer.launchScript`), which goes when you
+    /// remove it: its keys, how its engine starts again after a restart, and the crontab line that
+    /// does it (Kuvo Code's own folder's only).
+    /// A removal's, as `removalScript` is: one waiting for the machine is dropped if you add it
+    /// again, and leaves another Mac's engine there with what it has.
+    static var leftoversScript: String {
+        removalMark + """
+        K="$HOME/\(RemoteEngineInstaller.root)"
+        case "$(cat "$K/run/engine.json" 2>/dev/null)" in *'"mac":"\(MachineEngine.macID)"'*) ;; *'"mac":"'*) exit 0 ;; esac
+        \(leftovers)
         true
         """
     }
+
+    /// This Mac's key on your machines' bridges (`PhoneLink.macKey`), for a machine you remove to
+    /// stop counting it among its Macs. Set by the app.
+    static var linkKey: () -> String? = { nil }
+
+    private static var leftovers: String {
+        // Its bridge no longer counts this Mac among its Macs, nor the peers it gave (PROTOCOL.md,
+        // "Peers"); another Mac's stay.
+        let leave = linkKey().map { key in
+            """
+            L=$(ls -d "$K"/engine/*/opencode 2>/dev/null | tail -n 1)
+            if [ -x "$L" ] && [ -f "$K/bin/kuvo-link.js" ]; then (cd "$K" && KUVO_HOME="$K" BUN_BE_BUN=1 BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 "$L" "$K/bin/kuvo-link.js" leave '\(key)') >/dev/null 2>&1 || true; fi
+
+            """
+        } ?? ""
+        return leave + """
+        rm -rf "$K/keys" "$K/box/keys"
+        rm -f "$K/run/launch.env" "$K/run/launch.notes" "$K/bin/kuvo-start" "$K/bin/.kuvo-start-keeper" "$K/bin/kuvo-launch" "$K/bin/.kuvo-boot"
+        \(RemoteServer.rebootCrontabRemoval)
+        """
+    }
+
+    /// Signs the coding agents there out: their sign-ins' files, under `$K` (their conversations
+    /// stay, as the engine's sessions do).
+    static let agentsSignOut = """
+        [ -d "$K/agents" ] && find "$K/agents" -path "$K/agents/runtime" -prune -o \\( -name .credentials.json -o -name auth.json -o -name 'auth.json.*' -o -name acp_token.json -o -name 'acp_token.json.*' -o -name 'oauth-token.json*' \\) -type f -exec rm -f {} + 2>/dev/null
+        true
+        """
 
     func engine(_ id: String?) -> MachineEngine? {
         id.flatMap { engines[$0] }
@@ -587,10 +873,116 @@ final class Machines {
         }
         list.append(machine)
         Analytics.shared.track("machine_added")
-        let engine = MachineEngine(machine: machine)
+        let engine = makeEngine(machine)
         engines[machine.id] = engine
         save()
         return engine
+    }
+
+    private func makeEngine(_ machine: Machine) -> MachineEngine {
+        let engine = MachineEngine(machine: machine)
+        engine.onIdentity = { [weak self] identity in self?.note(identity, of: machine.id) }
+        engine.onReached = { [weak self] address in self?.noteReached(address, of: machine.id) }
+        return engine
+    }
+
+    // MARK: One computer, several addresses
+
+    /// A machine folded into another, being the same computer at another address: its name, and
+    /// the other's. The app moves what it kept under the first (its projects, its bots).
+    @ObservationIgnored var onFolded: (_ address: String, _ machine: String) -> Void = { _, _ in }
+    /// The last machine folded into another, to say so in Settings › Machines.
+    private(set) var folded: (address: String, machine: String)?
+
+    /// The machine already here that the computer at `address` is, if it's one of them.
+    func machine(calling identity: String) -> Machine? {
+        list.first { $0.identity == identity }
+    }
+
+    /// What `machine` calls itself, read: kept, and if another machine here is the same computer,
+    /// the one added later becomes one of the other's addresses.
+    func note(_ identity: String, of machine: String) {
+        guard let index = list.firstIndex(where: { $0.id == machine }) else { return }
+        if list[index].identity != identity {
+            list[index].identity = identity
+            engines[machine]?.update(list[index])
+            save()
+        }
+        // The one added first stays; any other is one of its addresses.
+        let same = list.filter { $0.identity == identity }
+        guard let first = same.first else { return }
+        for other in same.dropFirst() { fold(other.id, into: first.id) }
+    }
+
+    /// `machine` answered at `address`: tried first next time.
+    func noteReached(_ address: String, of machine: String) {
+        guard let index = list.firstIndex(where: { $0.id == machine }), list[index].reachedAt != address else { return }
+        list[index].reachedAt = address
+        engines[machine]?.update(list[index])
+        save()
+    }
+
+    /// You say `machine` is the same computer as `other` (one of them can't be reached to ask):
+    /// it becomes one of `other`'s addresses. Not when they've said they're two computers.
+    @discardableResult
+    func sameComputer(_ machine: String, as other: String) -> Bool {
+        guard let one = list.first(where: { $0.id == machine }), let two = list.first(where: { $0.id == other }), one.id != two.id else { return false }
+        if let a = one.identity, let b = two.identity, a != b { return false }
+        fold(machine, into: other)
+        return true
+    }
+
+    /// Says in Settings › Machines that `address`, added as a machine, was one already here.
+    func noteAdded(_ address: String, to machine: String) {
+        folded = (address, machine)
+    }
+
+    /// `address` reaches `machine` too: tried when the one in use doesn't answer.
+    func addAddress(_ address: String, to machine: String) {
+        guard let index = list.firstIndex(where: { $0.id == machine }), !list[index].addresses.contains(address) else { return }
+        list[index].otherAddresses = (list[index].otherAddresses ?? []) + [address]
+        engines[machine]?.update(list[index])
+        save()
+    }
+
+    /// No longer tries `address` for `machine` (not its name, which every other is an address of).
+    func removeAddress(_ address: String, from machine: String) {
+        guard let index = list.firstIndex(where: { $0.id == machine }), address != machine else { return }
+        list[index].otherAddresses?.removeAll { $0 == address }
+        if list[index].otherAddresses?.isEmpty == true { list[index].otherAddresses = nil }
+        if list[index].reachedAt == address { list[index].reachedAt = nil }
+        if SSHConnection(destination: machine).address == address { SSHConnection.route(machine, to: nil) }
+        engines[machine]?.update(list[index])
+        save()
+    }
+
+    /// `duplicate` is `machine`, reached at another address: one machine from now on, under
+    /// `machine`'s name, with `duplicate`'s addresses among its own. Nothing there is signed out
+    /// or stopped, as removing it would: the engine it reached is `machine`'s.
+    func fold(_ duplicate: String, into machine: String) {
+        guard duplicate != machine, let other = list.first(where: { $0.id == duplicate }), let index = list.firstIndex(where: { $0.id == machine }) else { return }
+        var merged = list[index]
+        var addresses = merged.otherAddresses ?? []
+        for address in other.addresses where address != merged.destination && !addresses.contains(address) { addresses.append(address) }
+        merged.otherAddresses = addresses.isEmpty ? nil : addresses
+        merged.identity = merged.identity ?? other.identity
+        list[index] = merged
+        engines[machine]?.update(merged)
+        // Its connection goes; the engine there goes on, as this one's.
+        engines[duplicate]?.browser.reset()
+        engines[duplicate]?.disconnect()
+        engines[duplicate] = nil
+        list.removeAll { $0.id == duplicate }
+        SSHConnection.route(duplicate, to: nil)
+        // What waited for it waits for this one, but a removal: nothing was removed.
+        if let scripts = Self.waiting[duplicate] {
+            setWaiting([], on: duplicate)
+            let kept = scripts.filter { !$0.hasPrefix(Self.removalMark) }
+            if !kept.isEmpty { Self.waiting[machine, default: []] += kept }
+        }
+        save()
+        folded = (duplicate, machine)
+        onFolded(duplicate, machine)
     }
 
     func remove(_ id: String) {
@@ -607,10 +999,14 @@ final class Machines {
                     removing.insert(id)
                     Task { [weak self] in
                         let forgotten = await engine.forgetAccounts()
-                        await engine.stopEngine()
+                        await engine.shutDown()
+                        // What it kept to work on its own goes too: its keys, how it starts after
+                        // a restart, and the crontab line that does it.
+                        let leftovers = Self.leftoversScript
+                        let tidied = await Task.detached { RemoteShell.run(leftovers, on: id) }.value != nil
                         self?.removing.remove(id)
                         // What didn't go, the next time it answers.
-                        if !forgotten { self?.runLater(Self.removalScript, on: id) }
+                        if !forgotten { self?.runLater(Self.removalScript, on: id) } else if !tidied { self?.runLater(Self.leftoversScript, on: id) }
                     }
                 }
             } else {
@@ -631,8 +1027,23 @@ final class Machines {
 
     private static func load() -> [Machine] {
         guard let data = UserDefaults.standard.data(forKey: key) else { return [] }
-        return (try? JSONDecoder().decode([Machine].self, from: data)) ?? []
+        do {
+            return try JSONDecoder().decode([Machine].self, from: data)
+        } catch {
+            // One that won't read (a newer version's, or damaged) is set aside, as Kuvo Code's
+            // files are (`JSONFile`), before adding a machine writes over it; once, however many
+            // launches find it there.
+            let aside = UserDefaults.standard.dictionaryRepresentation().filter { $0.key.hasPrefix(unreadableKey) }
+            if !aside.values.contains(where: { $0 as? Data == data }) {
+                UserDefaults.standard.set(data, forKey: "\(unreadableKey)-\(Int(Date.now.timeIntervalSince1970))")
+            }
+            Logger(subsystem: "run.kuvo.code", category: "machine").error("The machines couldn't be read and were set aside: \(error.localizedDescription, privacy: .public)")
+            return []
+        }
     }
+
+    /// Where machines that wouldn't read are kept, followed by when.
+    static let unreadableKey = "machines.unreadable"
 }
 
 /// A sign-in to an agent on a machine whose page sends your browser back to `localhost` there
@@ -643,6 +1054,16 @@ final class Machines {
     @ObservationIgnored private var timeout: Task<Void, Never>?
     /// Its port couldn't be forwarded (something on this Mac has it): why, to say beside the sign-in.
     private(set) var problem: String?
+
+    /// Why the forward ended, from what ssh said: the port taken on this Mac, or the machine out
+    /// of reach (its own words, last line).
+    nonisolated static func problem(_ said: String, port: Int, machine: String) -> String {
+        if said.range(of: #"(?i)address already in use|cannot listen to port|port forwarding failed|bind \[|bind: "#, options: .regularExpression) != nil {
+            return "Something on this Mac is using port \(port), where the sign-in page comes back, so it can't reach \(machine). Quit what uses it (another sign-in, say), then try again."
+        }
+        let last = said.split(whereSeparator: \.isNewline).last.map { $0.trimmingCharacters(in: .whitespaces) } ?? ""
+        return "The sign-in page can't come back to \(machine): it couldn't be reached" + (last.isEmpty ? "." : " (\(last)).") + " Check that it's connected, then try again."
+    }
 
     /// Forwards the port that `url`'s `redirect_uri` names on localhost, if it names one.
     func start(for url: URL, on machine: String) {
@@ -657,13 +1078,15 @@ final class Machines {
             running: "cat >/dev/null", extra: ["-o", "ExitOnForwardFailure=yes", "-L", "\(port):localhost:\(port)"], shared: false)
         process.standardInput = Pipe.unshared()
         process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+        let errors = Pipe()
+        process.standardError = errors
         process.terminationHandler = { [weak self] ended in
-            // Ended by itself right away: the port was taken here.
+            // Ended by itself right away: the port taken here, or the machine out of reach.
             guard ended.terminationReason == .exit, ended.terminationStatus != 0 else { return }
+            let said = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             Task { @MainActor in
                 guard let self, self.process === ended else { return }
-                self.problem = "Something on this Mac is using port \(port), where the sign-in page comes back, so it can't reach \(machine). Quit what uses it (another sign-in, say), then try again."
+                self.problem = Self.problem(said, port: port, machine: machine)
                 self.process = nil
             }
         }
@@ -847,6 +1270,15 @@ nonisolated extension RemoteShell {
         guard let (machine, path) = RemoteFolder.parse(url) else { return nil }
         let quoted = SSHConnection.quoted(path)
         guard let data = run("if [ -d \(quoted) ] && [ ! -L \(quoted) ]; then echo yes; else echo no; fi", on: machine) else { return nil }
+        return String(decoding: data, as: UTF8.self).hasPrefix("yes")
+    }
+
+    /// Whether anything (a link too, even a broken one) is at a path on a machine; nil when it
+    /// can't be asked.
+    static func exists(_ url: URL) -> Bool? {
+        guard let (machine, path) = RemoteFolder.parse(url) else { return nil }
+        let quoted = SSHConnection.quoted(path)
+        guard let data = run("if [ -e \(quoted) ] || [ -L \(quoted) ]; then echo yes; else echo no; fi", on: machine) else { return nil }
         return String(decoding: data, as: UTF8.self).hasPrefix("yes")
     }
 

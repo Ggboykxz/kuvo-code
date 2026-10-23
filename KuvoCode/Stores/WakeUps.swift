@@ -252,14 +252,17 @@ final class WakeUps {
 
     /// A session's folder, made as kuvo-wake makes it, for a wake-up you add before its agent made
     /// one: its session, where it works, and for a coding agent's, that its wake-ups go through the
-    /// agents' bridge (`via`). A bot's is made with it.
+    /// agents' bridge (`via`). A bot's is made with it. An archived session's is held from the
+    /// start, as its wake-ups would be had it had some when it was archived.
     private func makeFolder(of owner: Owner) async throws {
         guard !owner.isBot else { return }
         let directory = RemoteFolder.parse(owner.directory)?.path ?? owner.directory
+        let archived = app?.workspace.session(owner.session).map(Workspace.isArchived) == true
         if let machine = owner.machine {
             let folder = Self.shell(owner.folder)
             let via = owner.agents ? " && printf bridge >\(folder)/via" : ""
-            let script = "[ -f \(folder)/session ] || { (umask 077; mkdir -p \(folder)) && printf '%s' \(SSHConnection.quoted(owner.session)) >\(folder)/session && printf '%s' \(SSHConnection.quoted(directory)) >\(folder)/directory\(via); }"
+            let held = archived ? " && printf \(Self.archivedHold) >\(Self.shell(Self.pauseFile(of: owner)))" : ""
+            let script = "[ -f \(folder)/session ] || { (umask 077; mkdir -p \(folder)) && printf '%s' \(SSHConnection.quoted(owner.session)) >\(folder)/session && printf '%s' \(SSHConnection.quoted(directory)) >\(folder)/directory\(via)\(held); }"
             guard await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value != nil else { throw Failure.notConnected(machine) }
             return
         }
@@ -269,11 +272,14 @@ final class WakeUps {
         try Data(owner.session.utf8).write(to: URL(filePath: Self.path(owner, "session")))
         try Data(directory.utf8).write(to: URL(filePath: Self.path(owner, "directory")))
         if owner.agents { try Data("bridge".utf8).write(to: URL(filePath: Self.path(owner, "via"))) }
+        if archived { try await setPaused(true, owner, byArchiving: true) }
     }
 
     /// A wake-up you add: at `due`, `note` arrives in the conversation, and again at each repeat.
     /// One on weekdays starts on a weekday.
     func add(to owner: Owner, at due: Date, every: Wakes.Repeat?, note: String) async throws {
+        // Moving to another computer: its folder here is about to go (`Moves`).
+        if Moves.isFrozen(owner.key) || Moves.isFrozen(owner.session) { throw Moves.Failure.moving }
         let note = note.trimmingCharacters(in: .whitespacesAndNewlines)
         guard due > .now.addingTimeInterval(60) else { throw Failure.tooSoon }
         guard (wakes[owner.key]?.count ?? 0) < Wakes.limit else { throw Failure.tooMany }
@@ -301,6 +307,7 @@ final class WakeUps {
     /// have come back since it was listed). On a machine that can't be reached, it stays, and
     /// this says so.
     func cancel(_ wake: Wakes.Pending, of owner: Owner) async throws {
+        if Moves.isFrozen(owner.key) || Moves.isFrozen(owner.session) { throw Moves.Failure.moving }
         let letters = wake.letters
         // As kuvo-wake names them; anything else isn't one of its wake-ups (or safe in a command).
         guard !letters.isEmpty, letters.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return }
@@ -320,6 +327,7 @@ final class WakeUps {
 
     /// Stops a watch. On a machine that can't be reached, it stays, and this says so.
     func cancel(_ watch: Wakes.Watch, of owner: Owner) async throws {
+        if Moves.isFrozen(owner.key) || Moves.isFrozen(owner.session) { throw Moves.Failure.moving }
         let letters = watch.letters
         guard !letters.isEmpty, letters.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return }
         let folder = Self.path(owner, "watches", letters)
@@ -470,24 +478,48 @@ final class WakeUps {
         path(owner, "paused")
     }
 
+    /// What the pause file says when archiving held the wake-ups, not you: bringing the session
+    /// back takes only that hold away. Yours says `ownHold`; an empty one is from before they
+    /// said (0.6.3 and earlier), most likely archiving's, and goes too.
+    private static let archivedHold = "archived"
+    private static let ownHold = "paused"
+
     /// Holds a conversation's wake-ups until you resume them; then those that came due meanwhile
     /// go. On a machine that can't be reached, nothing changes, and this says so. A session's
-    /// with none has nothing to hold.
-    func setPaused(_ pause: Bool, _ owner: Owner) async throws {
+    /// with none has nothing to hold. `byArchiving`: held while the session is archived, which
+    /// leaves a hold of yours as it is, and lets go of only its own.
+    func setPaused(_ pause: Bool, _ owner: Owner, byArchiving: Bool = false) async throws {
+        // Held by a move under way (`Moves`), which lets them go once it's there.
+        if Moves.isFrozen(owner.key) || Moves.isFrozen(owner.session) { throw Moves.Failure.moving }
         let file = Self.pauseFile(of: owner)
+        var isPaused = pause
         if let machine = owner.machine {
             // A machine's kuvo-wake from before pausing would send them anyway.
             if pause, let engine = app?.machines.engine(machine) { try? await Wakes.install(on: engine.machine.connection) }
-            let folder = Self.shell(owner.folder)
-            let script = pause ? "[ ! -d \(folder) ] || : > \(Self.shell(file))" : "rm -f \(Self.shell(file))"
-            guard await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value != nil else { throw Failure.notConnected(machine) }
+            let folder = Self.shell(owner.folder), paused = Self.shell(file)
+            let script = switch (pause, byArchiving) {
+            case (true, false): "[ ! -d \(folder) ] || printf \(Self.ownHold) > \(paused)"
+            // A move's hold left by one cut short (`Moves`) becomes archiving's: lifting it then
+            // doesn't let them go.
+            case (true, true): "[ ! -d \(folder) ] || { [ -e \(paused) ] && [ \"$(cat \(paused) 2>/dev/null)\" != \(Moves.hold) ]; } || printf \(Self.archivedHold) > \(paused)"
+            case (false, false): "rm -f \(paused)"
+            case (false, true): "case \"$(cat \(paused) 2>/dev/null)\" in \(Self.archivedHold)|'') rm -f \(paused);; esac; [ -e \(paused) ] && echo held || true"
+            }
+            guard let output = await Task.detached(operation: { RemoteShell.run(script, on: machine) }).value else { throw Failure.notConnected(machine) }
+            if !pause, byArchiving { isPaused = String(decoding: output, as: UTF8.self).hasPrefix("held") }
         } else if pause {
             guard owner.isBot || FileManager.default.fileExists(atPath: owner.folder) else { return }
-            FileManager.default.createFile(atPath: file, contents: nil)
+            let held = FileManager.default.contents(atPath: file).map { String(decoding: $0, as: UTF8.self) }
+            if !(byArchiving && held != nil && held != Moves.hold) {
+                FileManager.default.createFile(atPath: file, contents: Data((byArchiving ? Self.archivedHold : Self.ownHold).utf8))
+            }
+        } else if byArchiving, let held = FileManager.default.contents(atPath: file), !held.isEmpty, String(decoding: held, as: UTF8.self) != Self.archivedHold {
+            // Yours: it stays.
+            isPaused = true
         } else {
             try? FileManager.default.removeItem(atPath: file)
         }
-        notePaused(owner.key, pause)
+        notePaused(owner.key, isPaused)
     }
 
     private func notePaused(_ key: String, _ isPaused: Bool) {
@@ -495,9 +527,20 @@ final class WakeUps {
         if !isPaused, paused.contains(key) { paused.remove(key) }
     }
 
+    /// Wake-ups being sent with Wake Up Now, by owner and wake-up.
+    @ObservationIgnored private var wakingNow: Set<String> = []
+
     /// Sends a waiting wake-up now rather than at its time (to see the job run), on this Mac or
     /// its machine; one that doesn't repeat is then done.
     func wakeNow(_ wake: Wakes.Pending, of owner: Owner) async throws {
+        if Moves.isFrozen(owner.key) || Moves.isFrozen(owner.session) { throw Moves.Failure.moving }
+        // Once: not again while it's on its way (waiting for the folder's tools can take a
+        // while), nor, for one that doesn't repeat, once it's gone (sent, or cancelled).
+        let key = owner.key + "/" + wake.id
+        guard !wakingNow.contains(key) else { return }
+        if owner.machine == nil, !FileManager.default.fileExists(atPath: Self.path(owner, "wakes", wake.id)) { return }
+        wakingNow.insert(key)
+        defer { wakingNow.remove(key) }
         guard let api = api(for: owner) else {
             if owner.agents { throw OutsideAgents.Failure.notRunning(app?.workspace.agents(forFolder: owner.directory)?.failure) }
             throw Failure.notConnected(owner.machine ?? "This Mac's engine")
@@ -522,7 +565,29 @@ final class WakeUps {
     func archived(_ session: Session, _ isArchived: Bool) async {
         let owner = Self.owner(of: session)
         if owner.machine == nil, !FileManager.default.fileExists(atPath: owner.folder) { return }
-        try? await setPaused(isArchived, owner)
+        try? await setPaused(isArchived, owner, byArchiving: true)
+    }
+
+    /// A conversation that carries on in another session (moved to the coding agents): its
+    /// wake-ups and watches go with it, held still if you'd held them, rather than staying with
+    /// the old one, which goes to Archived and holds them there.
+    static func carry(from old: Session, to new: Session) async {
+        let from = owner(of: old), to = owner(of: new)
+        guard from.folder != to.folder, from.machine == to.machine else { return }
+        let directory = RemoteFolder.parse(to.directory)?.path ?? to.directory
+        if let machine = from.machine {
+            let source = shell(from.folder), target = shell(to.folder)
+            let via = to.agents ? "printf bridge >\(target)/via" : "rm -f \(target)/via"
+            let script = "[ -f \(source)/session ] && [ ! -e \(target) ] && mv \(source) \(target) && printf '%s' \(SSHConnection.quoted(to.session)) >\(target)/session && printf '%s' \(SSHConnection.quoted(directory)) >\(target)/directory && \(via); true"
+            _ = await Task.detached { RemoteShell.run(script, on: machine) }.value
+            return
+        }
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: path(from, "session")), !manager.fileExists(atPath: to.folder),
+              (try? manager.moveItem(atPath: from.folder, toPath: to.folder)) != nil else { return }
+        try? Data(to.session.utf8).write(to: URL(filePath: path(to, "session")))
+        try? Data(directory.utf8).write(to: URL(filePath: path(to, "directory")))
+        if to.agents { try? Data("bridge".utf8).write(to: URL(filePath: path(to, "via"))) } else { try? manager.removeItem(atPath: path(to, "via")) }
     }
 
     /// A session that's gone takes its wake-ups and watches with it; a bot's go with its folder.
@@ -579,6 +644,8 @@ final class WakeUps {
     /// Wake-ups on this Mac that didn't go, by owner and file: when to try again, and how many
     /// times in a row they failed, so one that keeps failing is tried less and less often.
     @ObservationIgnored private var retries: [String: (at: Date, failures: Int)] = [:]
+    /// How long a wake-up that has nowhere to go waits before it's tried again.
+    static let unreachableRetry: TimeInterval = 30
 
     private func wakeDue() async {
         await adoptStrays()
@@ -588,6 +655,13 @@ final class WakeUps {
             if !due.isEmpty, let api = api(for: owner) {
                 if !owner.agents { await api.waitForTools(in: owner.directory) }
                 for wake in due { await send(wake, of: owner, api: api) }
+            } else if !due.isEmpty, app?.api != nil {
+                // Where it runs can't be reached while the engine is up (the coding agents' bridge
+                // is down): tried again in a while, rather than every half second meanwhile.
+                for wake in due {
+                    let key = owner.key + "/" + wake.id
+                    retries[key] = (Date.now.addingTimeInterval(Self.unreachableRetry), retries[key]?.failures ?? 0)
+                }
             }
             let left = Self.localWakes(of: owner)
             if wakes[owner.key] != left { wakes[owner.key] = left }
@@ -598,6 +672,8 @@ final class WakeUps {
     }
 
     private func send(_ wake: Wakes.Pending, of owner: Owner, api: OpenCodeAPI) async {
+        // Moving to another computer: it comes there, at its time.
+        guard !Moves.isFrozen(owner.session), !Moves.isFrozen(owner.key) else { return }
         let key = owner.key + "/" + wake.id
         do {
             // One that repeats and still waits from last time (busy, or waiting on you) isn't
@@ -648,6 +724,8 @@ final class WakeUps {
                 for letters in Wakes.changedWatches(in: await run([owner.folder, "check"], stopAfter: 300)) {
                     guard let message = Wakes.watchMessage(letters, inBot: owner.folder) else { continue }
                     if !owner.agents { await api.waitForTools(in: owner.directory) }
+                    // Moving to another computer: what it saw goes there, with its watch.
+                    guard !Moves.isFrozen(owner.session), !Moves.isFrozen(owner.key) else { continue }
                     do {
                         try await api.prompt(session: owner.session, id: Identifier.message(), text: Wakes.marker + message, delivery: .queue)
                         Wakes.watchDelivered(letters, inBot: owner.folder)

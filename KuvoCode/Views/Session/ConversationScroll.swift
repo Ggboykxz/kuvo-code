@@ -108,7 +108,7 @@ struct ConversationScroll<Rows: View>: View {
 
     private func scrollView(_ proxy: ScrollViewProxy) -> some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: spacing) {
+            column {
                 rows
                 // Room under the last message, so it doesn't sit on the composer: the end,
                 // which going to the end goes to (so it's made, wherever the lazy stack guessed
@@ -118,7 +118,10 @@ struct ConversationScroll<Rows: View>: View {
                     .id(ScrollAnchor.end)
             }
             .environment(\.scrollAnchor, anchor)
-            .onAppear { anchor.stopFollowing = { [scroller] in scroller.follow(false) } }
+            .onAppear {
+                anchor.stopFollowing = { [scroller] in scroller.follow(false) }
+                anchor.quote = quote
+            }
             .padding(.horizontal, Metrics.gutter)
             // Room under the card's header, which the conversation scrolls beneath (and under
             // Find's bar while it's open).
@@ -376,6 +379,23 @@ extension ConversationScroll {
         }
     }
 
+    /// What the conversation is laid out in: a plain stack, as what's in it is `RowStack` (which
+    /// makes only the rows in view itself) and a row or two around it. A lazy stack let go of the
+    /// whole `RowStack` when it guessed it was out of view, as the conversation's size changed by
+    /// thousands of points at once (a long reply coming in), and showed nothing until you
+    /// scrolled. Lazy only with the rows in it one by one (KUVO_PERF_LAZY).
+    @ViewBuilder private func column<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        #if DEBUG
+        if Perf.lazy {
+            LazyVStack(alignment: .leading, spacing: spacing, content: content)
+        } else {
+            VStack(alignment: .leading, spacing: spacing, content: content)
+        }
+        #else
+        VStack(alignment: .leading, spacing: spacing, content: content)
+        #endif
+    }
+
     fileprivate func toEnd(_ proxy: ScrollViewProxy) {
         proxy.scrollTo(ScrollAnchor.end, anchor: .bottom)
     }
@@ -478,6 +498,8 @@ final class EndFollower {
 /// SwiftUI would put a position of its own back over what this did.
 final class ScrollAnchor {
     static let space = "conversation"
+    /// Add to Chat, for what's selected in the conversation: a quote over the composer.
+    var quote: ((String) -> Void)?
     /// The conversation's end, after its last row.
     static let end = "conversation-end"
     #if DEBUG

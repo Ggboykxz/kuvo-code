@@ -218,7 +218,7 @@ struct ModelChip<Label: View>: View {
     /// The model picked can't be used now: the chip asks for another rather than show the
     /// default as if it were in use.
     private var isUnavailable: Bool { catalog.isUnavailable(selection) || selection.map { !scope.allows($0.providerID) } == true }
-    private var current: Model? { isUnavailable ? nil : catalog.model(selection) ?? catalog.defaultModel }
+    private var current: Model? { isUnavailable ? nil : catalog.shownModel(selection) ?? catalog.defaultModel }
     private var variant: String? { current.flatMap { model in selection?.sameModel(as: model.ref) == true ? selection?.variant : nil } }
 
     var body: some View {
@@ -235,8 +235,15 @@ struct ModelChip<Label: View>: View {
         .popover(isPresented: $isOpen, arrowEdge: placement.below ? .bottom : .top) {
             ModelPicker(catalog: catalog, selection: selection, onSelect: onSelect, close: { isOpen = false }, scope: scope, offersAuto: offersAuto,
                         startsExpanded: startsExpanded, startsOnList: startsOnList, maxHeight: placement.height,
-                        // Accounts on the machine whose models these are (each signs in on its own).
-                        openSettings: { page in page == .accounts ? app.openAccounts(on: catalog.machine) : app.openSettings(page) })
+                        // Accounts and Custom Auto lists on the machine whose models these are
+                        // (each has its own).
+                        openSettings: { page in
+                            switch page {
+                            case .accounts: app.openAccounts(on: catalog.machine)
+                            case .auto: app.openAuto(on: catalog.machine)
+                            default: app.openSettings(page)
+                            }
+                        })
         }
         .onAppear { LogoImages.shared.prefetch(catalog.models.flatMap { [$0.makerLogoID, $0.providerID] }) }
         #if DEBUG

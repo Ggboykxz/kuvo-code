@@ -37,6 +37,9 @@ struct Bot: Codable, Identifiable, Hashable {
     /// Its conversation runs with the coding agents (on this Mac): a model of theirs, or Auto, and
     /// the engine's models through them. Nil for the engine's.
     var agents: Bool?
+    /// When its name, look, job, personality or model last changed; nil for none since it was
+    /// made, or since an older version changed it.
+    var updated: Date?
 
     /// Where its session runs, the app's way of writing it.
     var directory: String {
@@ -48,6 +51,35 @@ struct Bot: Codable, Identifiable, Hashable {
     /// A path in its folder, the app's way: on its machine, or here.
     func app(_ path: String) -> String {
         machine.map { RemoteFolder.folder(path, on: $0) } ?? path
+    }
+
+    /// What a bot is, kept beside its memory as `bot.json` wherever it lives, so what runs there
+    /// knows it without this Mac (a machine's link answers your phone with it while this Mac is
+    /// closed): its name, look, job and model. This Mac's list (`bots.json`) stays what the app
+    /// goes by; this is written from it when one of these changes, and as its machine connects.
+    struct Descriptor: Codable, Equatable {
+        /// Goes up only when what's here changes in a way an older reader can't follow.
+        static let version = 1
+        static let file = "bot.json"
+
+        var kuvo = Descriptor.version
+        var id: String
+        var name: String
+        /// What it does, in a few words, as last read from its memory.
+        var job: String
+        var look: BotLook
+        var personality: String?
+        var model: ModelRef?
+        /// The project folder it works in, as the computer it lives on writes it; nil for a
+        /// folder of its own.
+        var project: String?
+        var created: Date
+        var updated: Date
+    }
+
+    var descriptor: Descriptor {
+        Descriptor(id: id, name: name, job: job, look: look, personality: personality, model: model,
+                   project: project.map { RemoteFolder.parse($0)?.path ?? $0 }, created: created, updated: updated ?? created)
     }
 }
 
@@ -116,7 +148,7 @@ final class Bots {
     func bot(actingAs id: String?) -> Bot? {
         guard let id else { return nil }
         if let bot = bot(forSession: id) { return bot }
-        return bot(app?.groups.group(seat: id)?.seats.first { $0.value == id }?.key)
+        return bot(app?.chats.group(seat: id)?.seats.first { $0.value == id }?.key)
     }
 
     /// What the bot is up to, for how its avatar moves: waiting for you comes first, then working,
@@ -212,7 +244,7 @@ final class Bots {
         bot.jobInMemory = true
         bot.personality = personality
         let approval = UserDefaults.standard.string(forKey: ToolApproval.key).flatMap(ToolApproval.init) ?? .approveAll
-        let rules = approval.rules(settings: EngineConfig.current?.permissionRules ?? []) + Self.ownRules(for: bot)
+        let rules = approval.rules(settings: EngineConfig.rules(on: machine)) + Self.ownRules(for: bot)
         let catalog = machine.flatMap { app.machines.engine($0)?.catalog } ?? app.catalog
         // The one picked, if you can use it where it lives (on this Mac, a coding agent's too);
         // otherwise the last one used, or that engine's default. Before its models are known (just
@@ -238,6 +270,7 @@ final class Bots {
         save()
         app.workspace.add(session)
         noteSessions()
+        await describe([bot.id])
         Analytics.shared.track("bot_created", ["machine": machine != nil, "project": project != nil])
         return bot
     }
@@ -278,6 +311,11 @@ final class Bots {
     /// about a new name, personality or model; its group chats hear about them too. The rest is
     /// kept as it is now: its job may have changed in its memory while Edit Bot was open.
     func update(_ edited: Bot) async {
+        // Moving to another computer: the edit comes once it's there (for ten minutes at most: a
+        // move cut short whose other computer doesn't answer keeps it here, where it's saved).
+        for _ in 0..<600 where Moves.isFrozen(edited.id) {
+            do { try await Task.sleep(for: .seconds(1)) } catch { break }
+        }
         guard let index = list.firstIndex(where: { $0.id == edited.id }) else { return }
         let old = list[index]
         var bot = old
@@ -285,6 +323,7 @@ final class Bots {
         bot.look = edited.look
         bot.model = edited.model
         bot.personality = edited.personality
+        if bot != old { bot.updated = .now }
         list[index] = bot
         save()
         var edits: Set<String> = []
@@ -293,6 +332,7 @@ final class Bots {
         // A new default model applies to its conversation too; you can still pick another there.
         if old.model != bot.model, bot.model != nil { edits.insert("model") }
         await tell(bot.id, edits)
+        await describe([bot.id])
     }
 
     /// A bot's conversation carried on with the coding agents on `model` (a model of theirs, or
@@ -383,6 +423,7 @@ final class Bots {
     /// machine you removed from Kuvo Code leaves the list, and its folder goes the next time that
     /// machine answers, so adding it again doesn't bring the bot back.)
     func delete(_ bot: Bot) async throws {
+        if Moves.isFrozen(bot.id) { throw Moves.Failure.moving }
         if let machine = bot.machine {
             let folder = SSHConnection.quoted(bot.folder)
             let script = """
@@ -399,7 +440,9 @@ final class Bots {
             }
         }
         await app?.groups.remove(bot)
+        await app?.machineGroups.remove(bot)
         list.removeAll { $0.id == bot.id }
+        described[bot.id] = nil
         save()
         app?.wakeUps.forget(key: bot.id)
         app?.utilities.closeTabs(of: bot.id)
@@ -407,7 +450,7 @@ final class Bots {
         await app?.workspace.delete(bot.sessionID)
         if bot.machine == nil, FileManager.default.fileExists(atPath: bot.folder) {
             do {
-                try FileManager.default.trashItem(at: URL(filePath: bot.folder), resultingItemURL: nil)
+                try FileManager.default.moveToTrash(URL(filePath: bot.folder))
             } catch {
                 log.error("A deleted bot's folder couldn't go to the Trash: \(error.localizedDescription, privacy: .public)")
             }
@@ -419,12 +462,18 @@ final class Bots {
     /// A personality you changed or deleted: the bots with it hear the new words, or go back to
     /// their own way.
     func personalityChanged(_ id: String) async {
-        for var bot in list where bot.personality == id {
-            if Personalities.shared.personality(id) == nil { bot.personality = nil }
+        for bot in list.filter({ $0.personality == id }).map(\.id) {
+            // Each as it is by then: one edited while another was being told (renamed, given
+            // another personality) keeps that.
+            guard let index = list.firstIndex(where: { $0.id == bot }), list[index].personality == id else { continue }
+            if Personalities.shared.personality(id) == nil {
+                list[index].personality = nil
+                list[index].updated = .now
+            }
             // Saved even when unchanged, so its session hears the new wording.
-            if let index = list.firstIndex(where: { $0.id == bot.id }) { list[index] = bot }
             save()
-            await tell(bot.id, ["instructions"])
+            await tell(bot, ["instructions"])
+            await describe([bot])
         }
     }
 
@@ -462,9 +511,12 @@ final class Bots {
     }
 
     /// Writes the bot's session in its folder, and the folder it works in, where `kuvo-wake fire`
-    /// reads them on a machine (it waits for the folder's tools before it wakes the bot).
+    /// reads them on a machine (it waits for the folder's tools before it wakes the bot); and, for
+    /// one that runs with the coding agents, that its wake-ups go to their bridge (`via`), which
+    /// has its session, not the engine.
     private func writeSession(of bot: Bot) async throws {
         let file = (bot.folder as NSString).appendingPathComponent("session")
+        let via = (bot.folder as NSString).appendingPathComponent("via")
         if let machine = bot.machine {
             let directory = (bot.folder as NSString).appendingPathComponent("directory")
             let timezone = (bot.folder as NSString).appendingPathComponent("timezone")
@@ -472,6 +524,7 @@ final class Bots {
             // Your time zone, which its wake-ups' times are in, and its rules from this Mac, for a
             // machine without zone files of its own.
             var script = "printf '%s' \(SSHConnection.quoted(bot.sessionID)) >\(SSHConnection.quoted(file)) && printf '%s' \(SSHConnection.quoted(path)) >\(SSHConnection.quoted(directory)) && printf '%s' \(SSHConnection.quoted(TimeZone.current.identifier)) >\(SSHConnection.quoted(timezone))"
+            script += bot.agents == true ? " && printf bridge >\(SSHConnection.quoted(via))" : " && rm -f \(SSHConnection.quoted(via))"
             if let rules = WakeUps.zoneRules(TimeZone.current.identifier) {
                 let zoneFile = (bot.folder as NSString).appendingPathComponent("zoneinfo")
                 script += " && { printf '%s' \(SSHConnection.quoted(rules.base64EncodedString())) | base64 -d >\(SSHConnection.quoted(zoneFile)) 2>/dev/null || rm -f \(SSHConnection.quoted(zoneFile)); }"
@@ -481,6 +534,7 @@ final class Bots {
             try Data(bot.sessionID.utf8).write(to: URL(filePath: file))
             // Where its watches' checks run.
             try Data(bot.directory.utf8).write(to: URL(filePath: (bot.folder as NSString).appendingPathComponent("directory")))
+            if bot.agents == true { try Data("bridge".utf8).write(to: URL(filePath: via)) } else { try? FileManager.default.removeItem(atPath: via) }
         }
     }
 
@@ -506,10 +560,14 @@ final class Bots {
     /// first line in a few words, for under the bot's name. Nil when it has none.
     static func job(inMemory text: String) -> (line: String, section: String)? {
         let lines = text.components(separatedBy: "\n")
-        guard let start = lines.firstIndex(where: isJobHeading) else { return nil }
-        let rest = lines[(start + 1)...]
-        let end = rest.firstIndex { $0.hasPrefix("#") } ?? lines.endIndex
-        let section = lines[(start + 1)..<end].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let (start, end) = jobLines(lines) else { return nil }
+        var section = lines[(start + 1)..<end].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        // The job written in its heading ("## Job: Keeps CI green"): its first line. In another
+        // heading ("## Job — keeps CI green"), only with nothing under it: else it names the
+        // section ("## Job — what I do").
+        if let (inline, isColon) = jobInHeading(lines[start]), isColon || section.isEmpty {
+            section = [inline, section].filter { !$0.isEmpty }.joined(separator: "\n")
+        }
         let first = section.components(separatedBy: "\n").lazy.map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty } ?? ""
         var line = first
         for mark in ["- ", "* ", "> "] where line.hasPrefix(mark) { line.removeFirst(mark.count) }
@@ -521,6 +579,55 @@ final class Bots {
         // A sentence's end, not a line's: "Keeps the build green." shows as "Keeps the build green".
         if line.hasSuffix("."), !line.hasSuffix("..") { line.removeLast() }
         return (line, section)
+    }
+
+    /// Where the job section is: its heading's line, and the line it ends before. It goes on to the
+    /// next heading of its level or above (its own sub-headings, "### Rules", are part of it), not
+    /// counting a line in a code block ("# run the tests") or one that isn't a heading ("#1 first").
+    private static func jobLines(_ lines: [String]) -> (heading: Int, end: Int)? {
+        guard let start = lines.firstIndex(where: isJobHeading) else { return nil }
+        let level = headingLevel(lines[start]) ?? 1
+        var inCode = false
+        for index in (start + 1)..<lines.endIndex {
+            let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") { inCode.toggle(); continue }
+            if !inCode, let other = headingLevel(lines[index]), other <= level { return (start, index) }
+        }
+        return (start, lines.endIndex)
+    }
+
+    /// A Markdown heading's level ("## Job" is 2), nil for a line that isn't one.
+    private static func headingLevel(_ line: String) -> Int? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let marks = trimmed.prefix { $0 == "#" }.count
+        guard (1...6).contains(marks) else { return nil }
+        let after = trimmed.dropFirst(marks)
+        return after.isEmpty || after.first == " " ? marks : nil
+    }
+
+    /// `memory` with `details` at the end of its job section (one with nothing under its heading
+    /// too).
+    static func addingDetails(_ details: String, toJobIn memory: String) -> String {
+        var lines = memory.components(separatedBy: "\n")
+        guard let (_, end) = jobLines(lines) else { return memory }
+        // After its last line with words, with a blank line before the next section.
+        var at = end
+        while at > 0, lines[at - 1].trimmingCharacters(in: .whitespaces).isEmpty, !isJobHeading(lines[at - 1]) { at -= 1 }
+        let blankAfter = at == lines.count || lines[at].trimmingCharacters(in: .whitespaces).isEmpty
+        lines.insert(contentsOf: ["", details] + (blankAfter ? [] : [""]), at: at)
+        return lines.joined(separator: "\n")
+    }
+
+    /// What a job heading says after "Job" ("Job: …", "Job — …", "Job (…)"), and whether after a
+    /// colon; nil when nothing.
+    private static func jobInHeading(_ line: String) -> (String, isColon: Bool)? {
+        let title = line.trimmingCharacters(in: .whitespaces).drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)
+        guard title.lowercased().hasPrefix("job") else { return nil }
+        var rest = title.dropFirst(3).trimmingCharacters(in: .whitespaces)
+        guard let mark = rest.first, ":-–—(".contains(mark) else { return nil }
+        rest = rest.dropFirst().trimmingCharacters(in: .whitespaces)
+        if mark == "(", rest.hasSuffix(")") { rest = String(rest.dropLast()).trimmingCharacters(in: .whitespaces) }
+        return rest.isEmpty ? nil : (rest, mark == ":")
     }
 
     private static func isJobHeading(_ line: String) -> Bool {
@@ -577,7 +684,7 @@ final class Bots {
                 if let kept = Self.job(inMemory: text) {
                     // It wrote one of its own: what Edit Bot said goes under it, if it isn't there.
                     let missing = old[1].isEmpty || Self.flat(kept.section).contains(Self.flat(old[1])) ? "" : old[1]
-                    if !missing.isEmpty { text = text.replacingOccurrences(of: kept.section, with: kept.section + "\n\n" + missing) }
+                    if !missing.isEmpty { text = Self.addingDetails(missing, toJobIn: text) }
                 } else {
                     text = Self.addingJob(old[0], details: old[1], to: text)
                 }
@@ -588,12 +695,14 @@ final class Bots {
         let kept = Self.job(inMemory: text)
         updated.job = kept?.line ?? ""
         updated.instructions = kept?.section ?? ""
+        if updated.job != bot.job { updated.updated = .now }
         if bot.machine == nil { memoryRead[id] = (try? FileManager.default.attributesOfItem(atPath: bot.memoryFile)[.modificationDate]) as? Date }
         guard updated != bot, let index = list.firstIndex(where: { $0.id == id }) else { return }
         list[index] = updated
         save()
         guard updated.job != bot.job || updated.instructions != bot.instructions else { return }
         await tell(updated.id, ["instructions"])
+        if updated.job != bot.job { await describe([id]) }
     }
 
     /// Text compared without its spacing.
@@ -632,13 +741,16 @@ final class Bots {
 
     /// What the bot's session knows about being a bot: who it is, its job, its memory and how to
     /// wake itself up.
-    static func instructions(for bot: Bot) -> String {
+    /// `personality`: what its personality tells it, when not its own (a machine's kit, see
+    /// `MachineKit`, has a stand-in there).
+    static func instructions(for bot: Bot, personality: String? = nil) -> String {
         let place = bot.machine.map { "the Linux machine \"\($0)\"" } ?? "this Mac"
         let job = bot.instructions.trimmingCharacters(in: .whitespacesAndNewlines)
+        let told = personality ?? Personalities.shared.personality(bot.personality)?.instruction
         return """
         You are \(bot.name), one of the user's bots in Kuvo Code\(bot.job.isEmpty ? "" : ": \(bot.job)"). A bot is a teammate with one job, \
         who keeps working on it over time in this one conversation. You run on \(place).
-        \(Personalities.shared.personality(bot.personality).map { "\n\($0.instruction)\n" } ?? "")
+        \(told.map { "\n\($0)\n" } ?? "")
         Your job is what the user gives you in this conversation, and it changes as they tell you more. Keep it at the top \
         of your memory file, under a "## Job" heading: first, on a line of its own, what you do in a few words, like "Keeps \
         the build green" (Kuvo Code shows it under your name); then, below it, the details: what to watch, what to make, what \
@@ -726,7 +838,7 @@ final class Bots {
         guard let session = app?.workspace.session(bot.sessionID) else { return false }
         let rules = session.permissions ?? []
         // Its approval with Settings › Permissions as they are now, as a conversation that's open gets it.
-        let repaired = ToolApproval.refreshed(rules.filter { !Self.isOwnRule($0, of: bot) }, settings: app?.engineConfig.permissionRules ?? []) + Self.ownRules(for: bot)
+        let repaired = ToolApproval.refreshed(rules.filter { !Self.isOwnRule($0, of: bot) }, settings: EngineConfig.rules(on: bot.machine)) + Self.ownRules(for: bot)
         guard repaired != rules else { return true }
         return (try? await api.setPermissions(session: bot.sessionID, rules: repaired)) != nil
     }
@@ -792,6 +904,133 @@ final class Bots {
         }
     }
 
+    // MARK: Moving
+
+    /// A bot that moved to another computer (`Moves`): it lives on `machine` (nil: this Mac) from
+    /// now on, in `folder`, with its conversation carried there (`session`, the same ID, on `api`).
+    /// Its session there gets its rules for its folder there, and instructions that say where it
+    /// runs; its folder, what kuvo-wake reads there; its description.
+    func moved(_ id: String, to machine: String?, folder: String, session: Session, api: OpenCodeAPI) async {
+        guard let index = list.firstIndex(where: { $0.id == id }) else { return }
+        let old = list[index]
+        var bot = old
+        bot.machine = machine
+        bot.folder = folder
+        list[index] = bot
+        save()
+        app?.workspace.add(session)
+        noteSessions()
+        let rules = (session.permissions ?? []).filter { !Self.isOwnRule($0, of: old) && !Self.isOwnRule($0, of: bot) }
+        var done = (try? await api.setPermissions(session: bot.sessionID, rules: ToolApproval.refreshed(rules, settings: EngineConfig.rules(on: bot.machine)) + Self.ownRules(for: bot))) != nil
+        done = (try? await sendInstructions(of: bot, api: api)) != nil && done
+        done = (try? await writeSession(of: bot)) != nil && done
+        // What didn't get there is tried again with the next check of bots' instructions.
+        if !done { synced.remove(id) }
+        if let machine, wakeInstalled.insert(machine).inserted, let engine = app?.machines.engine(machine) {
+            try? await Wakes.install(on: engine.machine.connection)
+        }
+        described[id] = nil
+        await describe([id])
+    }
+
+    // MARK: Descriptions
+
+    /// What this run last wrote to each bot's `bot.json`, so one that hasn't changed isn't
+    /// written again.
+    @ObservationIgnored private var described: [String: Data] = [:]
+
+    static func descriptorData(_ bot: Bot) -> Data? {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try? encoder.encode(bot.descriptor)
+    }
+
+    /// Writes bots' descriptions (`Bot.Descriptor`) in their folders, as they are by then: on this
+    /// Mac now, on a connected machine in one go; one on a machine that's away gets it as the
+    /// machine connects again (`describeAll(on:)`). A bot whose folder has gone gets none: no
+    /// folder is made. One round at a time where they live, so an older round's never lands after
+    /// a newer one's, and one place never waits on another (this Mac's bots on a slow machine's).
+    /// `force` writes them even if this run wrote the same before.
+    func describe(_ ids: [String], force: Bool = false) async {
+        let places = Dictionary(grouping: ids) { bot($0)?.machine ?? "" }
+        await withTaskGroup(of: Void.self) { group in
+            for (place, ids) in places {
+                let previous = describing[place]
+                let round = Task { [weak self] in
+                    await previous?.value
+                    await self?.writeDescriptions(of: ids, force: force)
+                }
+                describing[place] = round
+                group.addTask { await round.value }
+            }
+        }
+    }
+
+    /// The round of descriptions being written in each place (a machine, or "" for this Mac),
+    /// which the next one there waits for.
+    @ObservationIgnored private var describing: [String: Task<Void, Never>] = [:]
+
+    private func writeDescriptions(of ids: [String], force: Bool) async {
+        let changed = ids.compactMap { id -> (bot: Bot, data: Data)? in
+            guard let bot = bot(id), let data = Self.descriptorData(bot), force || described[id] != data else { return nil }
+            return (bot, data)
+        }
+        for (bot, data) in changed where bot.machine == nil {
+            var isFolder: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: bot.folder, isDirectory: &isFolder), isFolder.boolValue else { continue }
+            let file = URL(filePath: bot.folder).appending(path: Bot.Descriptor.file)
+            do {
+                if (try? Data(contentsOf: file)) != data { try data.write(to: file, options: .atomic) }
+                described[bot.id] = data
+            } catch {
+                log.error("A bot's description wasn't written: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        let away = Dictionary(grouping: changed.filter { $0.bot.machine != nil }) { $0.bot.machine ?? "" }
+        for (machine, entries) in away {
+            guard let engine = app?.machines.engine(machine), engine.isReady else { continue }
+            if await Self.write(entries, on: engine.machine.connection) {
+                for (bot, data) in entries { described[bot.id] = data }
+            } else {
+                log.error("Bots' descriptions weren't written on a machine")
+            }
+        }
+    }
+
+    /// The bots of this Mac (nil) or of a machine, written again whatever this run wrote before:
+    /// at the update that brought descriptions, and as a machine connects (where a copy of the
+    /// app before them, or one on another Mac, could have left one out of date or none).
+    func describeAll(on machine: String?) async {
+        await describe(list.filter { $0.machine == machine }.map(\.id), force: true)
+    }
+
+    /// Writes descriptions on a machine, through one connection: each folder and description, on
+    /// its input (a command line has a size limit), each written whole, never into a folder
+    /// that isn't there.
+    private static func write(_ entries: [(bot: Bot, data: Data)], on connection: SSHConnection) async -> Bool {
+        let lines = entries.map { Data($0.bot.folder.utf8).base64EncodedString() + "\t" + $0.data.base64EncodedString() }.joined(separator: "\n") + "\n"
+        let folder = FileManager.default.temporaryDirectory.appending(path: AppInfo.bundleID)
+        let input = folder.appending(path: "bot-descriptions-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: input) }
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try Data(lines.utf8).write(to: input)
+            let output = try await connection.run("""
+                t="$(printf '\\t')"
+                while IFS="$t" read -r f j; do
+                  d="$(printf '%s' "$f" | base64 -d)" || exit 1
+                  [ -d "$d" ] || continue
+                  printf '%s' "$j" | base64 -d >"$d/\(Bot.Descriptor.file).new" && mv -f "$d/\(Bot.Descriptor.file).new" "$d/\(Bot.Descriptor.file)" || { rm -f "$d/\(Bot.Descriptor.file).new"; exit 1; }
+                done
+                echo written
+                """, input: input)
+            return output.contains("written")
+        } catch {
+            return false
+        }
+    }
+
     // MARK: Storage
 
     private static func load() -> [Bot] {
@@ -800,5 +1039,150 @@ final class Bots {
 
     private func save() {
         JSONFile.write(list, to: Self.file, isoDates: true, readable: true)
+    }
+
+    /// A machine found to be another one here at another address (see `Machines.fold`): its bots
+    /// live on the other, as they did all along.
+    func fold(_ machine: String, into other: String) {
+        var changed = false
+        for index in list.indices where list[index].machine == machine {
+            list[index].machine = other
+            if let project = list[index].project, let parsed = RemoteFolder.parse(project), parsed.machine == machine {
+                list[index].project = RemoteFolder.folder(parsed.path, on: other)
+            }
+            changed = true
+        }
+        if changed { save() }
+    }
+}
+
+// MARK: - Bots a machine makes
+
+/// Bots a machine makes itself, with this Mac closed (New Bot there, from a phone): what it needs to
+/// make them as this Mac does, given as it connects, and the bots it made, taken in here as it does.
+extension Bots {
+    /// What a machine needs to make bots itself, kept in `~/.kuvo-code/bots/kit.json` there: New
+    /// Bot's templates, personalities and looks; what a bot is told (with ⟦name⟧, ⟦folder⟧ and
+    /// ⟦personality⟧ for its own), its first memory (⟦name⟧) and its greeting; the projects there
+    /// and the model a bot starts on; the rules a new conversation gets; and your time zone.
+    struct MachineKit: Encodable {
+        struct Template: Encodable {
+            var id: String, name: String, job: String, instructions: String, look: BotLook, personality: String?, wantsProject: Bool
+            /// The template's job, as the first message to the bot, for your composer.
+            var firstMessage: String
+        }
+        struct Personality: Encodable { var id: String, name: String, description: String, custom: Bool, instruction: String }
+        struct Looks: Encodable { var colors: [String], shapes: [String], faces: [String] }
+        struct Project: Encodable { var directory: String, name: String }
+        var kuvo = 1
+        var templates: [Template]
+        var personalities: [Personality]
+        /// What a bot is told of a personality made there, by its name and description.
+        var personalityWords = KuvoCode.Personality.words
+        var looks: Looks
+        var startingModel: ModelRef?
+        var projects: [Project]
+        var instructions: String
+        var projectNote: String
+        var identityNote: String
+        var memory: String
+        var greeting: String
+        /// A new conversation's rules, before a bot's own (its folder).
+        var rules: [PermissionRule]
+        var timeZone: String
+        /// Its time zone's rules, for a machine without zone files of its own.
+        var zoneinfo: String?
+    }
+
+    func kit(for machine: String) -> MachineKit {
+        let sample = Bot(id: "bot_sample", name: "⟦name⟧", job: "", instructions: "", look: .random(), machine: machine, project: nil,
+                         folder: "⟦folder⟧", sessionID: "", created: .now)
+        let approval = UserDefaults.standard.string(forKey: ToolApproval.key).flatMap(ToolApproval.init) ?? .approveAll
+        let catalog = app?.machines.engine(machine)?.catalog
+        return MachineKit(
+            templates: BotTemplate.all.map { .init(id: $0.id, name: $0.name, job: $0.job, instructions: $0.instructions, look: $0.look, personality: $0.personality,
+                                                   wantsProject: $0.wantsProject, firstMessage: BotTemplate.firstMessage(job: $0.job, instructions: $0.instructions)) },
+            personalities: Personalities.shared.all.map { .init(id: $0.id, name: $0.name, description: $0.description, custom: $0.isCustom, instruction: $0.instruction) },
+            looks: .init(colors: BotLook.Tint.allCases.map(\.rawValue), shapes: BotLook.Form.allCases.map(\.rawValue), faces: BotLook.Face.allCases.map(\.rawValue)),
+            startingModel: catalog?.startingModel(LastModel.current, scope: .on(machine: machine)),
+            projects: (app?.workspace.projects ?? []).filter { RemoteFolder.machine(of: $0.directory) == machine }
+                .map { .init(directory: RemoteFolder.parse($0.directory)?.path ?? $0.directory, name: $0.name) },
+            instructions: Self.instructions(for: sample, personality: "⟦personality⟧"),
+            projectNote: Self.projectNote, identityNote: Self.identityNote, memory: Self.blankMemory("⟦name⟧"), greeting: Self.greeting,
+            rules: approval.rules(settings: EngineConfig.rules(on: machine)),
+            timeZone: TimeZone.current.identifier, zoneinfo: WakeUps.zoneRules(TimeZone.current.identifier)?.base64EncodedString())
+    }
+
+    /// Gives a machine its kit, as it connects.
+    func writeKit(on machine: String) async {
+        guard let connection = app?.machines.engine(machine)?.machine.connection,
+              let data = try? JSONEncoder().encode(kit(for: machine)) else { return }
+        let folder = FileManager.default.temporaryDirectory.appending(path: AppInfo.bundleID)
+        let input = folder.appending(path: "bot-kit-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: input) }
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try data.write(to: input)
+            _ = try await connection.run("""
+                B="$HOME/\(RemoteEngineInstaller.root)/bots"
+                mkdir -p "$B" && cat >"$B/kit.json.new" && mv -f "$B/kit.json.new" "$B/kit.json"
+                """, input: input)
+        } catch {
+            log.error("A machine's bot kit wasn't written: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// A bot's folder on a machine, as read there: its description, its conversation and where
+    /// that runs.
+    struct Found {
+        var folder: String
+        var descriptor: Data
+        var session: String
+        var via: String
+    }
+
+    /// Takes in the bots a machine made while this Mac was away (`MachineKit`), from their
+    /// folders there; the ones it knows stay as they are. The bots taken in.
+    @discardableResult
+    func adopt(_ found: [Found], on machine: String) -> [Bot] {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        var adopted: [Bot] = []
+        for entry in found {
+            guard let described = try? decoder.decode(Bot.Descriptor.self, from: entry.descriptor), described.kuvo == Bot.Descriptor.version,
+                  described.id.hasPrefix("bot_"), (entry.folder as NSString).lastPathComponent == described.id,
+                  !entry.session.isEmpty, bot(described.id) == nil, !adopted.contains(where: { $0.id == described.id }) else { continue }
+            var bot = Bot(id: described.id, name: Self.oneLine(described.name), job: described.job, instructions: "", look: described.look, machine: machine,
+                          project: described.project.map { RemoteFolder.folder($0, on: machine) }, folder: entry.folder, sessionID: entry.session, created: described.created)
+            bot.jobInMemory = true
+            bot.model = described.model
+            bot.personality = described.personality
+            if entry.via == "bridge" { bot.agents = true }
+            bot.updated = described.updated
+            adopted.append(bot)
+        }
+        guard !adopted.isEmpty else { return [] }
+        list.append(contentsOf: adopted)
+        save()
+        noteSessions()
+        return adopted
+    }
+
+    /// The bots a machine made while this Mac was away, read there and taken in, as it connects.
+    func adoptMade(on machine: String) async {
+        guard let connection = app?.machines.engine(machine)?.machine.connection,
+              let output = try? await connection.run("""
+                for d in "$HOME/\(RemoteEngineInstaller.root)/bots"/bot_*; do
+                  [ -f "$d/\(Bot.Descriptor.file)" ] && [ -s "$d/session" ] || continue
+                  printf '%s\t%s\t%s\t%s\n' "$d" "$(base64 <"$d/\(Bot.Descriptor.file)" | tr -d '\n')" "$(head -c 200 "$d/session" | tr -d '\n\t')" "$(head -c 20 "$d/via" 2>/dev/null | tr -d '\n\t')"
+                done
+                """) else { return }
+        let found = output.split(separator: "\n").compactMap { line -> Found? in
+            let parts = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+            guard parts.count == 4, let descriptor = Data(base64Encoded: parts[1]) else { return nil }
+            return Found(folder: parts[0], descriptor: descriptor, session: parts[2], via: parts[3])
+        }
+        let adopted = adopt(found, on: machine)
+        for bot in adopted { await syncJob(of: bot.id) }
     }
 }

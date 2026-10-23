@@ -3,36 +3,18 @@ import Foundation
 /// What a phone may ask an engine for, and passing it on: the Mac's side of what a machine's
 /// bridge does in `kuvo-link.js` (the two lists are checked against `Vectors/link.json`).
 public enum EngineRoutes {
-    /// Sessions and what's in them, live events, what the phone needs to show them, a project's
-    /// files to read, and terminals. Never accounts, keys or integrations, the engine's settings,
-    /// MCP servers or plugins.
+    /// A paired phone is yours: the engine's whole API, as the app has it (sessions, files,
+    /// terminals, commands, accounts and keys, settings, MCP servers). Only a path that isn't what
+    /// it seems (`staysInProject`) is refused.
     public static func allows(_ path: String, method: String = "GET") -> Bool {
-        guard staysInProject(path) else { return false }
-        // Commands the engine runs for agents: read only (the list, one, its output); never run
-        // one or remove it.
-        if path.prefixMatch(of: #/api/shell(/|\?|$)/#) != nil {
-            return ["GET", "HEAD"].contains(method.uppercased()) && path.wholeMatch(of: #/api/shell(/[^/?]+(/output)?)?(\?.*)?/#) != nil
-        }
-        return path.prefixMatch(of: #/api/session(/|\?|$)/#) != nil
-            || path.prefixMatch(of: #/api/experimental/session/[^/]+/wait(\?|$)/#) != nil
-            || path.prefixMatch(of: #/api/event(\?|$)/#) != nil
-            || path.prefixMatch(of: #/api/(info|agent|command|model|provider|project|location|skill|vcs|worktree|permission|form)(/|\?|$)/#) != nil
-            || path.prefixMatch(of: #/api/fs/(list|find)(\?|$)/#) != nil
-            || path.prefixMatch(of: #/api/fs/read//#) != nil
-            || path.prefixMatch(of: #/api/pty(/|\?|$)/#) != nil
+        staysInProject(path) && path.prefixMatch(of: #/api(/|\?|$)/#) != nil
     }
 
-    /// What a phone may ask a Mac's coding agents' bridge for: what it may ask an engine for, and
-    /// their accounts (adding, naming, removing and signing in to them) and Auto's list. Never
-    /// where the engine is, nor updating an agent's program (that runs an installer on the Mac).
+    /// The same of a coding agents' bridge, but for the two routes only the app wires things with:
+    /// where the engine is, and its group chats' own steps (moves), which a phone does through
+    /// `kuvo/groups`.
     public static func allowsAgents(_ path: String, method: String = "GET") -> Bool {
-        guard staysInProject(path) else { return false }
-        let routed = routed(path)
-        if routed.prefixMatch(of: #/api/kuvo/engine(/|\?|$)/#) != nil { return false }
-        if routed.prefixMatch(of: #/api/integration/[^/?]+/update(/|\?|$)/#) != nil { return false }
-        return allows(path, method: method)
-            || path.prefixMatch(of: #/api/integration(/|\?|$)/#) != nil
-            || path.prefixMatch(of: #/api/kuvo/(auto|accounts)(/|\?|$)/#) != nil
+        allows(path, method: method) && routed(path).prefixMatch(of: #/api/kuvo/(engine|groups)(/|\?|$)/#) == nil
     }
 
     /// `path` as the agents bridge routes it: split into parts, without empty ones or "." ones
@@ -46,6 +28,18 @@ public enum EngineRoutes {
         return parts.joined(separator: "/") + (query.map { String(path[$0...]) } ?? "")
     }
 
+    /// Where a sign-in's page sent the browser back to the computer, for the computer to load
+    /// (`kuvo/sign-in/return`): only its own address (127.0.0.1, localhost, [::1]) over http, at a
+    /// port, with what the page sent back (a query), written plainly, in the characters an address
+    /// may hold as it is (so it's loaded exactly as written, never encoded again). What's loaded
+    /// is the address without its fragment, which a browser doesn't send; nil for anything else.
+    public static func signInReturn(_ url: String) -> URL? {
+        guard url.utf8.count <= 8192, url.unicodeScalars.allSatisfy({ ("!"..."~").contains($0) && $0 != "\\" }),
+              let match = url.wholeMatch(of: #/(http://(?:127\.0\.0\.1|localhost|\[::1\]):([1-9][0-9]{0,4})(?:/(?:[A-Za-z0-9\-._~!$&'()*+,;=:@/]|%[0-9A-Fa-f]{2})*)?\?(?:[A-Za-z0-9\-._~!$&'()*+,;=:@/?]|%[0-9A-Fa-f]{2})+)(?:#.*)?/#),
+              let port = Int(match.2), port <= 65535 else { return nil }
+        return URL(string: String(match.1), encodingInvalidCharacters: false)
+    }
+
     /// The sockets a phone may open: a terminal's.
     public static func allowsSocket(_ path: String) -> Bool {
         staysInProject(path) && path.prefixMatch(of: #/api/pty/[^/?]+/connect(\?|$)/#) != nil
@@ -54,11 +48,28 @@ public enum EngineRoutes {
     /// No way out of the project, written plainly or percent-encoded ("%2E%2E"): the engine
     /// decodes it, and lists a folder above the project if asked. Nor a fragment ("#…"), which
     /// isn't sent: ".../update#x" would be checked as itself and reach ".../update". Nor tabs,
-    /// line breaks or other control characters, which URL parsers drop (".\t." is ".." to them).
+    /// line breaks or other control characters, which URL parsers drop (".\t." is ".." to them),
+    /// nor a space at either end, which they drop too (".../update " is ".../update" to them).
+    /// Nor a sign they split on (`/`, `?`, `#`, `.`, `\`, `%`) joined into one character with a
+    /// mark after it, which these checks, made on characters, wouldn't see as that sign
+    /// (".../update#\u{301}" is ".../update" to them).
     static func staysInProject(_ path: String) -> Bool {
         guard !path.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7f }),
-              let decoded = path.removingPercentEncoding else { return false }
-        return !decoded.contains("..") && !decoded.contains("\\") && !path.contains("..") && !path.contains("#")
+              path.unicodeScalars.first != " ", path.unicodeScalars.last != " ",
+              !joinsASign(path), let decoded = path.removingPercentEncoding, !joinsASign(decoded) else { return false }
+        // As bytes, as parsers read them, not characters ("..\u{200D}" is ".." to them).
+        return !has("..", in: decoded) && !has("\\", in: decoded) && !has("..", in: path) && !has("#", in: path)
+    }
+
+    /// A sign other than a letter or digit, joined into one character with what follows it.
+    private static func joinsASign(_ text: String) -> Bool {
+        text.contains { $0.unicodeScalars.count > 1 && $0.unicodeScalars.contains { $0.isASCII && !$0.properties.isAlphabetic && !("0"..."9").contains($0) } }
+    }
+
+    private static func has(_ part: String, in text: String) -> Bool {
+        let bytes = Array(text.utf8), wanted = Array(part.utf8)
+        guard bytes.count >= wanted.count else { return false }
+        return (0...(bytes.count - wanted.count)).contains { Array(bytes[$0..<($0 + wanted.count)]) == wanted }
     }
 
     static let requestHeaders = ["content-type", "accept", "x-opencode-directory", "last-event-id"]

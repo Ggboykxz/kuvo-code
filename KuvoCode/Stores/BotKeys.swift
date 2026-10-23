@@ -68,6 +68,15 @@ enum BotKeys {
         }
     }
 
+    /// A bot moving off its machine (`Moves`): its keys' files there go. Your Keychain keeps its
+    /// keys, for where it lives now (`apply`).
+    static func leave(_ bot: Bot, app: AppModel?) async {
+        guard let machine = bot.machine, let engine = app?.machines.engine(machine), engine.isReady else { return }
+        let variables = await Task.detached { IntegrationKeys.variables(ofBot: bot.id) }.value
+        guard !variables.isEmpty else { return }
+        await send(variables.map { "DELETE=\($0)" }, to: engine, workspace: (bot.folder as NSString).appendingPathComponent("workspace"))
+    }
+
     /// As an engine starts (on `machine`, or this Mac's): each bot's there, in case its keys or the
     /// integrations' settings changed meanwhile. On this Mac, only bots with keys of their own or
     /// a folder's settings file; on a machine, every bot there (keys taken away while it was away

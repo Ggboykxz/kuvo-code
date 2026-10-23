@@ -61,7 +61,9 @@ nonisolated enum Passwords {
         let loose = agentSites.filter { accounts[$0] == nil }
         guard !loose.isEmpty else { return }
         for host in loose {
-            if let newest = logins(for: host).first { setAgentSignIn(host, true, account: newest.account) } else { setAgentSignIn(host, false) }
+            // The keychain couldn't say (locked at launch): left for the next launch, not turned off.
+            guard let saved = found(for: host) else { continue }
+            if let newest = saved.first { setAgentSignIn(host, true, account: newest.account) } else { setAgentSignIn(host, false) }
         }
     }
 
@@ -88,12 +90,19 @@ nonisolated enum Passwords {
 
     /// Saved logins, every site's or one's, newest first.
     static func logins(for host: String? = nil) -> [Login] {
+        found(for: host) ?? []
+    }
+
+    /// The saved logins, or nil when the keychain couldn't say (locked, say): none is `[]`.
+    private static func found(for host: String?) -> [Login]? {
         var query = base
         query[kSecMatchLimit as String] = kSecMatchLimitAll
         query[kSecReturnAttributes as String] = true
         if let host { query[kSecAttrServer as String] = host }
         var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let items = result as? [[String: Any]] else { return [] }
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return [] }
+        guard status == errSecSuccess, let items = result as? [[String: Any]] else { return nil }
         return items.compactMap { item in
             guard let host = item[kSecAttrServer as String] as? String else { return nil }
             return Login(host: host, account: item[kSecAttrAccount as String] as? String ?? "", modified: item[kSecAttrModificationDate as String] as? Date)

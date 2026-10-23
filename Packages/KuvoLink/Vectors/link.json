@@ -183,35 +183,43 @@
     },
     {
       "path": "api/experimental/session/ses_1/instructions/entries/k",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/credential",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/credential/anthropic",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/integration/github/connect/key",
-      "allowed": false
+      "allowed": true
+    },
+    {
+      "path": "api/integration",
+      "allowed": true
+    },
+    {
+      "path": "api/integration/github-copilot",
+      "allowed": true
     },
     {
       "path": "api/config",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/config/shell",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/mcp",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/plugin",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/fs/list",
@@ -231,11 +239,11 @@
     },
     {
       "path": "api/fs/read",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/fs/write/x",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/fs/read/../../etc/hosts",
@@ -282,6 +290,38 @@
       "allowed": false
     },
     {
+      "path": "api/experimental/session/import#\u0301/wait",
+      "allowed": false
+    },
+    {
+      "path": "api/session/ses_1#\u0301/../../credential",
+      "allowed": false
+    },
+    {
+      "path": "api/fs/read/Re\u0301sume\u0301.txt",
+      "allowed": true
+    },
+    {
+      "path": "api/session/%2e%2e\u200d/credential",
+      "allowed": false
+    },
+    {
+      "path": "api/session/%2e%2e\u0301/credential",
+      "allowed": false
+    },
+    {
+      "path": "api/session/ses_1/prompt ",
+      "allowed": false
+    },
+    {
+      "path": " api/session",
+      "allowed": false
+    },
+    {
+      "path": "api/fs/read/a%20b.txt",
+      "allowed": true
+    },
+    {
       "path": "api/fs/read/..%5c..%5csecret",
       "allowed": false
     },
@@ -295,11 +335,11 @@
     },
     {
       "path": "api/sessions",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/eventual",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/session/../credential",
@@ -331,7 +371,7 @@
     },
     {
       "path": "api/ptys",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/pty/%2e%2e/x",
@@ -339,7 +379,7 @@
     },
     {
       "path": "api/experimental/persistent-pty/pty_1",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/shell",
@@ -359,26 +399,191 @@
     },
     {
       "path": "api/shell/sh_1/x",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/shells",
-      "allowed": false
+      "allowed": true
     },
     {
       "path": "api/shell",
-      "allowed": false,
+      "allowed": true,
       "method": "POST"
     },
     {
       "path": "api/shell/sh_1",
-      "allowed": false,
+      "allowed": true,
       "method": "DELETE"
     },
     {
       "path": "api/shell/sh_1/output",
       "allowed": true,
       "method": "GET"
+    },
+    {
+      "path": "api/integration",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/integration?fresh=1",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/integration/github-copilot",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/integration/anthropic/connect/key",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/github-copilot/connect/oauth",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/github-copilot/connect/oauth/att_1",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/integration/gitlab/connect/oauth/att_1/complete",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/gitlab/connect/oauth/att_1",
+      "allowed": true,
+      "method": "DELETE"
+    },
+    {
+      "path": "api/credential/cred_1/activate",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/credential/cred_1",
+      "allowed": true,
+      "method": "DELETE"
+    },
+    {
+      "path": "api/integration/openai@work/connect/key",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/credential",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/credential/cred_1",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/credential",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/credential?x=1",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/credential/cred_1/activate",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/credential/cred_1/x",
+      "allowed": true,
+      "method": "DELETE"
+    },
+    {
+      "path": "api/integration/anthropic/update",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/anthropic/connect/external",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/anthropic/connect/%6bey",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/anthropic//connect/key",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/./connect/key",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/anthropic/connect/key/x",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/anthropic/connect/key?x=1",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/anthropic",
+      "allowed": true,
+      "method": "DELETE"
+    },
+    {
+      "path": "api/integration/anthropic",
+      "allowed": true,
+      "method": "PATCH"
+    },
+    {
+      "path": "api/integration/anthropic/connect/key",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/integration/anthropic/connect/key",
+      "allowed": true,
+      "method": "PUT"
+    },
+    {
+      "path": "api/integration/../credential",
+      "allowed": false,
+      "method": "GET"
+    },
+    {
+      "path": "api/integration/%2e%2e/credential",
+      "allowed": false,
+      "method": "GET"
+    },
+    {
+      "path": "api/integration/anthropic/connect/oauth/att_1/complete ",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/a#/../../credential",
+      "allowed": false,
+      "method": "GET"
+    },
+    {
+      "path": "api/credential/.hidden",
+      "allowed": true,
+      "method": "DELETE"
     }
   ],
   "sockets": [
@@ -425,6 +630,1416 @@
     {
       "path": "api/session/ses_1/connect",
       "allowed": false
+    },
+    {
+      "path": "api/pty/%2e%2e\u200d/connect",
+      "allowed": false
+    }
+  ],
+  "agentRoutes": [
+    {
+      "path": "api/session/ses_1/prompt",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/session",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/event",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/integration",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/integration/claude-code@1f2e/connect/oauth",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/kuvo/auto",
+      "allowed": true,
+      "method": "PUT"
+    },
+    {
+      "path": "api/kuvo/auto/limits",
+      "allowed": true,
+      "method": "DELETE"
+    },
+    {
+      "path": "api/kuvo/accounts",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/kuvo/accounts/codex-cli@9a8b",
+      "allowed": true,
+      "method": "PATCH"
+    },
+    {
+      "path": "api/model",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/kuvo/engine",
+      "allowed": false,
+      "method": "PUT"
+    },
+    {
+      "path": "api/kuvo/%65ngine",
+      "allowed": false,
+      "method": "GET"
+    },
+    {
+      "path": "api/kuvo//engine",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/claude-code/update",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/claude-code/%75pdate",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/claude-code//update",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/claude-code/./update",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/claude-code/%2e/update",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration//claude-code/update",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/claude-code/update/",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/claude-code/update#x",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/kuvo/engine#",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/fs/read/../../etc/passwd",
+      "allowed": false,
+      "method": "GET"
+    },
+    {
+      "path": "api/credential",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/config",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/kuvo/other",
+      "allowed": true,
+      "method": "GET"
+    },
+    {
+      "path": "api/shell",
+      "allowed": true,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/claude-code/update ",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": " api/kuvo/engine",
+      "allowed": false,
+      "method": "PUT"
+    },
+    {
+      "path": "api/kuvo/engine  ",
+      "allowed": false,
+      "method": "PUT"
+    },
+    {
+      "path": "api/integration/claude-code/update#\u0301",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/claude-code/update?\u0301",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/integration/claude-code/update/\u0301",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/kuvo/engine#\u200d",
+      "allowed": false,
+      "method": "PUT"
+    },
+    {
+      "path": "api/integration/claude-code/update%3F\u0301",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/kuvo/groups",
+      "allowed": false,
+      "method": "GET"
+    },
+    {
+      "path": "api/kuvo/groups/grp_x/release",
+      "allowed": false,
+      "method": "POST"
+    },
+    {
+      "path": "api/kuvo/%67roups",
+      "allowed": false,
+      "method": "GET"
+    }
+  ],
+  "signInReturns": [
+    {
+      "url": "http://127.0.0.1:19876/mcp/oauth/callback?code=abc&state=xyz",
+      "loads": "http://127.0.0.1:19876/mcp/oauth/callback?code=abc&state=xyz"
+    },
+    {
+      "url": "http://localhost:1455/auth/callback?code=a.b-c_d~e&state=1",
+      "loads": "http://localhost:1455/auth/callback?code=a.b-c_d~e&state=1"
+    },
+    {
+      "url": "http://[::1]:8080/cb?code=x",
+      "loads": "http://[::1]:8080/cb?code=x"
+    },
+    {
+      "url": "http://127.0.0.1:19876/?code=x",
+      "loads": "http://127.0.0.1:19876/?code=x"
+    },
+    {
+      "url": "http://127.0.0.1:19876?code=x",
+      "loads": "http://127.0.0.1:19876?code=x"
+    },
+    {
+      "url": "http://127.0.0.1:65535/cb?error=access_denied",
+      "loads": "http://127.0.0.1:65535/cb?error=access_denied"
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb?code=x#_=_",
+      "loads": "http://127.0.0.1:19876/cb?code=x"
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb?code=%2F%3D",
+      "loads": "http://127.0.0.1:19876/cb?code=%2F%3D"
+    },
+    {
+      "url": "http://127.0.0.1:1/cb?code=x",
+      "loads": "http://127.0.0.1:1/cb?code=x"
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb?",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1/cb?code=x",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:0/cb?code=x",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:65536/cb?code=x",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:019876/cb?code=x",
+      "loads": null
+    },
+    {
+      "url": "https://127.0.0.1:19876/cb?code=x",
+      "loads": null
+    },
+    {
+      "url": "HTTP://127.0.0.1:19876/cb?code=x",
+      "loads": null
+    },
+    {
+      "url": "http://LOCALHOST:19876/cb?code=x",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.2:19876/cb?code=x",
+      "loads": null
+    },
+    {
+      "url": "http://example.com:19876/cb?code=x",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1.example.com:19876/cb?code=x",
+      "loads": null
+    },
+    {
+      "url": "http://localhost.example.com:80/cb?code=x",
+      "loads": null
+    },
+    {
+      "url": "http://me@127.0.0.1:19876/cb?code=x",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:19876@example.com/cb?code=x",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:19876\\@example.com/cb?code=x",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb?code=a b",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb?code=x\n",
+      "loads": null
+    },
+    {
+      "url": " http://127.0.0.1:19876/cb?code=x",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb?code=x ",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:19876/c\\b?code=x",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb?code=\u00e9",
+      "loads": null
+    },
+    {
+      "url": "http://0x7f000001:19876/cb?code=x",
+      "loads": null
+    },
+    {
+      "url": "http://2130706433:19876/cb?code=x",
+      "loads": null
+    },
+    {
+      "url": "http://[::ffff:127.0.0.1]:19876/cb?code=x",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:19876#?code=x",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb#x?code=y",
+      "loads": null
+    },
+    {
+      "url": "//127.0.0.1:19876/cb?code=x",
+      "loads": null
+    },
+    {
+      "url": "127.0.0.1:19876/cb?code=x",
+      "loads": null
+    },
+    {
+      "url": "",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:1/cb?code=x#",
+      "loads": "http://127.0.0.1:1/cb?code=x"
+    },
+    {
+      "url": "http://127.0.0.1:19876/a@b?code=x",
+      "loads": "http://127.0.0.1:19876/a@b?code=x"
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb?#x",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb?code=a%2Fb&x=[1]",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb?code=a%2Fb&x=1",
+      "loads": "http://127.0.0.1:19876/cb?code=a%2Fb&x=1"
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb?code=50%",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb?code=%zz",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb?code=a|b",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb?code={x}",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb?code=a^b",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb?code=`x`",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb?code=\"x\"",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb?code=<x>",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:19876/c[b]?code=x",
+      "loads": null
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb?code=a'b(c)*!$,;:@/?~",
+      "loads": "http://127.0.0.1:19876/cb?code=a'b(c)*!$,;:@/?~"
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb?code=x#frag|ment[1]",
+      "loads": "http://127.0.0.1:19876/cb?code=x"
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb%7C?code=x",
+      "loads": "http://127.0.0.1:19876/cb%7C?code=x"
+    },
+    {
+      "url": "http://127.0.0.1:19876/cb?code=xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "loads": null
+    }
+  ],
+  "phoneBooks": [
+    {
+      "name": "a paired phone removes a lost one, which can't change anything after, nor come back with an old list",
+      "macs": [
+        "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE",
+        "_-KfaS0m38_-YzhyRvgGQhSLPVpU0_rFrl2kifbquvk"
+      ],
+      "phones": [
+        {
+          "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+          "pairing": "a",
+          "from": "mac",
+          "mac": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE"
+        },
+        {
+          "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+          "pairing": "b",
+          "from": "mac",
+          "mac": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE"
+        }
+      ],
+      "steps": [
+        {
+          "op": "remove",
+          "by": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+          "phones": [
+            {
+              "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+              "pairing": "b"
+            }
+          ],
+          "ok": true,
+          "after": {
+            "phones": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a",
+                "from": "mac"
+              }
+            ],
+            "removed": [
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "b"
+              }
+            ]
+          }
+        },
+        {
+          "op": "remove",
+          "by": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+          "phones": [
+            {
+              "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+              "pairing": "a"
+            }
+          ],
+          "ok": false,
+          "after": {
+            "phones": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a",
+                "from": "mac"
+              }
+            ],
+            "removed": [
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "b"
+              }
+            ]
+          }
+        },
+        {
+          "op": "macList",
+          "by": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE",
+          "phones": [
+            {
+              "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+              "pairing": "a"
+            },
+            {
+              "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+              "pairing": "b"
+            }
+          ],
+          "ok": true,
+          "after": {
+            "phones": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a",
+                "from": "mac"
+              }
+            ],
+            "removed": [
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "b"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "nobody removes a Mac, nor does a stranger remove anyone, nor an empty removal, too many at once, or ones that aren't keys",
+      "macs": [
+        "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE",
+        "_-KfaS0m38_-YzhyRvgGQhSLPVpU0_rFrl2kifbquvk"
+      ],
+      "phones": [
+        {
+          "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+          "pairing": "a",
+          "from": "mac",
+          "mac": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE"
+        },
+        {
+          "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+          "pairing": "b",
+          "from": "mac",
+          "mac": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE"
+        }
+      ],
+      "steps": [
+        {
+          "op": "remove",
+          "by": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+          "phones": [
+            {
+              "key": "_-KfaS0m38_-YzhyRvgGQhSLPVpU0_rFrl2kifbquvk",
+              "pairing": ""
+            },
+            {
+              "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+              "pairing": "b"
+            }
+          ],
+          "ok": false,
+          "after": {
+            "phones": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a",
+                "from": "mac"
+              },
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "b",
+                "from": "mac"
+              }
+            ],
+            "removed": []
+          }
+        },
+        {
+          "op": "remove",
+          "by": "jeCzxH8RLFl0X3F6YmkyJkxCKnVjlUhy4jeyI69K1kM",
+          "phones": [
+            {
+              "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+              "pairing": "a"
+            }
+          ],
+          "ok": false,
+          "after": {
+            "phones": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a",
+                "from": "mac"
+              },
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "b",
+                "from": "mac"
+              }
+            ],
+            "removed": []
+          }
+        },
+        {
+          "op": "remove",
+          "by": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+          "phones": [],
+          "ok": false,
+          "after": {
+            "phones": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a",
+                "from": "mac"
+              },
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "b",
+                "from": "mac"
+              }
+            ],
+            "removed": []
+          }
+        },
+        {
+          "op": "remove",
+          "by": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+          "phones": [
+            {
+              "key": "GmDhWz1yDZV4TsegTPSL_6a0MPfzDIrNlaPPt_boc5s"
+            },
+            {
+              "key": "rWZ7eLqO0CdYaPzBw2UPfVxz_GFDNS0_ZbvCktw2pRE"
+            },
+            {
+              "key": "nR3KegEFq1G9DBPT5ZnySXRfVtY3GyKgquoaX1mEgPs"
+            },
+            {
+              "key": "xsL5sU3hj2rWnyqu5Y_Kvj5LYGd9i_oAENNMZ1bY6K8"
+            },
+            {
+              "key": "hKQ-uTe2FuUkcJWc-9VVvAYlyZsaEzNyyfc628Fj9rY"
+            },
+            {
+              "key": "BrT--3Hdyc6CzW3FH4pMVFoWixRBmWVubizA-lcsfSA"
+            },
+            {
+              "key": "ouJpgrGIRmEV1mE-Xw-kSZBaa0iyPg7SPj9luWomcdo"
+            },
+            {
+              "key": "Io-QVCaZUoxcPx9ixHpA0f6ALKbMAtSltDr2bi7tJz4"
+            },
+            {
+              "key": "y_IiS7T0CyO7j6ucsBI0MtPWfmBPs8eJ-0HqZ-_zF8U"
+            },
+            {
+              "key": "bQnLEhL58m4aqawujU1wERMtgCAodJgqehk7FdUKgKY"
+            },
+            {
+              "key": "ZuwxDoN6ebnQnDP3QOkj4ksJbhhpLPu42naTWrHMSxk"
+            },
+            {
+              "key": "SKBCGJPgMcvaG0nWxkOwTKee5tB3C1P_l5ikRDmVtVA"
+            },
+            {
+              "key": "dm5BOZGi-hLIFmnK3wyykjrsk_iw2BkcJopuxSqDGD4"
+            },
+            {
+              "key": "6iKCg154bLaslk9zDLSSyRu-VhWF_oFHFGOXLc4Dx04"
+            },
+            {
+              "key": "IZPwCyrkAZMMnFA8Fyqzob2QWTeWfNENU6Y6_RSRAZQ"
+            },
+            {
+              "key": "543OV6Aj6vRPTaRIo6xwQBevPMra9x6GcHNTvNJZ970"
+            },
+            {
+              "key": "ZerGU330PLvaRS6_yHV0q7UVpitqcH9pNZNs1UmxkBs"
+            }
+          ],
+          "ok": false,
+          "after": {
+            "phones": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a",
+                "from": "mac"
+              },
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "b",
+                "from": "mac"
+              }
+            ],
+            "removed": []
+          }
+        },
+        {
+          "op": "remove",
+          "by": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+          "phones": [
+            {
+              "key": "not a key"
+            }
+          ],
+          "ok": false,
+          "after": {
+            "phones": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a",
+                "from": "mac"
+              },
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "b",
+                "from": "mac"
+              }
+            ],
+            "removed": []
+          }
+        },
+        {
+          "op": "remove",
+          "by": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+          "phones": [
+            {
+              "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+              "pairing": "not a pairing!"
+            }
+          ],
+          "ok": false,
+          "after": {
+            "phones": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a",
+                "from": "mac"
+              },
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "b",
+                "from": "mac"
+              }
+            ],
+            "removed": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "pairing it again on the Mac lets a removed phone back in",
+      "macs": [
+        "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE",
+        "_-KfaS0m38_-YzhyRvgGQhSLPVpU0_rFrl2kifbquvk"
+      ],
+      "phones": [
+        {
+          "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+          "pairing": "a",
+          "from": "mac",
+          "mac": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE"
+        },
+        {
+          "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+          "pairing": "b",
+          "from": "mac",
+          "mac": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE"
+        }
+      ],
+      "steps": [
+        {
+          "op": "remove",
+          "by": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+          "phones": [
+            {
+              "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+              "pairing": "b"
+            }
+          ],
+          "ok": true,
+          "after": {
+            "phones": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a",
+                "from": "mac"
+              }
+            ],
+            "removed": [
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "b"
+              }
+            ]
+          }
+        },
+        {
+          "op": "macList",
+          "by": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE",
+          "phones": [
+            {
+              "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+              "pairing": "a"
+            },
+            {
+              "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+              "pairing": "c"
+            }
+          ],
+          "ok": true,
+          "after": {
+            "phones": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a",
+                "from": "mac"
+              },
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "c",
+                "from": "mac"
+              }
+            ],
+            "removed": [
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "b"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "pairing it here lets a removed phone back in",
+      "macs": [
+        "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE",
+        "_-KfaS0m38_-YzhyRvgGQhSLPVpU0_rFrl2kifbquvk"
+      ],
+      "phones": [
+        {
+          "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+          "pairing": "a",
+          "from": "pair"
+        },
+        {
+          "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+          "pairing": "b",
+          "from": "pair"
+        }
+      ],
+      "steps": [
+        {
+          "op": "remove",
+          "by": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+          "phones": [
+            {
+              "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+              "pairing": "a"
+            }
+          ],
+          "ok": true,
+          "after": {
+            "phones": [
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "b",
+                "from": "pair"
+              }
+            ],
+            "removed": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a"
+              }
+            ]
+          }
+        },
+        {
+          "op": "pair",
+          "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+          "pairing": "d",
+          "ok": true,
+          "phones": [],
+          "after": {
+            "phones": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "d",
+                "from": "pair"
+              },
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "b",
+                "from": "pair"
+              }
+            ],
+            "removed": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "the Mac removes a phone by leaving it off its list, and passes on removals it heard of",
+      "macs": [
+        "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE",
+        "_-KfaS0m38_-YzhyRvgGQhSLPVpU0_rFrl2kifbquvk"
+      ],
+      "phones": [
+        {
+          "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+          "pairing": "a",
+          "from": "mac",
+          "mac": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE"
+        },
+        {
+          "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+          "pairing": "b",
+          "from": "mac",
+          "mac": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE"
+        },
+        {
+          "key": "n5hTs_E0RBl70cju2whbTAMKAu0otfYfOmobonvRrnM",
+          "pairing": "c",
+          "from": "pair"
+        }
+      ],
+      "steps": [
+        {
+          "op": "macList",
+          "by": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE",
+          "phones": [
+            {
+              "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+              "pairing": "a"
+            }
+          ],
+          "removed": [
+            {
+              "key": "n5hTs_E0RBl70cju2whbTAMKAu0otfYfOmobonvRrnM",
+              "pairing": "c"
+            }
+          ],
+          "ok": true,
+          "after": {
+            "phones": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a",
+                "from": "mac"
+              }
+            ],
+            "removed": [
+              {
+                "key": "n5hTs_E0RBl70cju2whbTAMKAu0otfYfOmobonvRrnM",
+                "pairing": "c"
+              },
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "b"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "a removal of an older pairing leaves the newer one; one of a phone not heard of yet keeps it out",
+      "macs": [
+        "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE",
+        "_-KfaS0m38_-YzhyRvgGQhSLPVpU0_rFrl2kifbquvk"
+      ],
+      "phones": [
+        {
+          "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+          "pairing": "a",
+          "from": "mac",
+          "mac": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE"
+        },
+        {
+          "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+          "pairing": "y",
+          "from": "mac",
+          "mac": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE"
+        }
+      ],
+      "steps": [
+        {
+          "op": "remove",
+          "by": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+          "phones": [
+            {
+              "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+              "pairing": "x"
+            },
+            {
+              "key": "rQlcFDBhbno5vyLamwFeK9qFr093rb-1Dw62cMLaOi0",
+              "pairing": "z"
+            }
+          ],
+          "ok": true,
+          "after": {
+            "phones": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a",
+                "from": "mac"
+              },
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "y",
+                "from": "mac"
+              }
+            ],
+            "removed": [
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "x"
+              },
+              {
+                "key": "rQlcFDBhbno5vyLamwFeK9qFr093rb-1Dw62cMLaOi0",
+                "pairing": "z"
+              }
+            ]
+          }
+        },
+        {
+          "op": "macList",
+          "by": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE",
+          "phones": [
+            {
+              "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+              "pairing": "a"
+            },
+            {
+              "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+              "pairing": "y"
+            },
+            {
+              "key": "rQlcFDBhbno5vyLamwFeK9qFr093rb-1Dw62cMLaOi0",
+              "pairing": "z"
+            }
+          ],
+          "ok": true,
+          "after": {
+            "phones": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a",
+                "from": "mac"
+              },
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "y",
+                "from": "mac"
+              }
+            ],
+            "removed": [
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "x"
+              },
+              {
+                "key": "rQlcFDBhbno5vyLamwFeK9qFr093rb-1Dw62cMLaOi0",
+                "pairing": "z"
+              }
+            ]
+          }
+        },
+        {
+          "op": "macList",
+          "by": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE",
+          "phones": [
+            {
+              "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+              "pairing": "a"
+            },
+            {
+              "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+              "pairing": "y"
+            },
+            {
+              "key": "rQlcFDBhbno5vyLamwFeK9qFr093rb-1Dw62cMLaOi0",
+              "pairing": "w"
+            }
+          ],
+          "ok": true,
+          "after": {
+            "phones": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a",
+                "from": "mac"
+              },
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "y",
+                "from": "mac"
+              },
+              {
+                "key": "rQlcFDBhbno5vyLamwFeK9qFr093rb-1Dw62cMLaOi0",
+                "pairing": "w",
+                "from": "mac"
+              }
+            ],
+            "removed": [
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "x"
+              },
+              {
+                "key": "rQlcFDBhbno5vyLamwFeK9qFr093rb-1Dw62cMLaOi0",
+                "pairing": "z"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "a Mac removes any phone, and a phone itself; a removal without a pairing takes the one there",
+      "macs": [
+        "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE",
+        "_-KfaS0m38_-YzhyRvgGQhSLPVpU0_rFrl2kifbquvk"
+      ],
+      "phones": [
+        {
+          "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+          "pairing": "a",
+          "from": "mac",
+          "mac": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE"
+        },
+        {
+          "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+          "pairing": "b",
+          "from": "pair"
+        },
+        {
+          "key": "n5hTs_E0RBl70cju2whbTAMKAu0otfYfOmobonvRrnM",
+          "pairing": "c",
+          "from": "mac",
+          "mac": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE"
+        }
+      ],
+      "steps": [
+        {
+          "op": "remove",
+          "by": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE",
+          "phones": [
+            {
+              "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI"
+            }
+          ],
+          "ok": true,
+          "after": {
+            "phones": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a",
+                "from": "mac"
+              },
+              {
+                "key": "n5hTs_E0RBl70cju2whbTAMKAu0otfYfOmobonvRrnM",
+                "pairing": "c",
+                "from": "mac"
+              }
+            ],
+            "removed": [
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "b"
+              }
+            ]
+          }
+        },
+        {
+          "op": "remove",
+          "by": "n5hTs_E0RBl70cju2whbTAMKAu0otfYfOmobonvRrnM",
+          "phones": [
+            {
+              "key": "n5hTs_E0RBl70cju2whbTAMKAu0otfYfOmobonvRrnM",
+              "pairing": "c"
+            }
+          ],
+          "ok": true,
+          "after": {
+            "phones": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a",
+                "from": "mac"
+              }
+            ],
+            "removed": [
+              {
+                "key": "n5hTs_E0RBl70cju2whbTAMKAu0otfYfOmobonvRrnM",
+                "pairing": "c"
+              },
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "b"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "two Macs set up the same machine: each lists its own phones, and neither removes the other's",
+      "macs": [
+        "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE",
+        "_-KfaS0m38_-YzhyRvgGQhSLPVpU0_rFrl2kifbquvk"
+      ],
+      "phones": [
+        {
+          "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+          "pairing": "a",
+          "from": "mac",
+          "mac": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE"
+        },
+        {
+          "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+          "pairing": "b",
+          "from": "mac",
+          "mac": "_-KfaS0m38_-YzhyRvgGQhSLPVpU0_rFrl2kifbquvk"
+        }
+      ],
+      "steps": [
+        {
+          "op": "macList",
+          "by": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE",
+          "phones": [
+            {
+              "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+              "pairing": "a"
+            }
+          ],
+          "ok": true,
+          "after": {
+            "phones": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a",
+                "from": "mac"
+              },
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "b",
+                "from": "mac"
+              }
+            ],
+            "removed": []
+          }
+        },
+        {
+          "op": "macList",
+          "by": "_-KfaS0m38_-YzhyRvgGQhSLPVpU0_rFrl2kifbquvk",
+          "phones": [
+            {
+              "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+              "pairing": "b"
+            }
+          ],
+          "ok": true,
+          "after": {
+            "phones": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a",
+                "from": "mac"
+              },
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "b",
+                "from": "mac"
+              }
+            ],
+            "removed": []
+          }
+        },
+        {
+          "op": "macList",
+          "by": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE",
+          "phones": [],
+          "ok": true,
+          "after": {
+            "phones": [
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "b",
+                "from": "mac"
+              }
+            ],
+            "removed": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a"
+              }
+            ]
+          }
+        },
+        {
+          "op": "remove",
+          "by": "_-KfaS0m38_-YzhyRvgGQhSLPVpU0_rFrl2kifbquvk",
+          "phones": [
+            {
+              "key": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE",
+              "pairing": ""
+            }
+          ],
+          "ok": false,
+          "after": {
+            "phones": [
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "b",
+                "from": "mac"
+              }
+            ],
+            "removed": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "a"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "ones from before Macs were named go off the list of the first Mac that doesn't list them, not for good",
+      "macs": [
+        "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE",
+        "_-KfaS0m38_-YzhyRvgGQhSLPVpU0_rFrl2kifbquvk"
+      ],
+      "phones": [
+        {
+          "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+          "pairing": "",
+          "from": "mac"
+        },
+        {
+          "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+          "pairing": "",
+          "from": "mac"
+        }
+      ],
+      "steps": [
+        {
+          "op": "macList",
+          "by": "H2No5uzAqmJvKaxOgffQNOVBfQvtLcpVjdyb4OzZ0IE",
+          "phones": [
+            {
+              "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+              "pairing": ""
+            }
+          ],
+          "ok": true,
+          "after": {
+            "phones": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "",
+                "from": "mac"
+              }
+            ],
+            "removed": []
+          }
+        },
+        {
+          "op": "macList",
+          "by": "_-KfaS0m38_-YzhyRvgGQhSLPVpU0_rFrl2kifbquvk",
+          "phones": [
+            {
+              "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+              "pairing": ""
+            }
+          ],
+          "ok": true,
+          "after": {
+            "phones": [
+              {
+                "key": "--rnwYZntph1GPOuYe2LGQOOWWHo5zaFl0KO_3bkhCo",
+                "pairing": "",
+                "from": "mac"
+              },
+              {
+                "key": "rLu3QsdSTOzex1V9YOShmvBiNGMJzlcxyISFx9r0iYI",
+                "pairing": "",
+                "from": "mac"
+              }
+            ],
+            "removed": []
+          }
+        }
+      ]
     }
   ]
 }

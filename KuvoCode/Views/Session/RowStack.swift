@@ -487,14 +487,25 @@ final class RowStackView: NSView, NSUserInterfaceValidations {
     // with no other change that would, and leave the rows unmade until you scrolled.
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        for observer in keyWatch { NotificationCenter.default.removeObserver(observer) }
+        keyWatch = []
         if window == nil {
             if let watch { NotificationCenter.default.removeObserver(watch) }
             watch = nil
             watchedClip = nil
         } else {
             needsLayout = true
+            // In front or behind: the selection shows as in use, or set aside.
+            for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+                keyWatch.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.updateEmphasis() }
+                })
+            }
         }
+        updateEmphasis()
     }
+
+    private var keyWatch: [NSObjectProtocol] = []
 
     override func viewDidMoveToSuperview() {
         super.viewDidMoveToSuperview()
@@ -561,12 +572,14 @@ final class RowStackView: NSView, NSUserInterfaceValidations {
 
     private func select(_ anchor: Spot, _ focus: Spot) {
         selection = (mark(anchor), mark(focus))
+        // The keyboard comes here with it (⌘C, ⌘A), and with that it shows as the selection in use.
+        if let window, window.firstResponder !== self { window.makeFirstResponder(self) }
         showSelection()
     }
     var rowText: (Int) -> String = { _ in "" }
     var rowSpace: (Int) -> CGFloat = { _ in 0 }
     /// The rows selected whole, each tinted behind.
-    private var tints: [String: NSView] = [:]
+    private var tints: [String: SelectionTint] = [:]
 
     private var orderedSelection: (start: Spot, end: Spot)? {
         guard let selection, let anchor = spot(selection.anchor), let focus = spot(selection.focus), anchor != focus else { return nil }
@@ -626,6 +639,26 @@ final class RowStackView: NSView, NSUserInterfaceValidations {
         return true
     }
 
+    /// Whether the selection shows as the one in use (its window in front, the conversation with
+    /// the keyboard) or set aside, in every text it takes part of and every row it tints alike.
+    private(set) var isSelectionEmphasized = false
+
+    private func updateEmphasis() {
+        let emphasized = window?.isKeyWindow == true && window?.firstResponder === self
+        guard emphasized != isSelectionEmphasized else { return }
+        isSelectionEmphasized = emphasized
+        for host in hosts.values {
+            for text in units(in: host.view) where text.selectedRange().length > 0 { text.needsDisplay = true }
+        }
+        for tint in tints.values { tint.isEmphasized = emphasized }
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let became = super.becomeFirstResponder()
+        if became { updateEmphasis() }
+        return became
+    }
+
     /// The selection drawn: ranges in the texts it takes part of, a tint behind rows it takes whole.
     private func showSelection() {
         let selected = orderedSelection
@@ -647,6 +680,7 @@ final class RowStackView: NSView, NSUserInterfaceValidations {
         for id in tinted {
             guard let host = hosts[id], let index = rowIndex[id] else { continue }
             let tint = tints[id] ?? SelectionTint()
+            tint.isEmphasized = isSelectionEmphasized
             tints[id] = tint
             if tint.superview !== self { addSubview(tint, positioned: .below, relativeTo: host.view) }
             // Its words, not the space above them.
@@ -655,19 +689,35 @@ final class RowStackView: NSView, NSUserInterfaceValidations {
             box = NSRect(x: box.minX, y: box.minY + space, width: box.width, height: box.height - space)
             tint.frame = box.insetBy(dx: -4, dy: -2)
         }
+        if actionsBar != nil { placeMenu() }
     }
 
-    /// Follows a drag from `event` (a press in a reply's text, or between rows) to where it's let
-    /// go, the conversation scrolling when it reaches the top or bottom. A press that doesn't
-    /// move clears the selection; `click` is told of it.
+    /// Follows a press from `event` (in a reply's text, or between rows) to where it's let go,
+    /// selecting as it goes: a drag from where it began, the conversation scrolling when it
+    /// reaches the top or bottom; a double click a word, a triple click a paragraph, a drag after
+    /// either going on from it; a shift-click from where the selection began. A press that selects
+    /// nothing clears the selection; `click` is told of it. Let go on a selection, its menu shows.
     func trackSelection(from event: NSEvent, click: () -> Void) {
+        hideMenu()
         guard let window, let clip = enclosingScrollView?.contentView else { return click() }
         let start = convert(event.locationInWindow, from: nil)
         let kept = selection.flatMap { spot($0.anchor) }
         let extending = event.modifierFlags.contains(.shift) && kept != nil
-        guard let anchor = extending ? kept : spot(at: start) else { return click() }
-        var dragged = extending
-        if extending, let focus = spot(at: start) { select(anchor, focus) }
+        guard let pressed = spot(at: start) else { return click() }
+        // What a double or triple click takes (a word, a paragraph): the drag after it goes on
+        // from it, whichever way.
+        let whole = event.clickCount >= 2 ? unit(around: pressed, by: event.clickCount == 2 ? .selectByWord : .selectByParagraph) : nil
+        let anchor = extending ? kept! : (whole?.start ?? pressed)
+        var dragged = extending || whole != nil
+        if extending {
+            select(anchor, pressed)
+        } else if let whole {
+            select(whole.start, whole.end)
+        }
+        func focus(_ spot: Spot) {
+            guard let whole else { return select(anchor, spot) }
+            if spot < whole.start { select(whole.end, spot) } else { select(whole.start, max(spot, whole.end)) }
+        }
         NSEvent.startPeriodicEvents(afterDelay: 0.05, withPeriod: 0.03)
         defer { NSEvent.stopPeriodicEvents() }
         // Where the pointer last was, in the window: held still past an edge, the conversation
@@ -711,21 +761,100 @@ final class RowStackView: NSView, NSUserInterfaceValidations {
                 let top = convert(NSPoint.zero, to: enclosingScrollView?.documentView).y >= clip.bounds.minY + (enclosingScrollView?.contentInsets.top ?? 0) - 1
                 let bottom = convert(NSPoint(x: 0, y: total), to: enclosingScrollView?.documentView).y <= clip.bounds.maxY - (enclosingScrollView?.contentInsets.bottom ?? 0) + 1
                 if past < 0, top {
-                    select(anchor, Spot(row: 0, unit: 0, offset: 0))
+                    focus(Spot(row: 0, unit: 0, offset: 0))
                 } else if past > 0, bottom, let last = ids.indices.last {
-                    select(anchor, Spot(row: last, unit: .max, offset: .max))
-                } else if let focus = spot(at: clamped) {
-                    select(anchor, focus)
+                    focus(Spot(row: last, unit: .max, offset: .max))
+                } else if let spot = spot(at: clamped) {
+                    focus(spot)
                 }
             default:
                 break
             }
         }
-        guard dragged else {
+        guard dragged, orderedSelection != nil else {
             clearSelection()
             return click()
         }
-        if orderedSelection != nil { window.makeFirstResponder(self) } else { clearSelection() }
+        showMenu()
+    }
+
+    /// The word or paragraph around `spot`, in the text it's in; a row without text of its own
+    /// is taken whole.
+    private func unit(around spot: Spot, by granularity: NSSelectionGranularity) -> (start: Spot, end: Spot)? {
+        guard spot.row < ids.count else { return nil }
+        let texts = hosts[ids[spot.row]].map { units(in: $0.view) } ?? []
+        guard spot.unit < texts.count, let length = texts[spot.unit].textStorage?.length, length > 0 else {
+            return (Spot(row: spot.row, unit: 0, offset: 0), Spot(row: spot.row, unit: .max, offset: .max))
+        }
+        let range = texts[spot.unit].selectionRange(forProposedRange: NSRange(location: min(spot.offset, length - 1), length: 0), granularity: granularity)
+        return (Spot(row: spot.row, unit: spot.unit, offset: range.location), Spot(row: spot.row, unit: spot.unit, offset: NSMaxRange(range)))
+    }
+
+    // MARK: The menu over a selection
+
+    /// Over what's selected once a press lets go of it: Add to Chat (it goes over the composer as
+    /// a quote to answer, where the conversation takes quotes) and Copy. It goes with the
+    /// selection, at the next press, or a key.
+    private var actionsBar: NSView?
+
+    private func showMenu() {
+        let actions = SelectionActions(addToChat: scrollAnchor?.quote.map { quote in { [weak self] in
+            guard let self else { return }
+            let text = self.selectedText().trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty { quote(text) }
+            self.hideMenu()
+        } }, copy: { [weak self] in
+            self?.copy(nil)
+            self?.hideMenu()
+        })
+        let view = ActionsBar(rootView: actions)
+        actionsBar?.removeFromSuperview()
+        actionsBar = view
+        addSubview(view)
+        placeMenu()
+    }
+
+    private func hideMenu() {
+        actionsBar?.removeFromSuperview()
+        actionsBar = nil
+    }
+
+    /// Over the selection's first line, centered on it; under it when there's no room above in
+    /// what's in sight. In front of the rows.
+    private func placeMenu() {
+        guard let bar = actionsBar, let selected = orderedSelection, let line = firstLine(of: selected) else { return hideMenu() }
+        let size = bar.fittingSize
+        var visible = bounds
+        if let clip = enclosingScrollView?.contentView {
+            visible = convert(clip.bounds, from: clip)
+            visible.origin.y += enclosingScrollView?.contentInsets.top ?? 0
+        }
+        let x = min(max(line.midX - size.width / 2, bounds.minX + 4), bounds.maxX - size.width - 4)
+        let above = line.minY - size.height - 6
+        let y = above >= visible.minY ? above : line.maxY + 6
+        bar.frame = NSRect(x: x, y: y, width: size.width, height: size.height)
+        if subviews.last !== bar { addSubview(bar, positioned: .above, relativeTo: nil) }
+    }
+
+    /// Where the selection's first line is: the part of it in its first text, else the first
+    /// row it takes whole.
+    private func firstLine(of selected: (start: Spot, end: Spot)) -> NSRect? {
+        for row in selected.start.row...min(selected.end.row, ids.count - 1) {
+            guard let host = hosts[ids[row]], host.isShown else { continue }
+            for (unit, text) in units(in: host.view).enumerated() {
+                guard let storage = text.textStorage, let range = range(row: row, unit: unit, length: storage.length, in: selected),
+                      let layout = text.layoutManager, let container = text.textContainer else { continue }
+                let glyphs = layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+                var line = NSRange()
+                layout.lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: &line)
+                var rect = layout.boundingRect(forGlyphRange: NSIntersectionRange(glyphs, line), in: container)
+                rect.origin.x += text.textContainerOrigin.x
+                rect.origin.y += text.textContainerOrigin.y
+                return convert(rect, from: text)
+            }
+            if let tint = tints[ids[row]] { return tint.frame }
+        }
+        return nil
     }
 
     /// Row `index`'s view, made and laid out where it is if it's not there.
@@ -741,6 +870,7 @@ final class RowStackView: NSView, NSUserInterfaceValidations {
     }
 
     func clearSelection() {
+        hideMenu()
         guard selection != nil || !tints.isEmpty else { return }
         selection = nil
         showSelection()
@@ -777,8 +907,16 @@ final class RowStackView: NSView, NSUserInterfaceValidations {
 
     override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
-        if resigned { clearSelection() }
+        if resigned {
+            clearSelection()
+            updateEmphasis()
+        }
         return resigned
+    }
+
+    override func keyDown(with event: NSEvent) {
+        hideMenu()
+        super.keyDown(with: event)
     }
 
     @objc func copy(_ sender: Any?) {
@@ -791,7 +929,6 @@ final class RowStackView: NSView, NSUserInterfaceValidations {
     override func selectAll(_ sender: Any?) {
         guard let last = ids.indices.last else { return }
         select(Spot(row: 0, unit: 0, offset: 0), Spot(row: last, unit: .max, offset: .max))
-        window?.makeFirstResponder(self)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -831,8 +968,20 @@ extension Array {
 }
 
 
-/// What tints a row a selection takes whole, behind it.
+/// The menu over a selection: its buttons work without taking the keyboard, which would take the
+/// selection with it before they read it.
+private final class ActionsBar: NSHostingView<SelectionActions> {
+    override var acceptsFirstResponder: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+/// What tints a row a selection takes whole, behind it, in the selection's look as its texts
+/// show it.
 private final class SelectionTint: NSView {
+    var isEmphasized = false {
+        didSet { if isEmphasized != oldValue { needsDisplay = true } }
+    }
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
@@ -844,7 +993,7 @@ private final class SelectionTint: NSView {
     override var wantsUpdateLayer: Bool { true }
 
     override func updateLayer() {
-        layer?.backgroundColor = NSColor.selectedTextBackgroundColor.withAlphaComponent(0.6).cgColor
+        layer?.backgroundColor = (isEmphasized ? NSColor.selectedTextBackgroundColor : NSColor.unemphasizedSelectedTextBackgroundColor).cgColor
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }

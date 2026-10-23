@@ -104,6 +104,190 @@ Pushes and other messages for a device that may not be connected use
 `kuvo-link mail v1`: one handshake message carrying the payload. A host's push carries a
 notification, below.
 
+A host mails another host the same way, with a relay `send` of a mail frame (`kind` 5, session
+0): a Mac mails each of its machines' bridges the phones you've paired (`{"phones": [{key, name,
+address, pairing}], "removed": [{key, pairing}], "at": <milliseconds>}`), so a phone you remove
+loses its way into every machine, reached or not. A bridge (from 0.9.6) takes it only from the key
+its setup named, and only a newer one; from 0.9.8 from any Mac that set it up, each by its own
+`at`, as "Paired phones" says. From 0.9.17 the same mail carries the machine's peers, and peers
+mail each other, as "Peers" says.
+
+### Peers
+
+Your computers talk to each other over the relay, Mac or not (bridge 0.9.17). A Mac connects to
+the relay when the phone link is on or it has at least one machine; a Mac on its own makes no
+connection.
+
+- **Who**: a Mac tells each of its machines its peers in setup and in its mail, `"peers": [{key,
+  address, name, kind: "mac"|"machine", id?}]` with `"peersAt"` (setup) or the mail's `at`: itself,
+  and its other machines whose bridge said `"peers": true` in setup's answer. `id` is the
+  machine's name on that Mac. A machine keeps each Mac's list (`peersFrom`), a newer one replacing
+  that Mac's last, and takes lists only from its Macs. Its peers are every list's, itself left
+  out. Its bridge runs while it has peers or phones. Setup also gives the machine's `id`, and both
+  carry `moved: [{session, key}]`: conversations being moved, by the key of the computer each
+  lives on now (the one it left may still list it until it's let go). With the
+  phone link off, a Mac's setup and mail leave out `phones` and `removed`, and the machine keeps
+  the phones it has.
+- **Mail**: a box opens mail from its Macs and its peers, and drops the rest. Every mail has `at`
+  (milliseconds). A sealed mail frame is at most 65,600 bytes, and one larger isn't sent: letters'
+  words and lists are cut to fit.
+- **Agents**: `{"agents": {"at", "list": [{session, name, kind: "bot"|"session", project?,
+  about?, machine?}]}}`. A box sends its bots and its 40 latest sessions (its engine's and its
+  coding agents') when they change and every ten minutes. Each box keeps the newest list from
+  each peer. The relay keeps nothing, so a box that has just connected adds `"ask": "agents"` to
+  what it sends first (its agents; a Mac's list), and whoever gets it tells that box its agents
+  again within a minute.
+  - A machine's bridge writes `run/agents.json` (what `list_agents` reads there) from its own
+    agents and its peers', relay or not.
+  - A moved session is the computer's a Mac says it lives on. A session listed by more than one
+    peer is the Mac's when a Mac lists it, and otherwise nobody's.
+  - A Mac also lists the agents of its machines whose bridge doesn't talk to peers, each with its
+    `machine`, and takes their letters on over SSH.
+  - A Mac connected over SSH writes its list to `run/mac-agents.json` (`{key, at, list}`), which
+    the bridge takes when it's newer than the Mac's mail.
+- **Letters**: `{"letter": {id, from, to, text, wait, at, answers?}}` goes to the box that listed
+  `to`.
+  - **Checks**: the receiver drops a letter older than a day. It delivers each `id` once (ids
+    remembered two days, noted once delivered), at most 20 in ten minutes from a box, and only
+    to a conversation an agent could be. A subagent's, a group chat's seat or one put away doesn't
+    take letters. One it can't look up now (its engine starting) is answered `retry`.
+  - **Sender**: it names the sender as the sending box named that agent, when that box alone
+    lists `from` and it isn't one of the receiver's own conversations. Otherwise the letter is from
+    "an agent on <box>", with no address to answer.
+  - **`delivered`**: it answers `{"delivered": {id, ok, why?, retry?, answer?}}`. `retry`: not
+    now (an engine restarting, too many lately), so the sender tries again. `answer: false`: there,
+    but no answer will come (its sender couldn't be verified, or its machine is away).
+  - **`wait`**: the receiver watches for an answer for ten minutes and sends it back as a letter
+    of its own, with `answers` naming the first. If a tool still waits for it, it goes to that
+    tool; otherwise it reaches the sender's conversation as a message.
+  - **Sender side**: a sender takes `delivered` only from the box it sent to, and an answer for a
+    waiting tool only from that box. Until `delivered` comes, it sends again each minute, for two
+    days, and a letter whose agent no box lists now waits. Before a letter goes, its sender is
+    told of to that box, if it wasn't.
+- **On a machine**: `send_message` leaves a letter for a peer's agent in
+  `run/outbox/sending/<id>.json`, which the bridge sends, and others in `run/outbox` for the Mac
+  to collect over SSH.
+  - A subagent writes as its conversation.
+  - A waiting tool reads `run/replies/<id>.json` (`{text}`, `{failed}` or `{note}`), and touches
+    `<id>.alive` as it looks. An answer that comes once it isn't is delivered as a message.
+  - After eleven minutes, or its turn stopped, the tool leaves `<id>.gaveup`, and its letter goes on
+    without waiting.
+  - With no relay for five minutes, letters not yet sent move to `run/outbox` for the Mac, marked
+    `handed`. Once the relay is back, those the Mac hasn't connected to take since come back.
+  - The Mac takes each letter in `run/outbox` by renaming it `.mac-<name>` before it reads it,
+    and puts back the ones it couldn't deliver, so a letter goes one way only.
+- `kuvo-link.js leave <mac>`: run when that Mac removes the machine. It stops counting that Mac,
+  forgets the peers only it named and what they told it, and leaves other Macs' lists alone.
+
+### Updates
+
+A box's files say which Kuvo Code put them there: `~/.kuvo-code/bin/box-version`. It holds that
+app's version, written by a Mac after it sets the box up, or by the box when it updates itself.
+- **Older or unmarked box**: a Mac installs its own engine, bridge, helpers, agents bridge and
+  keeper, as before, then writes its version. Marking it, it also keeps copies of the box's tools
+  (`kuvo-agents.js`, `kuvo-browser.js`, `kuvo-wake`, `kuvo-npx`) in `bin/.own`, only those that
+  carry its own first or last line (`// kuvo-browser <hash>`, `// kuvo-agents <hash>`); one that
+  doesn't (an older Mac's, put there meanwhile) gives way to the copy, when the copy is its own.
+  Its engine launches note `"box": <version>`.
+- **Newer box**: a Mac leaves everything as it is.
+  - Every script that would write one of its files reads what it was given and stops.
+  - It connects to the engine running there, and doesn't start it over for its own settings.
+  - If that engine isn't running, the box's keeper starts the one it has.
+  - A script's runtime `$E` is the Mac's engine version when it's there, else the newest there,
+    by version.
+- **Setup**: a Mac that does this says so with `"tolerates": 1`. The bridge keeps it per Mac
+  (`tolerant`), and drops it with that Mac.
+- **Setup** also sends the Mac's ID (`macID`, as its engine launches name it). The bridge keeps
+  `tolerantIDs[macID]`, set again at each setup, and notes in `run/launchers.json` which Mac
+  started the engine (from `run/engine.json`'s `notes.mac`).
+
+**An older Mac** (Kuvo Code 0.7 and before) still connects, and puts its own files there as it
+always did. The box keeps working as itself:
+- **Its tools**: an older Mac touches `run/attached` as it connects. Once that's newer than
+  `bin/box-version`, the keeper puts each tool in `bin/.own` back where it differs, but not while
+  a Mac installs (`run/mac-installing`, an hour at most) or the box updates itself.
+- **Its keeper**: an older Mac's `kuvo-start` only starts the engine after a restart, and its
+  `kuvo-launch` knows neither Stop nor the box's settings. The keeper keeps a copy of both
+  (`bin/.kuvo-start-keeper`, `bin/.kuvo-launch-keeper`), runs its starts from them, and puts them
+  back whenever the `kuvo-start` there has no `keep)` case (checked each round), leaving
+  `.kuvo-boot` as that Mac wrote it. The bridge starts the keeper from the copy then too. The
+  keeper stops the watchdogs an older Mac's start brings.
+- **Its engine**: an older Mac doesn't know Stop, so it starts one over `run/stopped`. Running,
+  it isn't stopped any longer: the keeper takes `run/stopped` away, under the start lock. An
+  engine without `notes.box` is an older Mac's, with that Mac's settings: a Mac that marks boxes
+  starts it over once nothing runs, so the box's settings apply again.
+- `run/attached` from before the box was last marked doesn't count as an older Mac: that was
+  most likely the same Mac before it updated. A Mac marking the box after an older Mac's visit
+  notes it first (`run/older-mac`, with the visit's time), so the mark doesn't hide it.
+- Marking, a Mac puts its `kuvo-npx` there only with its own engine version there, which it runs.
+
+**A box updating itself** (bridge 0.9.18). It takes only what a key pinned in `kuvo-link.js`
+(`UPDATE_KEYS`) signed; `scripts/set-box-key.sh` makes that key.
+- **What a release is**: `boxes.json` from `https://github.com/serhatandic/kuvo-code/releases/latest/download/`,
+  `{manifest, signature, key}`. The manifest is `{kuvo: "box/1", version, released, engine,
+  linux: {x86_64|aarch64: {url, integrity}}, pack: {url, sha256, size}}`. The signature is
+  Ed25519 over `"kuvo-box v1\n"` and the manifest's bytes, by a pinned key
+  (`scripts/sign-box.mjs`). The pack holds `box.json` (each file's SHA-256) and the files, laid
+  out as `~/.kuvo-code`.
+- **When**: the night's window, 02:00 to 05:00 in `KUVO_TZ`, once a night, with
+  `box/update.json`'s `auto` on (the default), for a release at least three days old. Or now
+  (Update Now), whatever its age.
+- **Never**:
+  - in another folder than `~/.kuvo-code`;
+  - while its engine is stopped on purpose (`run/stopped`), or its version (`bin/box-version`)
+    isn't known;
+  - to a version that isn't newer;
+  - while a conversation works there or a browser ask waits;
+  - while a Mac that started the engine in the last 30 days isn't in `tolerantIDs` as `true`;
+  - while an older Mac connected in the last 30 days, since the box was last marked. Kuvo Code
+    0.7 and before touches `run/attached` each time it connects, and later versions never do.
+  - When the newest release has no `boxes.json` (one from before machines updated themselves), it's
+    "current", not a failure.
+- **How**:
+  1. It checks the pack's SHA-256, each file's, and the engine's npm `integrity`.
+  2. It tries the new engine (`--version`), the new bridge with it (`selftest`), and the new
+     keeper (`sh -n`).
+  3. With another engine version, it first checks there's room to keep the engine's data. It keeps
+     each file it replaces in `updates/rollback`, writes `restore.sh` and `run/update-trial`, and
+     only then stops the engine. It goes on only once the engine has stopped; if it can't stop it,
+     nothing has changed, and it starts the engine again. With another engine version, it keeps
+     the engine's data (`opencode.db` with its `-wal` and `-shm`) whole or not at all
+     (`data.partial`, renamed once copied).
+     - `restore.sh` checks each step and keeps what was kept until it's all back.
+     - It moves the database back (same disk, no room needed), without the new engine's journal,
+       and only once it was kept.
+  4. It swaps file by file: `bin/box-version` first, `bin/.kuvo-boot` last, with copies of the
+     release's tools in `bin/.own` (kept for a rollback as the rest is). Then it starts again.
+     One update runs at a time, by its process (`run/.updating/pid`, the link's). While it runs,
+     `setup` doesn't restart the bridge, and the keeper doesn't run `restore.sh`.
+  5. Once the engine answers as the new version (and the coding agents' bridge, if it ran), the
+     old bridge goes and the keeper starts the new one. The new bridge confirms the update after
+     the relay's welcome or three minutes: what was kept, and other engines, go.
+  6. If the new version doesn't come up, `restore.sh` puts back what was there. The keeper runs
+     it too when `run/update-trial` is twenty minutes old, five minutes apart (`run/update-restore`).
+     After six failed tries it gives up and starts what's there. Without a bridge to start again
+     (no phones, no peers), `kuvo-link.js update` confirms it itself.
+  7. It notes what it installed (`updates/installed.json`). Each night it checks the files against
+     that note. A Mac notes `run/mac-installing` while it puts its files in place, and marking the
+     box clears it. Drift seen on two checks, and not while a Mac is installing, means an older Mac
+     put its own files back. The box then keeps its version mark, so no other older Mac takes it
+     further back, says why, and doesn't update itself for 30 days.
+  - What the new engine did during a trial that's rolled back is lost with it.
+  - The coding agents' own data (`agents`) isn't kept for a rollback.
+- **State**: `run/update.json` holds `{latest, checked, last: {at, result, message?, from?, to?},
+  running?, trial?, night?}`.
+- `kuvo/update`:
+  - `GET` answers `{setUp, auto, version, engine, latest, last, updating, blocked}`.
+    `updating` is the step under way (`checking`, `downloading`, `downloading the engine`,
+    `checking it`, `installing`, `starting`) or null. `blocked` is why it can't update, or null.
+  - `PATCH {auto: bool}` turns updating by itself on or off.
+  - `POST {now: true}` starts one: 202 with the status, or 409 `{message}` when it's not set up,
+    is blocked, or is updating already.
+  - A Mac does the same over SSH with `kuvo-link.js box update-status`, `update-auto`
+    (`true`/`false` on stdin) and `update-now`.
+- `kuvo-link.js update [--now]` updates from a shell. Only in a test's folder, it also takes
+  `--url <boxes.json> --key <public key>`.
+
 ## Notifications
 
 What the Mac shows as a notification goes to each paired phone too, as the relay's `push`
@@ -145,7 +329,11 @@ Who sends it:
   its screen locked), or while a phone has a session open (the phone leaves out what's on
   its screen); at the Mac, its own notifications are enough.
 - **A machine's bridge**, for that machine's sessions (permissions, questions, runs finished
-  or failed, bots' news), while no Mac is connected to it. A Mac that's connected touches
+  or failed, bots' news), from 0.9.9 what agents ask for as they browse there (category `ask`),
+  and from 0.9.10 its coding agents' sessions and the group chats that live there (a meeting
+  held, a bot done with its part: category `message`, `data.group`), each as the Mac words it,
+  while no Mac is connected to it. An engine run a coding agent's session started (Auto on an
+  engine model) tells its news as that session's, once. A Mac that's connected touches
   `~/.kuvo-code/run/present/<its id>` each minute and removes it when it quits; the bridge
   tells your phones only when none of those files is less than 150 seconds old. The Mac
   tells them only for 120 seconds after it last touched its file, so the two never both do.
@@ -167,17 +355,19 @@ like HTTP:
 | `{"t": "res", "id": 7, "s": 200, "h": {"content-type": "…"}, "end": false}` | The response's status and headers, with the first piece of its body. |
 | `{"t": "data", "id": 7, "end": false}` | More body. Event streams (`api/event`) go on until cancelled. |
 | `{"t": "cancel", "id": 7}` | Either side stops request 7. |
-| `{"t": "ping"}`, `{"t": "pong"}` | Is the other end still there? The relay's own pings only reach the relay. |
+| `{"t": "ping"}`, `{"t": "pong"}` | Is the other end still there? The relay's own pings only reach the relay. The phone pings before sending on a session that's been quiet (a host started again since closes the session, and the phone opens a new one before anything's lost), and while a request waits with nothing from the host (no answer ends the session). Answer at once. |
 
 `h` holds `x-opencode-directory` and `content-type`; the host adds the engine's password
 itself. A host serves:
 
-- `api/…`: passed to its engine, if the path is on the host's list (sessions, messages,
-  prompts, permissions, questions, events, providers, agents, commands, a project's files,
-  terminals). Never accounts or keys. The commands the engine runs for agents are read only:
-  `GET api/shell` (those running in the folder `x-opencode-directory` names), `GET
-  api/shell/<id>` and `GET api/shell/<id>/output?cursor=&limit=`; running one or removing it is
-  refused. Their `shell.created`, `shell.exited` and `shell.deleted` come with `api/event`.
+- `api/…`: passed to its engine, all of its API. A paired phone is yours, with the reach the app
+  has on that computer: sessions, files, terminals and commands, accounts and their keys, the
+  engine's settings, MCP servers. Only a path that isn't what it seems is refused (403): one with
+  `..` (plain or percent-encoded), a backslash, a fragment, control characters, a space at
+  either end, or a sign joined into one character with a mark after it. The commands the engine
+  runs for agents: `GET api/shell` (those running in the folder `x-opencode-directory` names),
+  `GET api/shell/<id>` and `GET api/shell/<id>/output?cursor=&limit=`; their `shell.created`,
+  `shell.exited` and `shell.deleted` come with `api/event`.
   A subagent's session (`metadata.sessionID` of the `subagent` step that started it) is a session
   like any other, which is how the phone watches and talks to one, as the Mac's subagent tab does:
   read its messages, prompt it (`steer` while it works: it reads it at its next step; once it's
@@ -190,17 +380,26 @@ itself. A host serves:
   engine's own remove (which deletes the output, and the agent hears the command wasn't found).
   Answers `200 {"stopped": "signal"}` or `200 {"stopped": "removed"}`, or `404 {}` when no such
   command runs. A machine's bridge does it there (from 0.5.1), with the Mac closed too.
-- `kuvo/info`: what the host is and runs; a Mac also names its folder of chats (conversations of
-  no project), whether its coding agents' bridge is up (`agents`), and `integrations`, each integration's name by its MCP server's (`{"microsoft-365":
-  "Outlook and Microsoft 365", …}`), for a card when one asks something.
-- On a Mac, `kuvo/agents/api/…`: the coding agents you already have (Claude Code, Codex,
-  Cursor, Grok, Antigravity), through the Mac's agents bridge, which answers the same paths as
-  the engine for them: sessions, messages, prompts, permissions, questions, events
+- `kuvo/info`: what the host is and runs, and whether its coding agents' bridge is up
+  (`agents`; a machine's bridge says so from 0.6.0), and `started`, when the engine running now
+  came up, in seconds since 1970 (null while none runs; a machine's bridge from 0.9.2): a restart
+  changes it, so a phone tells the new engine from the old. A machine's bridge (from 0.9.7) also
+  says whether its engine is `running`, and whether it's `stopped` on purpose (it stays down until
+  it's started, from a Mac or a phone); a Mac also names its folder of chats
+  (conversations of no project), and `integrations`, each integration's name by its MCP server's
+  (`{"microsoft-365": "Outlook and Microsoft 365", …}`), for a card when one asks something.
+- `kuvo/agents/api/…`: the coding agents you already have (Claude Code, Codex, Cursor, Grok,
+  Antigravity), through the agents bridge beside the host's engine, which answers the same paths
+  as the engine for them: sessions, messages, prompts, permissions, questions, events
   (`kuvo/agents/api/event`) and models (`kuvo/agents/api/model`, only signed-in agents'). Its
-  sessions carry `metadata.kuvoAgent` and run on the Mac; a new session with one of their
-  models (providers `claude-code`, `codex-cli`, `cursor`, `grok-cli`, `antigravity`) is made
-  there, never on the engine. `kuvo/info` has `agents: true` while the bridge is up; otherwise
-  these answer 503.
+  sessions carry `metadata.kuvoAgent` and run where that bridge does; a new session with one of
+  their models (providers `claude-code`, `codex-cli`, `cursor`, `grok-cli`, `antigravity`) is
+  made there, never on the engine. A Mac answers for its own; a machine's bridge (from 0.6.0) for
+  the machine's, with the Mac closed too: each machine signs in to them on its own, and has its
+  own Custom Auto lists. `kuvo/info` has `agents: true` while the bridge is up; otherwise these
+  answer 503. All of its API, but for the two routes only the app wires things with:
+  `api/kuvo/engine` (where the engine is) and `api/kuvo/groups` (group chats' own steps, which a
+  phone takes through `kuvo/groups`). The same on both (`Vectors/link.json`, `agentRoutes`).
   - Accounts: besides each agent's own sign-in, ones you added, each its own provider
     `<agent's provider>@<id>` (`claude-code@1f2e3d4c`), named `Claude Code · Work` in
     `kuvo/agents/api/integration` (`metadata.accountID`, `metadata.accountLabel`). Their models
@@ -209,6 +408,19 @@ itself. A host serves:
     any; `PATCH …/accounts/<provider> {label}`; `DELETE …/accounts/<provider>`.
     `metadata.signInEnded` true: its maker ended the sign-in; mark the account (the Mac says
     "Sign-in ended") and offer to sign in again.
+  - Signing in to an agent: `POST kuvo/agents/api/integration/<provider>/connect/oauth {methodID,
+    remote}` → `{data: {attemptID, url, instructions, mode, acceptsCode?, userCode?, time}}`; `GET
+    …/connect/oauth/<attempt>` → its status (`pending`, with `url`, `instructions`, `userCode` and
+    `message` as they come, for an agent installed first;
+    `complete`; `failed` with `message`; `expired`); `POST …/connect/oauth/<attempt>/complete
+    {code}` for one with `acceptsCode`; `DELETE …/connect/oauth/<attempt>` to give up. A key:
+    `POST …/connect/key {key}`. With `remote: true` the page is for another device (the phone),
+    so it doesn't come back to the computer's `localhost`: Claude Code's ends on a code to paste
+    back (`acceptsCode`), Codex's and Grok's are device codes (`userCode`, shown beside the page,
+    to copy), Cursor's finishes by itself. An agent whose sign-in can do that has
+    `metadata.remoteSignIn` true in `…/integration`; for the others (Antigravity, whose Google page
+    comes back to `localhost`) `remote: true` answers 400: sign in on the computer it runs on.
+    Signed in, an account's Custom Auto limit goes, as when you sign in there.
   - Custom Auto: a session's model `{providerID: "auto", id: <list ID>}` runs down that list,
     going on with the next model at a usage limit or an error. `kuvo/agents/api/kuvo/auto`: `GET`
     and `PUT {lists}` → `{data: {entries, lists: [{id, name, entries: [{providerID, modelID,
@@ -222,12 +434,143 @@ itself. A host serves:
     too: it runs those through an engine session of its own, which carries
     `metadata.kuvo.engineFor` and is never shown (hide it in the engine's session list).
     `…/session/<id>/fork {before}` makes a new session from a message.
+- Plan accounts (Copilot, OpenCode, GitLab, Poe, a provider's API key), on a Mac and (from
+  bridge 0.7.5) a machine, as Settings › Accounts has them: the phone sees and signs in to them,
+  and (from bridge 0.8.0) reads them as the app does. A machine's plans that its Mac
+  also has a key or a sign-in for that stays the same (Copilot's) follow the Mac's: each time
+  the Mac connects, its own replaces what's in use there. Change those on the Mac, or with the
+  Mac's own routes; a change made on the machine lasts for plans the Mac has none of, and for
+  sign-ins that renew themselves (ChatGPT's, GitLab's), which each machine keeps its own of.
+  - `GET api/integration` and `GET api/integration/<id>`: each plan, its ways to sign in
+    (`methods`) and what it's signed in as (`connections`: label and status).
+  - A key: `POST api/integration/<id>/connect/key {key, answer?}`.
+  - A sign-in page: `POST api/integration/<id>/connect/oauth {methodID, answer?}` → the attempt
+    (its URL, `mode`, and `acceptsCode`); `GET …/connect/oauth/<attempt>` for its status; `POST
+    …/connect/oauth/<attempt>/complete {code}` for one that ends on a code; `DELETE
+    …/connect/oauth/<attempt>` to give up. A page that sends the browser back to `localhost` on
+    the computer (GitLab's, Poe's, ChatGPT's) finishes there with `kuvo/sign-in/return` (below).
+    Device codes (Copilot, OpenCode Console, SuperGrok) and keys work from anywhere.
+  - Its sign-ins: `GET api/credential` (with what each is signed in with), or `GET
+    kuvo/accounts/credentials` → `{credentials: [{id, integrationID, label, active}]}`, the list
+    alone; `POST api/credential/<id>/activate` uses one; `DELETE api/credential/<id>` removes one.
+  - On a Mac only: `GET kuvo/accounts/ended` → `{providers: [id]}`, the plans whose sign-in in use
+    ended (the service refused it; the Mac says "Sign-in ended"); `POST
+    kuvo/accounts/<provider>/forget` is Disconnect, as Settings › Accounts does it: its sign-ins
+    and keys on the Mac, and the copies on your machines.
+  What a phone may ask an engine for is the same on both (`Vectors/link.json`, `routes`).
 - On a Mac, `kuvo/hosts`: the machines this phone may reach directly, with their addresses
-  and static keys, so pairing once with the Mac reaches them all.
-- On a Mac, `kuvo/bots`: your bots by their session, wherever they live, with their name,
-  look and job, and what only the Mac knows: paused, the next wake-up, how many things each
-  watches, and `agents`: its conversation is with the coding agents, so it's read and written
-  through `kuvo/agents/api/…` (a group chat's members carry the same flag).
+  and static keys, so pairing once with the Mac reaches them all; each with `machine`, its id
+  (as a bot's `machine`), and `anotherMac`: its engine is another Mac's, which gives it its
+  settings, so this Mac's (`kuvo/config`) don't reach it (as it was when it last connected).
+- `POST kuvo/sign-in/return` with `{"url"}`: where a sign-in's page sent the browser back to the
+  computer (`http://127.0.0.1:<port>/…?code=…`: a plan's that finishes there, an MCP server's at
+  `127.0.0.1:19876`, a coding agent's), which a phone can't load. The computer loads it, as the
+  browser would have: only its own address (127.0.0.1, localhost or [::1], over http, at a port,
+  with a query; a fragment is left off), and no further than it answers (a redirect isn't
+  followed). `200 {"status"}` with the status it got: 2xx or 3xx, it took it; `400 {"message"}`
+  for an address that isn't one; `502 {"message"}` when nothing there answered (start the
+  sign-in again). Send it to the computer the sign-in is on: a Mac for its own, a machine's
+  bridge (from 0.9.0) for the machine's, the engine's and the coding agents'. The same check on
+  both (`Vectors/link.json`, `signInReturns`).
+- `kuvo/config`: the computer's own engine settings as Settings has them, the whole document
+  (the same that its `opencode.json` holds). Each computer keeps its own ("Settings per box"):
+  change a machine's on the machine's bridge, never through the Mac. `PATCH kuvo/config` with `{"changes":
+  [{"path": ["mcp", "servers", "linear", "disabled"], "value": true}, …]}` changes some, as
+  Settings does (a `null` value removes the key, and a level that isn't there is made; a path
+  goes through objects only, so a list is sent whole, at its own path: 400 otherwise), and
+  answers with the whole document; the computer's engine takes it at once, and on a Mac a change
+  to the rules reaches open sessions. A change can say what it read at its path (`"was"`, `null` for
+  nothing): changed since, nothing is changed and it answers `409 {"message"}`, so read again.
+  `409 {"message"}` too while the file can't be read (it has comments, say): it's changed by
+  hand then. Settings › Permissions keeps its choices and rules under `permissions` (a list of
+  `{action, resource, effect}`, effect `allow`, `ask` or `deny`) and its blocks under `policies`. A machine's bridge (from
+  0.9.11) answers `kuvo/config` and `kuvo/mcp/catalog` for the machine's own; before a Mac on
+  0.9.11 or later made them its own, and on older bridges, `409 {"message"}`.
+- On a Mac, `kuvo/mcp/catalog`: Settings › MCP Servers' popular servers, `{"servers": [{id,
+  title, summary, access, added, integration, macOnly}]}` (a machine's bridge, from 0.9.11, for
+  the machine, without `macOnly` ones): `access` is `signIn`, `open` or `local`; `integration` when Integrations added it (it's kept there, with its sign-in: don't turn
+  it off or remove it); `macOnly` for one that uses the Mac's own apps (Chrome DevTools), which
+  never reaches your machines, so leave it out of a machine's list. `POST kuvo/mcp/catalog/<id>`
+  adds one as its Add button does and answers with the settings, as `kuvo/config`; turn one off
+  or remove it through `kuvo/config` (`mcp.servers.<name>`). The rest is the engine's: each
+  server's status from `GET api/mcp`, connecting again with `POST
+  api/experimental/mcp/<name>/connect`, a server's sign-in through `api/integration/<id>/connect/…`
+  (its page comes back to `127.0.0.1:19876`: `kuvo/sign-in/return`), and the approvals saved for
+  a project with `GET api/permission/saved?projectID=` and `DELETE api/permission/saved/<id>`.
+- `kuvo/keys`: the computer's own integrations' keys (`KUVO_KEY_<INTEGRATION>_<NAME>`, as its
+  settings name them; a bot's own aren't among them). `GET kuvo/keys` lists them, `{"keys":
+  [name]}`; `GET kuvo/keys/<name>` answers `{"value"}` (404 for none, 400 for a name that
+  isn't a shared key's), `PUT` with `{"value"}` sets one and `DELETE` removes it. On a Mac they're in its Keychain; on a machine (bridge 0.9.12
+  or later, once its settings are its own: `409 {"message"}` before) in `~/.kuvo-code/box/keys`.
+  The engine reads one as it next reads its settings, so set the key before adding what names it
+  (`kuvo/config`). An integration added on a machine names its keys
+  `{file:~/.kuvo-code/box/keys/<name>}` there; on a Mac, `{file:<its keys' folder>/<name>}`.
+  "Also Apply to…" on a phone is the same changes (`kuvo/config`) and keys made on each computer
+  you pick: a list gets what was added and loses what was taken out, keeping the other's own.
+- `POST kuvo/engine/restart`: the computer's engine starts over, as Settings › Engine's Restart
+  does on a Mac; what's running in it stops. It answers `202 {}` first: the link goes down with
+  the engine, and the computer is back once it answers again (`kuvo/info`). A machine's bridge
+  (from 0.9.0) starts its engine over as it was last started (with its coding agents' bridge), and
+  a Mac connected to it goes on with the new one; from 0.9.7 the link stays up meanwhile. One
+  never started from a Mac answers `409 {"message"}`.
+- `POST kuvo/engine/stop` and `POST kuvo/engine/start` (a machine's bridge, from 0.9.7): Stop
+  ends the machine's engine and its coding agents' bridge, and it stays down, through restarts of
+  the machine too, until Start; meanwhile the link answers and the routes that need the engine
+  answer 503. Stop answers `200 {}` once it's down (`202 {}` when a start under way holds it up
+  past a minute: it's down once that's done), or `503 {"message"}`; Start answers `202 {}`
+  and the engine is up once `kuvo/info` says `running`; it answers `409 {"message"}` on a machine
+  never started from a Mac, as restart does.
+- `kuvo/bots`: bots by their session, with their `id` (`bot_…`, as group chats name their
+  members; a machine's bridge from 0.9.4), their name, look and job, whether their wake-ups
+  are paused, the next one (`wakes`, left out when none waits), how many things each watches,
+  `machine` (the machine it lives on, left out for the Mac), and `agents`: its conversation is
+  with the coding agents, so it's read and written through `kuvo/agents/api/…` (a group chat's
+  members carry the same flag). A Mac lists all of yours, wherever they live. A machine's bridge
+  (from 0.6.0) lists the bots that live on that machine, as their folders are now, with the Mac
+  closed too: their name, look and job as the Mac last wrote them there (`bot.json`, which the
+  Mac writes when they change and each time it connects; one it hasn't written yet isn't
+  listed). For a machine's bot, its machine's list is the newer while it answers.
+- On a Mac, making a bot as New Bot does. `GET kuvo/bots/templates` is what New Bot offers:
+  `{"templates": [{id, name, job, instructions, look, personality, wantsProject}],
+  "personalities": [{id, name, description, custom}], "looks": {colors, shapes, faces},
+  "startingModel": {"mac": {providerID, id, variant} | null, "<machine id>": … | null},
+  "projects": [{directory, name, machine}]}`. A template's `personality` and a project's
+  `machine` (null for the Mac) are left out when there's none. `startingModel`'s keys are the
+  places a bot can live (the Mac and each machine), each with the model New Bot starts with
+  there. `POST kuvo/bots` with `{name, look?, personality?, model?, machine?, project?,
+  template?}` makes one: `personality` by id (`preset.*`, or `custom.*` for one you made);
+  without `look` or `personality`, the template's, or a random look; without `model`, that
+  place's starting model; a `project` on a machine makes it there (`machine` is then ignored).
+  It answers `201 {"bot": <as kuvo/bots lists one>, "firstMessage"}`: from a template, the bot
+  waits, and `firstMessage` is its job for your composer, to edit and send; otherwise it's null
+  and the bot writes first. Errors are `{"message"}`: 400 for a missing name or an unknown
+  template, personality, machine or project; 409 while its machine isn't connected; 422 for a
+  model that can't run there (its account isn't signed in there); 503 when it couldn't be made.
+- On a Mac, `POST kuvo/groups` with `{name, members, purpose?, meeting?}` (members by bot `id`,
+  at least two) makes a group chat on the Mac, as New Group Chat does: `201 {"group": <as
+  kuvo/groups lists one>}`, 400 `{"message"}` without a name or two bots, 404 `{"message"}` for
+  a bot that isn't there. Moving it to a machine is the Mac's Move to Computer.
+  `meeting` is `{next, every?, topic?}`: `next` in seconds since 1970, `every` as kuvo-wake writes
+  it (`1d`, `weekdays`, `1w`…; null or left out for once). The computer the chat lives on sets it
+  up as Edit Group Chat does (`BotGroup.Meeting.planned`, held to the agents bridge's
+  `planMeeting` by `Agents/test/groups-vectors.json`), on your clock, to the minute: a repeating one whose time
+  has passed comes at its next round, weekdays skip the weekend, a time of day (and a week's day)
+  is kept from then on, and an empty topic gets the default. 400 `{"message"}` for a one-off whose
+  time has passed or a repeat there isn't. The chat lists it as `meeting: {next, every, topic,
+  at, weekday}`.
+- `PATCH kuvo/groups/<id>` with any of `{name, purpose, members, meeting}` changes the chat as
+  Edit Group Chat does (an empty `purpose` is none, `meeting: null` none): `200 {"group"}`, 400
+  `{"message"}` for what can't be (no name, fewer than two bots, a bot that doesn't live where
+  the chat does, a meeting as above), 404 for no such chat or bot, 409 while it moves. A Mac
+  answers it for every chat it lists, a machine's bridge (from 0.9.14) for those that live there;
+  `kuvo/groups/events` says what changed at once.
+- A machine's bridge (from 0.9.5) answers the same three, with the Mac closed too: what New Bot
+  offers there (`startingModel` has one key, the machine's name as its bots' `machine` has it,
+  and `projects` are its own); a bot made there, with its folder, conversation and instructions,
+  listed at once (`machine` is ignored); a group chat of its own bots, which lives and runs there.
+  What New Bot needs comes from the Mac, which gives it to the machine each time it connects; one
+  never connected from a Mac answers `409 {"message"}`. The Mac takes in the bots a machine made
+  the next time it connects (its group chats it follows there already).
 - On a Mac, `kuvo/named`: who you can name with `&` in a message, as the Mac's composer
   offers them: `{"agents": [{session, name, kind, machine, project, about}]}`, every bot
   (`kind: "bot"`, `about` its job) then the latest sessions with a title (`kind: "session"`,
@@ -239,15 +582,36 @@ itself. A host serves:
   `- &<name> (<session>): <what it is>` lines) to a line `</named-agents>`, before the
   `<review-comments>` and `<attached-files>` blocks. Show each `&<name>` it lists in bold
   (a bot's in its color), opening that session.
-- On a Mac, `kuvo/wakes/<session>`: a session's (or chat's) wake-ups and watches, which its
+- A prompt a phone sends (`POST api/session/<id>/prompt`, and `kuvo/agents/api/…` alike) gets a
+  block at the end of its text that tells the agent it's from the phone: a line `<from-phone>`,
+  the words in `FromPhone.swift`, and a line `</from-phone>`. The Mac adds it, and a machine's
+  bridge (from 0.9.4) in the same words with the Mac closed; send the text without it. Show a
+  message without it (everything from a line `<from-phone>` to the line `</from-phone>`), as
+  sent from the phone. It tells the agent to keep replies short and to show files with
+  `show_file`.
+- An agent shows a file in the conversation with `show_file`, one of Kuvo Code's tools (on the
+  Mac and machines, for the engine and the coding agents): a tool call named
+  `kuvo-browser_show_file` with input `{"path": "<full path on the computer it runs on>",
+  "caption"?}`, which fails when the path isn't a file. Show a completed one in the
+  conversation's flow, as `generate_image`'s: a picture (by its extension) large, any other
+  file as a row that opens it, its caption under it; get its bytes with `kuvo/file` from the
+  computer the session runs on.
+- `kuvo/wakes/<session>`: a session's (or chat's) wake-ups and watches, which its
   agent sets with `kuvo-wake`, as the bar over the Mac's composer shows them: `{"wakes": [{id,
   due, note, every}], "watches": [{letters, every, check, note}], "paused"}` (`due` in seconds
   since 1970, `every` like `1d` or null; paused while it's archived). `POST
   kuvo/wakes/<session>/cancel` with `{"wake": "<id>"}` or `{"watch": "<letters>"}` cancels one;
   `POST kuvo/wakes/<session>/now` with `{"wake": "<id>"}` sends it now (one that repeats still
-  comes back at its time).
-  A bot's are in `kuvo/bots`. A wake-up reaches the conversation as a message starting with
-  `[Wake-up] `.
+  comes back at its time). Both answer `200 {}`, `404 {}` when there's no such one, `409
+  {"message"}` while its conversation is on its way to another computer (a machine's bridge
+  from 0.9.3), or `503 {"message"}` when it couldn't go. A Mac answers for its sessions and its machines'; a
+  machine's bridge (from 0.6.0) for its own sessions and bots, with the Mac closed too (a
+  session that keeps none answers an empty list). A wake-up reaches the conversation as a
+  message starting with `[Wake-up] `. `GET kuvo/wakes` lists every session with a wake-up or a
+  watch at once, for the marks beside them in a list: `{"sessions": [{session, next, watching}]}`
+  (`next`, the soonest, in seconds since 1970, left out when it has none). Bots' come with
+  `kuvo/bots`. A Mac lists its sessions' and those it has read of its machines'; a machine's
+  bridge (from 0.7.4) its own.
 - On a Mac, `kuvo/asks`: what agents ask you for while they browse, on the Mac or a machine: a
   sign-in (the fields the page has, and the accounts Passwords keeps for the site, never
   their passwords), a one-time code, or a step only you can do. `kuvo/asks/events` is the same
@@ -256,6 +620,12 @@ itself. A host serves:
   (or `"saved": "<account>"`, which the Mac fills in from Passwords itself), `{"answer":
   "code", "code"}`, `{"answer": "done"}` or `{"answer": "declined"}`. What's typed goes into
   the page, never to the agent.
+- A machine's bridge (from 0.9.9) answers the same three for what's asked in that machine's
+  browser, with the Mac closed too: `saved` is empty and `offersToSave` false (saved passwords
+  are the Mac's), and a `saved` answer gets `400 {"message"}`. A Mac connected to the machine
+  lists the same asks, by the same `id`: the first answer counts, and the ask goes from both.
+  The browser keeps them in `~/.kuvo-code/run/browser-asks.json` for the bridge, and waits the
+  whole 15 minutes for an answer while the bridge runs, rather than a few for a Mac.
 - On a Mac, `kuvo/groups`: your group chats, with their bots (face, name, session), who's
   talking, whether one is under way or paused, and the last thing said; `kuvo/groups/events`
   streams that list as it changes, and `kuvo/groups/<id>/events` one chat's latest messages,
@@ -265,8 +635,29 @@ itself. A host serves:
   `task`, `state` (`proposed`, `waiting`, `working`, `done` or `failed`), `started`/`finished`,
   and `after` (the bots whose parts come first; it waits for them);
   `…/start` (`{"message"}`, the wrap-up) hands each proposed part to its bot's own conversation.
+  While a bot talks, one chat's events carry `activity`, what it's doing, its last step:
+  `{"kind": "tool", "call"}` (a tool call as a message's `steps` hold them, without its output),
+  `{"kind": "thinking", "text"}` (the line its thinking is on) or `{"kind": "writing"}`. Show
+  them under who's talking, so a long turn doesn't look stuck. A line of one chat's events whose
+  messages are as they were leaves `messages` out (only who's talking or what they're doing
+  changed): keep the ones you have. The first line always has them (a machine's bridge from 0.9.0).
   A bot's message with `report` (a task's id) is it reporting back on its part. Times are
   seconds since 1970.
+  A Mac lists all of yours: its own, and those that live on your machines (whose bots all live
+  there), which it follows from there; each with `machine`, the machine it lives on (by id, as a
+  bot's `machine`; none for the Mac), and `moving` while it's on its way to another computer
+  (one chat's events say it too): what you'd write waits until it's there, and `POST
+  kuvo/groups/<id>` and `…/undo` answer 409 meanwhile, as they do while its machine is away.
+  A machine's bridge (from 0.7.1) answers the same routes, in the same shapes, for the chats that
+  live on it, with the Mac closed too: the coding agents' bridge there runs them (503 while it
+  isn't up or isn't answering: ask again; 404 only when none run there). One moving between computers isn't listed
+  where it's going until it's there. Moving one is on the Mac (Move to Computer), not the phone.
+- `kuvo/file?uri=<file:// URI>`: a file on that computer that an agent's reply or tool names
+  (a picture it made, a file it shows you), by its `file://` address, percent-encoded as a query
+  value: `200` with its bytes and `content-type` (from its extension; `application/octet-stream`
+  when unknown), `404 {"message"}` for one that isn't there or isn't a file, `413 {"message"}`
+  over 25 MB, `400 {"message"}` for an address that isn't `file://`. A Mac answers for its own
+  files; a machine's bridge (from 0.9.4) for the machine's, with the Mac closed too.
 - On a Mac, `kuvo/usage`: the menu bar's usage panel as its Bars view lists it (each provider's
   name, plan, brand color, mark as a PNG to tint, notice, whether it's outdated, and its lines as
   UsageKit writes them), whether a refresh is under way and when the last one ended;
@@ -298,7 +689,10 @@ once.
 On a machine the bridge keeps its state in `~/.kuvo-code/run/link.json` (mode 600):
 
 ```json
-{"relay": "wss://…", "secret": "…", "key": "<static private key>", "phones": [{"key": "…", "name": "…", "added": 1760000000, "from": "mac", "address": "…"}]}
+{"relay": "wss://…", "secret": "…", "key": "<static private key>", "mac": "<the last Mac's static key>",
+ "macs": ["<each Mac that set it up>"], "macAts": {"<Mac>": <its last list's at>}, "macSeen": {"<Mac>": <when it came, here>},
+ "phones": [{"key": "…", "name": "…", "added": 1760000000, "from": "mac", "mac": "<the Mac that listed it>", "address": "…", "pairing": "…"}],
+ "removed": [{"key": "…", "pairing": "…"}]}
 ```
 
 The Mac sets the phones paired with it (`"from": "mac"`), so they reach the machine too,
@@ -306,4 +700,77 @@ and takes a phone off when you unpair; phones paired with the machine itself (`"
 stay. `address` is the phone's on the relay, where its notifications go: the Mac passes on
 what it knows, and the bridge notes it each time the phone comes in. The machine's keys stay when no phones are left, so pairing again gives the same
 address. The bridge reads the file every 30 seconds: a phone taken off loses its sessions,
-and with no phones and no pairing waiting the bridge stops.
+and with no phones and no pairing waiting the bridge stops. The bridge notes when a phone last
+used the machine (`run/link.seen`).
+
+### Settings per box
+
+Each computer keeps its own engine settings and keys; nothing copies them between computers but
+you. A machine's are in `~/.kuvo-code/box` (`opencode.json`, and `keys/` for integrations' keys,
+which its settings name as `{file:~/.kuvo-code/box/keys/…}`), which its engine reads
+(`OPENCODE_CONFIG`) and reloads as they change; no older Kuvo Code writes there. A Mac makes them
+the machine's own the first time it connects (from 0.9.11): what the machine runs with then (the
+settings an older Mac's start left) goes in its box, or, on a machine with none, the Mac's. From
+then on a Mac's start sends none of its own, and a machine's settings are changed through its
+bridge's script, the same way from a Mac (`kuvo-link.js box read | change | key`, over SSH) and
+from a phone (`kuvo/config`), one change at a time under `run/.config.lock`.
+
+### Personalities
+
+The personalities you make are one library on every computer: each keeps its copy (a Mac in
+its data folder, a machine in `~/.kuvo-code/bots/personalities.json`, from bridge 0.9.13), and
+copies meet as a Mac connects to a machine (`kuvo-link.js box personalities`, over SSH) or as a
+personality changes on the Mac. Per personality, the newest change wins (`updated`, milliseconds
+since 1970, made newer than the change before it whatever the clock says); a removal over a change
+at the same moment, then the words that sort last; a removal stays noted (`removed`, the last
+500), so no copy brings it back. Held to `Vectors/personalities.json` (KuvoLink's
+`PersonalityLibraries`, the bridge's `mergePersonalities`). Kuvo Code's own presets (`preset.…`)
+aren't in it.
+
+- `GET kuvo/personalities`: `{"personalities": [{id, name, description, symbol, updated}]}`, the
+  ones you made, on the computer asked.
+- `POST kuvo/personalities` with `{name, description}` makes one (`custom.<uuid>`) and answers
+  with it; 400 without both.
+- `PATCH kuvo/personalities/<id>` with `{name?, description?}` changes one and answers with it;
+  `DELETE` removes it. 404 for one that isn't there, or a preset.
+
+A change on one computer reaches the others as the Mac next meets them; to have it everywhere at
+once, make it on each computer you reach. A bot made on a machine can have one there at once: its
+`kuvo/bots/templates` lists them, told as the Mac words them (the kit's `personalityWords`).
+
+### Paired phones
+
+Each computer keeps the phones paired with it, and the ones removed, by the pairing they came in
+with (`pairing`, made where the phone paired, new each time). The same rules on a Mac and a
+machine's bridge (from 0.9.8), held to `Vectors/link.json` (`phoneBooks`):
+
+- A pairing adds a phone, with a pairing nothing removed (what removed its others still keeps
+  them out).
+- A phone paired with it, or a Mac (one that set it up, `macs`), removes phones, at most 16 at a
+  time, each a phone's key (32 bytes); a removal never names a Mac. What's removed stays removed,
+  its pairing noted (the last 256 kept): the phone can't come in or change anything, and no list
+  brings it back. Only a pairing of its own, with a new `pairing`, lets the phone in again, though
+  its key is one the computer has.
+- A removal of an older pairing than the one there leaves that one.
+- A Mac's list (its setup, its mail) counts only when newer than the last one from that Mac (by
+  its `at`). It adds the phones on it that aren't removed, removes the ones it listed before and no
+  longer lists, and the removals it carries; another Mac's phones stay. One from before Macs were
+  named (no `mac`) that a Mac doesn't list goes off, not for good. A Mac the machine hasn't heard
+  from in 30 days, by its own clock, no longer counts, and its phones are as ones from before Macs
+  were named; it counts again once it sets the machine up.
+
+On both, for a paired phone:
+
+- `kuvo/phones`: `{"phones": [{key, name, added, pairing, you}]}`, `added` in seconds since 1970,
+  `you` the one asking.
+- `POST kuvo/phones/remove` with `{"phones": [{key, pairing}]}` (`pairing` left out: the one
+  there): removes them there, itself too, and their sessions end, once the answer's on its way.
+  `200 {}`, or `400 {"message"}` when it names a Mac, nothing, too many or something that isn't a
+  phone's key, or the one asking isn't paired there. A removal goes to each computer the phone pairs with, Mac
+  and machines (`kuvo/hosts`); a Mac passes on the removals it has with its list.
+
+A machine keeps itself running (from 0.9.7): its keeper (`bin/kuvo-start keep`, `run/box.pid`)
+starts its engine again when it ends, unless it was stopped on purpose (`run/stopped`), and keeps
+the bridge running while a phone is paired or a pairing waits (`run/link.needed`, which the
+bridge writes). The bridge stays up while the engine is down, and starts the keeper when it
+isn't running. A Mac quitting or disconnecting leaves all of it running.

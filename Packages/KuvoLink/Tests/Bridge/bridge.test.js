@@ -1,13 +1,14 @@
 // The bridge, checked against the shared vectors and against a phone and an engine in this
 // process. Run with `node --test Packages/KuvoLink/Tests/Bridge/*.test.js`.
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // The bridge keeps its state in KUVO_HOME, so give it a folder of its own before loading it.
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-link-test-"));
@@ -15,6 +16,13 @@ process.env.KUVO_HOME = home;
 after(() => fs.rmSync(home, { recursive: true, force: true }));
 const link = await import("../../Sources/KuvoLink/Resources/kuvo-link.js");
 
+// Windows keeps permissions in ACLs, not in stat's mode, so those checks are Unix's; a machine's
+// own tools are Unix shell scripts, which Windows doesn't run.
+const unixModes = process.platform !== "win32";
+const unixBox = process.platform === "win32" && "a machine's tools are Unix shell scripts";
+
+// A phone's key as a phone has one (32 bytes, base64url), named for a test.
+const shaped = name => crypto.createHash("sha256").update(name).digest("base64url");
 const vectors = name => JSON.parse(fs.readFileSync(new URL(`../../Vectors/${name}`, import.meta.url), "utf8"));
 const hex = s => Buffer.from(s, "hex");
 
@@ -71,6 +79,8 @@ test("addresses, relay messages, frames and messages match the vectors", () => {
   }
   for (const r of v.routes) assert.equal(link.allowed(r.path, r.method ?? "GET"), r.allowed, `${r.path} ${r.method ?? "GET"}`);
   for (const r of v.sockets) assert.equal(link.socketAllowed(r.path), r.allowed, r.path);
+  for (const r of v.agentRoutes) assert.equal(link.agentsAllowed(r.path, r.method ?? "GET"), r.allowed, `agents: ${r.path} ${r.method ?? "GET"}`);
+  for (const r of v.signInReturns) assert.equal(link.signInReturn(r.url), r.loads ?? null, r.url);
   for (const m of v.messages) {
     assert.equal(link.encodeMessage(m.head, hex(m.body)).toString("hex"), m.bytes);
     assert.deepEqual(link.decodeMessage(hex(m.bytes)), { head: m.head, body: hex(m.body) });
@@ -187,6 +197,14 @@ async function fakeEngine() {
       request.on("close", () => { clearInterval(timer); asked.push({ closed: request.url }); });
       return;
     }
+    if (request.url === "/api/credential" && request.method === "GET") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ data: [
+        { id: "cred_1", integrationID: "anthropic", label: "Work", active: true, value: { type: "api", key: "sk-ant-secret" } },
+        { id: "cred_2", integrationID: "github-copilot", label: "me", active: false, value: { type: "oauth", refresh: "ghr_secret" } },
+      ] }));
+      return;
+    }
     let body = "";
     request.on("data", chunk => { body += chunk; });
     request.on("end", () => {
@@ -198,7 +216,7 @@ async function fakeEngine() {
   return { asked, port: server.address().port, close: () => { server.closeAllConnections(); server.close(); } };
 }
 
-test("requests go to the engine with its password; other routes don't", async t => {
+test("requests go to the engine with its password, all of its API; paths that aren't what they seem don't", async t => {
   const engine = await fakeEngine();
   t.after(engine.close);
   const hostKey = link.newKey();
@@ -213,17 +231,22 @@ test("requests go to the engine with its password; other routes don't", async t 
   assert.equal(answer.head.s, 200);
   assert.equal(answer.head.h["content-type"], "application/json");
   assert.equal(answer.head.h["set-cookie"], undefined);
-  assert.deepEqual(JSON.parse(answer.body), { path: "/api/session/ses_1/prompt?x=1", body: '{"text":"hi"}' });
+  // A message from the phone says so, at its end.
+  assert.deepEqual(JSON.parse(answer.body), { path: "/api/session/ses_1/prompt?x=1", body: JSON.stringify({ text: `hi\n\n${link.FROM_PHONE}` }) });
   const call = engine.asked.at(-1);
   assert.equal(call.auth, `Basic ${Buffer.from("opencode:s3cret").toString("base64")}`);
   assert.equal(call.directory, "/home/me/p");
 
-  for (const [id, p] of [[2, "api/credential"], [3, "api/integration/github/connect/key"], [4, "api/config"], [5, "api/session/../credential"]]) {
+  // The phone is yours: the engine's settings and sign-ins too.
+  for (const [id, p] of [[2, "api/credential"], [3, "api/config"]]) {
     phone.send({ t: "req", id, m: "GET", p, h: {} });
-    const refused = await phone.response();
-    assert.equal(refused.head.s, 403, p);
+    assert.equal((await phone.response()).head.s, 200, p);
   }
-  assert.ok(!engine.asked.some(a => a.url?.includes("credential") || a.url?.includes("config")));
+  for (const [id, p] of [[4, "api/session/../credential"], [5, "kuvo/nothing"], [6, "api/session#x"]]) {
+    phone.send({ t: "req", id, m: "GET", p, h: {} });
+    assert.equal((await phone.response()).head.s, 403, p);
+  }
+  assert.ok(!engine.asked.some(a => a.url?.includes("..") || a.url?.includes("nothing")));
 
   // An event stream runs until the phone cancels it, and then the engine sees it close.
   phone.send({ t: "req", id: 9, m: "GET", p: "api/event", h: { Accept: "text/event-stream" } });
@@ -234,6 +257,150 @@ test("requests go to the engine with its password; other routes don't", async t 
   phone.send({ t: "cancel", id: 9 });
   for (let i = 0; i < 50 && !engine.asked.some(a => a.closed === "/api/event"); i++) await new Promise(r => setTimeout(r, 20));
   assert.ok(engine.asked.some(a => a.closed === "/api/event"));
+});
+
+// What a phone's request gets from the handler, read whole.
+async function answer(handle, method, p, body) {
+  const parts = [];
+  for await (const part of handle({ method, path: p, headers: {}, body: Buffer.from(body ?? "") }, {}, undefined)) parts.push(part);
+  const text = Buffer.concat(parts.filter(part => part.body).map(part => part.body)).toString();
+  return { status: parts[0].head.status, json: text ? JSON.parse(text) : undefined };
+}
+
+test("a sign-in that returns to the machine is loaded there, at its own address only, without following it further", async t => {
+  const asked = [];
+  const server = http.createServer((request, response) => {
+    asked.push(request.url);
+    response.writeHead(302, { location: "http://example.com/done" });
+    response.end();
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => server.close());
+  const handle = link.engineHandler(() => ({ port: 1, password: "p" }));
+  const port = server.address().port;
+  const loaded = await answer(handle, "POST", "kuvo/sign-in/return", JSON.stringify({ url: `http://127.0.0.1:${port}/mcp/oauth/callback?code=c&state=s#_=_` }));
+  assert.deepEqual([loaded.status, loaded.json], [200, { status: 302 }]);
+  assert.deepEqual(asked, ["/mcp/oauth/callback?code=c&state=s"]);
+  for (const url of ["http://example.com:80/cb?code=c", `http://127.0.0.1:${port}/cb`, `https://127.0.0.1:${port}/cb?code=c`]) {
+    assert.equal((await answer(handle, "POST", "kuvo/sign-in/return", JSON.stringify({ url }))).status, 400, url);
+  }
+  assert.equal(asked.length, 1);
+  // Nothing there to take it.
+  const closed = http.createServer();
+  await new Promise(resolve => closed.listen(0, "127.0.0.1", resolve));
+  const gone = closed.address().port;
+  await new Promise(resolve => closed.close(resolve));
+  assert.equal((await answer(handle, "POST", "kuvo/sign-in/return", JSON.stringify({ url: `http://127.0.0.1:${gone}/cb?code=c` }))).status, 502);
+  assert.equal((await answer(handle, "GET", "kuvo/sign-in/return")).status, 405);
+});
+
+test("a machine whose settings still come from its Mac says so; its engine restarts as it was started", { skip: unixBox }, async () => {
+  const handle = link.engineHandler(() => ({ pid: 999999, port: 1, password: "p" }));
+  for (const p of ["kuvo/config", "kuvo/mcp/catalog", "kuvo/mcp/catalog/linear"]) {
+    const answered = await answer(handle, p.endsWith("linear") ? "POST" : "GET", p);
+    assert.equal(answered.status, 409, p);
+    assert.match(answered.json.message, /Mac/);
+  }
+  // Never started from a Mac here (no record of how): it says to.
+  assert.equal((await answer(handle, "POST", "kuvo/engine/restart")).status, 409);
+  assert.equal((await answer(link.engineHandler(() => { throw new Error("none"); }), "POST", "kuvo/engine/restart")).status, 409);
+  // Started from a Mac: `kuvo-start` starts it again, once the answer's out.
+  const bin = path.join(home, "bin");
+  fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(path.join(home, "run"), { recursive: true });
+  fs.writeFileSync(path.join(home, "run", "launch.env"), "PATH=/usr/bin\n");
+  const started = path.join(home, "run", "started-again");
+  fs.writeFileSync(path.join(bin, "kuvo-start"), `#!/bin/sh\necho "bun=\${BUN_BE_BUN-}" >"${started}"\n`);
+  // Without what starts the engine (`kuvo-launch`), nothing is stopped.
+  assert.equal((await answer(handle, "POST", "kuvo/engine/restart")).status, 409);
+  fs.writeFileSync(path.join(bin, "kuvo-launch"), "#!/bin/sh\n");
+  // The bridge runs as Bun; the engine it starts again mustn't.
+  process.env.BUN_BE_BUN = "1";
+  try {
+    assert.equal((await answer(handle, "POST", "kuvo/engine/restart")).status, 202);
+    for (let i = 0; i < 100 && !fs.existsSync(started); i++) await new Promise(r => setTimeout(r, 50));
+  } finally {
+    delete process.env.BUN_BE_BUN;
+  }
+  assert.equal(fs.readFileSync(started, "utf8").trim(), "bun=");
+  assert.equal((await answer(handle, "GET", "kuvo/engine/restart")).status, 405);
+  for (const name of ["bin/kuvo-start", "bin/kuvo-launch", "run/launch.env", "run/started-again"]) fs.rmSync(path.join(home, name));
+});
+
+test("kuvo/file sends a file on the machine by its file:// address, with its type", async () => {
+  const handle = link.engineHandler(() => ({}));
+  const folder = fs.mkdtempSync(path.join(home, "files-"));
+  const picture = path.join(folder, "a chart #1.png");
+  const bytes = crypto.randomBytes(100 * 1024);
+  fs.writeFileSync(picture, bytes);
+  const ask = async uri => {
+    const parts = [];
+    for await (const part of handle({ method: "GET", path: `kuvo/file?uri=${encodeURIComponent(uri)}`, headers: {}, body: Buffer.alloc(0) }, {}, undefined)) parts.push(part);
+    return { head: parts[0].head, body: Buffer.concat(parts.filter(part => part.body).map(part => part.body)) };
+  };
+  const sent = await ask(pathToFileURL(picture).href);
+  assert.equal(sent.head.status, 200);
+  assert.equal(sent.head.headers["content-type"], "image/png");
+  assert.ok(sent.body.equals(bytes));
+  const gone = await ask(pathToFileURL(path.join(folder, "gone.png")).href);
+  assert.equal(gone.head.status, 404);
+  assert.ok(JSON.parse(gone.body).message);
+  assert.equal((await ask(pathToFileURL(folder).href)).head.status, 404, "a folder isn't a file");
+  assert.equal((await ask("https://example.com/a.png")).head.status, 400);
+  const big = path.join(folder, "big.bin");
+  fs.writeFileSync(big, "");
+  fs.truncateSync(big, link.FILE_LIMIT + 1);
+  assert.equal((await ask(pathToFileURL(big).href)).head.status, 413);
+  fs.rmSync(folder, { recursive: true });
+});
+
+test("kuvo/info says when the engine running now came up, which a restart changes", async () => {
+  fs.mkdirSync(path.join(home, "run"), { recursive: true });
+  const record = path.join(home, "run", "engine.json");
+  fs.writeFileSync(record, JSON.stringify({ pid: 4242, port: 1, password: "p", version: "2.0.32" }));
+  const then = new Date("2026-10-22T10:00:00Z");
+  fs.utimesSync(record, then, then);
+  const handle = link.engineHandler(() => JSON.parse(fs.readFileSync(record, "utf8")));
+  const info = await answer(handle, "GET", "kuvo/info");
+  assert.equal(info.json.started, then.getTime() / 1000);
+  assert.equal(info.json.engine, "2.0.32");
+  // None running: none started.
+  assert.equal((await answer(link.engineHandler(() => { throw new Error("none"); }), "GET", "kuvo/info")).json.started, null);
+  fs.rmSync(record);
+});
+
+test("plan accounts: listed, signed in to and switched from a phone", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const hostKey = link.newKey();
+  const handle = link.engineHandler(() => ({ pid: process.pid, port: engine.port, password: "s3cret", version: "2.0.30" }));
+  const host = new link.LinkHost({ key: hostKey, hello: { v: 1, kind: "machine", name: "m", app: "0" }, authorize: () => true, handle });
+  const phone = phoneFor(host, hostKey);
+  await phone.open({});
+
+  // Its sign-ins, by name and which is in use; never what they're signed in with.
+  phone.send({ t: "req", id: 1, m: "GET", p: "kuvo/accounts/credentials", h: {} });
+  const listed = await phone.response();
+  assert.equal(listed.head.s, 200);
+  assert.deepEqual(JSON.parse(listed.body), { credentials: [
+    { id: "cred_1", integrationID: "anthropic", label: "Work", active: true },
+    { id: "cred_2", integrationID: "github-copilot", label: "me", active: false },
+  ] });
+  assert.ok(!listed.body.toString().includes("secret"));
+
+  // A key goes in; another sign-in is switched to; the list itself never goes out.
+  phone.send({ t: "req", id: 2, m: "POST", p: "api/integration/anthropic/connect/key", h: { "Content-Type": "application/json" } }, Buffer.from('{"key":"sk-new"}'));
+  assert.equal((await phone.response()).head.s, 200);
+  phone.send({ t: "req", id: 3, m: "POST", p: "api/credential/cred_2/activate", h: {} });
+  assert.equal((await phone.response()).head.s, 200);
+  // A sign-in page, started with its method's hidden answers (OpenCode's server), as the Mac sends them.
+  const start = '{"methodID":"console","answer":{"server":"https://opencode.ai"}}';
+  phone.send({ t: "req", id: 7, m: "POST", p: "api/integration/opencode/connect/oauth", h: { "Content-Type": "application/json" } }, Buffer.from(start));
+  const started = await phone.response();
+  assert.equal(started.head.s, 200);
+  assert.equal(JSON.parse(started.body).body, start);
+  assert.deepEqual(engine.asked.filter(a => a.url?.startsWith("/api/")).map(a => `${a.method} ${a.url}`),
+    ["GET /api/credential", "POST /api/integration/anthropic/connect/key", "POST /api/credential/cred_2/activate", "POST /api/integration/opencode/connect/oauth"]);
 });
 
 // A terminal on a free port as the engine serves one: a WebSocket that first says where its
@@ -327,6 +494,7 @@ test("the self-test passes here", () => {
 
 test("setup keeps the machine's keys and its own phones, starts the bridge, and stops it with no phones left", async () => {
   const { spawnSync } = await import("node:child_process");
+  const [A, B, C] = ["A", "B", "C"].map(shaped);
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-link-setup-"));
   fs.mkdirSync(path.join(folder, "workspace"));
   const script = fileURLToPath(new URL("../../Sources/KuvoLink/Resources/kuvo-link.js", import.meta.url));
@@ -337,7 +505,7 @@ test("setup keeps the machine's keys and its own phones, starts the bridge, and 
   const pidFile = path.join(folder, "run", "link.pid");
   try {
     // A relay nobody listens on: the bridge keeps trying, which is all this needs.
-    const first = setup({ relay: "ws://127.0.0.1:9", name: "test", phones: [{ key: "AAAA", name: "A" }] });
+    const first = setup({ relay: "ws://127.0.0.1:9", name: "test", phones: [{ key: A, name: "A" }] });
     assert.match(first.address, /^[A-Za-z0-9_-]{22}$/);
     // The file exists briefly before its PID is written; setup also needs its version file.
     let pid = 0;
@@ -354,24 +522,28 @@ test("setup keeps the machine's keys and its own phones, starts the bridge, and 
     process.kill(pid, 0);
 
     // Its keys stay; the phones are what the Mac says now; the same bridge carries on.
-    const second = setup({ relay: "ws://127.0.0.1:9", name: "test", phones: [{ key: "AAAA", name: "A" }, { key: "BBBB", name: "B" }] });
+    const second = setup({ relay: "ws://127.0.0.1:9", name: "test", phones: [{ key: A, name: "A" }, { key: B, name: "B" }] });
     assert.deepEqual(second, first);
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(folder, "run", "link.json"), "utf8")).phones.map(p => p.key), ["AAAA", "BBBB"]);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(folder, "run", "link.json"), "utf8")).phones.map(p => p.key), [A, B]);
     assert.equal(Number(fs.readFileSync(pidFile, "utf8")), pid);
 
     // A phone paired with the machine itself stays when the Mac's list changes.
     const linkFile = path.join(folder, "run", "link.json");
     const saved = JSON.parse(fs.readFileSync(linkFile, "utf8"));
-    fs.writeFileSync(linkFile, JSON.stringify({ ...saved, phones: [...saved.phones, { key: "CCCC", name: "C", added: 1, from: "pair" }] }));
-    setup({ relay: "ws://127.0.0.1:9", name: "test", phones: [{ key: "BBBB", name: "B" }] });
-    assert.deepEqual(JSON.parse(fs.readFileSync(linkFile, "utf8")).phones.map(p => p.key), ["BBBB", "CCCC"]);
+    fs.writeFileSync(linkFile, JSON.stringify({ ...saved, phones: [...saved.phones, { key: C, name: "C", added: 1, from: "pair" }] }));
+    setup({ relay: "ws://127.0.0.1:9", name: "test", phones: [{ key: B, name: "B" }] });
+    assert.deepEqual(JSON.parse(fs.readFileSync(linkFile, "utf8")).phones.map(p => p.key), [B, C]);
 
-    // Nothing left to answer: the bridge stops, and the machine keeps its keys.
+    // Nothing left to answer: the bridge stops, and the machine keeps its keys; no phone keeps
+    // the engine up any more.
+    const seen = path.join(folder, "run", "link.seen");
+    fs.writeFileSync(seen, "");
     fs.writeFileSync(linkFile, JSON.stringify({ ...saved, phones: [] }));
     assert.deepEqual(setup({ relay: "ws://127.0.0.1:9", phones: [] }), {});
     const kept = JSON.parse(fs.readFileSync(linkFile, "utf8"));
     assert.equal(kept.secret, saved.secret);
     assert.deepEqual(kept.phones, []);
+    assert.equal(fs.existsSync(seen), false);
     let stopped = false;
     for (let i = 0; i < 50 && !stopped; i++) {
       try { process.kill(pid, 0); await new Promise(r => setTimeout(r, 50)); } catch { stopped = true; }
@@ -421,6 +593,7 @@ test("engine events become notifications, as the Mac words them", async () => {
     ses_main: { id: "ses_main", title: "Fix the tests", location: { directory: "/home/me/kuvo-ai" } },
     ses_sub: { id: "ses_sub", parentID: "ses_main", title: "Explore", location: { directory: "/home/me/kuvo-ai" } },
     ses_bot: { id: "ses_bot", title: "Fixer", metadata: { kuvo: { bot: "bot_1" } }, location: { directory: "/home/me/.kuvo-code/bots/bot_1/workspace" } },
+    ses_run: { id: "ses_run", title: "Auto", metadata: { kuvo: { engineFor: "ses_agent" } }, location: { directory: "/home/me/kuvo-ai" } },
   };
   const messages = { data: [{ type: "assistant", content: [{ type: "text", text: "**All** green:\n 42 tests pass." }] }, { type: "user", content: [] }] };
   // ses_main is at work, with a tool of the "linear" server running.
@@ -461,6 +634,11 @@ test("engine events become notifications, as the Mac words them", async () => {
   assert.equal(failed.category, "failed");
   assert.equal(failed.body, "Stopped with an error.");
 
+  // An engine run a coding agent's session started: the agents' bridge tells its news, as that
+  // session's, not the engine.
+  assert.equal(await link.noticeFor({ type: "permission.asked", data: { id: "per_2", sessionID: "ses_run", action: "shell", resources: ["ls"] } }, get), null);
+  assert.equal(await link.noticeFor({ type: "session.execution.succeeded", data: { sessionID: "ses_run" } }, get), null);
+
   // A subagent's run is its parent's business; a stopped run and the rest aren't news.
   assert.equal(await link.noticeFor({ type: "session.execution.succeeded", data: { sessionID: "ses_sub" } }, get), null);
   assert.equal(await link.noticeFor({ type: "session.execution.interrupted", data: { sessionID: "ses_main" } }, get), null);
@@ -479,5 +657,412 @@ test("a Mac that said it's here in the last few minutes keeps the bridge quiet",
     assert.equal(link.macPresent(folder), false);
   } finally {
     fs.rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test("a phone list a Mac mails through the relay is taken from the Macs that set the machine up alone, a newer one only: a phone removed there loses its way in", () => {
+  const machine = link.newKey(), mac = link.newKey(), other = link.newKey(), stranger = link.newKey();
+  const [lost, fresh, own, others] = [0, 1, 2, 3].map(() => crypto.randomBytes(32));
+  const k = key => key.toString("base64url");
+  fs.mkdirSync(path.join(home, "run"), { recursive: true });
+  link.writeLink({
+    secret: crypto.randomBytes(32).toString("base64url"), key: machine.toString("base64url"), relay: "wss://relay.test", name: "m",
+    mac: k(link.publicOf(mac)), macs: [k(link.publicOf(mac)), k(link.publicOf(other))], macAt: 1000,
+    phones: [{ key: k(lost), name: "Lost iPhone", added: 1, from: "mac", mac: k(link.publicOf(mac)) }, { key: k(own), name: "Paired here", added: 2, from: "pair" }],
+  });
+  const mail = (from, phones, at) => link.sealOneWay(Buffer.from(JSON.stringify({ phones, at })), from, link.publicOf(machine)).message;
+  const ended = [];
+  const host = { keepOnly: keys => ended.push(keys.size) };
+  const names = () => link.readLink().phones.map(phone => `${phone.from}:${phone.name}`);
+
+  link.phonesFromMac(mail(stranger, [], 2000), host);
+  link.phonesFromMac(mail(mac, [{ key: k(fresh), name: "New iPhone" }], 900), host);
+  assert.deepEqual(names(), ["mac:Lost iPhone", "pair:Paired here"], "not from a Mac of its own, or older: nothing changes");
+  assert.deepEqual(ended, []);
+
+  link.phonesFromMac(mail(mac, [{ key: k(fresh), name: "New iPhone" }], 2000), host);
+  assert.deepEqual(names(), ["mac:New iPhone", "pair:Paired here"], "the Mac's list now, and the machine's own pairing kept");
+  assert.deepEqual(ended, [2], "the removed phone's sessions end");
+  assert.equal(link.authorizePhone(lost, {}, undefined), false);
+  // The same mail again changes nothing.
+  link.phonesFromMac(mail(mac, [], 2000), host);
+  assert.deepEqual(names(), ["mac:New iPhone", "pair:Paired here"]);
+  // The other Mac's list, by its own clock: its phones beside the first Mac's, which it leaves.
+  link.phonesFromMac(mail(other, [{ key: k(others), name: "Other iPhone" }], 500), host);
+  assert.deepEqual(names(), ["mac:Other iPhone", "mac:New iPhone", "pair:Paired here"]);
+
+  // A Mac not heard from in 30 days: its phones go off the next list of another, not for good.
+  const later = link.readLink();
+  link.forgetOldMacs(later, k(link.publicOf(mac)), Date.now() + 31 * 24 * 3600 * 1000);
+  link.takeMacList(later, [{ key: k(fresh), name: "New iPhone" }], [], k(link.publicOf(mac)));
+  assert.deepEqual(later.phones.map(phone => phone.name), ["New iPhone", "Paired here"]);
+  assert.deepEqual(link.macsOf(later), [k(link.publicOf(mac))]);
+  assert.equal(later.removed.some(entry => entry.key === k(others)), false);
+  fs.rmSync(path.join(home, "run", "link.json"));
+});
+test("Start and Stop go through the box's tool, the bridge staying up; kuvo/info says whether it runs and whether it's stopped", { skip: unixBox }, async () => {
+  const bin = path.join(home, "bin");
+  fs.mkdirSync(bin, { recursive: true });
+  fs.mkdirSync(path.join(home, "run"), { recursive: true });
+  const said = path.join(home, "run", "box-said");
+  fs.writeFileSync(path.join(bin, "kuvo-start"), `#!/bin/sh\necho "\${1:-box} bun=\${BUN_BE_BUN-}" >>"${said}"\n[ "$1" = stop ] && touch "${path.join(home, "run", "stopped")}"\nexit 0\n`);
+  const handle = link.engineHandler(() => { throw new Error("none"); });
+  // Never started from a Mac: there's nothing to start it as.
+  assert.equal((await answer(handle, "POST", "kuvo/engine/start")).status, 409);
+  fs.writeFileSync(path.join(bin, "kuvo-launch"), "#!/bin/sh\n");
+  fs.writeFileSync(path.join(home, "run", "launch.env"), "PATH=/usr/bin\n");
+  assert.equal((await answer(handle, "POST", "kuvo/engine/stop")).status, 200);
+  let info = await answer(handle, "GET", "kuvo/info");
+  assert.equal(info.json.running, false);
+  assert.equal(info.json.stopped, true);
+  assert.equal((await answer(handle, "POST", "kuvo/engine/start")).status, 202);
+  for (let i = 0; i < 100 && !fs.readFileSync(said, "utf8").includes("start"); i++) await new Promise(r => setTimeout(r, 30));
+  assert.deepEqual(fs.readFileSync(said, "utf8").trim().split("\n"), ["stop bun=", "start bun="]);
+  assert.equal((await answer(handle, "GET", "kuvo/engine/start")).status, 405);
+  for (const name of ["bin/kuvo-start", "bin/kuvo-launch", "run/launch.env", "run/box-said", "run/stopped"]) fs.rmSync(path.join(home, name), { force: true });
+});
+
+test("the box's keeper keeps the phone link up while a phone is paired, and the link starts the keeper again if it went", { skip: unixBox }, async () => {
+  fs.mkdirSync(path.join(home, "run"), { recursive: true });
+  const flag = path.join(home, "run", "link.needed");
+  link.writeLink({ secret: "s", key: "k", relay: "wss://relay.test", phones: [{ key: "p", name: "Phone", from: "mac", added: 1 }] });
+  assert.equal(fs.existsSync(flag), true);
+  link.writeLink({ secret: "s", key: "k", relay: "wss://relay.test", phones: [] });
+  assert.equal(fs.existsSync(flag), false);
+  // A pairing run out with no phone paired: the bridge ends, and the keeper starts it no more.
+  link.writeLink({ secret: "s", key: "k", relay: "wss://relay.test", phones: [], pairing: { token: "t", expires: Date.now() + 60_000 } });
+  assert.equal(fs.existsSync(flag), true);
+  const ran = link.readLink();
+  ran.pairing.expires = Date.now() - 1;
+  fs.writeFileSync(link.LINK_FILE, JSON.stringify(ran));
+  link.noLongerNeeded();
+  assert.equal(fs.existsSync(flag), false);
+  fs.rmSync(path.join(home, "run", "link.json"), { force: true });
+
+  const bin = path.join(home, "bin");
+  fs.mkdirSync(bin, { recursive: true });
+  const said = path.join(home, "run", "keeper-started");
+  fs.writeFileSync(path.join(bin, "kuvo-start"), `#!/bin/sh\necho "\${1:-box}" >"${said}"\n`);
+  fs.writeFileSync(path.join(home, "run", "box.pid"), "999999");
+  link.keepKeeper();
+  for (let i = 0; i < 100 && !fs.existsSync(said); i++) await new Promise(r => setTimeout(r, 30));
+  assert.equal(fs.readFileSync(said, "utf8").trim(), "box");
+  fs.rmSync(said);
+  // An older Kuvo Code on a Mac put its own kuvo-start there, which only starts the engine after a
+  // restart: the keeper starts from the copy it keeps of itself.
+  fs.writeFileSync(path.join(bin, "kuvo-start"), `#!/bin/sh\necho older >"${said}"\n`);
+  fs.writeFileSync(path.join(bin, ".kuvo-start-keeper"), `#!/bin/sh\ncase "\${1:-box}" in\nbox)\n  echo copy >"${said}"\n  ;;\nkeep)\n  ;;\nesac\n`);
+  link.keepKeeper();
+  for (let i = 0; i < 100 && !fs.existsSync(said); i++) await new Promise(r => setTimeout(r, 30));
+  assert.equal(fs.readFileSync(said, "utf8").trim(), "copy");
+  for (const name of ["bin/kuvo-start", "bin/.kuvo-start-keeper", "run/keeper-started", "run/box.pid"]) fs.rmSync(path.join(home, name), { force: true });
+});
+
+test("paired phones, as the Mac has them too: removals stick, only a new pairing lets one back, and nobody removes the Mac (Vectors/link.json)", () => {
+  const byKey = (a, b) => (a.key + "/" + (a.pairing ?? "")).localeCompare(b.key + "/" + (b.pairing ?? ""));
+  const view = book => ({
+    phones: (book.phones ?? []).map(phone => ({ key: phone.key, pairing: phone.pairing ?? "", from: phone.from })).sort(byKey),
+    removed: (book.removed ?? []).map(entry => ({ key: entry.key, pairing: entry.pairing })).sort(byKey),
+  });
+  for (const book of vectors("link.json").phoneBooks) {
+    const state = { macs: book.macs, phones: book.phones.map(phone => ({ ...phone })), removed: [] };
+    for (const step of book.steps) {
+      let ok = true;
+      if (step.op === "pair") link.pairPhone(state, { key: step.key, pairing: step.pairing, from: "pair" });
+      else if (step.op === "remove") ok = link.removePhones(state, step.by, step.phones);
+      else link.takeMacList(state, step.phones, step.removed, step.by);
+      assert.equal(ok, step.ok, `${book.name}: ${step.op}`);
+      assert.deepEqual(view(state), step.after, `${book.name}: ${step.op}`);
+    }
+  }
+});
+
+test("a phone lists the phones paired with a machine and removes a lost one there, which loses its sessions and its way in, for good", async () => {
+  fs.mkdirSync(path.join(home, "run"), { recursive: true });
+  const mine = crypto.randomBytes(32), lost = crypto.randomBytes(32);
+  link.writeLink({
+    secret: "s", key: "k", relay: "wss://relay.test", mac: crypto.randomBytes(32).toString("base64url"),
+    phones: [{ key: mine.toString("base64url"), name: "Mine", added: 1, from: "mac", pairing: "a" }, { key: lost.toString("base64url"), name: "Lost", added: 2, from: "mac", pairing: "b" }],
+  });
+  const ended = [];
+  const handle = link.engineHandler(() => { throw new Error("none"); }, {}, () => null, changed => ended.push(changed.phones.map(phone => phone.name)));
+  const as = async (key, method, p, body) => {
+    const parts = [];
+    for await (const part of handle({ method, path: p, headers: {}, body: Buffer.from(body ?? "") }, { key }, undefined)) parts.push(part);
+    const text = Buffer.concat(parts.filter(part => part.body).map(part => part.body)).toString();
+    return { status: parts[0].head.status, json: text ? JSON.parse(text) : undefined };
+  };
+
+  const listed = await as(mine, "GET", "kuvo/phones");
+  assert.deepEqual(listed.json.phones.map(phone => [phone.name, phone.pairing, phone.you]), [["Mine", "a", true], ["Lost", "b", false]]);
+  assert.equal((await as(mine, "POST", "kuvo/phones/remove", JSON.stringify({ phones: [{ key: link.readLink().mac }] }))).status, 400, "never the Mac");
+  assert.equal((await as(mine, "GET", "kuvo/phones/remove")).status, 405);
+
+  assert.equal((await as(mine, "POST", "kuvo/phones/remove", JSON.stringify({ phones: [{ key: lost.toString("base64url"), pairing: "b" }] }))).status, 200);
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.deepEqual(ended, [["Mine"]], "the lost one's sessions end, once the answer's on its way");
+  assert.equal(link.authorizePhone(lost, {}, undefined), false, "and it can't come in");
+  assert.equal((await as(lost, "POST", "kuvo/phones/remove", JSON.stringify({ phones: [{ key: mine.toString("base64url") }] }))).status, 400, "nor remove anyone");
+
+  // The Mac's list, mailed before it heard of the removal, doesn't bring it back.
+  const before = link.readLink();
+  link.takeMacList(before, [{ key: mine.toString("base64url"), name: "Mine", pairing: "a" }, { key: lost.toString("base64url"), name: "Lost", pairing: "b" }], []);
+  assert.deepEqual(before.phones.map(phone => phone.name), ["Mine"]);
+
+  // Pairing it again lets it back in, though its key is one the machine has.
+  const token = crypto.randomBytes(16).toString("base64url");
+  link.updateLink(current => ({ ...current, pairing: { token, expires: Date.now() + 60_000 } }));
+  assert.equal(link.authorizePhone(lost, { pair: token, name: "Found" }, undefined), true);
+  const found = link.readLink().phones.find(phone => phone.key === lost.toString("base64url"));
+  assert.ok(found && found.pairing && found.pairing !== "b", "a pairing of its own");
+  assert.deepEqual(link.readLink().removed, [{ key: lost.toString("base64url"), pairing: "b" }], "the old one still out");
+  fs.rmSync(path.join(home, "run", "link.json"), { force: true });
+});
+
+test("a phone answers what an agent asks for while it browses on a machine, with the Mac closed: listed and answered as on the Mac, the answer going to the machine's browser", { skip: process.platform === "win32" && "the browser's socket is a Unix socket" }, async t => {
+  const run = path.join(home, "run");
+  fs.mkdirSync(run, { recursive: true });
+  // The browser the bridge finds: a live process whose command line names it.
+  const browserProcess = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "kuvo-browser"], { stdio: "ignore" });
+  t.after(() => browserProcess.kill());
+  const asks = [
+    { id: "ask-1", kind: "signIn", host: "github.com", targetId: "T1", username: true, password: true, session: "ses_sub" },
+    { id: "ask-2", kind: "code", host: "github.com", targetId: "T1", prompt: "The code GitHub sent", session: "ses_1" },
+  ];
+  fs.writeFileSync(path.join(run, "browser-asks.json"), JSON.stringify({ asks }));
+  // The engine: a subagent's session, and the conversation it works for.
+  const sessions = { ses_sub: { id: "ses_sub", parentID: "ses_1", title: "Look it up" }, ses_1: { id: "ses_1", title: "Fixer" } };
+  const engine = http.createServer((request, response) => {
+    const id = decodeURIComponent(request.url.split("/").pop());
+    response.writeHead(sessions[id] ? 200 : 404, { "content-type": "application/json" });
+    response.end(JSON.stringify({ data: sessions[id] }));
+  });
+  await new Promise(resolve => engine.listen(0, "127.0.0.1", resolve));
+  const readEngine = () => ({ port: engine.address().port, password: "p" });
+  // The browser's socket: it says hello first, as the keeper does, then takes answers.
+  const taken = [];
+  const browser = (await import("node:net")).createServer(socket => {
+    socket.write(JSON.stringify({ method: "Kuvo.hello", params: { asks } }) + "\n");
+    let buffer = "";
+    socket.on("data", chunk => {
+      buffer += chunk;
+      let end;
+      while ((end = buffer.indexOf("\n")) >= 0) {
+        const message = JSON.parse(buffer.slice(0, end));
+        buffer = buffer.slice(end + 1);
+        if (message.method === "Kuvo.answer") {
+          taken.push(message.params);
+          socket.write(JSON.stringify({ id: message.id, result: {} }) + "\n");
+        }
+      }
+    });
+  });
+  await new Promise(resolve => browser.listen(path.join(run, "browser.sock"), resolve));
+  try {
+    const handle = link.engineHandler(readEngine, { name: "Lokum" });
+    // None while the browser isn't running: what one left behind was asked of no one now.
+    assert.deepEqual((await answer(handle, "GET", "kuvo/asks")).json, { asks: [] });
+    fs.writeFileSync(path.join(run, "browser.pid"), String(browserProcess.pid));
+    const listed = await answer(handle, "GET", "kuvo/asks");
+    // A subagent's, in the conversation it works for, by that one's name.
+    assert.deepEqual(listed.json.asks[0], { id: "ask-1", kind: "signIn", host: "github.com", machine: "Lokum", session: "ses_1", asker: "Fixer", username: true, password: true, saved: [], offersToSave: false });
+    assert.equal(listed.json.asks[1].prompt, "The code GitHub sent");
+
+    assert.equal((await answer(handle, "POST", "kuvo/asks/ask-1", JSON.stringify({ answer: "signIn", saved: "me" }))).status, 400, "saved passwords are the Mac's");
+    assert.equal((await answer(handle, "POST", "kuvo/asks/ask-1", JSON.stringify({ answer: "code", code: "1" }))).status, 400, "not what it asks");
+    assert.equal((await answer(handle, "POST", "kuvo/asks/ask-9", JSON.stringify({ answer: "declined" }))).status, 404);
+    assert.equal((await answer(handle, "POST", "kuvo/asks/ask-1", JSON.stringify({ answer: "signIn", username: "me", password: "secret" }))).status, 200);
+    assert.equal((await answer(handle, "POST", "kuvo/asks/ask-2", JSON.stringify({ answer: "code", code: " 123456 " }))).status, 200);
+    assert.deepEqual(taken, [
+      { id: "ask-1", answer: { type: "signIn", username: "me", password: "secret" } },
+      { id: "ask-2", answer: { type: "code", code: "123456" } },
+    ]);
+
+    // Its notification, as the Mac words it (in the conversation it's filed in).
+    assert.deepEqual(link.askNotice({ ...asks[0], session: "ses_1" }, "Fixer"), { title: "Sign in to github.com", subtitle: "Fixer", body: "The agent needs your sign-in to go on.", category: "ask", thread: "ses_1", data: { session: "ses_1", ask: "ask-1" } });
+    assert.equal(link.askNotice(asks[1]).body, "The code GitHub sent");
+  } finally {
+    browser.close();
+    engine.close();
+    for (const name of ["browser-asks.json", "browser.pid"]) fs.rmSync(path.join(run, name), { force: true });
+  }
+  // The browser gone: an answer can't reach it.
+  assert.equal(await link.answerAsk("ask-1", { type: "declined" }, path.join(run, "browser.sock")), false);
+});
+
+test("a group chat that lives on a machine tells your phones its news, as the Mac words it", () => {
+  const met = link.groupNotice({ type: "kuvo.group.met", data: { id: "grp_1", name: "Standup", who: "Ada", last: { kind: "wrapUp", text: "**Done**: shipped the fix." } } });
+  assert.deepEqual(met, { title: "Standup", subtitle: "Ada\u2019s wrap-up", body: "Done: shipped the fix.", category: "message", thread: "grp_1", data: { group: "grp_1" } });
+  assert.equal(link.groupNotice({ type: "kuvo.group.met", data: { id: "grp_1", name: "Standup", who: "Ada", last: { kind: "message", text: "Hi" } } }).subtitle, "Ada");
+  assert.equal(link.groupNotice({ type: "kuvo.group.met", data: { id: "grp_1", name: "Standup" } }).body, "The meeting came, but no one could take part.");
+  const done = link.groupNotice({ type: "kuvo.group.done", data: { id: "grp_1", name: "Standup", who: "Ada", text: "x".repeat(400) } });
+  assert.equal(done.subtitle, "Ada finished its part");
+  assert.equal(done.body.length, 220);
+  assert.equal(link.groupNotice({ type: "kuvo.group.done", data: {} }), null);
+});
+
+test("a machine that owns its settings has them read and changed from a phone, as the Mac's are: key by key, a change that read something else turned away", async () => {
+  const folder = path.join(home, "box");
+  fs.mkdirSync(folder, { recursive: true });
+  const file = path.join(folder, "opencode.json");
+  fs.writeFileSync(file, JSON.stringify({ model: "anthropic/sonnet", permissions: [{ action: "shell", resource: "*", effect: "ask" }], mcp: { servers: { linear: { url: "https://mcp.linear.app" } } } }));
+  fs.mkdirSync(path.join(home, "bin"), { recursive: true });
+  fs.writeFileSync(path.join(home, "bin", "mcp-catalog.json"), JSON.stringify({ servers: [
+    { id: "linear", title: "Linear", summary: "Issues", access: "signIn", integration: true, settings: { url: "https://mcp.linear.app" } },
+    { id: "context7", title: "Context7", summary: "Docs", access: "open", settings: { url: "https://mcp.context7.com/mcp" } },
+    { id: "chrome-devtools", title: "Chrome DevTools", summary: "Chrome", access: "local", macOnly: true, settings: { command: ["npx"] } },
+  ] }));
+  try {
+    const handle = link.engineHandler(() => { throw new Error("none"); });
+    assert.equal((await answer(handle, "GET", "kuvo/config")).json.model, "anthropic/sonnet");
+
+    const patched = await answer(handle, "PATCH", "kuvo/config", JSON.stringify({ changes: [
+      { path: ["model"], value: "openai/gpt-6", was: "anthropic/sonnet" },
+      { path: ["mcp", "servers", "linear", "disabled"], value: true },
+    ] }));
+    assert.equal(patched.status, 200);
+    assert.equal(patched.json.model, "openai/gpt-6");
+    assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).mcp.servers.linear.disabled, true, "written to its own file");
+    if (unixModes) assert.equal((fs.statSync(file).mode & 0o777), 0o600);
+
+    // Read before that change: turned away, nothing changed.
+    const stale = await answer(handle, "PATCH", "kuvo/config", JSON.stringify({ changes: [{ path: ["model"], value: "x/y", was: "anthropic/sonnet" }] }));
+    assert.equal(stale.status, 409);
+    assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).model, "openai/gpt-6");
+    // Through a list: sent whole instead.
+    assert.equal((await answer(handle, "PATCH", "kuvo/config", JSON.stringify({ changes: [{ path: ["permissions", "0", "effect"], value: "deny" }] }))).status, 400);
+    assert.equal((await answer(handle, "PATCH", "kuvo/config", JSON.stringify({ changes: [] }))).status, 400);
+    // Removing a key, and the object it leaves empty.
+    await answer(handle, "PATCH", "kuvo/config", JSON.stringify({ changes: [{ path: ["mcp", "servers", "linear"], value: null }] }));
+    assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).mcp, undefined);
+
+    // Popular servers: the Mac's own apps' left out; adding one writes it as the Mac's Add does.
+    const catalog = await answer(handle, "GET", "kuvo/mcp/catalog");
+    assert.deepEqual(catalog.json.servers.map(server => [server.id, server.added]), [["linear", false], ["context7", false]]);
+    const added = await answer(handle, "POST", "kuvo/mcp/catalog/context7");
+    assert.equal(added.status, 200);
+    assert.deepEqual(added.json.mcp.servers.context7, { codemode: false, url: "https://mcp.context7.com/mcp" });
+    assert.equal((await answer(handle, "POST", "kuvo/mcp/catalog/chrome-devtools")).status, 404);
+
+    // Its integrations' keys: listed, read, set and removed, in its own keys' folder; a bot's own
+    // and anything that isn't a key's name, never.
+    assert.deepEqual((await answer(handle, "GET", "kuvo/keys")).json, { keys: [] });
+    assert.equal((await answer(handle, "PUT", "kuvo/keys/KUVO_KEY_GITHUB_TOKEN", JSON.stringify({ value: "ghp_1" }))).status, 200);
+    assert.equal(fs.readFileSync(path.join(folder, "keys", "KUVO_KEY_GITHUB_TOKEN"), "utf8"), "ghp_1");
+    if (unixModes) assert.equal((fs.statSync(path.join(folder, "keys", "KUVO_KEY_GITHUB_TOKEN")).mode & 0o777), 0o600);
+    fs.writeFileSync(path.join(folder, "keys", "KUVO_KEY_GITHUB_TOKEN__BOT_A"), "ghp_bot");
+    assert.deepEqual((await answer(handle, "GET", "kuvo/keys")).json, { keys: ["KUVO_KEY_GITHUB_TOKEN"] });
+    assert.deepEqual((await answer(handle, "GET", "kuvo/keys/KUVO_KEY_GITHUB_TOKEN")).json, { value: "ghp_1" });
+    assert.equal((await answer(handle, "GET", "kuvo/keys/KUVO_KEY_GITHUB_TOKEN__BOT_A")).status, 400);
+    assert.equal((await answer(handle, "GET", "kuvo/keys/%E0%A4%A")).status, 400, "a broken escape");
+    assert.equal((await answer(handle, "PUT", "kuvo/keys/..%2Fopencode.json", JSON.stringify({ value: "x" }))).status, 400);
+    assert.equal((await answer(handle, "PUT", "kuvo/keys/KUVO_KEY_GITHUB_TOKEN", JSON.stringify({ value: "" }))).status, 400);
+    assert.equal((await answer(handle, "DELETE", "kuvo/keys/KUVO_KEY_GITHUB_TOKEN")).status, 200);
+    assert.equal((await answer(handle, "GET", "kuvo/keys/KUVO_KEY_GITHUB_TOKEN")).status, 404);
+
+    // A file with comments is left alone.
+    fs.writeFileSync(file, "{ // mine\n}");
+    assert.equal((await answer(handle, "GET", "kuvo/config")).status, 409);
+  } finally {
+    fs.rmSync(path.join(home, "box"), { recursive: true, force: true });
+    fs.rmSync(path.join(home, "bin", "mcp-catalog.json"), { force: true });
+  }
+});
+
+test("a machine's settings become its own once: what it runs with now, its Mac's over the global file, with its keys, in a box no older start writes", () => {
+  const global = path.join(home, "config", "opencode", "opencode.json");
+  const keys = path.join(home, "keys");
+  fs.mkdirSync(path.dirname(global), { recursive: true });
+  fs.mkdirSync(keys, { recursive: true });
+  fs.mkdirSync(path.join(home, "run"), { recursive: true });
+  const reference = name => `{file:${home}/keys/${name}}`;
+  fs.writeFileSync(global, JSON.stringify({ websearch: { provider: "exa" }, mcp: { servers: { linear: { url: "https://mcp.linear.app", headers: { Authorization: reference("KUVO_KEY_LINEAR_TOKEN") } } } } }));
+  fs.writeFileSync(path.join(keys, "settings.json"), JSON.stringify({ model: "anthropic/sonnet", websearch: { provider: "tavily" }, permissions: [{ action: "shell", resource: "*", effect: "ask" }], mcp: { servers: { context7: { url: "https://mcp.context7.com/mcp" } } } }));
+  fs.writeFileSync(path.join(keys, "KUVO_KEY_LINEAR_TOKEN"), "lin-secret");
+  fs.writeFileSync(path.join(keys, "KUVO_KEY_NOTION_TOKEN__bot_1"), "bot-secret");
+  fs.writeFileSync(path.join(home, "run", "launch.env"), "PATH=/usr/bin\nKUVO_SETTINGS={\"websearch\":{}}\nKUVO_TZ=Europe/Istanbul\n");
+  try {
+    const adopted = link.adoptBox(null);
+    assert.equal(adopted.status, "adopted");
+    assert.equal(adopted.seeded, false);
+    const own = JSON.parse(fs.readFileSync(path.join(home, "box", "opencode.json"), "utf8"));
+    assert.deepEqual(adopted.settings, own);
+    assert.equal(own.model, "anthropic/sonnet");
+    assert.equal(own.websearch.provider, "tavily", "the Mac's own settings win, as they did");
+    assert.deepEqual(Object.keys(own.mcp.servers).sort(), ["context7", "linear"], "both files' servers");
+    assert.equal(own.mcp.servers.linear.headers.Authorization, `{file:${home}/box/keys/KUVO_KEY_LINEAR_TOKEN}`, "its key where the box keeps it");
+    assert.equal(fs.readFileSync(path.join(home, "box", "keys", "KUVO_KEY_LINEAR_TOKEN"), "utf8"), "lin-secret");
+    assert.equal(fs.existsSync(path.join(home, "box", "keys", "KUVO_KEY_NOTION_TOKEN__bot_1")), false, "a bot's own stays with the bot");
+    // What runs now reads what it started with, untouched; the next start clears it.
+    assert.match(fs.readFileSync(global, "utf8"), /linear/);
+    assert.equal(fs.existsSync(path.join(keys, "settings.json")), true);
+    assert.equal(fs.existsSync(path.join(home, "box", "global-adopted")), true);
+    assert.equal(fs.readFileSync(path.join(home, "run", "launch.env"), "utf8"), "PATH=/usr/bin\nKUVO_TZ=Europe/Istanbul\n", "no start writes them back");
+    assert.ok(fs.existsSync(path.join(home, "box", "adopted-from", "settings.json")), "what it was made from, kept");
+    if (unixModes) assert.equal((fs.statSync(path.join(home, "box")).mode & 0o777), 0o700);
+    // Once: again, nothing changes.
+    fs.writeFileSync(path.join(keys, "settings.json"), JSON.stringify({ model: "x/y" }));
+    assert.equal(link.adoptBox(null).status, "own");
+    assert.equal(JSON.parse(fs.readFileSync(path.join(home, "box", "opencode.json"), "utf8")).model, "anthropic/sonnet");
+  } finally {
+    for (const name of ["box", "config", "keys", "run/launch.env"]) fs.rmSync(path.join(home, name), { recursive: true, force: true });
+  }
+
+  // A machine with nothing yet: the Mac's, as it would have sent them.
+  try {
+    const seed = { settings: { model: "openai/gpt-6", mcp: { servers: { linear: { headers: { Authorization: reference("KUVO_KEY_LINEAR_TOKEN") } } } } }, keys: { KUVO_KEY_LINEAR_TOKEN: "seeded", nope: "x" } };
+    const seeded = link.adoptBox(seed);
+    assert.equal(seeded.status, "adopted");
+    assert.equal(seeded.seeded, true);
+    const own = JSON.parse(fs.readFileSync(path.join(home, "box", "opencode.json"), "utf8"));
+    assert.equal(own.model, "openai/gpt-6");
+    assert.equal(own.mcp.servers.linear.headers.Authorization, `{file:${home}/box/keys/KUVO_KEY_LINEAR_TOKEN}`);
+    assert.equal(fs.readFileSync(path.join(home, "box", "keys", "KUVO_KEY_LINEAR_TOKEN"), "utf8"), "seeded");
+    assert.deepEqual(fs.readdirSync(path.join(home, "box", "keys")), ["KUVO_KEY_LINEAR_TOKEN"]);
+    // Its own keys, set and taken away.
+    assert.equal(link.setBoxKey("KUVO_KEY_GITHUB_TOKEN", "gh").status, 200);
+    assert.equal(fs.readFileSync(path.join(home, "box", "keys", "KUVO_KEY_GITHUB_TOKEN"), "utf8"), "gh");
+    assert.equal(link.setBoxKey("KUVO_KEY_GITHUB_TOKEN", null).status, 200);
+    assert.equal(fs.existsSync(path.join(home, "box", "keys", "KUVO_KEY_GITHUB_TOKEN")), false);
+    assert.equal(link.setBoxKey("../settings", "x").status, 400);
+  } finally {
+    fs.rmSync(path.join(home, "box"), { recursive: true, force: true });
+  }
+});
+
+test("personalities' libraries meet as the vectors say", () => {
+  for (const each of vectors("personalities.json").cases) {
+    assert.deepEqual(link.mergePersonalities(...each.libraries), each.expected, each.name);
+  }
+});
+
+test("a phone makes, changes and removes personalities in a machine's library; a bot made there can have them, told as the Mac words it", () => {
+  const file = path.join(home, "bots", "personalities-test.json");
+  const lock = path.join(home, "run", ".personalities-test.lock");
+  try {
+    assert.deepEqual(link.answerPersonalities("GET", undefined, undefined, file, lock), [200, { personalities: [] }]);
+    const [made, personality] = link.answerPersonalities("POST", undefined, { name: " Night  Owl ", description: "Works late, writes short." }, file, lock);
+    assert.equal(made, 200);
+    assert.match(personality.id, /^custom\./);
+    assert.equal(personality.name, "Night Owl");
+    if (unixModes) assert.equal((fs.statSync(file).mode & 0o777), 0o600);
+    assert.equal(link.answerPersonalities("POST", undefined, { name: "No words" }, file, lock)[0], 400);
+    const [changed, after] = link.answerPersonalities("PATCH", personality.id, { description: "Works late." }, file, lock);
+    assert.equal(changed, 200);
+    assert.equal(after.description, "Works late.");
+    assert.ok(after.updated > personality.updated || after.updated === personality.updated + 1);
+    const kit = { personalities: [{ id: "preset.calm", name: "Calm", description: "Calm.", custom: false, instruction: "Be calm." }], personalityWords: "Your personality: ⟦name⟧. ⟦description⟧ Show it." };
+    const offered = link.botPersonalities(kit, link.readPersonalities(file));
+    assert.deepEqual(offered.map(each => each.id), ["preset.calm", personality.id]);
+    assert.equal(offered[1].instruction, "Your personality: Night Owl. Works late. Show it.");
+    // Removed: gone from the list, noted, and an older copy met with it doesn't bring it back.
+    assert.deepEqual(link.answerPersonalities("DELETE", personality.id, undefined, file, lock), [200, {}]);
+    assert.equal(link.answerPersonalities("DELETE", personality.id, undefined, file, lock)[0], 404);
+    const met = link.changePersonalities(library => link.mergePersonalities(library, { personalities: [personality] }), file, lock);
+    assert.deepEqual(met.personalities, []);
+    assert.equal(met.removed[0].id, personality.id);
+    assert.equal(link.answerPersonalities("PATCH", "preset.calm", { name: "x" }, file, lock)[0], 404);
+  } finally {
+    fs.rmSync(file, { force: true });
   }
 });

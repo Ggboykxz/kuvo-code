@@ -16,6 +16,8 @@ struct SessionView: View {
     /// the window lays out only the one in view.
     @State private var hiddenSizes: [String: CGSize] = [:]
     @State private var size: CGSize = .zero
+    /// A list open over the composer (see `ComposerListShown`).
+    @State private var listShown = false
 
     var body: some View {
         ZStack {
@@ -37,6 +39,7 @@ struct SessionView: View {
                     .environment(\.isOffline, Self.offlineMachine(of: each, in: app) != nil)
             }
         }
+        .scrollEdgeEffectHidden(listShown, for: .bottom)
         .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
         .onChange(of: model.id, initial: true) { old, new in
             kept = Array(([model] + kept.filter { $0.id != new }).prefix(Self.keptCount))
@@ -51,6 +54,7 @@ struct SessionView: View {
                 // Room for the composer, the cards' own buttons and a little conversation.
                 .environment(\.cardRoom, max(160, height - 440))
         }
+        .onPreferenceChange(ComposerListShown.self) { shown in listShown = shown }
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
         // Its machine out of reach: the conversation to read, without what needs the engine.
         .environment(\.isOffline, Self.offlineMachine(of: model, in: app) != nil)
@@ -323,7 +327,9 @@ private struct BottomStack: View {
             Analytics.shared.firstMessageBlocked("machine_offline")
             return
         }
-        model.submitDraft(for: catalog.model(model.session.model), queue: queue, commands: catalog.commands(in: model.session.location.directory))
+        let machine = RemoteFolder.machine(of: model.session.location.directory).map { id in app.machines.list.first { $0.id == id }?.name ?? id }
+        let unavailable = model.session.model.flatMap { catalog.needsSignIn($0) ? catalog.unavailable($0, on: machine) : nil }
+        model.submitDraft(for: catalog.model(model.session.model), queue: queue, commands: catalog.commands(in: model.session.location.directory), unavailable: unavailable)
     }
 }
 
@@ -340,7 +346,7 @@ struct DraftSessionView: View {
     @Environment(AppModel.self) private var app
     /// Picked in the composer; until then, the mode Settings starts new sessions in.
     @State private var pickedAgent: String?
-    private var agent: String { pickedAgent ?? catalog.startingAgent(chosen: app.engineConfig.value(at: ["default_agent"])?.string) }
+    private var agent: String { pickedAgent ?? catalog.startingAgent(chosen: EngineConfig.of(catalog.machine)?.value(at: ["default_agent"])?.string) }
     @AppStorage(ToolApproval.key) private var approval = ToolApproval.approveAll
     /// New sessions in a git repository get a worktree of their own (remembered).
     @AppStorage("newSessionWorktree") private var worktree = false

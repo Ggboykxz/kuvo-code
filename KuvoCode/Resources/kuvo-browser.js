@@ -14,11 +14,12 @@
 // The app writes this file to the machine, with the browsing scripts and tools filled in below.
 
 import { spawn } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const CONFIG = /*KUVO_CONFIG*/ { scripts: {}, tools: [], instructions: "", version: "dev" };
 
@@ -29,6 +30,9 @@ const PIDFILE = path.join(RUN, "browser.pid");
 // The pages open when the keeper last stopped (for an update, or with nobody around), to open
 // again when it starts.
 const PAGESFILE = path.join(RUN, "pages.json");
+// What agents ask the user for now, for the machine's phone link, which answers it for a phone
+// with the Mac closed (KuvoLink's PROTOCOL.md, "kuvo/asks"); gone while nothing is.
+const ASKSFILE = path.join(RUN, "browser-asks.json");
 const ERRORFILE = path.join(RUN, "browser.error");
 const LOGFILE = path.join(RUN, "browser.log");
 const BROWSER = path.join(K, "browser");
@@ -52,9 +56,9 @@ const TAB_IDLE = Number(process.env.KUVO_BROWSER_TAB_IDLE || 3600) * 1000;
 
 // Goes up with every change to the keeper (host mode): a newer one replaces one that's running
 // (its pages close, its sign-ins stay), and an older one never replaces a newer.
-const KEEPER = 33;
+const KEEPER = 35;
 // Passkeys: none yet, as in the panel's browser on the Mac (Passkeys.swift, the same script).
-const NO_PASSKEYS = "(() => {\n  try {\n    const none = () => Promise.reject(new DOMException(\"Passkeys can't be used in this browser.\", \"NotAllowedError\"));\n    const credentials = navigator.credentials;\n    if (credentials) {\n      const get = credentials.get.bind(credentials), create = credentials.create.bind(credentials);\n      credentials.get = (options) => (options && options.publicKey ? none() : get(options));\n      credentials.create = (options) => (options && options.publicKey ? none() : create(options));\n    }\n    const Credential = window.PublicKeyCredential;\n    if (Credential) {\n      Credential.isUserVerifyingPlatformAuthenticatorAvailable = () => Promise.resolve(false);\n      if (Credential.isConditionalMediationAvailable) Credential.isConditionalMediationAvailable = () => Promise.resolve(false);\n    }\n  } catch {}\n})();";
+const NO_PASSKEYS = "(() => {\n  try {\n    const none = () => Promise.reject(new DOMException(\"Passkeys can't be used in this browser.\", \"NotAllowedError\"));\n    const Container = window.CredentialsContainer;\n    if (Container && Container.prototype) {\n      const prototype = Container.prototype, get = prototype.get, create = prototype.create;\n      if (get) prototype.get = function (options) { return options && options.publicKey ? none() : get.call(this, options); };\n      if (create) prototype.create = function (options) { return options && options.publicKey ? none() : create.call(this, options); };\n    }\n    const Credential = window.PublicKeyCredential;\n    if (Credential) {\n      Credential.isUserVerifyingPlatformAuthenticatorAvailable = () => Promise.resolve(false);\n      if (Credential.isConditionalMediationAvailable) Credential.isConditionalMediationAvailable = () => Promise.resolve(false);\n    }\n  } catch {}\n})();";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -456,6 +460,8 @@ async function host() {
     reopen = JSON.parse(fs.readFileSync(PAGESFILE, "utf8")).filter((url) => typeof url === "string" && /^(https?|file):/.test(url)).slice(0, 8);
   } catch {}
   fs.rmSync(PAGESFILE, { force: true });
+  // What a keeper before this one left asked: it went with it.
+  fs.rmSync(ASKSFILE, { force: true });
   let started = await launchChrome(sandbox);
   if (!started.chrome && sandbox && /No usable sandbox|SUID sandbox|user namespace/i.test(started.output)) sandbox = false;
   if (!started.chrome) started = await launchChrome(sandbox);
@@ -478,6 +484,10 @@ async function host() {
   // The keeper's own session with each page and worker, which says what the browser is before
   // it loads anything; the ones clients open come after it.
   const own = new Map();
+  // And with each frame of another site in a page, which Chrome runs on its own, as a target of
+  // its own: held as it starts, as a page is.
+  const ownFrames = new Set();
+  const isOwn = (sessionId) => ownFrames.has(sessionId) || [...own.values()].includes(sessionId);
   // Downloads under way: their temporary names, and the names their sites gave them.
   const downloads = new Map();
   const browserIdentity = identity();
@@ -486,8 +496,18 @@ async function host() {
   // What agents ask the user for (a sign-in, a code, a step), by ID: who asked, and the ask. The
   // answer goes to the one who asked, and no one else.
   const asks = new Map();
+  const noteAsks = () => {
+    try {
+      if (!asks.size) return fs.rmSync(ASKSFILE, { force: true });
+      fs.writeFileSync(ASKSFILE + ".tmp", JSON.stringify({ asks: [...asks.values()].map((ask) => ask.params) }), { mode: 0o600 });
+      fs.renameSync(ASKSFILE + ".tmp", ASKSFILE);
+    } catch {}
+  };
   const closeAsk = (id) => {
-    if (asks.delete(id)) broadcast({ method: "Kuvo.askClosed", params: { id } });
+    if (asks.delete(id)) {
+      broadcast({ method: "Kuvo.askClosed", params: { id } });
+      noteAsks();
+    }
   };
 
   const send = (client, message) => {
@@ -597,6 +617,7 @@ async function host() {
   };
   const cleanUp = () => {
     fs.rmSync(SOCKET, { force: true });
+    fs.rmSync(ASKSFILE, { force: true });
     try {
       if (Number(fs.readFileSync(PIDFILE, "utf8")) === process.pid) fs.rmSync(PIDFILE, { force: true });
     } catch {}
@@ -640,17 +661,25 @@ async function host() {
       owners.delete(message.params.sessionId);
       attachedTo.delete(message.params.sessionId);
     }
-    if (message.method === "Target.attachedToTarget" && !message.sessionId && !own.has(message.params.targetInfo.targetId)) {
+    // A page, or a frame of another site in one of the keeper's pages.
+    const frame = message.method === "Target.attachedToTarget" && message.sessionId && isOwn(message.sessionId);
+    if (message.method === "Target.attachedToTarget" && (frame || (!message.sessionId && !own.has(message.params.targetInfo.targetId)))) {
       const { sessionId, targetInfo, waitingForDebugger } = message.params;
-      own.set(targetInfo.targetId, sessionId);
+      if (frame) ownFrames.add(sessionId);
+      else own.set(targetInfo.targetId, sessionId);
       toChrome({ id: next++, method: "Network.setUserAgentOverride", params: browserIdentity, sessionId });
       // No passkeys here yet: a page asking for one hears so at once, instead of Chrome's passkey
-      // dialog, which no one sees in the live view, holding the page still (Passkeys.swift).
+      // dialog, which no one sees in the live view, holding the page still (Passkeys.swift). The
+      // page domain first: without it Chrome takes the script and never runs it.
+      toChrome({ id: next++, method: "Page.enable", params: {}, sessionId });
       toChrome({ id: next++, method: "Page.addScriptToEvaluateOnNewDocument", params: { source: NO_PASSKEYS, runImmediately: true }, sessionId });
+      // Its frames of other sites run on their own: the same for them (a sign-in button from
+      // another site, say).
+      toChrome({ id: next++, method: "Target.setAutoAttach", params: { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }, sessionId });
       if (waitingForDebugger) toChrome({ id: next++, method: "Runtime.runIfWaitingForDebugger", params: {}, sessionId });
       return;
     }
-    if (message.method === "Target.detachedFromTarget" && [...own.values()].includes(message.params.sessionId)) return;
+    if (message.method === "Target.detachedFromTarget" && (ownFrames.delete(message.params.sessionId) || [...own.values()].includes(message.params.sessionId))) return;
     if (message.method === "Browser.downloadWillBegin" && !downloads.has(message.params.guid)) {
       downloads.set(message.params.guid, message.params.suggestedFilename || "download");
       broadcast({ method: "Kuvo.downloading", params: { name: downloads.get(message.params.guid) } });
@@ -762,6 +791,7 @@ async function host() {
           // One already asked keeps its asker: its answer goes to it.
           if (!params.id || asks.has(params.id)) return;
           asks.set(params.id, { client, params });
+          noteAsks();
           return broadcast({ method: "Kuvo.asked", params });
         }
         case "Kuvo.answer": {
@@ -1442,16 +1472,16 @@ async function point(p, index, action) {
 }
 
 /// Asks the user, in Kuvo Code, and waits for the answer (15 minutes at most), out of the line.
-/// With no Mac connected, it waits a few minutes for one (Kuvo Code opening) rather than the
-/// whole while. Meanwhile its page stays this conversation's; the engine giving up on the call
-/// closes the ask.
+/// With no Mac connected and no phone to answer it, it waits a few minutes for one (Kuvo Code
+/// opening) rather than the whole while. Meanwhile its page stays this conversation's; the engine
+/// giving up on the call closes the ask.
 function askUser(params) {
   if (current.cancelled) throw new Cancelled();
   const id = crypto.randomUUID();
   const session = caller;
   link.notify("Kuvo.ask", { id, ...params, ...(session ? { session } : {}) });
   const started = Date.now();
-  let alone = viewerCount ? null : started;
+  let alone = viewerCount || phoneCanAnswer() ? null : started;
   return outOfLine((call) => new Promise((resolve) => {
     const finish = (answer) => {
       clearInterval(check);
@@ -1466,7 +1496,7 @@ function askUser(params) {
     waiting.set(id, finish);
     call.stops.add(stop);
     const check = setInterval(() => {
-      if (viewerCount) alone = null;
+      if (viewerCount || phoneCanAnswer()) alone = null;
       else alone ??= Date.now();
       const nobody = alone !== null && Date.now() - alone > 180_000;
       if (nobody || Date.now() - started >= 900_000) {
@@ -1477,6 +1507,19 @@ function askUser(params) {
     }, 5_000);
     if (call.cancelled) stop();
   }));
+}
+
+/// Whether a phone can answer: one is paired with this machine, and its phone link runs, which
+/// tells it what's asked (`ASKSFILE`) and gives the browser its answer.
+function phoneCanAnswer() {
+  try {
+    if (!fs.existsSync(path.join(RUN, "link.needed"))) return false;
+    if (!(JSON.parse(fs.readFileSync(path.join(RUN, "link.json"), "utf8")).phones?.length > 0)) return false;
+    const pid = Number(fs.readFileSync(path.join(RUN, "link.pid"), "utf8"));
+    return pid > 0 && fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").includes("kuvo-link");
+  } catch {
+    return false;
+  }
 }
 
 /// Back in the page a call waited for you in, as the page in use: nil if it can go on there (it's
@@ -1791,11 +1834,13 @@ function findAgent(wanted, agents, from, here) {
 }
 
 function composeMail(name, session, words, waits) {
-  const answer = waits ? "They're waiting for your reply: just answer, in your words." : `To answer, use send_message to ${session}.`;
+  const answer = waits ? "They're waiting for your reply: just answer, in your words." : session === "unknown" ? "It can't be answered: who sent it isn't known." : `To answer, use send_message to ${session}.`;
   return `[Message from ${name} · ${session}] (${answer})\n\n${words}`;
 }
 
-async function mail(name, args, from) {
+async function mail(name, args, from, cancelled = () => false) {
+  // A subagent writes, reads and starts sessions as its conversation, as on the Mac.
+  from = await rootSession(from);
   const directory = readJSON(path.join(K, "run", "agents.json")) ?? { machine: null, agents: [] };
   const agents = directory.agents ?? [];
   const here = directory.machine ?? null;
@@ -1820,13 +1865,24 @@ async function mail(name, args, from) {
   mailSent.set(key, [...lately, Date.now()]);
   const sender = agents.find((agent) => agent.session === from)?.name ?? (here ? `an agent on ${here}` : "an agent on a machine");
   if ((target.machine ?? null) !== here) {
-    // Elsewhere: for the Mac to take on.
-    const outbox = path.join(K, "run", "outbox");
+    // Elsewhere: this machine's link sends it to the computer its agent is on, when it knows
+    // that one (one of your other computers told it so); otherwise the Mac takes it on. Whose it
+    // is to send is decided once, here, by where it's left: the link's in `outbox/sending`, which
+    // no Mac collects, the Mac's in `outbox`.
+    const told = readJSON(path.join(K, "run", "peer-agents.json")) ?? {};
+    const byLink = Object.values(told).some((peer) => (peer?.list ?? []).some((agent) => agent.session === target.session));
+    const outbox = path.join(K, "run", "outbox", ...(byLink ? ["sending"] : []));
     fs.mkdirSync(outbox, { recursive: true, mode: 0o700 });
-    const file = path.join(outbox, messageID() + ".json");
-    fs.writeFileSync(file + ".new", JSON.stringify({ from, name: sender, to: target.session, text: words }), { mode: 0o600 });
+    const id = byLink ? "ltr_" + crypto.randomBytes(16).toString("base64url") : messageID();
+    const file = path.join(outbox, id + ".json");
+    fs.writeFileSync(file + ".new", JSON.stringify({ from, name: sender, to: target.session, text: words, wait: waits && byLink, at: Date.now(), ...(byLink ? { via: "link" } : {}) }), { mode: 0o600 });
     fs.renameSync(file + ".new", file);
-    return text(`Left for ${target.name}: it goes on as soon as Kuvo Code on the user's Mac is connected (at once, if it is)${waits ? "; across machines there's no waiting for the answer, which comes to you as a message" : ""}.`);
+    if (!byLink) return text(`Left for ${target.name}: it goes on as soon as Kuvo Code on the user's Mac is connected (at once, if it is)${waits ? "; across machines there's no waiting for the answer, which comes to you as a message" : ""}.`);
+    if (!waits) return text(`On its way to ${target.name}. Its answer, if it writes one, comes to you as a message.`);
+    const answer = await letterAnswer(id, cancelled);
+    if (answer?.failed) return text(`It didn't reach ${target.name}: ${answer.failed}`, true);
+    if (answer?.note) return text(answer.note);
+    return text(answer?.text ? `${target.name} answered:\n\n` + answer.text : `${target.name} hasn't answered yet. It may still write back with send_message.`);
   }
   const id = messageID();
   const place = await placeOf(target.session);
@@ -1834,6 +1890,46 @@ async function mail(name, args, from) {
   if (!waits) return text(`Sent to ${target.name}. Its answer, if it writes one, comes to you as a message.`);
   const answer = await replyTo(target.session, id, place);
   return text(answer ? `${target.name} answered:\n\n` + answer : `${target.name} hasn't answered yet. It may still write back with send_message.`);
+}
+
+/// The conversation a session works for: itself, or a subagent's, the one that started it.
+async function rootSession(session) {
+  let id = session;
+  for (let step = 0; id && step < 6; step++) {
+    const found = (await findSession(id))?.data ?? null;
+    if (!found?.parentID) break;
+    id = found.parentID;
+  }
+  return id ?? session;
+}
+
+/// How a letter to another computer went, as this machine's link writes it (`run/replies/<id>.json`):
+/// its answer, why it didn't get there, or why no answer will come; null when nothing came in
+/// eleven minutes. Given up on, the letter goes on without waiting, and an answer that comes later
+/// reaches this conversation as a message (`<id>.gaveup`, for the link).
+async function letterAnswer(id, cancelled = () => false) {
+  const replies = path.join(K, "run", "replies");
+  const file = path.join(replies, id + ".json");
+  // Still waiting, as the link sees it: an answer that comes once this isn't (its turn stopped,
+  // this ended) comes as a message instead.
+  const alive = path.join(replies, id + ".alive");
+  const began = Date.now();
+  try {
+    fs.mkdirSync(replies, { recursive: true, mode: 0o700 });
+    while (Date.now() - began < 660_000 && !cancelled()) {
+      fs.writeFileSync(alive, "", { mode: 0o600 });
+      await sleep(2000);
+      const answer = readJSON(file);
+      if (!answer) continue;
+      fs.rmSync(file, { force: true });
+      return answer;
+    }
+    fs.writeFileSync(path.join(replies, id + ".gaveup"), "", { mode: 0o600 });
+  } catch {
+  } finally {
+    fs.rmSync(alive, { force: true });
+  }
+  return null;
 }
 
 /// Another agent's conversation, as read_conversation on the Mac gives it: one on this machine, from
@@ -2242,6 +2338,25 @@ async function tool(name, args) {
     return text(`Sent: the ${isFolder ? "folder" : "file"} ${full} opens in Kuvo Code's side panel beside this conversation, at once if the user is looking at it, or else when they come back to it.`);
   }
 
+  // Shown by Kuvo Code from the call, in the conversation (and on a phone, which fetches it).
+  if (name === "show_file") {
+    const raw = string("path");
+    if (!raw) throw new ToolError("Missing path.");
+    // As given, which is what the conversation shows it from: a full path, nothing to expand.
+    const full = raw;
+    if (!path.isAbsolute(full) || full.split("/").some((part) => part === "." || part === "..")) {
+      return text(raw.startsWith("~") ? `Give the file's full path: ${raw.replace(/^~(?=$|\/)/, os.homedir())}` : "Give the file's full path.", true);
+    }
+    let stat;
+    try {
+      stat = fs.statSync(full);
+    } catch {
+      return text(`There's nothing at ${full}.`, true);
+    }
+    if (stat.isDirectory()) return text(`${full} is a folder: show a file in it, or the folder with show_in_panel.`, true);
+    return text(`Shown in the conversation: the file ${full}. The user sees it there, on their Mac and their phone.`);
+  }
+
   if (name === "browser_upload") {
     const index = integer("index");
     const files = Array.isArray(args.files) ? args.files.filter((f) => typeof f === "string" && f) : [];
@@ -2255,6 +2370,11 @@ async function tool(name, args) {
       }
     });
     if (unreadable) return text(`Can't read ${unreadable} on this machine. Give its full path.`);
+    // Attached, a file goes to the site: one outside the conversation's folder only as a command
+    // could read it, after asking (as on the Mac).
+    const access = await fileAccess(caller);
+    const outside = paths.find((f) => outsideFile(pathToFileURL(f).href, access));
+    if (outside) return text(`Not attached: ${outside} is outside this conversation's folder, and this session asks before reading files elsewhere. Ask the user first; if they agree, copy it into the folder (a command, which asks them) and attach it from there.`, true);
     const p = await page();
     // The file input the element stands for, as an object to hand the files to.
     const found = await link.send("Runtime.evaluate", {
@@ -2583,7 +2703,7 @@ async function mcp() {
           return;
         }
         if (params.name === "list_agents" || params.name === "send_message" || params.name === "read_conversation" || params.name === "start_session") {
-          mail(params.name, params.arguments || {}, call.session).then(reply, (error) => reply(text(error instanceof ToolError ? error.message : String(error), true)));
+          mail(params.name, params.arguments || {}, call.session, () => call.cancelled).then(reply, (error) => reply(text(error instanceof ToolError ? error.message : String(error), true)));
           return;
         }
         // An added integration's site: to its tools instead, with no browser needed.
@@ -2591,7 +2711,7 @@ async function mcp() {
           const note = integrationNote(params.arguments?.url, call.session);
           if (note) return reply(text(note));
         }
-        if (params.name === "show_in_panel" || params.name === "show_widget") {
+        if (params.name === "show_in_panel" || params.name === "show_widget" || params.name === "show_file") {
           tool(params.name, params.arguments || {}).then(reply, (error) => reply(text(error instanceof ToolError ? error.message : String(error), true)));
           return;
         }

@@ -44,6 +44,103 @@ struct BotGroup: Codable, Identifiable, Hashable {
         var weekday: Int?
 
         var repeats: Wakes.Repeat? { every.flatMap(Wakes.Repeat.init) }
+
+        /// What a meeting's topic is when you give it none.
+        static let defaultTopic = "Our regular meeting: where things stand, and what's next."
+
+        /// A meeting as you set it up (Edit Group Chat, or a phone): at `time`, repeating `every`
+        /// (nil for once), about `topic`. Its next time is after now: a repeating one's next
+        /// round, if `time` has passed; on weekdays, a weekday. With its time and repeat as
+        /// `before` had them, it keeps the time of day (and a week's day) it had, whatever
+        /// daylight saving or a new time zone did to its next time; a time picked anew is the one
+        /// it keeps from then on. Nil for a one-off whose time has passed.
+        static func planned(at time: Date, every: Wakes.Repeat?, topic: String, before: Meeting?, now: Date = .now, calendar: Calendar = .current) -> Meeting? {
+            // To the minute, as a machine's chats plan it.
+            let time = Date(timeIntervalSince1970: (time.timeIntervalSince1970 / 60).rounded(.down) * 60)
+            let kept = before.flatMap { $0.next == time && $0.repeats == every ? $0 : nil }
+            let at = every?.keepsTimeOfDay == true ? kept?.at ?? Wakes.minutes(of: time, calendar: calendar) : nil
+            let weekday = every?.keepsWeekday == true ? kept?.weekday ?? calendar.component(.weekday, from: time) : nil
+            var next = time
+            if next <= now, let every { next = every.next(after: next, now: now, at: at, weekday: weekday, calendar: calendar) }
+            while every == .weekdays, Wakes.isWeekend(next, calendar: calendar), let day = calendar.date(byAdding: .day, value: 1, to: next) { next = day }
+            guard next > now else { return nil }
+            let topic = topic.trimmingCharacters(in: .whitespacesAndNewlines)
+            return Meeting(next: next, every: every?.text, topic: topic.isEmpty ? defaultTopic : topic, at: at, weekday: weekday)
+        }
+    }
+}
+
+/// What a bot is doing on its turn, as its seat shows it: the chat shows its last step under
+/// who's talking, so a long turn doesn't look stuck. A machine's chats send it as they run.
+enum GroupActivity: Codable, Hashable {
+    /// A tool it called (without what it gave back).
+    case step(Message.ToolCall)
+    /// Its thinking, the line it's on.
+    case thinking(String)
+    /// Its reply, being written.
+    case writing
+
+    private enum Key: String, CodingKey { case kind, call, text }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Key.self)
+        switch try c.decode(String.self, forKey: .kind) {
+        case "tool": self = .step(try c.decode(Message.ToolCall.self, forKey: .call))
+        case "thinking": self = .thinking(try c.decodeIfPresent(String.self, forKey: .text) ?? "")
+        default: self = .writing
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: Key.self)
+        switch self {
+        case .step(let call):
+            try c.encode("tool", forKey: .kind)
+            try c.encode(call, forKey: .call)
+        case .thinking(let text):
+            try c.encode("thinking", forKey: .kind)
+            try c.encode(text, forKey: .text)
+        case .writing:
+            try c.encode("writing", forKey: .kind)
+        }
+    }
+
+    /// The last step in a seat's `messages` (oldest first), since `promptID` (or, not among them
+    /// yet, since `sent`); none before its first.
+    static func latest(in messages: [Message], after promptID: String, since sent: Date) -> [GroupActivity] {
+        let start = messages.firstIndex { $0.id == promptID }.map { $0 + 1 }
+        let since = sent.timeIntervalSince1970 * 1000 - 2000
+        var found: [GroupActivity] = []
+        for (index, message) in messages.enumerated() where start.map({ index >= $0 }) ?? (message.created >= since) {
+            guard case .assistant(let answer) = message else { continue }
+            for block in answer.content {
+                switch block {
+                case .tool(let call): found.append(.step(bare(call)))
+                case .reasoning(let text): if let line = thought(text.text) { found.append(.thinking(line)) }
+                case .text(let text):
+                    if !text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, found.last != .writing { found.append(.writing) }
+                default: break
+                }
+            }
+        }
+        return Array(found.suffix(1))
+    }
+
+    /// Thinking under way, in a line: the latest it's written, without Markdown's stars.
+    static func thought(_ text: String) -> String? {
+        let lines = text.split(whereSeparator: \.isNewline).map { $0.replacingOccurrences(of: "**", with: "").trimmingCharacters(in: .whitespaces) }
+        guard let line = lines.last(where: { !$0.isEmpty }) else { return nil }
+        return line.count > 100 ? String(line.prefix(99)) + "…" : line
+    }
+
+    private static func bare(_ call: Message.ToolCall) -> Message.ToolCall {
+        var call = call
+        switch call.state {
+        case .completed(let input, _, let metadata): call.state = .completed(input: input, output: [], metadata: metadata)
+        case .failed(let input, let error, _, let metadata): call.state = .failed(input: input, error: error, output: nil, metadata: metadata)
+        case .streaming, .running: break
+        }
+        return call
     }
 }
 
@@ -127,7 +224,7 @@ enum GroupWork {
         var after: [String] = []
     }
 
-    /// Who does what in a lead's list of `@Name: task` lines, or `@Name (after @Other): task` for
+    /// Who does what in a lead's list of `&Name: task` lines, or `&Name (after &Other): task` for
     /// a part that waits for another (bullets and bold allowed): one part for each name, several
     /// lines for one going together as a list; and whether its GO or WAIT line said to go ahead.
     /// Lines for anyone not in `names` are left out.
@@ -144,7 +241,8 @@ enum GroupWork {
             if line.range(of: #"^\W*GO\W*$"#, options: .regularExpression) != nil { go = true; continue }
             if line.range(of: #"^\W*WAIT\W*$"#, options: .regularExpression) != nil { go = false; continue }
             for name in byLength {
-                let pattern = "^@?" + NSRegularExpression.escapedPattern(for: name) + #"\s*(?:\(\s*(?:after|once)\s+([^)]*)\))?\s*[:—–-]\s*"#
+                // "&", or "@" as a lead may still write it.
+                let pattern = "^[@&]?" + NSRegularExpression.escapedPattern(for: name) + #"\s*(?:\(\s*(?:after|once)\s+([^)]*)\))?\s*[:—–-]\s*"#
                 guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
                       let match = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
                       let whole = Range(match.range, in: line) else { continue }
@@ -152,7 +250,7 @@ enum GroupWork {
                 if task.isEmpty { break }
                 let waitsFor = Range(match.range(at: 1), in: line).map { String(line[$0]) } ?? ""
                 let after = byLength.filter { other in
-                    other != name && waitsFor.range(of: #"(^|[^\p{L}\p{N}])@?"# + NSRegularExpression.escapedPattern(for: other) + #"($|[^\p{L}\p{N}])"#,
+                    other != name && waitsFor.range(of: #"(^|[^\p{L}\p{N}])[@&]?"# + NSRegularExpression.escapedPattern(for: other) + #"($|[^\p{L}\p{N}])"#,
                                                     options: [.regularExpression, .caseInsensitive]) != nil
                 }
                 if let index = parts.firstIndex(where: { $0.name == name }) {
@@ -189,7 +287,7 @@ enum GroupWork {
 /// under way.
 ///
 /// A discussion starts with each message of yours. The lead speaks first, unless you named
-/// someone with @; then whoever the last message named, then the others in turn. A bot with
+/// someone with &; then whoever the last message named, then the others in turn. A bot with
 /// nothing new to add passes. It ends when everyone else has passed, or at a limit of turns
 /// (Keep Going carries on), and the lead sums up one that went back and forth, listing who does
 /// what. A message you send while a bot is talking goes to that bot straight away, and to the
@@ -203,6 +301,8 @@ final class BotGroups {
     private var logs: [String: [GroupMessage]] = [:]
     /// Whose turn it is, in each chat that's talking.
     private(set) var speaking: [String: String] = [:]
+    /// What the bot talking is doing, by chat (see `GroupActivity`).
+    private(set) var activity: [String: [GroupActivity]] = [:]
     /// Chats talking something through right now.
     private(set) var discussing: Set<String> = []
     /// Chats that stopped at their limit of turns with more to say.
@@ -259,7 +359,7 @@ final class BotGroups {
         let onAgents = if let seat = group?.seats[bot.id] {
             group?.agentSeats?.contains(seat) == true
         } else {
-            OutsideAgents.runsWithAgents(bot.model ?? app.workspace.session(bot.sessionID)?.model, machine: bot.machine)
+            OutsideAgents.runsWithAgents(talkingModel(of: bot), machine: bot.machine)
         }
         return onAgents ? app.workspace.agents(forFolder: bot.directory)?.api : app.workspace.api(forFolder: bot.directory)
     }
@@ -324,10 +424,13 @@ final class BotGroups {
         for bot in old.members where !group.members.contains(bot) {
             if let seat = group.seats.removeValue(forKey: bot) { leaving.append((bot, seat)) }
             group.heard[bot] = nil
+            // What it was told to set aside goes too: back in the chat later, it hasn't heard it.
+            group.retracted?[bot] = nil
         }
         list[index] = group
         save()
-        for (bot, seat) in leaving { await deleteSeat(seat, of: bot) }
+        // Where each seat is, by the chat as it was (it's gone from the chat now).
+        for (bot, seat) in leaving { await deleteSeat(seat, of: bot, in: old) }
         await refreshSeats(of: list.first { $0.id == group.id } ?? group)
         // One that left forgets the chat (its transcript goes from its folder); the rest remember.
         for bot in Set(old.members + group.members) {
@@ -344,7 +447,7 @@ final class BotGroups {
         logs[group.id] = nil
         save()
         try? FileManager.default.removeItem(at: Self.folder.appending(path: "\(group.id).json"))
-        for (bot, seat) in group.seats { await deleteSeat(seat, of: bot) }
+        for (bot, seat) in group.seats { await deleteSeat(seat, of: bot, in: group) }
         for bot in group.members { await remember(bot, changed: group.id, forgetting: group.id) }
         Analytics.shared.track("group_deleted")
     }
@@ -358,6 +461,20 @@ final class BotGroups {
             guard var group = list.first(where: { $0.id == id }) else { continue }
             group.members.removeAll { $0 == bot.id }
             await update(group)
+        }
+    }
+
+    /// A bot moving to another computer (`Moves`), as it still is where it was: its seats there go,
+    /// and each chat makes it a new one where it lives now at its next turn, which hears the whole
+    /// chat (as a new model's does).
+    func botMoving(_ bot: Bot) async {
+        for group in list {
+            guard let seat = group.seats[bot.id] else { continue }
+            await deleteSeat(seat, of: bot.id, in: group)
+            guard let index = list.firstIndex(where: { $0.id == group.id }) else { continue }
+            list[index].seats[bot.id] = nil
+            list[index].heard[bot.id] = nil
+            save()
         }
     }
 
@@ -375,30 +492,72 @@ final class BotGroups {
         onAgents && OutsideAgents.base(model?.providerID ?? "") == "cursor" ? "plan" : nil
     }
 
+    /// The model a bot talks on in a chat: the one picked for it in Edit Bot while that can run
+    /// where it lives; otherwise (its account signed out of, which takes its models away, so Edit
+    /// Bot shows none) what its own conversation is on now.
+    func talkingModel(of bot: Bot) -> ModelRef? {
+        let conversation = app?.workspace.session(bot.sessionID)?.model
+        guard let picked = bot.model else { return conversation }
+        let catalog = bot.machine.flatMap { app?.machines.engine($0)?.catalog } ?? app?.catalog
+        return catalog?.isUnavailable(picked) == true ? (conversation ?? picked) : picked
+    }
+
     /// A bot's new default model, for its seats.
     func modelChanged(of bot: Bot) async {
-        guard let model = bot.model else { return }
+        guard let model = talkingModel(of: bot) else { return }
+        for group in list where group.seats[bot.id] != nil { await follow(model, bot: bot, in: group) }
+    }
+
+    /// A bot's seat in `group`, on `model`: switched, or, where it can't run there (the engine,
+    /// the agents), gone, for a new one at its next turn, which hears the whole chat.
+    private func follow(_ model: ModelRef, bot: Bot, in group: BotGroup) async {
         let onAgents = OutsideAgents.runsWithAgents(model, machine: bot.machine)
-        for group in list {
-            guard let seat = group.seats[bot.id] else { continue }
-            // One that runs elsewhere than the new model can (the engine, the agents): a new seat
-            // at its next turn, which hears the whole chat.
-            if group.agentSeats?.contains(seat) == true || !onAgents {
-                if let api = seatAPI(of: bot, in: group) {
-                    try? await api.selectModel(session: seat, model: model)
-                    // Cursor plans in a seat (it can't stop to ask); others take part as seats do.
-                    if group.agentSeats?.contains(seat) == true {
-                        try? await api.selectAgent(session: seat, agent: Self.seatAgent(for: model, onAgents: onAgents) ?? "build")
-                    }
+        guard let seat = group.seats[bot.id] else { return }
+        if group.agentSeats?.contains(seat) == true || !onAgents {
+            if let api = seatAPI(of: bot, in: group) {
+                try? await api.selectModel(session: seat, model: model)
+                // Cursor plans in a seat (it can't stop to ask); others take part as seats do.
+                if group.agentSeats?.contains(seat) == true {
+                    try? await api.selectAgent(session: seat, agent: Self.seatAgent(for: model, onAgents: onAgents) ?? "build")
                 }
-            } else {
-                await deleteSeat(seat, of: bot.id, in: group)
-                guard let index = list.firstIndex(where: { $0.id == group.id }) else { continue }
-                list[index].seats[bot.id] = nil
-                list[index].heard[bot.id] = nil
-                save()
             }
+        } else {
+            await deleteSeat(seat, of: bot.id, in: group)
+            guard let index = list.firstIndex(where: { $0.id == group.id }) else { return }
+            list[index].seats[bot.id] = nil
+            list[index].heard[bot.id] = nil
+            save()
         }
+    }
+
+    // MARK: Moving
+
+    /// A chat moving to one of your machines (`Moves`): it stops here and goes as it is, its seats
+    /// left where they are (its bots live there). `toTrash`: its file goes to the Trash (it moved);
+    /// else it's let go (a copy that didn't get to start). Its bots remember the chats left here.
+    @discardableResult
+    func release(_ id: String, toTrash: Bool) async -> Bool {
+        guard let group = group(id) else { return false }
+        stop(id)
+        list.removeAll { $0.id == id }
+        logs[id] = nil
+        save()
+        let file = Self.folder.appending(path: "\(id).json")
+        if toTrash, FileManager.default.fileExists(atPath: file.path) { try? FileManager.default.moveToTrash(file) } else { try? FileManager.default.removeItem(at: file) }
+        for bot in group.members { await remember(bot) }
+        return true
+    }
+
+    /// A chat come from one of your machines (`Moves`), with its messages: it talks here from now on.
+    func adopt(_ group: BotGroup, messages: [GroupMessage]) {
+        list.removeAll { $0.id == group.id }
+        list.append(group)
+        logs[group.id] = messages
+        save()
+        saveLog(group.id)
+        app?.workspace.seats.formUnion(group.seats.values)
+        if let agentSeats = group.agentSeats { app?.workspace.runsOnAgents(agentSeats) }
+        rememberSoon(group.id)
     }
 
     // MARK: Talking
@@ -407,7 +566,8 @@ final class BotGroups {
     /// talking gets it straight away, the rest at their turns.
     func send(_ text: String, to id: String) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, group(id) != nil else { return }
+        // Moving to one of your machines (`Moves`): nothing more happens here.
+        guard !text.isEmpty, group(id) != nil, !Moves.isFrozen(id) else { return }
         let message = append(GroupMessage(id: Self.newID(), author: nil, text: text, time: .now), to: id)
         asked[id, default: 0] += 1
         paused.remove(id)
@@ -435,8 +595,10 @@ final class BotGroups {
         }
     }
 
-    private func meetDue() {
-        for group in list {
+    /// Holds the meetings that have come due: once each, then the next time of one that repeats,
+    /// or none for a one-off.
+    func meetDue() {
+        for group in list where !Moves.isFrozen(group.id) {
             guard var meeting = group.meeting, meeting.next <= .now, let index = list.firstIndex(where: { $0.id == group.id }) else { continue }
             // Its bots on machines still connecting (after launch, or a wake): it waits for them,
             // two minutes at most, rather than meeting without them.
@@ -502,7 +664,7 @@ final class BotGroups {
     /// to set it aside. Returns the message's words, for the composer.
     @discardableResult
     func undo(from messageID: String, in id: String) -> String? {
-        guard let index = list.firstIndex(where: { $0.id == id }), var messages = logs[id],
+        guard !Moves.isFrozen(id), let index = list.firstIndex(where: { $0.id == id }), var messages = logs[id],
               let cut = messages.firstIndex(where: { $0.id == messageID }) else { return nil }
         stop(id)
         let taken = messages[cut...]
@@ -531,6 +693,7 @@ final class BotGroups {
         discussions.removeValue(forKey: id)?.cancel()
         runs[id] = nil
         paused.remove(id)
+        activity[id] = nil
         // The bot talking, or the lead handing out the work.
         for speaker in [speaking.removeValue(forKey: id), splitting.removeValue(forKey: id)].compactMap({ $0 }) {
             guard let bot = app?.bots.bot(speaker), let seat = group(id)?.seats[speaker] else { continue }
@@ -542,7 +705,7 @@ final class BotGroups {
 
     /// After the limit of turns: more of the same.
     func keepGoing(_ id: String) {
-        guard discussions[id] == nil else { return }
+        guard discussions[id] == nil, !Moves.isFrozen(id) else { return }
         paused.remove(id)
         asked[id, default: 0] += 1
         start(id)
@@ -632,11 +795,16 @@ final class BotGroups {
         return epoch
     }
 
-    /// Who talks next: someone the last message named with @, after one of yours the lead,
+    /// Who talks next: someone the last message named with &, after one of yours the lead,
     /// otherwise the next in line after whoever spoke last. Nobody twice in a row, and nobody
     /// who passed since the last thing said. Nil once there's nobody left with something to add.
     private func nextSpeaker(in group: BotGroup, members: [String], quiet: Set<String>) -> String? {
-        let all = messages(in: group.id)
+        let names = Dictionary(group.members.compactMap { id in app?.bots.bot(id).map { (id, $0.name) } }) { first, _ in first }
+        return Self.nextSpeaker(in: group, messages: messages(in: group.id), members: members, quiet: quiet, names: names)
+    }
+
+    /// The rule `nextSpeaker` follows, by each bot's name (what a chat on a machine follows too).
+    static func nextSpeaker(in group: BotGroup, messages all: [GroupMessage], members: [String], quiet: Set<String>, names: [String: String]) -> String? {
         let last = all.last { $0.kind != .note }
         // Who spoke last waits a turn, unless something of yours came that it hasn't heard: one
         // you wrote as its turn was ending (or before its run began) didn't reach it then.
@@ -647,7 +815,7 @@ final class BotGroups {
         let candidates = members.filter { ($0 != last?.author || missedYou($0)) && !quiet.contains($0) }
         guard !candidates.isEmpty else { return nil }
         // Its own words: a quote it replies to names whoever that message did.
-        if let last, let named = mentions(in: Quoting.words(of: last.text), among: candidates).first {
+        if let last, let named = mentions(in: Quoting.words(of: last.text), among: candidates.compactMap { id in names[id].map { (id, $0) } }).first {
             return named
         }
         guard let author = last?.author, let index = group.members.firstIndex(of: author) else {
@@ -657,13 +825,12 @@ final class BotGroups {
         return order.first { candidates.contains($0) }
     }
 
-    /// The bots a message names with @, in the order it names them.
-    func mentions(in text: String, among ids: [String]) -> [String] {
-        let bots = ids.compactMap { app?.bots.bot($0) }
-        return bots.compactMap { bot -> (String, String.Index)? in
-            // The whole name: "@Sam" isn't Samantha.
+    /// The bots a message names with &, in the order it names them: each by its ID and name.
+    static func mentions(in text: String, among bots: [(id: String, name: String)]) -> [String] {
+        bots.compactMap { bot -> (String, String.Index)? in
+            // The whole name: "&Sam" isn't Samantha.
             var from = text.startIndex
-            while let found = text.range(of: "@" + bot.name, options: [.caseInsensitive, .diacriticInsensitive], range: from..<text.endIndex) {
+            while let found = text.range(of: "&" + bot.name, options: [.caseInsensitive, .diacriticInsensitive], range: from..<text.endIndex) {
                 if found.upperBound == text.endIndex || !(text[found.upperBound].isLetter || text[found.upperBound].isNumber) { return (bot.id, found.lowerBound) }
                 from = found.upperBound
             }
@@ -677,13 +844,36 @@ final class BotGroups {
     private func turn(of botID: String, in id: String, wrapUp: Bool = false) async -> Outcome {
         guard let app, let bot = app.bots.bot(botID) else { return .absent }
         speaking[id] = botID
-        defer { if speaking[id] == botID { speaking[id] = nil } }
+        defer {
+            if speaking[id] == botID {
+                speaking[id] = nil
+                activity[id] = nil
+            }
+        }
+        if Moves.isFrozen(botID) {
+            note("\(bot.name) is moving to another computer, so it sat this out.", in: id)
+            return .absent
+        }
         if let machine = bot.machine, app.machines.engine(machine)?.isReady != true {
             note("\(bot.name) is on \(machine), which isn’t connected, so it sat this out.", in: id)
             return .absent
         }
+        // Its model can't run where it lives (its account signed out of): said, rather than
+        // sent to an engine that drops it without a word.
+        let catalog = bot.machine.flatMap { app.machines.engine($0)?.catalog } ?? app.catalog
+        let model = talkingModel(of: bot)
+        let place = bot.machine.map { machine in app.machines.list.first { $0.id == machine }?.name ?? machine }
+        if let model, catalog.needsSignIn(model) {
+            note("\(bot.name) couldn’t answer: \(catalog.unavailable(model, on: place))", in: id)
+            return .absent
+        }
+        // A seat made on another model (picked since, in its conversation or Edit Bot): on this one.
+        if let model, let group = group(id), let seat = group.seats[bot.id], let api = seatAPI(of: bot, in: group),
+           let current = try? await api.session(seat).model, !current.sameModel(as: model) {
+            await follow(model, bot: bot, in: group)
+        }
         guard let api = seatAPI(of: bot, in: group(id)) else {
-            note("\(bot.name) couldn’t answer: \(app.workspace.agents(forFolder: bot.directory)?.api == nil && OutsideAgents.runsWithAgents(bot.model, machine: bot.machine) ? "the coding agents aren’t running" : "the engine isn’t running").", in: id)
+            note("\(bot.name) couldn’t answer: \(app.workspace.agents(forFolder: bot.directory)?.api == nil && OutsideAgents.runsWithAgents(model, machine: bot.machine) ? "the coding agents aren’t running" : "the engine isn’t running").", in: id)
             return .absent
         }
         do {
@@ -702,11 +892,14 @@ final class BotGroups {
                 save()
             }
             let sent = Date.now
-            try await waitForRun(of: seat, after: ended, since: sent, api: api)
+            try await waitForRun(of: seat, after: ended, since: sent, api: api) { [weak self] messages in
+                let now = GroupActivity.latest(in: messages, after: promptID, since: sent)
+                if self?.speaking[id] == botID, self?.activity[id] ?? [] != now { self?.activity[id] = now.isEmpty ? nil : now }
+            }
             let (text, error, steps) = try await reply(in: seat, after: promptID, since: sent, api: api)
             if text.isEmpty {
                 if let error {
-                    note("\(bot.name) couldn’t answer: \(error)", in: id)
+                    note("\(bot.name) couldn’t answer: \(catalog.plain(error, for: model, on: place))", in: id)
                     return .absent
                 }
                 return .passed
@@ -720,7 +913,7 @@ final class BotGroups {
         } catch {
             guard !Task.isCancelled else { return .absent }
             log.error("\(bot.id, privacy: .public)'s turn in \(id, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
-            note("\(bot.name) couldn’t answer: \(error.localizedDescription)", in: id)
+            note("\(bot.name) couldn’t answer: \(catalog.plain(error.localizedDescription, for: model, on: place))", in: id)
             return .absent
         }
     }
@@ -730,7 +923,8 @@ final class BotGroups {
         // Only into a run: one that hasn't started yet gets it with the rest at its turn.
         guard let bot = app?.bots.bot(botID), let seat = group(id)?.seats[botID], app?.workspace.running.contains(seat) == true,
               let api = seatAPI(of: bot, in: group(id)) else { return }
-        let text = AgentReferences.text("The user, just now: \(message.text)", excluding: nil, here: bot.machine)
+        // The chat's own bots are there already: only others named with "&" are described.
+        let text = AgentReferences.text("The user, just now: \(message.text)", excludingAll: memberSessions(of: group(id)), here: bot.machine)
         if (try? await api.prompt(session: seat, id: Identifier.message(), text: text, delivery: .steer)) != nil {
             setHeard(message.id, by: botID, in: id)
         }
@@ -742,11 +936,18 @@ final class BotGroups {
     }
 
     /// Until the seat's run ends. Questions and requests for permission are turned down on the
-    /// way, since nobody's there to answer them.
-    private func waitForRun(of seat: String, after ended: Int, since sent: Date, api: OpenCodeAPI) async throws {
+    /// way, since nobody's there to answer them. `seen` hears its latest messages now and then,
+    /// for what it's doing.
+    private func waitForRun(of seat: String, after ended: Int, since sent: Date, api: OpenCodeAPI,
+                            seen: (([Message]) -> Void)? = nil) async throws {
         var checked = Date.now
+        var looked = Date.now
         while app?.workspace.endedRuns[seat, default: 0] == ended {
             try await Task.sleep(for: .milliseconds(300))
+            if let seen, Date.now.timeIntervalSince(looked) > 1.5 {
+                looked = .now
+                if let messages = try? await api.messages(session: seat, limit: 12).data { seen(messages) }
+            }
             if app?.workspace.asking.values.contains(seat) == true { await decline(in: seat, api: api) }
             // The engine's word, now and then, in case an event went missing in a reconnect.
             if Date.now.timeIntervalSince(checked) > 8 {
@@ -786,7 +987,7 @@ final class BotGroups {
     }
 
     /// What `messages` say, as `reply` reads them.
-    private static func said(in messages: [Message]) -> (text: String, error: String?, steps: [Message.ToolCall]) {
+    static func said(in messages: [Message]) -> (text: String, error: String?, steps: [Message.ToolCall]) {
         var parts: [String] = []
         var part = ""
         var error: String?
@@ -832,15 +1033,36 @@ final class BotGroups {
         return call
     }
 
-    /// "PASS", "Pass.", "[pass] nothing to add": a bot with nothing to say.
+    /// "PASS", "Pass.", "[pass] nothing to add": a bot with nothing to say. Not a message that
+    /// starts with the word ("Pass rate is 98% on main."): PASS as it's told to write it, first, or
+    /// "pass" alone or with words that say there's nothing.
     static func isPass(_ text: String) -> Bool {
-        text.count < 80 && text.range(of: #"^\W*pass\b"#, options: [.regularExpression, .caseInsensitive]) != nil
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.count < 80 else { return false }
+        if text.range(of: #"^\W*PASS\b"#, options: .regularExpression) != nil { return true }
+        guard text.range(of: #"^\W*pass\b"#, options: [.regularExpression, .caseInsensitive]) != nil else { return false }
+        let rest = text.replacingOccurrences(of: #"^\W*pass\W*"#, with: "", options: [.regularExpression, .caseInsensitive])
+        return rest.isEmpty || rest.range(of: #"(?i)^(nothing|no (new|more|comment|further)|i('| ha)ve nothing|skip|n/a)"#, options: .regularExpression) != nil
+    }
+
+    /// A chat's own bots' conversations: named with "&", they're asked in the chat, not described.
+    func memberSessions(of group: BotGroup?) -> Set<String> {
+        Set((group?.members ?? []).compactMap { app?.bots.bot($0)?.sessionID })
     }
 
     /// What a bot is told at its turn: what was said since it last spoke.
     private func turnText(for bot: Bot, in group: BotGroup, unheard: [GroupMessage], wrapUp: Bool) -> String {
+        // Who the user named with "&", as a session's message says.
+        let yours = unheard.suffix(40).filter { $0.author == nil }.map(\.text)
+        let named = AgentReferences.note(naming: AgentReferences.named(in: yours, excluding: memberSessions(of: group)), here: bot.machine)
+        return Self.turnText(bot: bot.id, name: bot.name, in: group, unheard: unheard, wrapUp: wrapUp, named: named) { self.name(of: $0) }
+    }
+
+    /// What `turnText` says, by the bot's name and everyone else's (`name`), with the block naming
+    /// the agents your messages named with "&", if any.
+    static func turnText(bot: String, name botName: String, in group: BotGroup, unheard: [GroupMessage], wrapUp: Bool, named: String?, name: (String?) -> String) -> String {
         var text = ""
-        if let taken = group.retracted?[bot.id] {
+        if let taken = group.retracted?[bot] {
             text += "The user took back their message starting \"\(taken)\" and everything said after it. Set all of that aside: it no longer stands.\n\n"
         }
         if unheard.isEmpty {
@@ -852,16 +1074,14 @@ final class BotGroups {
             // another speaker (a bot writing "User: go ahead").
             for message in unheard.suffix(40) {
                 let words = message.text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).map { "    " + $0 }.joined(separator: "\n")
-                text += "\n\(label(of: message)):\n\(words)\n"
+                text += "\n\(label(of: message, name: name)):\n\(words)\n"
             }
-            // Who the user named with "&", as a session's message says.
-            let yours = unheard.suffix(40).filter { $0.author == nil }.map(\.text)
-            if let note = AgentReferences.note(naming: AgentReferences.named(in: yours), here: bot.machine) { text += "\n" + note + "\n" }
+            if let named { text += "\n" + named + "\n" }
         }
         if wrapUp {
             text += "\nWrap up this discussion now, the one since the user last wrote: in a few short lines, what was decided, what's still open, and who does what next. Write to the user as \"you\". Don't reply PASS."
         } else {
-            text += "\nYour turn, \(bot.name). Reply to the group, or just PASS if you have nothing new to add."
+            text += "\nYour turn, \(botName). Reply to the group, or just PASS if you have nothing new to add."
         }
         return text
     }
@@ -872,11 +1092,15 @@ final class BotGroups {
 
     /// Who said it, as the bots read it: a bot's wrap-up says so, and a meeting is the user's.
     private func label(of message: GroupMessage) -> String {
-        if message.report != nil { return name(of: message.author) + " (reporting back on its part of the work)" }
+        Self.label(of: message) { self.name(of: $0) }
+    }
+
+    static func label(of message: GroupMessage, name: (String?) -> String) -> String {
+        if message.report != nil { return name(message.author) + " (reporting back on its part of the work)" }
         return switch message.kind {
-        case .wrapUp: name(of: message.author) + " (wrap-up)"
+        case .wrapUp: name(message.author) + " (wrap-up)"
         case .meeting: "Meeting the user scheduled, now"
-        case .message, .note: name(of: message.author)
+        case .message, .note: name(message.author)
         }
     }
 
@@ -928,9 +1152,9 @@ final class BotGroups {
     static func splitText(members: [Bot], said: [String]) -> String {
         var text = """
         For the app, not the chat: list who does what next, from what was decided, one line for each bot with work, as
-        @Name: what they do, with what they need to know
-        If a part can only start once others are done, write it as @Name (after @Other): …; it then starts when theirs is done, with what they reported.
-        Only the bots in this chat (\(members.map { "@" + $0.name }.joined(separator: ", "))), and only work that was agreed on, not what's still open.
+        &Name: what they do, with what they need to know
+        If a part can only start once others are done, write it as &Name (after &Other): …; it then starts when theirs is done, with what they reported.
+        Only the bots in this chat (\(members.map { "&" + $0.name }.joined(separator: ", "))), and only work that was agreed on, not what's still open.
         Then, on a line of its own, GO or WAIT: GO if the user told you to go ahead and do the work (like "go ahead", "do it", "get going", "do your parts"), WAIT if they only asked for a plan or haven't decided.
         If there's no work to hand out, reply just NONE.
         """
@@ -959,7 +1183,7 @@ final class BotGroups {
     /// Hands each part of a wrap-up's work not yet started to its bot: in its own conversation,
     /// with what was decided, to do with all its tools. Each reports back to the chat when it's done.
     func startWork(_ wrapUpID: String, in id: String) {
-        guard let tasks = messages(in: id).first(where: { $0.id == wrapUpID })?.tasks else { return }
+        guard !Moves.isFrozen(id), let tasks = messages(in: id).first(where: { $0.id == wrapUpID })?.tasks else { return }
         let proposed = tasks.filter { $0.state == .proposed }
         for task in proposed {
             changeTask(task.id, of: wrapUpID, in: id) { $0.state = ($0.after ?? []).isEmpty ? .working : .waiting; $0.started = .now }
@@ -1027,6 +1251,13 @@ final class BotGroups {
 
     /// One part, to its bot's conversation; then it's followed until the bot reports.
     private func hand(_ taskID: String, of wrapUpID: String, in id: String) async {
+        // A bot moving to another computer gets its part there, once it is (for ten minutes at
+        // most: a move cut short whose other computer doesn't answer leaves it to the checks below).
+        if let bot = group(id).flatMap({ group in messages(in: id).first { $0.id == wrapUpID }?.tasks?.first { $0.id == taskID }?.bot }) {
+            for _ in 0..<300 where Moves.isFrozen(bot) {
+                do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            }
+        }
         guard let app, let group = group(id), let wrapUp = messages(in: id).first(where: { $0.id == wrapUpID }),
               let task = wrapUp.tasks?.first(where: { $0.id == taskID }) else { return }
         guard let bot = app.bots.bot(task.bot) else { return fail(taskID, of: wrapUpID, in: id, "the bot is gone") }
@@ -1199,12 +1430,16 @@ final class BotGroups {
     /// The bot's seat in the chat, made the first time it's needed.
     private func seat(of bot: Bot, in id: String, api: OpenCodeAPI) async throws -> String {
         if let seat = group(id)?.seats[bot.id] {
-            // One an earlier version made: its rules as seats get them now, once a launch.
-            if seatsChecked.insert(seat).inserted { try? await api.setPermissions(session: seat, rules: Self.seatRules(for: bot)) }
+            // One an earlier version made: its rules and instructions as seats get them now, once a
+            // launch (so a seat from before & names whoever it asks with &, as the chat reads it).
+            if seatsChecked.insert(seat).inserted {
+                try? await api.setPermissions(session: seat, rules: Self.seatRules(for: bot))
+                if let group = group(id) { try? await api.setInstruction(session: seat, key: Self.seatKey, text: seatInstructions(for: bot, in: group)) }
+            }
             return seat
         }
         guard let group = group(id), let app else { throw CancellationError() }
-        let model = bot.model ?? app.workspace.session(bot.sessionID)?.model
+        let model = talkingModel(of: bot)
         let onAgents = OutsideAgents.runsWithAgents(model, machine: bot.machine)
         let agent = Self.seatAgent(for: model, onAgents: onAgents)
         let session = try await api.createSession(directory: bot.directory, title: "\(bot.name) in \(group.name)", agent: agent, model: model, permissions: Self.seatRules(for: bot))
@@ -1230,26 +1465,36 @@ final class BotGroups {
     /// bot's own conversation once you say go, handed out after the wrap-up.
     private static func seatRules(for bot: Bot) -> [PermissionRule] {
         let approval = UserDefaults.standard.string(forKey: ToolApproval.key).flatMap(ToolApproval.init) ?? .approveAll
+        return seatRules(for: bot, askFirst: approval == .askFirst, denies: EngineConfig.rules(on: bot.machine).filter { $0.effect == .deny })
+    }
+
+    /// What `seatRules` gives a seat, with Ask First on or not and what Settings › Permissions denies.
+    static func seatRules(for bot: Bot, askFirst: Bool, denies: [PermissionRule]) -> [PermissionRule] {
         // Nor a session of its own, a PDF written anywhere or your files sent to a site.
         var rules = ["edit", "write", "patch", "question", "external_directory", "shell", "subagent", "kuvo-browser_send_message",
                      "kuvo-browser_start_session", "kuvo-browser_browser_save_pdf", "kuvo-browser_browser_upload",
                      "kuvo-browser_schedule_wake_up", "kuvo-browser_watch_for_change"].map { PermissionRule(action: $0, effect: .deny) }
-        if approval == .askFirst {
+        if askFirst {
             rules.append(PermissionRule(action: "webfetch", effect: .deny))
         }
         rules.append(PermissionRule(action: "external_directory", resource: (bot.folder as NSString).appendingPathComponent("*"), effect: .allow))
         // What Settings › Permissions doesn't allow, nothing here does either.
-        return rules + (EngineConfig.current?.permissionRules ?? []).filter { $0.effect == .deny }
+        return rules + denies
     }
 
     private func seatInstructions(for bot: Bot, in group: BotGroup) -> String {
         let others = group.members.filter { $0 != bot.id }.compactMap { app?.bots.bot($0) }
-        let who = others.map { other in other.name + (other.job.isEmpty ? "" : " (\(other.job))") }.joined(separator: ", ")
         let lead = group.lead.flatMap { app?.bots.bot($0) }
+        return Self.seatInstructions(for: bot, in: group, others: others, lead: lead, personality: Personalities.shared.personality(bot.personality)?.instruction)
+    }
+
+    /// What `seatInstructions` says, by the bots themselves and what the bot's personality tells it.
+    static func seatInstructions(for bot: Bot, in group: BotGroup, others: [Bot], lead: Bot?, personality: String?) -> String {
+        let who = others.map { other in other.name + (other.job.isEmpty ? "" : " (\(other.job))") }.joined(separator: ", ")
         let job = bot.instructions.trimmingCharacters(in: .whitespacesAndNewlines)
         var text = """
-        You are \(bot.name), one of the user's bots in Kuvo Code\(bot.job.isEmpty ? "" : ": \(bot.job)").\(Personalities.shared.personality(bot.personality).map { " \($0.instruction)" } ?? "")\(job.isEmpty ? "" : "\nYour job:\n\(job)\n")
-        Your memory file is "\(bot.memoryFile)": read it for context on your work.
+        You are \(bot.name), one of the user's bots in Kuvo Code\(bot.job.isEmpty ? "" : ": \(bot.job)").\(personality.map { " \($0)" } ?? "")\(job.isEmpty ? "" : "\nYour job:\n\(job)\n")
+        Your memory file is "\(bot.memoryFile)": read it when what's asked is about your work.
 
         This conversation is your seat in "\(group.name)", a group chat between the user and these bots: \(who.isEmpty ? "just you" : who), and you. \
         \(lead.map { $0.id == bot.id ? "You lead it." : "\($0.name) leads it." } ?? "")\(group.purpose.map { $0.isEmpty ? "" : " The chat is for: \($0)" } ?? "")
@@ -1257,9 +1502,9 @@ final class BotGroups {
         Each message you get here holds what was said in the chat since you last spoke, and means it's your turn. Your reply is posted \
         to the chat as your message, so write it to the group: a few sentences, plain and to the point, like a colleague in a team \
         chat. Add something new: build on what others said instead of repeating it, disagree when you do, and ask someone directly \
-        with @Name. Write to the user as "you". If you have nothing new to add, reply with just PASS.
+        with &Name. Write to the user as "you". If you have nothing new to add, reply with just PASS.
 
-        You can look things up before you answer (read and search files, search the web) when it helps; there are no commands, subagents or messages to other agents here. \
+        Answer from what's in the chat and what you know; look things up (read and search files, search the web, read another conversation) only when what's asked needs it, and give small talk and quick questions a straight answer. There are no commands, subagents or messages to other agents here. \
         Don't change files or start the work here: the chat is for talking it through. When something needs doing, say who should \
         do it. Once the user says go, each of you gets your part in your own conversation, does it there with all your tools, and \
         reports back here: don't send anyone the work yourself, and don't wait on it in the chat.

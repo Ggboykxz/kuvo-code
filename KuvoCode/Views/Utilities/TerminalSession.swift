@@ -155,7 +155,18 @@ extension TerminalSession: @preconcurrency LocalProcessTerminalViewDelegate {
     func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
 
     func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
-        self.title = title.isEmpty ? "Terminal" : title
+        // Only when it says something new, without the spinner some agents turn at its start: one
+        // changing every tenth of a second would draw the tabs and the sidebar again as often.
+        let steady = Self.steady(title)
+        if self.title != steady { self.title = steady }
+    }
+
+    /// A title without the spinner or mark an agent keeps changing at its start (Braille dots, ✳).
+    static func steady(_ title: String) -> String {
+        let marks: Set<Character> = ["✳", "✶", "✻", "✽", "✢", "✺", "·", "•", "●", "○", "◐", "◓", "◑", "◒", "⏺"]
+        let kept = title.drop { $0.isWhitespace || marks.contains($0) || $0.unicodeScalars.allSatisfy { (0x2800...0x28FF).contains($0.value) } }
+        let named = kept.trimmingCharacters(in: .whitespaces)
+        return named.isEmpty ? "Terminal" : named
     }
 
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
@@ -198,4 +209,56 @@ private struct TerminalRepresentable: NSViewRepresentable {
     func updateNSView(_ view: LocalProcessTerminalView, context: Context) {
         session.apply(dark: dark, focused: focused)
     }
+}
+
+/// Terminals that are tabs of the window, in place of a conversation: a project's own terminal
+/// command (`omp`, `opencode`…), or a plain shell. Tab keys are `terminal:<id>`, kept with the
+/// window's other tabs; the shells themselves don't outlive the app, so a key restored at launch
+/// has none and its tab goes.
+@Observable
+final class MainTerminals {
+    struct Entry {
+        let session: TerminalSession
+        let directory: String
+        /// The tab's name until the program in the terminal names itself.
+        let label: String
+        let opened = Date()
+    }
+
+    private(set) var entries: [String: Entry] = [:]
+
+    /// The terminals, in the order they were opened.
+    var opened: [(key: String, entry: Entry)] {
+        entries.sorted { $0.value.opened < $1.value.opened }.map { (key: $0.key, entry: $0.value) }
+    }
+
+    private static let prefix = "terminal:"
+
+    static func isTerminal(_ key: String) -> Bool { key.hasPrefix(prefix) }
+
+    func entry(_ key: String) -> Entry? { entries[key] }
+
+    /// Starts a terminal in `directory`, typing `command` in it, and returns its tab's key.
+    func open(in directory: String, command: String?, environment: [String: String]) -> String {
+        let key = Self.prefix + UUID().uuidString
+        let command = command?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let label = command.map { String($0.split(separator: " ").first ?? "Terminal") } ?? "Terminal"
+        entries[key] = Entry(session: TerminalSession(directory: directory, environment: environment, command: command), directory: directory, label: label)
+        return key
+    }
+
+    /// Ends the terminal's shell and whatever runs in it.
+    func close(_ key: String) {
+        entries.removeValue(forKey: key)?.session.terminate()
+    }
+
+    /// Ends every terminal: the window closed, and its tabs with it.
+    func closeAll() {
+        for entry in entries.values { entry.session.terminate() }
+        entries = [:]
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? { isEmpty ? nil : self }
 }

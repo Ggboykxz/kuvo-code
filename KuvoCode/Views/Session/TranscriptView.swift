@@ -375,7 +375,12 @@ struct TranscriptView: View {
             case .agentSwitched(let change):
                 rows.append(.notice(change.id, change.agent == "plan" ? "list.bullet.clipboard" : "hammer", "\(change.agent.capitalized) mode"))
             case .compaction(let compaction):
-                rows.append(.notice(compaction.id, "rectangle.compress.vertical", compaction.status == "running" ? "Summarizing the conversation…" : "Summarized the conversation to save space"))
+                let words = switch compaction.status {
+                case "running": "Summarizing the conversation…"
+                case "failed": "Couldn’t summarize the conversation"
+                default: "Summarized the conversation to save space"
+                }
+                rows.append(.notice(compaction.id, "rectangle.compress.vertical", words))
             case .shell(let shell):
                 rows.append(.shell(shell))
             case .synthetic(let notice), .system(let notice):
@@ -413,9 +418,7 @@ struct TranscriptView: View {
         }
         // A step still going at the end is under way, whatever the running state says.
         flushSteps(live: model.transcript.isRunning || StepsRow.isUnfinished(steps.last))
-        // A run cut off with no end of its own (Kuvo Code quit, or its engine stopped, while it
-        // worked) says so, rather than ending on a failed step.
-        if !model.transcript.isRunning, cut == nil, let last, case .assistant(let step) = messages[last], step.error?.isInterruption == true {
+        if cut == nil, let step = Self.interruptedStep(in: messages, isRunning: model.transcript.isRunning) {
             rows.append(.notice(step.id + "#interrupted", "pause.circle", "Interrupted before it finished: send a message to carry on"))
         }
         if let cut {
@@ -699,9 +702,11 @@ private struct RowView: View, Equatable {
         case .user(let message) where CommandMessages.shared.text(of: message).hasPrefix(Wakes.marker):
             WakeRow(note: String(CommandMessages.shared.text(of: message).dropFirst(Wakes.marker.count)), at: message.time.created)
         case .user(let message):
-            let (text, comments, paths, references) = SentMessage.split(CommandMessages.shared.text(of: message))
+            let written = CommandMessages.shared.text(of: message)
+            let (text, comments, paths, references) = SentMessage.split(written)
             let stored = (message.files ?? []).enumerated().map { AttachmentItem.stored($1, id: "\(message.id)#\($0)") }
             YourMessage(text: text, references: references, folders: folders(), attachments: stored + Attachments.paths(paths, besides: (message.files ?? []).compactMap(\.fileURL)).map(AttachmentItem.path), comments: comments, sent: Date(timeIntervalSince1970: message.time.created / 1000),
+                        fromPhone: FromPhone.isFromPhone(written),
                         fork: { fork(message) }, undo: { undo(message) },
                         undoNote: YourMessage.undoNote(in: directory),
                         isOffline: isOffline)
@@ -719,7 +724,7 @@ private struct RowView: View, Equatable {
         case .widget(let call):
             WidgetCard(call: call, send: answerAgent)
         case .picture(let call):
-            MadePictureRow(call: call)
+            MadePictureRow(call: call, directory: directory)
         case .sent(let call):
             AgentSentRow(call: call)
         case .subagent(let call):
@@ -1000,11 +1005,20 @@ struct WritingText: View {
 
     var body: some View {
         // Still being written: a code block it ends in is colored once it's done.
-        MarkdownText(text: isWriting ? writing?.text(row: row, part: part) ?? text : text, folders: folders, isWriting: isWriting)
+        let shown = isWriting ? writing?.text(row: row, part: part) ?? text : text
+        MarkdownText(text: shown, folders: folders, agents: MarkdownText.agents(namedIn: shown), isWriting: isWriting)
     }
 }
 
 struct MarkdownText: View {
+    /// The agents `text` names with "&" (a bot's face and color, as in your messages); none
+    /// without an "&", so most replies aren't looked through.
+    /// Only for a reply with an "&" before a name: one with "&&" or "& " in its code doesn't look
+    /// up (and follow) your sessions.
+    static func agents(namedIn text: String) -> [MessageMentions.Agent] {
+        text.range(of: #"&[^\s&]"#, options: .regularExpression) != nil ? MessageMentions.agents(namedIn: text) : []
+    }
+
     let text: String
     /// The project's folders: file names written as code in them become links.
     var folders: () -> [String] = { [] }
@@ -1181,12 +1195,48 @@ private struct TurnEndView: View {
     var reply: ((String) -> Void)?
     @Environment(AppModel.self) private var app
 
+    /// The model's account was refused because its sign-in couldn't be renewed: the engine says only
+    /// "Request failed: 400" then (a key refused, the service says why itself).
+    private var signInEnded: Bool {
+        idle.error?.type == "provider.auth" && idle.error?.message.hasPrefix("Request failed") == true
+    }
+
+    /// What went wrong; an ended sign-in said plainly, with the service's words after it.
+    /// A provider that turned the request down for want of a sign-in, whatever the engine calls it.
+    private var refused: Bool {
+        idle.error.map { $0.type == "provider.auth" || Catalog.isSignInRefusal($0.message) } == true
+    }
+
+    private var message: String {
+        guard let error = idle.error else { return "The run failed." }
+        guard signInEnded else {
+            guard refused, error.type != "provider.auth" else { return error.message }
+            let there = RemoteFolder.machine(of: directory).map { " on \($0)" } ?? ""
+            return "This model’s account isn’t signed in\(there), so the request was refused (\(error.message)). Sign in to it again in Accounts, or choose another model."
+        }
+        let ended = "This model's sign-in has ended and couldn't be renewed, so the request was refused (\(error.message))."
+        // A machine signs in on its own, to its plans, or to a plan's coding agent there.
+        if let machine = RemoteFolder.machine(of: directory) {
+            return ended + " Sign in to it on \(machine) in Accounts, or use its plan's coding agent there (Codex for ChatGPT)."
+        }
+        return ended + " Sign in to its account again."
+    }
+
     var body: some View {
         switch idle.outcome {
         case .failed:
             VStack(alignment: .leading, spacing: 8) {
-                ErrorCard(message: idle.error?.message ?? "The run failed.")
+                ErrorCard(message: message)
                 HStack(spacing: 8) {
+                    // The model's account to sign in to again: in Accounts, where this conversation
+                    // runs (a machine signs in on its own).
+                    if refused {
+                        let machine = RemoteFolder.machine(of: directory)
+                        Button(signInEnded ? "Sign In Again" : "Open Accounts", systemImage: "person.crop.circle") { app.openAccounts(on: machine) }
+                            .buttonStyle(.glass)
+                            .controlSize(.small)
+                            .help(machine.map { "Accounts, on \($0)" } ?? "Accounts")
+                    }
                     // A coding agent to sign in to: where this conversation runs (a machine signs in
                     // on its own), Accounts open on it.
                     if idle.error?.type == "signin" {
@@ -1454,10 +1504,13 @@ private struct AgentSentRow: View {
     @Environment(AppModel.self) private var app
 
     private var input: JSONValue? {
-        switch call.state {
+        let input: JSONValue? = switch call.state {
         case .running(let input, _), .completed(let input, _, _), .failed(let input, _, _, _): input
         case .streaming: nil
         }
+        // Grok's, sent before the bridge read its arguments out of its own wrapping.
+        if let wrapped = input?["tool_input"], wrapped["text"] != nil || wrapped["to"] != nil { return wrapped }
+        return input
     }
 
     /// What the tool said back: the answer it waited for, or that it's sent.
@@ -1495,7 +1548,7 @@ private struct AgentSentRow: View {
             }
         } content: {
             if !text.isEmpty {
-                MarkdownText(text: text)
+                MarkdownText(text: text, agents: MarkdownText.agents(namedIn: text))
                     .padding(.leading, 24)
             }
             // What it answered, when it was waited for.
@@ -1505,7 +1558,7 @@ private struct AgentSentRow: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .padding(.leading, 24)
-                MarkdownText(text: answer)
+                MarkdownText(text: answer, agents: MarkdownText.agents(namedIn: answer))
                     .padding(.leading, 24)
             }
         }
@@ -1630,7 +1683,7 @@ private struct AgentMessageRow: View {
                     .help("Open \(from)'s conversation")
             }
         } content: {
-            MarkdownText(text: text)
+            MarkdownText(text: text, agents: MarkdownText.agents(namedIn: text))
                 .padding(.leading, 24)
         }
     }
@@ -1829,5 +1882,21 @@ private struct CutFade: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+extension TranscriptView {
+    /// A run cut off with no end of its own (Kuvo Code quit, or its engine stopped, while it
+    /// worked): the step it stopped in, which the conversation says was interrupted, rather than
+    /// ending on a failed step. None while it runs, or once its run has an end (Stop gives it one).
+    static func interruptedStep(in messages: [Message], isRunning: Bool) -> Message.Assistant? {
+        let last = messages.last { message in
+            switch message {
+            case .modelSwitched, .agentSwitched: false
+            default: true
+            }
+        }
+        guard !isRunning, case .assistant(let step)? = last, step.error?.isInterruption == true else { return nil }
+        return step
     }
 }

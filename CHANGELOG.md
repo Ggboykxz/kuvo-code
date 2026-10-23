@@ -5,6 +5,165 @@ Unreleased, in plain words about what they'll see, as part of the change itself.
 release, Unreleased is renamed to the version; the release notes come from that section.
 
 ## Unreleased
+
+- A new app icon: Kuvo Code's five bots huddled together, each in its own color, with the coral one in front, on cream in light mode and on black in dark mode.
+- A remote machine's engine runs on its own, with its sessions, bots and group chats: quitting Kuvo Code or clicking Disconnect leaves it running, it no longer stops after a day without Kuvo Code, and it starts again by itself if it crashes.
+- Stop Engine in Settings › Machines stops a machine's engine until you click Start Engine, through restarts of the machine too.
+- Open at login, in Settings › General: Kuvo Code opens in the background when you log in, without its window, so your bots and sessions on this Mac keep working from then on. Its engine also starts with the app now, whether or not the window is open.
+- Each computer has its own settings: with machines, Settings' sidebar has a page for each, and a machine's Accounts, Custom Auto, Agents, Permissions, Commands, Skills, Integrations, MCP Servers, Engine and Worktrees are its own, in tabs named for it. Your Mac no longer copies its settings, keys and sign-ins to machines; a new machine starts with a copy, once.
+- Also Apply to…: after you change a setting on one computer, a bar at the bottom of the page makes the same change on another computer, or every one, keys included.
+- With machines, the sidebar has a page for each computer, with its bots, chats and projects: swipe with two fingers between them, or click one below the sidebar (or above it, as names: Settings › Appearance › Switch computers with). It follows the tab you're on, and search covers every computer.
+- A machine's sessions, bots and group chats go by that machine's own permissions, not this Mac's.
+- The personalities you write for bots are on all your computers: one you make, change or delete on one reaches the others as Kuvo Code connects to them.
+- Agents on your machines write to agents on your other machines, and wait for their answers, with your Mac off too: your computers reach each other through Kuvo Code's relay.
+- A machine another Mac set up with a newer Kuvo Code is used as it is, rather than taken back to older versions.
+- A Mac with an older Kuvo Code can still use a machine a newer one set up: the machine keeps its own tools, keeps running by itself, and goes back to its own settings once nothing runs there.
+- Each machine keeps Kuvo Code up to date by itself: at night, while nothing runs there, a few days after a release, going back to what it had if the new version doesn't start. Turn it off, or update now, on the machine's Engine page in Settings.
+
+## 0.7.2
+
+- Edit Bot shows the model a bot really talks on: when the one picked for it belongs to an account you've signed out of, its conversation's model, rather than "Choose a Model".
+- With Claude Code in Build, a plan it makes on its own for a big task no longer leaves it stuck planning: it carries on building once its plan is done.
+- With Claude Code in Plan mode under Ask First, it writes its plan again; asking first about its plan file had it refused.
+- A bot in a group chat talks on the model its own conversation is on when the one picked for it belongs to an account you've signed out of (Edit Bot shows no model for it then), rather than saying it needs a sign-in for a model you aren't using.
+- Ask the agent for a screenshot of the page it's browsing and it shows in the conversation, not only inside its browser step.
+- With Cursor, a subagent still at work when you press Stop shows as stopped in its session, rather than finished, and how full the context is no longer counts Cursor's thinking twice.
+- With Codex, a file it creates or deletes shows its lines in the conversation and on its permission card, rather than +0 and the file's bare text, and a turn's token count includes every step, not only those just before its words.
+- With Grok and Antigravity, what a session has cost counts each turn once, rather than adding up the agent's running total every time it reports it, and pressing Stop while it waits on a permission shows that step as stopped, not declined.
+
+## 0.7.1
+
+- A message to a conversation or a bot whose model you're no longer signed in to says so right away, naming the account to sign in to, and stays in the composer, rather than going unanswered without a word. In a group chat, that bot says so and the others carry on, on your Mac or on a machine.
+- When a model's provider turns a message down because it isn't signed in, a bot in a group chat or a conversation says which account to sign in to again, and where, rather than the provider's own words, like "Missing required Authorization header".
+- A bot's reply that names another agent with &, like &Finance, shows its face and colored name, as your own messages do, in conversations and in the cards for messages between agents.
+- An agent can put a file in the conversation for you to see, like a chart it made or a PDF it found: a picture shows large, and any other file as a card that opens it in the side panel.
+- In a composer, Backspace right after an agent you named with &, like &Finance, removes the whole name at once.
+- A loader beside text, like a message card's "Waiting for its answer", sits in line with the words rather than below them.
+
+## 0.7.0
+
+- A sign-in whose page turned it down, or that the service couldn't finish, says so in words, rather than with the code the page sent back (like `access_denied`).
+- **Get beta updates** in Settings › General: turn it on to get new versions to try before they're released, through the same updates. Turned off, you keep the beta you have until the next release.
+- A project can use a terminal instead of the chat: in Edit Project, **Terminal Instead of Chat** takes a command (`omp`, `claude`, `codex`, `opencode`, `pi`…, with any flags: `claude --continue`), with the common ones a click away, and each new session in that project opens a terminal tab in the main area running it. **New Terminal Tab** (⌃⇧`, or ⌘K) opens a plain shell there for any project. The project's terminals are listed under it in the sidebar, and its menu has **New Conversation** to start a conversation anyway. Closing a tab, or the window, ends the shell; terminal tabs aren't kept when the app quits.
+- A change to Settings › Permissions' rules made outside that page, like in the engine's settings file, applies to conversations that are already open, not only to new ones.
+- In a group chat, the bot that's talking shows what it's doing under its name, like the file it's reading or the line it's thinking, so a long turn doesn't look stuck.
+- A conversation no longer goes blank when a long reply comes in; it used to show nothing until you scrolled.
+- The list that opens over the composer as you type /, @ or & no longer shows a dark block behind it.
+- Bots in a group chat answer small talk and quick questions straight away, and look things up (files, the web, other conversations) only when what's asked needs it.
+- An agent you name with & reads that conversation or writes to it only when what you ask needs it; a name that just comes up in your message stays a mention.
+- In a group chat you name a bot with &, as you name agents everywhere else; @ is only for files. Replying to a bot or clicking its face writes &Name.
+- A Markdown file's rendered view in Files draws Mermaid diagrams from `mermaid` code blocks, like flowcharts, Gantt charts and sequence diagrams, in light or dark, offline. A button shows a diagram's code, and one Mermaid can't read shows as code with what's wrong.
+- The context ring of a Cursor session counts the last request Cursor reports, rather than all of a reply's requests added up.
+- The first launch after an update that changes how your things are kept backs up your lists and settings first, then brings them up to date, while the window says Updating. Each bot's name, look and job are now also kept in its own folder, on this Mac or its machine.
+- A remote machine that restarts starts Kuvo Code's engine again by itself, as your Mac last started it, with its bots' wake-ups and your integrations' keys, so it carries on without your Mac. It keeps those keys between starts (only you can read them), and a line in your crontab there does the starting; removing the machine takes it out.
+- Move to Computer, in a bot's or a chat's right-click menu, moves it to this Mac or another of your machines, like one you just set up, with its conversation, memory, files and wake-ups; it carries on there. What you send it while it moves waits in the composer. What it leaves behind goes to the trash where it was, with a copy of its conversation. Bots that work in a project or with a coding agent stay where they are.
+- A group chat whose bots all live on the same machine can move there with Move to Computer, and keeps talking, holding its meetings and handing out work there while your Mac is off. A chat whose bots live on different computers stays on your Mac.
+
+## 0.6.6
+
+- Undo in a Claude Code, Codex or other coding agent's session works right after its turn ends or after Kuvo Code opens again; for a moment it said "Stop the agent first" while nothing was working.
+- Text on the window's cards (conversations, the side panel, Settings) is crisp in light mode: it was drawn see-through over the window's glass, which turned black a washed-out gray. The sidebar keeps the glass look.
+- Buttons and menus in Settings are readable again: 0.6.5 drew them pale behind white labels. Text areas in Settings (commit instructions, an agent's instructions) are the group itself, without a box inside it.
+- Settings › Accounts uses the same quiet gray groups as the other pages, rather than a yellowish one.
+
+## 0.6.5
+
+- Settings › Permissions says what Default comes to, like "Default (Allow)" or "Default (Ask First)", and an agent's own permissions show what Settings › Permissions has for it.
+- Settings reads more easily: brighter descriptions, the first sentence of each skill (all of it on hover) and a search field for skills, one-line fields you can see, a site count on Website Data, "Add Another" for a second account, "Added" beside integrations that need nothing, and MCP Servers sends you to Integrations for servers kept there. The sidebar scrolls to the page that's open.
+- Settings fits a narrow window: a row's control goes under its title rather than squeezing it, and no page pushes the sidebar out of the window.
+- The space around the cards moves the window, at the top, sides and bottom, and a double-click there does what a title bar's does. Settings' sidebar can be resized, like the sessions' sidebar, and keeps the same width.
+- The tab bar is off when you start: the window's cards reach the top, and you switch sessions in the sidebar or with ⌘K. Turn it on in View › Show Tab Bar or Settings › General. Without it, Settings shows one page at a time.
+- Settings has a cleaner look: a wider column, even spacing between sections, quieter groups with separators, text fields you can see, and shorter descriptions (the details are in tooltips). Its sidebar is grouped as Application, Models & Providers, Agents & Tools, Projects, Side Panel, and Privacy & Data.
+- Settings › Storage counts the coding agents Kuvo Code installed, under a kind of their own, and your bots' and chats' folders: its total left them out, often the biggest part.
+- A session on a machine keeps its Claude Code, Codex or Custom Auto model while the machine's coding agents start, after it connects or reconnects, rather than a new one starting on another model or an open one saying to choose one. Settings › Custom Auto no longer says an agent's models aren't signed in while the agents start.
+- Set Up Custom Auto in a machine's session opens that machine's lists, not this Mac's.
+- A bot whose memory writes its job in the heading ("## Job: Keeps CI green") shows that job under its name and knows it; with nothing written under such a heading, it asked you for its job again.
+- A group chat open in the window while you're in another app no longer marks itself read, which took away the notifications of what was said; it waits for you, as a session does.
+- A session you switch to a coding agent's model keeps its side panel: its pages, terminals and files go with it to the new session, and its agent goes on in the page it was using, rather than staying behind the archived one.
+- With two sessions side by side, Add to Message and Add Screenshot to Message from the panel go to the session you're working in, the one beside once you've clicked into it, rather than the other; the panel stays that session's.
+- A group chat's panel browser doesn't offer Add Screenshot to Message, which did nothing there: a group chat's messages are words only.
+- The number on the Dock counts a session once while its subagents ask you something, rather than once for each subagent.
+- While the coding agents start, the composer's chip shows the session's Claude Code, Codex or Custom Auto model as it is, rather than the engine's default as if that were the one in use.
+- A file's path typed in the panel browser's address field ("/Users/you/site/index.html", "~/report.html") opens the file; it went to a web address made of the path.
+- Setting up the coding agents no longer leaves a few hundred megabytes of downloads behind on your Mac (on first launch, a build of Claude's that isn't used); what an earlier version kept goes the next time Kuvo Code starts.
+- Settings › Commands lists Claude Code's commands kept in folders of ~/.claude/commands too (/frontend:component there comes over as frontend-component); only those at its top showed.
+- Selecting in a conversation works as one selection again: it stays when you let go, whichever way you drag, looks the same in every reply and step it takes in, and Add to Chat and Copy show over it, for a double-clicked word or a triple-clicked paragraph too.
+- In a session that asks before reading files outside its folder, the agent's browser no longer attaches such a file to a website's upload without asking first, on this Mac and on machines; it said so for opening one, but uploads went through.
+- The context ring of a Claude Code session counts against the window Claude Code gives the model on your plan, 1M tokens for Opus 5.5, rather than 200K for every model it didn't call 1M, which showed a long session full ("218K / 200K") with most of its room left.
+- The context ring of a Grok or Antigravity session counts against the window the agent says its model has, once it has answered, rather than 256K for every Grok model and 1M for every Antigravity one.
+- The context ring of a model whose provider takes less than its whole window in one request (OpenAI's GPT-5 models take 272K of 400K, and most of GitHub Copilot's take less too) counts against what it takes: the conversation was summarized while the ring still showed room left.
+
+## 0.6.4
+
+- A message you'd sent for the agent's next step that was still waiting when Kuvo Code quit shows under Paused when you open the session again, first in line, and Resume sends it. It showed as sending for ever, and Resume went past it to the queue.
+- When Grok looks through its tools for one, the step reads "Looked for a tool" with what it looked for, rather than its words run together as a tool's name.
+- Clearing the panel browser's history no longer leaves the icon of a site you'd just visited behind, kept if it was still loading as you cleared.
+- A machine you reach at two addresses, like its name on your local network and over Tailscale, is one machine. Adding it again at its other address, or having added both before, makes the second one of the first's addresses, rather than a second machine that set everything up again, listed every session twice, and on removal would have signed out and stopped what the first still used. Kuvo Code uses whichever address answers. Right-click it in Settings › Machines to stop using an address, or, when one of the two can't be reached to tell, to say they're the same computer.
+- Signing in on a machine's browser (to connect an integration, or when an agent asks) no longer freezes when a site asks for a passkey: the site, or a frame of another site in its page like a sign-in button, hears there's none here and offers its other ways, such as "Try another way". Chrome's passkey prompt, which the live view couldn't show, held the page still. The panel's browser on your Mac refuses passkeys the same way, however a site asks.
+- Modes, permission rules and other settings you change reach your connected machines too, not only the next time they connect: a machine's engine starts over with them once nothing is running there. A mode you added showed up only on this Mac.
+- Custom Auto's lists are each place's own: this Mac and each machine have their own, made from the models each has, picked at the top of Settings › Custom Auto. A machine's lists were a copy of this Mac's, with models it might not have, and changing them there changed this Mac's.
+- Undoing a message that waited in the queue, then sending, keeps the agent's reply from before it for good; in 0.6.3 it still went a moment later, as the engine confirmed the undo.
+- Searching the sidebar for words like "read" or "asked" no longer lists nearly every session: Kuvo Code's own wording for the agent's steps ("Read …", "Asked you a question") isn't searched, only what a step worked on, like its file or command.
+- Removing a machine closes the tabs of its bots, which stayed open waiting for it.
+- A session shows working when Kuvo Code opens while a subagent of one of its subagents is still at work, not only one of its own.
+- Starting a bot from a shared one whose job and details are on the same line keeps the details in its first message; only the job's own sentence is left out, as it's said first.
+- A session archived with Kuvo Code 0.6.2 or earlier gets its wake-ups back when you bring it back; they stayed paused, as if you'd paused them.
+- Redo after typing between two undos keeps what you typed and nothing else: the message the first undo put in the composer, which Redo brings back to the conversation, no longer stays there to be sent twice.
+- Sessions and bots on Cursor have Kuvo Code's own tools (send_message, the panel's browser, show_in_panel), and a message Grok sends another session shows what it said and to whom. 0.6.3 said so, but its copy of the coding agents' bridge was built before these fixes.
+
+## 0.6.3
+
+- Switching an MCP server between running on this Mac and on the web no longer writes a half-typed environment variable or header into the other kind.
+- An MCP server's command keeps a backslash inside double quotes, as a shell does ("a\.b" stays a\.b).
+- Signing in on a machine that can't be reached says so, rather than that something on your Mac is using the sign-in's port.
+- A machine whose engine another Mac of yours started is used with that Mac's accounts, as it says; this Mac's keys no longer go into it (where they'd stay after you removed the machine).
+- Removing a connected machine signs its coding agents out there too, as it said it would; their sign-ins stayed when the machine was connected.
+- Connecting to a machine after an update of Kuvo Code no longer stops a session still working there to update its engine; the update waits until nothing runs.
+- A new password typed in a sign-in card for a saved account is saved in its place; agents allowed to sign in on their own kept using the old one. Allowing them with a password filled in from Passwords asks for Touch ID, as it should.
+- Turning notifications on in System Settings after saying no works without restarting Kuvo Code.
+- A message Grok sends another session shows what it said and to whom, and opens; it showed only "To another agent" and couldn't be opened. Grok's use of Kuvo Code's other tools (the panel, its browser) shows what it asked for too.
+- A summary of the conversation that failed says so ("Couldn't summarize the conversation"); it read "Summarized the conversation to save space", and could turn an earlier summary into a failed one.
+- A project folder that a git repository around it ignores (such as one under a dotfiles repository at your home folder) lists its files in the panel and for @ mentions; the list was empty.
+- Opening a bot whose machine isn't connected shows that it's waiting for the machine, with Connect Now, under the bot's name. A bot on a machine whose sessions hadn't been listed on this Mac yet showed the welcome screen.
+- Sessions and bots running on Cursor have Kuvo Code's own tools, as the other coding agents do: they can answer another session with send_message, use the panel's browser and show things in the panel. A bot on Cursor asked by another session went looking for send_message in your files.
+- Archiving a session the engine couldn't archive just then leaves it where it was, with its wake-ups running; it looked archived, came back on its own later, and its wake-ups stayed held.
+- A session moved to a coding agent's model takes its wake-ups and watches along; they stayed with the old session in Archived, held there.
+- A wake-up an agent sets after its session was archived waits until you bring the session back, as the ones it had already do.
+- Redo after undoing twice keeps what you typed in the composer between the two undos; it used to put the composer back as it was before the first undo, and what you'd typed was lost.
+- In the Changes tab, files whose names have quotes, a backslash or a tab in them, or a folder named like "Plan b", are listed by their real paths, and Discard and Stage work on them. Some were listed under another file's name, and Discard could act on that file instead.
+- Discarding a deleted file whose folder has since been replaced by a file of the same name moves that file to the Trash. It used to be deleted for good.
+- Unstage works in a repository with no commits yet; it said git couldn't restore the file.
+- In the Changes tab of a folder that isn't a git repository, or of a project on a machine, a file the agent edited more than once no longer shows lines like "--- a/notes.md" among its changes, and its counts match what it shows.
+- When merging a worktree back would conflict, the files are named as they are; a name with accented letters or quotes showed as escaped codes ("caf\303\251.txt").
+- Searching the sidebar for words like "you" or "agent" no longer lists every session under In Conversations; it finds only conversations where they were said.
+- Switching to another session in the same folder with the Changes tab open shows that session's changes under This Session (and outside git); within a few seconds it went back to showing the first session's. A comment half written on a line stays with the session it was written in.
+- Undoing a message that waited in the queue, then sending, no longer takes away the agent's reply from before it (until the conversation was read again); only the message and what came after it go.
+- The Now button on a session's wake-up sends it once: clicked again while it was on its way, the agent got it twice.
+- Wake-ups you paused stay paused when you archive the session and bring it back; bringing it back resumed them.
+- A bot imported from a .kuvobot file says its job once in its first message; the job's line was there twice.
+- A session whose subagent was still working when Kuvo Code opened (or a machine reconnected), one sent off in the background, shows as working in the sidebar, its tab and its bot; it showed as done.
+- A bot on a machine that runs with a coding agent (or Custom Auto) gets its wake-ups and watches while your Mac is off; they were sent to the engine, which doesn't have its conversation, and never arrived.
+## 0.6.2
+
+- A worktree's branch named after a title in another language keeps its letters ("Giriş düzeltmesi" is giris-duzeltmesi, not giri-dzeltmesi).
+- A model or mode changed elsewhere (a bot's editor, your phone, another Mac) shows in a conversation you have open, and picking the one before works again.
+- Try Again sends a message's files again when they were sent inline (to a machine, or from your phone); they used to be dropped.
+- A session deleted while it worked no longer counts as working, which kept the Mac awake, and its notifications go with it.
+- A message for a coding agent on a machine that couldn't go as the machine connected (its agents still starting) goes within a minute, rather than at the machine's next connection.
+- Editing a bot while a personality it used was changed or removed no longer undoes your edit.
+- A bot's job keeps all of its section in its memory, its own sub-headings and code included; it used to stop at the first line starting with #. A job written in Edit Bot by an older version is no longer lost when the bot's memory has an empty Job heading.
+- In a group chat, a bot's message that only starts with "Pass" ("Pass rate is 98% on main.") is no longer taken as passing its turn and left out.
+- Closing the window with a machine's conversation in view no longer leaves two start tabs in its panel.
+- A message with comments on the changes that didn't go, or was on its way when Kuvo Code quit, comes back to its composer with its comments.
+- Notifications hide AWS access key IDs (AKIA…) too, and no longer hide names that only start like a key (npm_config_…), which also took their answer buttons away.
+
+## 0.6.1
+
+- Requests to a model whose sign-in ran out and couldn't be renewed (shown only as "Request failed: 400") now say so, with Sign In Again, and Accounts and the sidebar mark that account.
+- Sign-ins that renew themselves with a new token each time (an older ChatGPT sign-in, GitLab Duo) are no longer copied to your machines, where two copies ended the sign-in everywhere; each machine signs in to its plans on its own, in Accounts with the machine picked. Copies made before are taken off the machines. API keys and GitHub Copilot still go to all of them.
+
+## 0.6.0
+
 - With Find open, Esc closes it first; press Esc again to stop the agent.
 - Get Skills lists each skill of a repository once, not again for copies it keeps for other tools.
 - With a coding agent, a message you send again after undoing one no longer vanishes from the conversation.

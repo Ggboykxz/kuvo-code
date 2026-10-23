@@ -205,10 +205,58 @@ final class Catalog {
         return isKnown(ref) && offeredModel(ref) == nil
     }
 
+    /// A model whose account you signed out of (its provider has a sign-in, and isn't signed in):
+    /// the engine would drop a message on it without a word, so it's said before it's sent.
+    /// Only then: a model missing from a list for a moment (a coding agent's, as it starts) goes
+    /// to its agent, which says for itself if it can't run it.
+    func needsSignIn(_ ref: ModelRef?) -> Bool {
+        guard let ref, isUnavailable(ref) else { return false }
+        return integrations.contains { $0.id == ref.providerID && !$0.isConnected && !$0.methods.isEmpty }
+    }
+
+    /// Why `ref` can't run here, and what to do, for one `isUnavailable` turned down: its account
+    /// to sign in to (on the machine named `on`, as Settings › Accounts lists it), or another
+    /// model. Without it, the engine takes the message and drops it without a word.
+    func unavailable(_ ref: ModelRef, on machine: String? = nil) -> String {
+        let name = model(ref)?.name ?? ref.id
+        let there = machine.map { " on \($0)" } ?? ""
+        if let provider = integrations.first(where: { $0.id == ref.providerID }), !provider.isConnected, !provider.methods.isEmpty {
+            return "\(name) needs a sign-in\(there): sign in to \(signInName(ref.providerID)) in Settings › Accounts, or choose another model."
+        }
+        return "\(name) isn’t available\(there) now: choose another model."
+    }
+
+    /// A provider's refusal that means it isn't signed in (a request sent without its credentials,
+    /// or ones it turned down), in words saying what to do, for `ref`'s provider (on the machine
+    /// named `on`, or its model's when it's not known); any other error as it was said.
+    func plain(_ error: String, for ref: ModelRef?, on machine: String? = nil) -> String {
+        guard Self.isSignInRefusal(error) else { return error }
+        let there = machine.map { " on \($0)" } ?? ""
+        return "\(ref.map { signInName($0.providerID) } ?? "Its model’s account") isn’t signed in\(there): sign in to it again in Settings › Accounts, or choose another model."
+    }
+
+    /// Whether a provider's error means it isn't signed in.
+    static func isSignInRefusal(_ error: String) -> Bool {
+        error.range(of: #"authorization header|unauthori[sz]ed|\b401\b|\b403\b|forbidden|invalid api key"#, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
     /// Whether the models `ref` would be among are known yet: the engine's, or the coding agents'
-    /// (this Mac's; a machine has none).
+    /// (this Mac's, or the machine's beside its engine).
     private func isKnown(_ ref: ModelRef) -> Bool {
-        OutsideAgents.runsInBridge(ref.providerID) && isMac ? areAgentsLoaded : isLoaded
+        OutsideAgents.runsInBridge(ref.providerID) ? areAgentsLoaded : isLoaded
+    }
+
+    /// What the composer's chip shows for `ref`: its model; one whose models aren't known yet
+    /// (the coding agents still starting) as it is, by its ID, not the default as if that were
+    /// the one in use; nothing picked, the default.
+    func shownModel(_ ref: ModelRef?) -> Model? {
+        if let model = model(ref) { return model }
+        guard let ref, !isKnown(ref) else { return ref == nil ? defaultModel : nil }
+        var placeholder = Self.autoTemplate
+        placeholder.id = ref.id
+        placeholder.providerID = ref.providerID
+        placeholder.name = ref.providerID == OutsideAgents.autoProvider ? "Custom Auto" : ref.id
+        return placeholder
     }
 
     /// The model a new session or bot starts on: the first of `wanted` (the one picked, the one
@@ -314,13 +362,14 @@ final class Catalog {
         if read { areAgentsLoaded = true }
     }
 
-    /// The agents bridge stopped for good: its agents and their models aren't there to use.
-    func forgetAgents() {
+    /// The agents bridge stopped for good, or isn't there (a machine's engine started without
+    /// it): its agents and their models aren't there to use. `untilBack`: it's away for now (its
+    /// machine disconnected), and they're unknown until it's back, not gone.
+    func forgetAgents(untilBack: Bool = false) {
         agentIntegrations = []
         agentModels = []
         merge()
-        // Known: not there.
-        areAgentsLoaded = true
+        areAgentsLoaded = !untilBack
     }
 
     /// True while the agents are being asked anew.
@@ -372,6 +421,37 @@ final class Catalog {
     func loadCommands(in directory: String) async {
         guard let api else { return }
         do { projectCommands[directory] = try await api.commands(directory: directory) } catch { log.error("commands: \(String(describing: error), privacy: .public)") }
+    }
+
+    /// Sign-ins that ran out and couldn't be renewed (the service refused them), by provider: the
+    /// one a run on its model was refused.
+    private var endedSignIns: [String: String] = [:]
+
+    /// A run on `provider`'s model was refused its account: its sign-in in use, if that's one (a
+    /// key refused says why itself).
+    func signInEnded(_ provider: String) {
+        guard !OutsideAgents.runsInBridge(provider), let active = activeCredential(of: provider),
+              active.method == "oauth", let id = active.credentialID, endedSignIns[provider] != id else { return }
+        endedSignIns[provider] = id
+    }
+
+    /// A step on `provider`'s model ended well: its sign-in works (renewed after all).
+    func signInWorks(_ provider: String) {
+        if endedSignIns[provider] != nil { endedSignIns[provider] = nil }
+    }
+
+    /// The plans whose sign-in in use ended.
+    var endedProviders: [String] { endedSignIns.keys.filter(hasEndedSignIn).sorted() }
+
+    /// `provider`'s sign-in in use ended: the one refused is still the one in use (signed in again,
+    /// it's another).
+    func hasEndedSignIn(_ provider: String) -> Bool {
+        guard let id = endedSignIns[provider] else { return false }
+        return activeCredential(of: provider)?.credentialID == id
+    }
+
+    private func activeCredential(of provider: String) -> Integration.Connection? {
+        integrations.first { $0.id == provider }?.connections.first { $0.type == "credential" }
     }
 
     func handle(_ event: ServerEvent) {

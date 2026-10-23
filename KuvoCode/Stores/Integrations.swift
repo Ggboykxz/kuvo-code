@@ -67,9 +67,10 @@ nonisolated enum Integrations {
     /// engine's Code Mode, the agent sees only a short list of them under one tool, and went to
     /// the service's site in the browser instead.
     /// With `bot`, the settings that bot's folder has, naming its own keys rather than the shared ones.
-    static func settings(for service: Service, bot: String? = nil) -> JSONValue? {
+    /// On a machine (`machine`), its keys are named where that machine keeps them.
+    static func settings(for service: Service, bot: String? = nil, on machine: String? = nil) -> JSONValue? {
         let variable = { (name: String) in bot.map { IntegrationKeys.variable(service.id, name, bot: $0) } ?? IntegrationKeys.variable(service.id, name) }
-        guard case .object(var settings) = server(for: service, variable: variable) else { return nil }
+        guard case .object(var settings) = server(for: service, variable: variable, machine: machine) else { return nil }
         settings["codemode"] = .bool(false)
         return .object(settings)
     }
@@ -77,8 +78,9 @@ nonisolated enum Integrations {
     /// Brings added integrations up to date before the engine starts: tools made plain tools (for
     /// those added before they were), a package's server started as it's pinned now (so a new
     /// version or option reaches integrations added with an older one), and keys read from their
-    /// files where an earlier version named them in the environment.
-    @MainActor static func upgrade(_ config: EngineConfig) {
+    /// files where an earlier version named them in the environment. A machine's (`machine`) as
+    /// it keeps its keys.
+    @MainActor static func upgrade(_ config: EngineConfig, on machine: String? = nil) {
         guard case .object(let servers) = config.value(at: MCPSettings.path) else { return }
         for (id, original) in servers {
             guard let service = service(id), case .object(var server) = original else { continue }
@@ -86,8 +88,13 @@ nonisolated enum Integrations {
             // place of the package, whose key goes.
             if case .official = service.way, case .array(let old)? = server["command"], old.first?.string == Launcher.name,
                let settings = settings(for: service) {
-                for variable in Self.keyNames(in: original) { IntegrationKeys.set(nil, for: variable) }
-                config.set(settings, at: MCPSettings.path + [id])
+                let keys = Self.keyNames(in: original)
+                if let machine {
+                    Task { for variable in keys { try? await MachineBox.setKey(variable, nil, on: SSHConnection(destination: machine)) } }
+                } else {
+                    for variable in keys { IntegrationKeys.set(nil, for: variable) }
+                }
+                config.set(settings, at: MCPSettings.path + [id], noted: false)
                 continue
             }
             if server["codemode"] == nil { server["codemode"] = .bool(false) }
@@ -102,25 +109,26 @@ nonisolated enum Integrations {
                     server["environment"] = .object(environment)
                 }
             }
-            let updated = Self.keyFiles(in: .object(server))
-            if updated != original { config.set(updated, at: MCPSettings.path + [id]) }
+            let updated = Self.keyFiles(in: .object(server), on: machine)
+            if updated != original { config.set(updated, at: MCPSettings.path + [id], noted: false) }
         }
     }
 
-    /// Settings with each key named by the file this Mac's engine reads it from: one an earlier
-    /// version named in the environment (`{env:KUVO_KEY_…}`), or in another temporary folder.
-    nonisolated static func keyFiles(in value: JSONValue) -> JSONValue {
+    /// Settings with each key named by the file the computer's engine reads it from (this Mac's,
+    /// or `machine`'s): one an earlier version named in the environment (`{env:KUVO_KEY_…}`), or
+    /// in another folder.
+    nonisolated static func keyFiles(in value: JSONValue, on machine: String? = nil) -> JSONValue {
         switch value {
         case .string(let text):
             guard text.contains("KUVO_KEY_"), let regex = try? NSRegularExpression(pattern: #"\{(?:env|file):[^{}]*?(KUVO_KEY_[A-Z0-9_]+)\}"#) else { return value }
             let original = text as NSString
             let result = NSMutableString(string: text)
             for match in regex.matches(in: text, range: NSRange(location: 0, length: original.length)).reversed() {
-                result.replaceCharacters(in: match.range, with: IntegrationKeys.reference(original.substring(with: match.range(at: 1))))
+                result.replaceCharacters(in: match.range, with: IntegrationKeys.reference(original.substring(with: match.range(at: 1)), on: machine))
             }
             return .string(result as String)
-        case .object(let object): return .object(object.mapValues(keyFiles))
-        case .array(let array): return .array(array.map(keyFiles))
+        case .object(let object): return .object(object.mapValues { keyFiles(in: $0, on: machine) })
+        case .array(let array): return .array(array.map { keyFiles(in: $0, on: machine) })
         default: return value
         }
     }
@@ -156,15 +164,15 @@ nonisolated enum Integrations {
     }
 
     /// `variable` names a key's variable (the shared key's, or a bot's own).
-    private static func server(for service: Service, variable: @escaping (String) -> String) -> JSONValue? {
-        let env = { (name: String) in JSONValue.string(IntegrationKeys.reference(variable(name))) }
+    private static func server(for service: Service, variable: @escaping (String) -> String, machine: String?) -> JSONValue? {
+        let env = { (name: String) in JSONValue.string(IntegrationKeys.reference(variable(name), on: machine)) }
         switch service.way {
         case .official(let url):
             return .object(["type": .string("remote"), "url": .string(url)])
         case .officialToken(let url, let key, _):
             return .object([
                 "type": .string("remote"), "url": .string(url), "oauth": .bool(false),
-                "headers": .object(["Authorization": .string("Bearer " + IntegrationKeys.reference(variable(key.name)))]),
+                "headers": .object(["Authorization": .string("Bearer " + IntegrationKeys.reference(variable(key.name), on: machine))]),
             ])
         case .officialApp(let url, _):
             return .object([
@@ -186,8 +194,7 @@ nonisolated enum Integrations {
         }
     }
 
-    /// Integrations that only work on this Mac, left out of machines' settings: those that use
-    /// its apps. (Those you sign in to go too: the sign-in is copied, see `syncSignIns`.)
+    /// Integrations that only work on this Mac, which machines don't offer: those that use its apps.
     static var macOnly: [String] {
         all.compactMap { service in
             if case .package(_, _, _, _, _, true) = service.way { return service.id }
@@ -243,7 +250,12 @@ nonisolated enum Integrations {
 
     /// The integrations added in the engine's settings, by ID.
     @MainActor static func added(in config: EngineConfig) -> [String] {
-        (config.value(at: MCPSettings.path)?.object ?? [:]).keys.filter { service($0) != nil }.sorted()
+        added(inSettings: config.settings)
+    }
+
+    /// Those added in `settings` (a box's, say).
+    static func added(inSettings settings: [String: JSONValue]) -> [String] {
+        (settings["mcp"]?["servers"]?.object ?? [:]).keys.filter { service($0) != nil }.sorted()
     }
 
     /// The sites of the integrations `ids`, those with tools of their own.

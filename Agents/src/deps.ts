@@ -58,9 +58,11 @@ export class Deps {
       stderr: "pipe",
     })
     const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()])
-    // On a machine, Bun's cache of what it downloaded goes once it's installed: nothing there
-    // needs it again, and it would grow with every update (installs are copied out of it).
-    if (process.env.KUVO_AGENTS_REMOTE === "1") rmSync(join(this.cache, "install"), { recursive: true, force: true })
+    // Bun's cache of what it downloaded goes once it's installed, on this Mac as on a machine:
+    // nothing needs it again, it holds packages left out of the install (a platform's build of
+    // Claude's, hundreds of megabytes), and it would grow with every update. Not while another
+    // agent's install reads from it.
+    if (installing.size <= 1) rmSync(join(this.cache, "install"), { recursive: true, force: true })
     if (code !== 0) throw new Error(`Couldn't download what the agent needs (${packages.map((pkg) => pkg.name).join(", ")}): ${stderr.trim().slice(-400)}`)
   }
 

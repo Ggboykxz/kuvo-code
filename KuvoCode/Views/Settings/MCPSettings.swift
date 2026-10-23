@@ -5,6 +5,7 @@ import SwiftUI
 /// Each can be turned off, connected again, or signed in to.
 struct MCPSettings: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.settingsBox) private var box
     @State private var live: [MCPServer] = []
     @State private var editing: ServerEdit?
     /// What to remove once its sheet has closed (and its fields are done saving).
@@ -12,7 +13,7 @@ struct MCPSettings: View {
     /// A server's sign-in, while it's open.
     @State private var signingIn: IntegrationRef?
 
-    private var config: EngineConfig { app.engineConfig }
+    private var config: EngineConfig { app.config(for: box) }
     static let path = ["mcp", "servers"]
     /// The app's own browser tools: not yours to change.
     static let builtIn: Set = ["kuvo-browser"]
@@ -27,14 +28,22 @@ struct MCPSettings: View {
             guard !builtIn.contains(id), case .object(let settings) = server, settings["codemode"] == nil else { return nil }
             return (path + [id, "codemode"], .bool(false))
         }
-        if !changes.isEmpty { config.set(changes) }
+        if !changes.isEmpty { config.set(changes, noted: false) }
     }
 
     /// Your servers: not Kuvo Code's own, nor integrations', which their page adds and removes
-    /// (with their keys, sign-ins and machines' copies, which removing one here would leave).
+    /// (with their keys and sign-ins, which removing one here would leave), where it has one.
     private var names: [String] {
         let configured = config.value(at: Self.path)?.object?.keys.map { $0 } ?? []
-        return Set(configured + live.map(\.name)).subtracting(Self.builtIn).filter { Integrations.service($0) == nil }.sorted()
+        return Set(configured + live.map(\.name)).subtracting(Self.builtIn).filter { !integrationsHere || Integrations.service($0) == nil }.sorted()
+    }
+
+    /// This computer has an Integrations page, which keeps integrations' servers.
+    private var integrationsHere: Bool { SettingsPage.integrations.isShown(on: box) }
+
+    /// The popular servers that run here: on a machine, not those only a Mac can run.
+    private var popular: [MCPCatalog.Server] {
+        box.machine == nil ? MCPCatalog.servers : MCPCatalog.servers.filter { !MCPCatalog.macOnly.contains($0.id) }
     }
 
     var body: some View {
@@ -51,34 +60,35 @@ struct MCPSettings: View {
             } header: {
                 Text("Servers")
             } footer: {
-                Text("MCP servers give the agent more tools, like a database, an issue tracker or your design files. A server on this Mac runs a command; one on the web is a URL.")
+                Text("A server on \(box.machine == nil ? "this Mac" : app.name(of: box)) runs a command; one on the web is a URL.")
                     .foregroundStyle(.secondary)
             }
 
             ConfigProblem()
 
             Section {
-                ForEach(MCPCatalog.servers) { server in
-                    HStack(alignment: .firstTextBaseline) {
+                ForEach(popular) { server in
+                    SettingsRowLayout {
                         VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
-                                Text(server.title)
-                                Text(server.access.title)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                            }
+                            Text("\(server.title)  \(Text(server.access.title).font(.subheadline).foregroundStyle(.secondary))")
                             Text(server.summary)
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                         }
-                        Spacer()
-                        if config.value(at: Self.path + [server.id]) != nil {
+                        .settingsText()
+                        Group {
+                        if config.value(at: Self.path + [server.id]) != nil, integrationsHere, Integrations.service(server.id) != nil {
+                            // Added as an integration: kept on that page, not in Servers above.
+                            Button("In Integrations…") { app.settingsTabs.show(.integrations, on: box) }
+                                .help("Added from Integrations, where it's kept with its sign-in")
+                        } else if config.value(at: Self.path + [server.id]) != nil {
                             Label("Added", systemImage: "checkmark")
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                         } else {
-                            Button("Add") { add(server) }
+                            Button("Add") { MCPCatalog.add(server, to: config) }
                                 .accessibilityLabel("Add \(server.title)")
+                        }
                         }
                     }
                 }
@@ -100,7 +110,7 @@ struct MCPSettings: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .modifier(LiveMCPServers(servers: $live, api: { app.api }, change: config.settings))
+        .modifier(LiveMCPServers(servers: $live, api: { app.api(for: box) }, change: config.settings))
         .settingsDetail(item: $editing, title: { $0.name ?? "Add Server" }, onDismiss: removePending) { edit in
             ServerEditor(name: edit.name, taken: Set(live.map(\.name))) { editing = nil } remove: { path in
                 removal = path
@@ -111,9 +121,8 @@ struct MCPSettings: View {
             ConnectDetail(integrationID: ref.id, name: ref.service?.title, symbol: ref.service?.symbol, note: "The agent can use its tools now.") {
                 signingIn = nil
                 Task {
-                    if let api = app.api { for server in live where server.integrationID == ref.id { await app.reconnect(server.name, api: api, machine: nil) } }
+                    if let api = app.api(for: box) { for server in live where server.integrationID == ref.id { await app.reconnect(server.name, api: api, machine: box.machine) } }
                     await refresh()
-                    app.syncSignIns()
                 }
             }
         }
@@ -156,7 +165,7 @@ struct MCPSettings: View {
                 } else if isOn, status?.status == "failed" {
                     Button("Try Again") {
                         Task {
-                            if let api = app.api { await app.reconnect(name, api: api, machine: nil) }
+                            if let api = app.api(for: box) { await app.reconnect(name, api: api, machine: box.machine) }
                             await refresh()
                         }
                     }
@@ -183,17 +192,7 @@ struct MCPSettings: View {
     }
 
     private func refresh() async {
-        live = await MCPStatus.read(app.api) ?? []
-    }
-
-    private func add(_ server: MCPCatalog.Server) {
-        var settings = server.settings
-        if case .object(var object) = settings, object["codemode"] == nil {
-            object["codemode"] = .bool(false)
-            settings = .object(object)
-        }
-        config.set(settings, at: Self.path + [server.id])
-        Analytics.shared.track("mcp_server_added", ["catalog": server.id])
+        live = await MCPStatus.read(app.api(for: box)) ?? []
     }
 
     private func removePending() {
@@ -201,7 +200,7 @@ struct MCPSettings: View {
         self.removal = nil
         // Once the closing editor's fields have saved what you typed last, or they'd write it
         // back into a half-made entry.
-        let config = app.engineConfig
+        let config = app.config(for: box)
         DispatchQueue.main.async { config.set(nil, at: removal) }
     }
 }
@@ -243,6 +242,7 @@ private struct ServerEditor: View {
     /// Removes this entry, once it's closed.
     let remove: ([String]) -> Void
     @Environment(AppModel.self) private var app
+    @Environment(\.settingsBox) private var box
     @State private var newName = ""
     @State private var command = ""
     /// The command as shown, to tell whether you changed it.
@@ -252,7 +252,7 @@ private struct ServerEditor: View {
     @State private var putAside: [String: JSONValue] = [:]
     @State private var confirmsRemoval = false
 
-    private var config: EngineConfig { app.engineConfig }
+    private var config: EngineConfig { app.config(for: box) }
     /// The fields only one kind has: a command and what it runs with, or a URL and how it
     /// signs in.
     private static let kindFields = ["command", "cwd", "environment", "url", "headers", "oauth"]
@@ -272,7 +272,7 @@ private struct ServerEditor: View {
     /// Why the name you typed can't be used, if it can't.
     private var problem: String? {
         // Nothing would be written: what you fill in would be lost.
-        if let broken = app.engineConfig.problem { return "The engine's settings file can't be changed here: \(broken)" }
+        if let broken = app.config(for: box).problem { return "The engine's settings file can't be changed here: \(broken)" }
         if newID.isEmpty {
             return newName.trimmingCharacters(in: .whitespaces).isEmpty ? nil : "A name needs a letter or a number."
         }
@@ -310,8 +310,10 @@ private struct ServerEditor: View {
     /// be called when that isn't quite what you typed.
     private var naming: some View {
         Section {
-            TextField("Name", text: $newName, prompt: Text("github"))
-                .onSubmit(add)
+            SettingsTextRow(title: "Name") {
+                TextField("Name", text: $newName, prompt: Text("github"))
+                    .onSubmit(add)
+            }
         } footer: {
             if let problem {
                 Text(problem).foregroundStyle(.red)
@@ -349,13 +351,15 @@ private struct ServerEditor: View {
                     .disabled(customSignIn)
                 } else {
                     // A command is often long: it wraps, in a typeface that keeps its flags apart.
-                    TextField(text: $command, prompt: Text(verbatim: "npx -y @modelcontextprotocol/server-github"), axis: .vertical) {
-                        Text("Command").font(.body)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Command")
+                        TextField("Command", text: $command, prompt: Text(verbatim: "npx -y @modelcontextprotocol/server-github"), axis: .vertical)
+                            .labelsHidden()
+                            .font(.body.monospaced())
+                            .lineLimit(1...8)
+                            .onSubmit { saveCommand(path) }
+                            .onDisappear { saveCommand(path) }
                     }
-                    .font(.body.monospaced())
-                    .lineLimit(1...8)
-                    .onSubmit { saveCommand(path) }
-                    .onDisappear { saveCommand(path) }
                     ConfigTextField(title: "Working folder", path: path + ["cwd"], prompt: "The project's folder")
                 }
                 Toggle(isOn: config.bool(path + ["codemode"], default: true)) {
@@ -449,9 +453,16 @@ private struct ServerEditor: View {
         command?.array?.compactMap(\.string).map(quoted).joined(separator: " ") ?? ""
     }
 
+    static func words(_ line: String) -> [String] { CommandWords.split(line) }
+    static func quoted(_ word: String) -> String { CommandWords.quoted(word) }
+}
+
+/// A command line, as the MCP server editor reads and writes it.
+nonisolated enum CommandWords {
     /// A command line's words, as a shell splits them: quotes keep spaces in one word, and a
-    /// backslash takes the next character as it is (except inside single quotes).
-    static func words(_ line: String) -> [String] {
+    /// backslash takes the next character as it is (not inside single quotes; inside double ones,
+    /// only before ", \, $ or `, as in "a\.b", a pattern pasted from a README).
+    static func split(_ line: String) -> [String] {
         var words: [String] = []
         var current = ""
         var quote: Character?
@@ -459,6 +470,7 @@ private struct ServerEditor: View {
         var escaped = false
         for character in line {
             if escaped {
+                if quote == "\"", !"\"\\$`".contains(character) { current.append("\\") }
                 current.append(character)
                 escaped = false
             } else if character == "\\", quote != "'" {

@@ -7,9 +7,12 @@ struct GroupChatView: View {
     let group: BotGroup
     /// Goes up to open the find bar (⌘F).
     var findRequest = 0
-    @Environment(BotGroups.self) private var groups
+    @Environment(GroupChats.self) private var groups
     @Environment(Bots.self) private var bots
+    @Environment(AppModel.self) private var app
     @State private var scroller = ConversationScroller()
+    /// The "&" list open over the composer (see `ComposerListShown`).
+    @State private var listShown = false
     /// Goes up to have the composer take the keyboard.
     @State private var composerFocus = 0
     /// The quote whose answer takes the keyboard: the one just added.
@@ -37,11 +40,12 @@ struct GroupChatView: View {
                     .environment(\.findHighlight, find.highlight(for: message.id))
             }
             if let speaker {
-                TypingRow(bot: speaker)
+                TypingRow(bot: speaker, activity: groups.activity[group.id] ?? [])
                     .id("typing")
                     .transition(.opacity)
             }
         }
+        .scrollEdgeEffectHidden(listShown, for: .bottom)
         .conversationFind(find, scroller: scroller, version: [messages.last?.id, String(messages.count)]) {
             groups.messages(in: group.id).map { ConversationFind.Row(id: $0.id, parts: Self.findParts($0)) }
         }
@@ -55,6 +59,12 @@ struct GroupChatView: View {
         }
         .safeAreaBar(edge: .bottom, spacing: 0) {
             VStack(spacing: 10) {
+                // One on a machine that's away: as last seen, and what you write waits.
+                if let machine = groups.unreachable(group.id), let engine = app.machines.engine(machine) {
+                    MachineOfflineBar(engine: engine)
+                        .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
+                        .transition(.opacity.combined(with: .offset(y: 6)))
+                }
                 // Once the wrap-up after the limit is done: Keep Going does nothing before.
                 if groups.paused.contains(group.id) && !groups.discussing.contains(group.id) {
                     PausedBar { groups.keepGoing(group.id) }
@@ -77,8 +87,12 @@ struct GroupChatView: View {
             .padding(.bottom, 16)
             .readableColumn()
         }
-        .onAppear { groups.markViewed(group.id) }
-        .onChange(of: messages.count) { groups.markViewed(group.id) }
+        .onPreferenceChange(ComposerListShown.self) { shown in listShown = shown }
+        // Seen only while you're here, as a session is: what's said while you're in another app
+        // waits for you (its notifications too), and counts as seen when you come back.
+        .onAppear { if NSApp.isActive { groups.markViewed(group.id) } }
+        .onChange(of: messages.count) { if NSApp.isActive { groups.markViewed(group.id) } }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in groups.markViewed(group.id) }
     }
 
     /// The words Find looks in, as the message shows them: yours, or a bot's reply.
@@ -94,9 +108,9 @@ struct GroupChatView: View {
     private func reply(to message: GroupMessage) {
         addQuote(message.text, how: "message")
         // Named, so it's the one to answer.
-        if let name = message.author.flatMap({ bots.bot($0)?.name }), !Drafts.shared[draftKey].text.contains("@" + name) {
+        if let name = message.author.flatMap({ bots.bot($0)?.name }), !Drafts.shared[draftKey].text.contains("&" + name) {
             let draft = Drafts.shared[draftKey].text.trimmingCharacters(in: .whitespacesAndNewlines)
-            Drafts.shared[draftKey].text = "@\(name) " + draft
+            Drafts.shared[draftKey].text = "&\(name) " + draft
         }
     }
 
@@ -111,12 +125,14 @@ struct GroupChatView: View {
     /// Takes the chat back to before your message, which comes back to the composer, ahead of
     /// anything already there.
     private func undo(from message: GroupMessage) {
-        guard let taken = groups.undo(from: message.id, in: group.id) else { return }
-        let (quotes, text) = Quoting.draft(of: taken)
-        let draft = Drafts.shared[draftKey].text
-        Drafts.shared[draftKey].text = [text, draft].filter { !$0.isEmpty }.joined(separator: "\n\n")
-        Drafts.shared[draftKey].quotes = quotes + Drafts.shared[draftKey].quotes
-        composerFocus += 1
+        Task {
+            guard let taken = await groups.undo(from: message.id, in: group.id) else { return }
+            let (quotes, text) = Quoting.draft(of: taken)
+            let draft = Drafts.shared[draftKey].text
+            Drafts.shared[draftKey].text = [text, draft].filter { !$0.isEmpty }.joined(separator: "\n\n")
+            Drafts.shared[draftKey].quotes = quotes + Drafts.shared[draftKey].quotes
+            composerFocus += 1
+        }
     }
 
     private func send() {
@@ -124,7 +140,8 @@ struct GroupChatView: View {
         let message = Quoting.message(quotes: draft.quotes, text: draft.text)
         // A quote you didn't answer goes only with words of yours.
         guard !Quoting.words(of: message).isEmpty else { return }
-        groups.send(message, to: group.id)
+        // Its machine away, or it's moving: it waits in the composer.
+        guard groups.unreachable(group.id) == nil, groups.send(message, to: group.id) else { return NSSound.beep() }
         Drafts.shared[draftKey].text = ""
         Drafts.shared[draftKey].quotes = []
         scroller.toEnd()
@@ -200,8 +217,7 @@ private struct GroupMessageRow: View, Equatable {
                 .frame(maxWidth: .infinity)
                 .multilineTextAlignment(.center)
         } else if message.author == nil {
-            YourMessage(text: message.text, style: { GroupMentions.styled($0, bots: members) },
-                        references: MessageMentions.agents(namedIn: message.text).map(\.reference),
+            YourMessage(text: message.text, references: MessageMentions.agents(namedIn: message.text).map(\.reference),
                         sent: message.time, undo: undo,
                         undoNote: "The chat goes back to before this message, and the message comes back to the composer. The bots are told to set aside what was taken back.")
         } else {
@@ -256,7 +272,7 @@ private struct GroupMessageRow: View, Equatable {
                         StepsRow(blocks: steps.map(Message.Content.tool), isLive: false, directory: author?.directory ?? "")
                             .padding(.bottom, 2)
                     }
-                    MarkdownText(text: message.text, mentions: members, agents: MessageMentions.agents(namedIn: message.text))
+                    MarkdownText(text: message.text, agents: MarkdownText.agents(namedIn: message.text))
                     ForEach((message.steps ?? []).filter { WidgetCard.isWidget($0) || MadePictureRow.isMade($0) }) { call in
                         Group {
                             if MadePictureRow.isMade(call) { MadePictureRow(call: call) } else { WidgetCard(call: call, send: answerAgent) }
@@ -415,12 +431,36 @@ private struct WorkState: View {
 /// The bot talking now, at work.
 private struct TypingRow: View {
     let bot: Bot
+    /// What it's doing, its last step: so a long turn doesn't look stuck.
+    var activity: [GroupActivity] = []
 
     var body: some View {
-        HStack(spacing: 10) {
-            BotAvatar(look: bot.look, size: 28, mood: .working)
-            ShimmerText(text: "\(bot.name) is thinking…")
-                .font(.callout)
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 10) {
+                BotAvatar(look: bot.look, size: 28, mood: .working)
+                ShimmerText(text: "\(bot.name) is thinking…")
+                    .font(.callout)
+            }
+            ForEach(Array(activity.enumerated()), id: \.offset) { _, step in
+                Text(Self.line(step, in: bot.directory))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    // Under its name.
+                    .padding(.leading, 38)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.ui, value: activity)
+    }
+
+    /// A step as a session's conversation says it: "Reading notes.txt", "Searched the web for …".
+    static func line(_ step: GroupActivity, in directory: String) -> String {
+        switch step {
+        case .step(let call): ToolCallView.summary(of: call, in: directory)
+        case .thinking(let text): text
+        case .writing: "Writing its reply"
         }
     }
 }
@@ -501,6 +541,7 @@ private struct GroupComposer: View {
         VStack(alignment: .leading, spacing: 10) {
             if let named = agents.matches(in: text, excluding: nil) {
                 AgentReferenceList(agents: named, selected: min(agents.selected, named.count - 1)) { agents.insert($0, into: $text) }
+                    .preference(key: ComposerListShown.self, value: true)
             }
             if !quotes.isEmpty {
                 QuoteList(quotes: $quotes, answering: $answering, focus: quoteFocus, font: messageFont.body, onSubmit: send)
@@ -564,10 +605,10 @@ private struct GroupComposer: View {
         Composer.cursorToEnd(of: text)
     }
 
-    /// "@Mira " where the message goes on.
+    /// "&Mira " where the message goes on.
     private func mention(_ bot: Bot) {
         if !text.isEmpty, !(text.last?.isWhitespace ?? true) { text += " " }
-        text += "@\(bot.name) "
+        text += "&\(bot.name) "
         isFocused = true
     }
 }
