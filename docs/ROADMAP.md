@@ -47,17 +47,23 @@ historical reference. This file tracks what we build next, in our own order.
 
 ## Now (0.7.x)
 
-- [ ] **Bots, complete**: the richer editor (look, keys, machine, project,
-  wake-ups), bot keys, group chats, sub-agents and @-mentions. The settings page
-  exists; the backend does not.
-- [ ] **Machines, complete**: install the engine on a remote over SSH, run sessions
-  there, show status and wake. Reachability exists; sessions do not.
-- [ ] **Auto rail**: offer the detected coding agents in the model picker and route
-  to their CLI through the agents bridge. Detection exists; routing does not.
-- [ ] **Passwords**: a real credential store (Windows Credential Manager) instead of
+- [x] **Bots, complete**: the richer editor (look, keys, machine, project,
+  wake-ups), bot keys, group chats, sub-agents and @-mentions.
+- [x] **Machines, complete**: install the engine on a remote over SSH, run sessions
+  there, show status and wake.
+- [x] **Auto rail**: offer the detected coding agents in the model picker and route
+  to their CLI through the agents bridge.
+- [x] **Passwords**: a real credential store (Windows Credential Manager) instead of
   `localStorage`.
-- [ ] **Browser settings** wired to the panel's browser (search engine, history,
-  website data) once the panel has a browser.
+- [x] **Browser settings** wired to the harness (search engine, history, website data).
+
+## Later (0.8.x)
+
+- [ ] New Browser Tab / integrated browser surface (needs a WebView2 host).
+- [ ] Tab-pair style (needs a split conversation view).
+- [ ] Offline/air-gapped mode.
+- [ ] Auto-update channel choice (stable/beta).
+- [ ] Split `store.ts`, `Overlays.tsx` into modules under ~800 lines.
 
 ## Later
 
