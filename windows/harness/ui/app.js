@@ -41,7 +41,7 @@ function sanitizeHtml(html) {
     [...node.attributes].forEach(attr => {
       const name = attr.name.toLowerCase();
       const value = attr.value.trim();
-      if (name.startsWith("on") || name === "srcdoc") { node.removeAttribute(attr.name); return; }
+      if (name.startsWith("on") || name === "srcdoc" || name === "style" || name === "srcset") { node.removeAttribute(attr.name); return; }
       if ((name === "href" || name === "src" || name === "xlink:href" || name === "poster") &&
           /^\s*(javascript|vbscript|data):/i.test(value)) {
         node.removeAttribute(attr.name);

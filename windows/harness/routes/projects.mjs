@@ -227,7 +227,8 @@ export async function handle(ctx, request, response, url) {
           }
           const parent = path.dirname(folder);
           // Stop walking above the user's home.
-          const parentAllowed = parent !== folder && (parent === home || parent.startsWith(home + path.sep) || !(folder === home || folder.startsWith(home + path.sep)));
+          const underHome = folder === home || folder.startsWith(home + path.sep);
+          const parentAllowed = parent !== folder && (underHome ? (parent === home || parent.startsWith(home + path.sep)) : true);
           return json({ path: folder, parent: parentAllowed ? parent : null, folders, files });
         }
 

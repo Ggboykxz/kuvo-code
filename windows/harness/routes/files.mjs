@@ -52,10 +52,13 @@ export async function handle(ctx, request, response, url) {
         const asked = url.searchParams.get("path");
         if (!asked) throw new HttpError(400, "No file was given.");
         const home = os.homedir();
-        const base = ctx.currentProject && ctx.currentProject.startsWith(home + path.sep) ? ctx.currentProject : home;
         const resolved = path.resolve(asked);
-        if (resolved !== base && !resolved.startsWith(base + path.sep)) {
-          throw new HttpError(403, "That file is outside the project.");
+        if (ctx.currentProject) {
+          if (resolved !== ctx.currentProject && !resolved.startsWith(ctx.currentProject + path.sep)) {
+            throw new HttpError(403, "That file is outside the project.");
+          }
+        } else if (resolved !== home && !resolved.startsWith(home + path.sep)) {
+          throw new HttpError(403, "That file is outside the home folder.");
         }
         let stats;
         try { stats = fs.statSync(resolved); }
@@ -97,6 +100,9 @@ export async function handle(ctx, request, response, url) {
             const full = path.join(dir, entry.name);
             if (entry.isDirectory()) { walk(full, depth + 1); continue; }
             if (!entry.isFile()) continue;
+            let stats;
+            try { stats = fs.statSync(full); } catch { continue; }
+            if (stats.size > 2 * 1024 * 1024) continue;
             let text;
             try { text = fs.readFileSync(full, "utf8"); }
             catch { continue; }

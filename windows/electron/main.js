@@ -459,10 +459,13 @@ async function checkForUpdates({ quiet = false } = {}) {
 }
 
 async function downloadAndRun(update) {
-  const target = path.join(os.tmpdir(), update.name);
+  const name = typeof update?.name === "string" ? path.basename(update.name) : "";
+  if (!name || !/\\.exe$/i.test(name) || name.includes("..")) throw new Error("that download's name isn't allowed.");
+  const target = path.join(os.tmpdir(), name);
   const response = await fetch(update.url, { headers: { 'user-agent': 'Kuvo-Code' } });
   if (!response.ok) throw new Error(`the download failed (${response.status})`);
-  fs.writeFileSync(target, Buffer.from(await response.arrayBuffer()));
+  const buffer = Buffer.from(await response.arrayBuffer());
+  await fs.promises.writeFile(target, buffer);
   const failure = await shell.openPath(target);
   if (failure) throw new Error(failure);
 }
