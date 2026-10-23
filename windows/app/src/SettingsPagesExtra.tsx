@@ -1,0 +1,425 @@
+import {
+  useEffect,
+  useState
+} from "react";
+import {
+  Symbol
+} from "./components/symbols";
+import {
+  api
+} from "./api";
+
+import {
+  loadSessions,
+  complain,
+  render,
+  state,
+  worktrees,
+  createWorktree,
+  removeWorktree
+} from "./store";
+import {
+  SettingGroup,
+  SettingRow
+} from "./SettingsShared";
+
+export function WorktreesPage() {
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const list = worktrees();
+  const remove = async (root: string, force = false) => {
+    setRemoving(root);
+    try { await removeWorktree(root, force); setRemoving(null); render(); } catch (error) { setFailure(String(error)); setRemoving(null); }
+  };
+  const create = async () => {
+    setCreating(true);
+    try { await createWorktree(); setCreating(false); render(); } catch (error) { setFailure(String(error)); setCreating(false); }
+  };
+  return (
+    <>
+      <SettingGroup title="Worktrees">
+        {list.length === 0 ? (
+          <div className="settings-note">None yet. Create one to give a session its own copy of the project.</div>
+        ) : list.map(item => (
+          <SettingRow key={item.root} label={item.branch} note={`${item.project} · ${item.root}`}>
+            <button className="small" onClick={() => (window as unknown as { kuvo?: { showInFolder?: (path: string) => void } }).kuvo?.showInFolder?.(item.root)}>Show in Folder</button>
+            <button className="small" disabled={removing === item.root} onClick={() => void remove(item.root)}>{removing === item.root ? "Removing…" : "Remove…"}</button>
+          </SettingRow>
+        ))}
+        {failure ? <div className="settings-note" style={{ color: "var(--danger)" }}>{failure}</div> : null}
+      </SettingGroup>
+      <SettingGroup title="Create">
+        <SettingRow label="New worktree" note="A copy of the project on a branch of its own, for a session to work in apart from the rest.">
+          <button className="small" disabled={creating || !state.project} onClick={() => void create()}>{creating ? "Creating…" : "Create"}</button>
+        </SettingRow>
+      </SettingGroup>
+    </>
+  );
+}
+
+/// Storage: where this machine keeps things, and what the engine is running (StorageSettings.swift).
+export function StoragePage() {
+  const [info, setInfo] = useState<{ logPath?: string; logSize?: number; attachments?: { path: string; files: number; bytes: number } | null; engine?: { status: string; version?: string } }>({});
+  useEffect(() => {
+    void api<typeof info>("/api/storage").then(answer => setInfo(answer)).catch(() => {});
+  }, []);
+  return (
+    <>
+      <SettingGroup title="Engine">
+        <div className="gauge-line big">{info.engine ? `${info.engine.status}${info.engine.version ? ` · ${info.engine.version}` : ""}` : "—"}</div>
+      </SettingGroup>
+      <SettingGroup title="Storage">
+        <SettingRow label="Log" note={info.logPath ?? ""}>
+          <button className="small" onClick={() => (window as unknown as { kuvo?: { showInFolder?: (path: string) => void } }).kuvo?.showInFolder?.(info.logPath ?? "")}>Show in Folder</button>
+        </SettingRow>
+        <SettingRow label="Attachments" note={info.attachments ? `${info.attachments.files} files · ${info.attachments.bytes} bytes` : "None yet."} />
+        <div className="settings-note">Where this machine keeps things, and what the engine is running — what the Mac app's Engine and Storage settings show.</div>
+      </SettingGroup>
+    </>
+  );
+}
+
+/// Integrations: services that give the agent more tools.
+export function IntegrationsPage() {
+  const [integrations, setIntegrations] = useState<{ id: string; name?: string; connections?: unknown[] }[]>([]);
+  useEffect(() => {
+    void api<{ integrations: { id: string; name?: string; connections?: unknown[] }[] }>("/api/integrations")
+      .then(answer => setIntegrations(answer.integrations ?? []))
+      .catch(() => setIntegrations([]));
+  }, []);
+  return (
+    <>
+      <SettingGroup title="Integrations">
+        {integrations.length === 0 ? (
+          <div className="settings-note">None yet.</div>
+        ) : integrations.map(one => (
+          <SettingRow key={one.id} label={one.name ?? one.id} note={(one.connections ?? []).length ? "Connected" : "Not connected"}>
+            <span className="where">{(one.connections ?? []).length ? "Connected" : "Not connected"}</span>
+          </SettingRow>
+        ))}
+      </SettingGroup>
+    </>
+  );
+}
+
+/// Browser: the panel's browser, its search engine, history and website data (BrowserSettings.swift).
+export function BrowserPage() {
+  const [engine, setEngine] = useState("google");
+  const [historyCount, setHistoryCount] = useState(0);
+  useEffect(() => {
+    const stored = localStorage.getItem("kuvo-browser-engine");
+    if (stored) setEngine(stored);
+  }, []);
+  const set = (value: string) => { setEngine(value); localStorage.setItem("kuvo-browser-engine", value); };
+  return (
+    <>
+      <SettingGroup title="Search">
+        <SettingRow label="Search engine" note="For anything you type in the address field that isn't an address.">
+          <select value={engine} onChange={event => set(event.target.value)}>
+            <option value="google">Google</option>
+            <option value="bing">Bing</option>
+            <option value="duckduckgo">DuckDuckGo</option>
+          </select>
+        </SettingRow>
+        <SettingRow label="Browsing history" note={historyCount ? `${historyCount} sites, which the new tab page suggests.` : "None yet."}>
+          <button className="small" onClick={() => { localStorage.removeItem("kuvo-browser-history"); setHistoryCount(0); }}>Clear</button>
+        </SettingRow>
+      </SettingGroup>
+      <SettingGroup title="Website Data">
+        <SettingRow label="Website data" note="Sign-ins, cookies and what sites store, kept apart from your other browsers. Removing a site's data signs you out of it.">
+          <button className="small" onClick={() => (window as unknown as { kuvo?: { showInFolder?: (path: string) => void } }).kuvo?.showInFolder?.(localStorage.getItem("kuvo-browser-data") ?? "")}>Remove All…</button>
+        </SettingRow>
+      </SettingGroup>
+    </>
+  );
+}
+
+/// Passwords: the sign-ins the panel's browser saved (PasswordsSettings.swift).
+export function PasswordsPage() {
+  const [offers, setOffers] = useState(() => localStorage.getItem("kuvo-passwords-offers") !== "0");
+  return (
+    <>
+      <SettingGroup title="Passwords">
+        <SettingRow label="Offer to save passwords" note="When you sign in to a site in the panel's browser. Click the key in its toolbar to fill one in.">
+          <input type="checkbox" checked={offers} onChange={event => { setOffers(event.target.checked); localStorage.setItem("kuvo-passwords-offers", event.target.checked ? "1" : "0"); }} />
+        </SettingRow>
+      </SettingGroup>
+      <div className="settings-note">Kept in your credential store, where the system lists them too. Kuvo Code fills one in only when you ask, and the agent never sees them.</div>
+    </>
+  );
+}
+
+/// Phone: pairing Kuvo Code for iPhone with this Mac (PhoneSettings.swift).
+export function PhonePage() {
+  return (
+    <>
+      <SettingGroup title="Pair">
+        <div className="settings-note">Pair a phone from the Kuvo Code app on your iPhone: scan the QR code it shows. The phone link is switched on in General.</div>
+        <SettingRow label="Pair a Phone…">
+          <button className="small" disabled>Pair a Phone…</button>
+        </SettingRow>
+      </SettingGroup>
+      <SettingGroup title="Phones">
+        <div className="settings-note">None yet.</div>
+      </SettingGroup>
+    </>
+  );
+}
+
+/// Auto: your lists of models, one for bugfixes and one for features (AutoSettings.swift).
+export function AutoPage() {
+  const [agents, setAgents] = useState<{ id: string; name: string; installed: boolean }[]>([]);
+  useEffect(() => {
+    void api<{ agents: { id: string; name: string; installed: boolean }[] }>("/api/agents/detect")
+      .then(answer => setAgents(answer.agents ?? []))
+      .catch(() => setAgents([]));
+  }, []);
+  return (
+    <>
+      <SettingGroup title="Coding Agents on This Machine">
+        {agents.length === 0 ? <div className="settings-note">Detecting…</div> : agents.map(agent => (
+          <SettingRow key={agent.id} label={agent.name} note={agent.installed ? "Installed" : "Not found"}>
+            <span className="where">{agent.installed ? "Installed" : "Not found"}</span>
+          </SettingRow>
+        ))}
+        <div className="settings-note">Custom Auto runs with these coding agents, each on its own account. A session on Auto tries the models in your list in order, and moves on when one reaches a limit.</div>
+      </SettingGroup>
+      <SettingGroup title="Custom Auto">
+        <div className="settings-note">Your lists of models — one for bugfixes, one for features — go here, each tried in order when one reaches a limit. Editing the lists needs the coding agents above.</div>
+      </SettingGroup>
+    </>
+  );
+}
+
+/// Machines: Linux servers whose engine Kuvo Code runs over SSH (MachinesSettings.swift).
+export function MachinesPage() {
+  const [machines, setMachines] = useState<{ id: string; name: string; destination: string; status?: string }[]>(() => {
+    try { return JSON.parse(localStorage.getItem("kuvo-machines") ?? "[]"); } catch { return []; }
+  });
+  const [name, setName] = useState("");
+  const [destination, setDestination] = useState("");
+  const [testing, setTesting] = useState<string | null>(null);
+  const save = (list: typeof machines) => { setMachines(list); localStorage.setItem("kuvo-machines", JSON.stringify(list)); };
+  const add = () => {
+    if (!name.trim() || !destination.trim()) return;
+    save([...machines, { id: `m-${Date.now()}`, name: name.trim(), destination: destination.trim() }]);
+    setName(""); setDestination("");
+  };
+  const remove = (id: string) => save(machines.filter(m => m.id !== id));
+  const test = async (id: string) => {
+    setTesting(id);
+    const machine = machines.find(m => m.id === id);
+    if (!machine) { setTesting(null); return; }
+    const result = await (window as unknown as { kuvo?: { sshCheck?: (d: string) => Promise<{ ok: boolean; error?: string }> } }).kuvo?.sshCheck?.(machine.destination);
+    save(machines.map(m => m.id === id ? { ...m, status: result?.ok ? "reachable" : `unreachable: ${result?.error ?? "unknown"}` } : m));
+    setTesting(null);
+  };
+  return (
+    <>
+      <SettingGroup title="Machines">
+        <div className="settings-note">Linux servers you reach with SSH, like a home server or a VPS. Test reachability here; installing the engine on the remote and running sessions there comes next.</div>
+        {machines.length === 0 ? <div className="settings-note">None yet.</div> : machines.map(machine => (
+          <SettingRow key={machine.id} label={machine.name} note={`${machine.destination}${machine.status ? ` · ${machine.status}` : ""}`}>
+            <button className="small" disabled={testing === machine.id} onClick={() => void test(machine.id)}>{testing === machine.id ? "Testing…" : "Test"}</button>
+            <button className="small" onClick={() => remove(machine.id)}>Remove</button>
+          </SettingRow>
+        ))}
+      </SettingGroup>
+      <SettingGroup title="Add a Machine">
+        <div className="settings-row"><span>Name</span><input type="text" value={name} onChange={event => setName(event.target.value)} /></div>
+        <div className="settings-row"><span>SSH destination</span><input type="text" value={destination} placeholder="user@host" onChange={event => setDestination(event.target.value)} /></div>
+        <div className="settings-editor-buttons">
+          <button className="primary" disabled={!name.trim() || !destination.trim()} onClick={add}>Add Machine…</button>
+        </div>
+      </SettingGroup>
+    </>
+  );
+}
+
+/// Accounts: what's connected, the popular providers, and every other one the engine knows.
+export function AccountsPage() {
+  const [integrations, setIntegrations] = useState<{ id: string; name?: string; connections?: unknown[] }[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    void api<{ integrations: { id: string; name?: string; connections?: unknown[] }[] }>("/api/integrations")
+      .then(answer => setIntegrations(answer.integrations ?? []))
+      .catch(() => setIntegrations([]))
+      .finally(() => setLoaded(true));
+  }, []);
+  return (
+    <>
+      <SettingGroup title="Accounts">
+        {!loaded ? <div className="settings-note">Loading…</div> : integrations.length === 0 ? <div className="settings-note">The engine did not report any integrations.</div> : integrations.map(one => (
+          <SettingRow key={one.id} label={one.name ?? one.id} note={(one.connections ?? []).length ? "Connected" : "Not connected"}>
+            {(one.connections ?? []).length ? (
+              <span className="where">Connected</span>
+            ) : (
+              <button className="small" onClick={() => { state.settingsSection = "providers"; render(); }}>Set up in Providers</button>
+            )}
+          </SettingRow>
+        ))}
+      </SettingGroup>
+      <div className="settings-note">Sign in with a subscription you already have, or add an API key. Credentials stay on this machine. This page lists the engine's integrations; signing in to them from here comes next, and Providers is where you add your own today.</div>
+    </>
+  );
+}
+
+/// Bots: your own, a name, a job, and the model that does it (BotEditor.swift).
+export function BotsPage() {
+  const [bots, setBots] = useState<{ id: string; name: string; personality: string; model: string }[]>(() => {
+    try { return JSON.parse(localStorage.getItem("kuvo-bots") ?? "[]"); } catch { return []; }
+  });
+  const [editing, setEditing] = useState<{ id: string; name: string; personality: string; model: string } | null>(null);
+  const save = (list: { id: string; name: string; personality: string; model: string }[]) => { setBots(list); localStorage.setItem("kuvo-bots", JSON.stringify(list)); };
+  const remove = (id: string) => save(bots.filter(bot => bot.id !== id));
+  const upsert = (bot: { id: string; name: string; personality: string; model: string }) => {
+    const list = bots.some(item => item.id === bot.id) ? bots.map(item => item.id === bot.id ? bot : item) : [...bots, bot];
+    save(list);
+    setEditing(null);
+  };
+  return (
+    <>
+      <SettingGroup title="Bots">
+        {bots.length === 0 ? <div className="settings-note">None yet. A bot is an agent of your own: a name, a job, and the model that does it.</div> : bots.map(bot => (
+          <SettingRow key={bot.id} label={bot.name} note={bot.personality || bot.model}>
+            <button className="small" onClick={() => setEditing(bot)}>Edit</button>
+            <button className="small" onClick={() => remove(bot.id)}>Remove</button>
+          </SettingRow>
+        ))}
+        <SettingRow label="New Bot">
+          <button className="small" onClick={() => setEditing({ id: `bot-${Date.now()}`, name: "", personality: "", model: "" })}>New Bot…</button>
+        </SettingRow>
+      </SettingGroup>
+      {editing ? (
+        <div className="settings-row column">
+          <span>Name</span>
+          <input type="text" value={editing.name} onChange={event => setEditing({ ...editing, name: event.target.value })} />
+          <span>Personality</span>
+          <textarea value={editing.personality} onChange={event => setEditing({ ...editing, personality: event.target.value })} />
+          <span>Model</span>
+          <input type="text" value={editing.model} placeholder="provider/model" onChange={event => setEditing({ ...editing, model: event.target.value })} />
+          <div className="settings-editor-buttons">
+            <button className="primary" onClick={() => editing && upsert(editing)}>Save</button>
+            <button className="small" onClick={() => setEditing(null)}>Cancel</button>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+/// The sessions that are put away: out of the sidebar, still here, brought back or deleted.
+export function ArchivedPage() {
+  const [sessions, setSessions] = useState<{ id: string; title?: string | null; time?: { updated?: number } }[]>([]);
+  const [query, setQuery] = useState("");
+
+  const load = async () => {
+    try {
+      const { sessions } = await api<{ sessions: { id: string; title?: string | null; time?: { updated?: number; archived?: number }; metadata?: Record<string, unknown> | null }[] }>(`/api/sessions?directory=${encodeURIComponent(state.project ?? "")}`);
+      setSessions((sessions ?? []).filter(session => Boolean(session.time?.archived) || session.metadata?.["kuvo.archived"] === true));
+    } catch {
+      setSessions([]);
+    }
+  };
+  useEffect(() => { void load(); }, [state.project]);
+
+  const shown = sessions.filter(session => !query || (session.title || "").toLowerCase().includes(query.toLowerCase()));
+  return (
+    <>
+      <div className="settings-row">
+        <span>Search archived sessions</span>
+        <input type="text" value={query} placeholder="Search" onChange={event => setQuery(event.target.value)} />
+      </div>
+      {shown.length === 0 ? (
+        <div className="settings-note">None yet. Put a session away with the archive button beside it, and it comes here.</div>
+      ) : shown.map(session => (
+        <div className="cfg-row" key={session.id}>
+          <div className="cfg-row-main">
+            <div className="cfg-row-title"><strong>{session.title || "Untitled"}</strong></div>
+          </div>
+          <button
+            className="small"
+            onClick={async () => {
+              try {
+                await api(`/api/sessions/${encodeURIComponent(session.id)}/archive`, { method: "POST", body: { archived: false } });
+                await load();
+                await loadSessions();
+              } catch (error) { complain(error); }
+            }}
+          >
+            Unarchive
+          </button>
+          <button
+            className="small"
+            title="Delete it for good"
+            onClick={async () => {
+              if (!confirm("Delete it for good?")) return;
+              try {
+                await api(`/api/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
+                await load();
+              } catch (error) { complain(error); }
+            }}
+          >
+            <Symbol name="xmark" size={11} />
+          </button>
+        </div>
+      ))}
+    </>
+  );
+}
+
+export function PermissionsPage({ permissions, onChange }: {
+  permissions: { id: string; action?: string; resource?: string }[];
+  onChange: (next: { id: string; action?: string; resource?: string }[]) => void;
+}) {
+  return (
+    <>
+      <SettingGroup title="Rules">
+        <div id="saved-permissions" className="saved-permissions">
+        {permissions.map(rule => (
+          <div key={rule.id} className="cfg-row">
+            <div className="cfg-row-main">
+              <div className="cfg-row-title">
+                <strong>{rule.action ?? "rule"}</strong>
+                <span className="where">{rule.resource ?? ""}</span>
+              </div>
+            </div>
+            <button
+              className="small"
+              onClick={async () => {
+                try {
+                  await api(`/api/permission/saved/${encodeURIComponent(rule.id)}`, { method: "DELETE" });
+                  onChange(permissions.filter(item => item.id !== rule.id));
+                } catch (error) { complain(error); }
+              }}
+            >
+              Forget
+            </button>
+          </div>
+        ))}
+        </div>
+        <div className="settings-note">What this session's agent was once told it may always do, as the engine remembers it.</div>
+      </SettingGroup>
+    </>
+  );
+}
+
+export function SystemPage({ system }: { system: { engine?: string; storage?: string; lists?: string } }) {
+  return (
+    <>
+      <SettingGroup title="Engine">
+        <div id="engine-line" className="gauge-line big">{system.engine ?? ""}</div>
+      </SettingGroup>
+      <SettingGroup title="Storage">
+        <div id="storage-log" className="gauge-line">{system.storage ?? ""}</div>
+        <div id="storage-attachments" className="gauge-line" />
+        <div id="config-lists" className="gauge-line">{system.lists ?? ""}</div>
+        <div className="settings-note">Where this machine keeps things, and what the engine is running — what the Mac app's Engine and Storage settings show.</div>
+      </SettingGroup>
+    </>
+  );
+}
+
+// ---- MCP ----
+
