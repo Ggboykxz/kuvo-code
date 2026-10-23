@@ -15,7 +15,7 @@
   --fg: oklch(18% 0.012 250);
   --muted: oklch(54% 0.012 250);
   --border: oklch(92% 0.005 250);
-  --accent-signal: oklch(58% 0.18 255);
+  --accent-signal: oklch(56% 0.18 255);
   /* Surfaces — the app's own names, bound to the direction's. */
   --panel: var(--surface);
   --panel-2: oklch(97.5% 0.004 250);
@@ -32,16 +32,17 @@
   --line-soft: oklch(94% 0.004 250);
   --lit: rgba(255, 255, 255, 0.9);
   /* Accent — the user's pick (cobalt by default, the direction's own blue), interactive only. */
-  --accent: #2f6feb;
+  /* Accent — the user's pick (cobalt by default, the direction's own blue), interactive only. */
+  --accent: oklch(56% 0.18 255);
   --accent-ink: #ffffff;
-  --accent-hover: #2458c4;
+  --accent-hover: oklch(52% 0.18 255);
   --accent-soft: color-mix(in oklab, var(--accent), transparent 88%);
   /* Semantic — colour with a meaning, never colour alone. */
-  --danger: #d92d20;
+  --danger: oklch(55% 0.22 25);
   --danger-soft: color-mix(in oklab, var(--danger), transparent 90%);
-  --ok: #1a7f37;
+  --ok: oklch(54% 0.18 140);
   --ok-soft: color-mix(in oklab, var(--ok), transparent 90%);
-  --warn: #9a6700;
+  --warn: oklch(56% 0.18 85);
   --warn-soft: color-mix(in oklab, var(--warn), transparent 90%);
   /* Radius — quiet, small, consistent. */
   --radius: 8px;

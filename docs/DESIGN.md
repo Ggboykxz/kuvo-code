@@ -9,10 +9,10 @@ Adapted from the Open Design "Neutral Modern" + "Linear" aesthetic.
 OKLch-inspired palette with semantic role names. Light default, dark via `prefers-color-scheme`.
 
 - Background: `#fafafa` (`--bg`), Surface: `#ffffff` (`--panel`), Surface 2: `#f5f5f3` (`--panel-2`), Code: `#f1f1ee` (`--code-bg`)
-- Foreground: `#111111` (`--ink`), Secondary: `#6b6b6b` (`--ink-soft`), Faint: `#9a9a9f` (`--ink-faint`)
+- Foreground: `#111111` (`--ink`), Secondary: `#5a5a5a` (`--ink-soft`), Faint: `#9a9a9f` (`--ink-faint`)
 - Border: `#e5e5e5` (`--line`), Border soft: `#efefec` (`--line-soft`)
-- Accent: `#2f6feb` cobalt (`--accent`) — primary CTAs, links, one hero element per screen. Never on gradients.
-- Semantic: Success `#17a34a`, Warn `#eab308`, Danger `#dc2626` (each with a `-soft` variant at 12% opacity)
+- Accent: `#2a66d8` cobalt (`--accent`) — primary CTAs, links, one hero element per screen. Never on gradients.
+- Semantic: Success `#168f45`, Warn `#c89600`, Danger `#dc2626` (each with a `-soft` variant at 12% opacity)
 - Dark mode: background `#0a0a0a`, panel `#141414`, ink `#ececec`, accent `#6f9dff`
 - Never pure black; never pure white for backgrounds.
 
