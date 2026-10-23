@@ -262,6 +262,16 @@ export function startHarness({ project = null, port = Number(process.env.KUVO_HA
 
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, `http://${request.headers.host ?? "127.0.0.1"}`);
+    // Reject cross-origin browser requests to the localhost API.
+    const origin = request.headers.origin;
+    if (origin && !/^https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?$/i.test(origin)) {
+      response.writeHead(403, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "That origin isn't allowed." }));
+      return;
+    }
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    response.setHeader("X-Frame-Options", "DENY");
+    response.setHeader("Referrer-Policy", "no-referrer");
     try {
       if (url.pathname === "/api/events" && request.method === "GET") return await relayEvents(request, response);
       if (url.pathname.startsWith("/api/")) {

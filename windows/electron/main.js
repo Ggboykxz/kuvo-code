@@ -379,9 +379,16 @@ ipcMain.on("kuvo:user-name", (event) => {
 
 // A folder opened where the user can see it: the Mac's "Show in Finder" is the Explorer
 // here (SidebarView.swift:616).
-ipcMain.on("kuvo:show-in-folder", (_event, path) => {
-  if (typeof path !== 'string' || !path) return;
-  shell.openPath(path);
+ipcMain.on("kuvo:show-in-folder", (_event, target) => {
+  if (typeof target !== "string" || !target) return;
+  let stats;
+  try { stats = fs.statSync(target); } catch { return; }
+  if (!stats.isFile() && !stats.isDirectory()) return;
+  // Only reveal things inside the user's home (or an open project passed by the harness).
+  const home = os.homedir();
+  const resolved = path.resolve(target);
+  if (resolved !== home && !resolved.startsWith(home + path.sep)) return;
+  shell.openPath(resolved);
 });
 
 // The page asks the bridge what only the shell knows (preload.js): the terminal's port.
@@ -391,7 +398,11 @@ ipcMain.on("kuvo:terminal-port", (event) => {
 
 // A settings page asks for something outside the app — a system page, a doc, a folder.
 ipcMain.on("kuvo:open-external", (_event, url) => {
-  if (typeof url === "string" && url) void shell.openExternal(url);
+  if (typeof url !== "string" || !url) return;
+  let parsed;
+  try { parsed = new URL(url); } catch { return; }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
+  void shell.openExternal(parsed.toString());
 });
 
 // A machine reached over SSH: is it there, and can we talk to it?

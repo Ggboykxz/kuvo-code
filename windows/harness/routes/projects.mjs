@@ -109,7 +109,9 @@ export async function handle(ctx, request, response, url) {
         // Coding agents on this machine: the Mac's OutsideAgents detects them by their CLI.
         // We do the same, so the user sees which ones are available.
         if (url.pathname === "/api/agents/detect" && request.method === "GET") {
-          const { execFileSync } = await import("node:child_process");
+          const { execFile } = await import("node:child_process");
+          const { promisify } = await import("node:util");
+          const run = promisify(execFile);
           const agents = [
             { id: "claude-code", name: "Claude Code", binary: process.platform === "win32" ? "claude.exe" : "claude", logo: "anthropic" },
             { id: "codex-cli", name: "Codex", binary: process.platform === "win32" ? "codex.exe" : "codex", logo: "openai" },
@@ -117,15 +119,15 @@ export async function handle(ctx, request, response, url) {
             { id: "grok-cli", name: "Grok", binary: process.platform === "win32" ? "grok.exe" : "grok", logo: "xai" },
             { id: "antigravity", name: "Antigravity", binary: process.platform === "win32" ? "antigravity.exe" : "antigravity", logo: "google" },
           ];
-          const found = agents.map(agent => {
+          const found = await Promise.all(agents.map(async agent => {
             let installed = false;
             try {
               const cmd = process.platform === "win32" ? "where" : "which";
-              execFileSync(cmd, [agent.binary], { stdio: ["ignore", "pipe", "pipe"] });
+              await run(cmd, [agent.binary], { stdio: ["ignore", "pipe", "pipe"] });
               installed = true;
             } catch { installed = false; }
             return { ...agent, installed };
-          });
+          }));
           return json({ agents: found });
         }
 
@@ -198,9 +200,9 @@ export async function handle(ctx, request, response, url) {
         // The page's folder picker: what's under a folder, so someone can walk to theirs.
         if (url.pathname === "/api/browse" && request.method === "GET") {
           const asked = url.searchParams.get("path");
-          let folder = asked ? path.resolve(asked) : ctx.currentProject ?? os.homedir();
-          // Keep the picker from wandering outside the user's home (or the open project).
           const home = os.homedir();
+          let folder = asked ? path.resolve(asked) : ctx.currentProject ?? home;
+          // Keep the picker from wandering outside the user's home (or the open project).
           if (asked && folder !== home && !folder.startsWith(home + path.sep)
               && !(ctx.currentProject && (folder === ctx.currentProject || folder.startsWith(ctx.currentProject + path.sep)))) {
             folder = ctx.currentProject ?? home;
@@ -224,7 +226,9 @@ export async function handle(ctx, request, response, url) {
             files = [];
           }
           const parent = path.dirname(folder);
-          return json({ path: folder, parent: parent === folder ? null : parent, folders, files });
+          // Stop walking above the user's home.
+          const parentAllowed = parent !== folder && (parent === home || parent.startsWith(home + path.sep) || !(folder === home || folder.startsWith(home + path.sep)));
+          return json({ path: folder, parent: parentAllowed ? parent : null, folders, files });
         }
 
   return false;

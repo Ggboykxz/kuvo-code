@@ -16,9 +16,16 @@ export async function handle(ctx, request, response, url) {
         const asked = url.searchParams.get("path");
         if (!asked) throw new HttpError(400, "No file was given.");
         // A path in the project (what a reply's file link holds) or an absolute one.
-        const resolved = path.isAbsolute(asked) ? path.resolve(asked) : path.resolve(ctx.currentProject ?? ".", asked);
-        if (ctx.currentProject && resolved !== ctx.currentProject && !resolved.startsWith(ctx.currentProject + path.sep)) {
-          throw new HttpError(403, "That file is outside the project.");
+        // The home folder is the floor when no project (or a project outside home) is open.
+        const home = os.homedir();
+        const base = ctx.currentProject ?? home;
+        const resolved = path.isAbsolute(asked) ? path.resolve(asked) : path.resolve(base, asked);
+        if (ctx.currentProject) {
+          if (resolved !== ctx.currentProject && !resolved.startsWith(ctx.currentProject + path.sep)) {
+            throw new HttpError(403, "That file is outside the project.");
+          }
+        } else if (resolved !== home && !resolved.startsWith(home + path.sep)) {
+          throw new HttpError(403, "That file is outside the home folder.");
         }
         let content;
         try { content = fs.readFileSync(resolved, "utf8"); }
@@ -28,9 +35,14 @@ export async function handle(ctx, request, response, url) {
       if (url.pathname === "/api/file" && request.method === "POST") {
         const body = await ctx.readBody(request);
         if (!body.path) throw new HttpError(400, "No file was given.");
+        const home = os.homedir();
         const resolved = path.resolve(body.path);
-        if (ctx.currentProject && resolved !== ctx.currentProject && !resolved.startsWith(ctx.currentProject + path.sep)) {
-          throw new HttpError(403, "That file is outside the project.");
+        if (ctx.currentProject) {
+          if (resolved !== ctx.currentProject && !resolved.startsWith(ctx.currentProject + path.sep)) {
+            throw new HttpError(403, "That file is outside the project.");
+          }
+        } else if (resolved !== home && !resolved.startsWith(home + path.sep)) {
+          throw new HttpError(403, "That file is outside the home folder.");
         }
         fs.mkdirSync(path.dirname(resolved), { recursive: true });
         fs.writeFileSync(resolved, String(body.content ?? ""), "utf8");
@@ -39,8 +51,10 @@ export async function handle(ctx, request, response, url) {
       if (url.pathname === "/api/file" && request.method === "DELETE") {
         const asked = url.searchParams.get("path");
         if (!asked) throw new HttpError(400, "No file was given.");
+        const home = os.homedir();
+        const base = ctx.currentProject && ctx.currentProject.startsWith(home + path.sep) ? ctx.currentProject : home;
         const resolved = path.resolve(asked);
-        if (ctx.currentProject && resolved !== ctx.currentProject && !resolved.startsWith(ctx.currentProject + path.sep)) {
+        if (resolved !== base && !resolved.startsWith(base + path.sep)) {
           throw new HttpError(403, "That file is outside the project.");
         }
         let stats;
@@ -53,9 +67,14 @@ export async function handle(ctx, request, response, url) {
       if (url.pathname === "/api/mkdir" && request.method === "POST") {
         const body = await ctx.readBody(request);
         if (!body.path) throw new HttpError(400, "No folder was given.");
+        const home = os.homedir();
         const resolved = path.resolve(body.path);
-        if (ctx.currentProject && resolved !== ctx.currentProject && !resolved.startsWith(ctx.currentProject + path.sep)) {
-          throw new HttpError(403, "That folder is outside the project.");
+        if (ctx.currentProject) {
+          if (resolved !== ctx.currentProject && !resolved.startsWith(ctx.currentProject + path.sep)) {
+            throw new HttpError(403, "That folder is outside the project.");
+          }
+        } else if (resolved !== home && !resolved.startsWith(home + path.sep)) {
+          throw new HttpError(403, "That folder is outside the home folder.");
         }
         fs.mkdirSync(resolved, { recursive: true });
         return json({ ok: true, path: resolved });
@@ -177,9 +196,14 @@ export async function handle(ctx, request, response, url) {
         if (url.pathname === "/api/raw" && request.method === "GET") {
           const asked = url.searchParams.get("path");
           if (!asked) throw new HttpError(400, "No file was given.");
+          const home = os.homedir();
           const resolved = path.resolve(asked);
-          if (ctx.currentProject && resolved !== ctx.currentProject && !resolved.startsWith(ctx.currentProject + path.sep)) {
-            throw new HttpError(403, "That file is outside the project.");
+          if (ctx.currentProject) {
+            if (resolved !== ctx.currentProject && !resolved.startsWith(ctx.currentProject + path.sep)) {
+              throw new HttpError(403, "That file is outside the project.");
+            }
+          } else if (resolved !== home && !resolved.startsWith(home + path.sep)) {
+            throw new HttpError(403, "That file is outside the home folder.");
           }
           let data;
           try { data = fs.readFileSync(resolved); }

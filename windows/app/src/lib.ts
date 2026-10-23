@@ -11,10 +11,16 @@ export const escapeHtml = (text: unknown) =>
 /// The engine's words can carry anything: keep the structure, drop the dangerous parts.
 export function sanitizeHtml(html: string): string {
   const doc = new DOMParser().parseFromString(html, "text/html");
-  doc.querySelectorAll("script, iframe, object, embed, link, meta, base, style").forEach(node => node.remove());
+  doc.querySelectorAll("script, iframe, object, embed, link, meta, base, style, form, input, button, textarea, select, svg, math").forEach(node => node.remove());
   doc.querySelectorAll("*").forEach(node => {
     [...node.attributes].forEach(attr => {
-      if (attr.name.startsWith("on") || /^\s*javascript:/i.test(attr.value)) node.removeAttribute(attr.name);
+      const name = attr.name.toLowerCase();
+      const value = attr.value.trim();
+      if (name.startsWith("on") || name === "srcdoc") { node.removeAttribute(attr.name); return; }
+      if ((name === "href" || name === "src" || name === "xlink:href" || name === "poster") &&
+          /^\s*(javascript|vbscript|data):/i.test(value)) {
+        node.removeAttribute(attr.name);
+      }
     });
   });
   return doc.body.innerHTML;

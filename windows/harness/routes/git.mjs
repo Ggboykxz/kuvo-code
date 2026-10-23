@@ -27,6 +27,7 @@ export async function handle(ctx, request, response, url) {
       if (url.pathname === "/api/git/diff" && request.method === "GET") {
         if (!ctx.currentProject) throw new HttpError(400, "No project folder is open.");
         const asked = url.searchParams.get("path");
+        if (asked && (asked.includes("..") || path.isAbsolute(asked))) throw new HttpError(400, "That path isn't allowed.");
         const { execFileSync } = await import("node:child_process");
         let output = "";
         try {
@@ -41,6 +42,7 @@ export async function handle(ctx, request, response, url) {
         if (!ctx.currentProject) throw new HttpError(400, "No project folder is open.");
         const body = await ctx.readBody(request);
         const files = Array.isArray(body.paths) ? body.paths : (body.path ? [body.path] : []);
+        if (files.some(file => typeof file !== "string" || file.includes("..") || path.isAbsolute(file))) throw new HttpError(400, "That path isn't allowed.");
         const { execFileSync } = await import("node:child_process");
         try { execFileSync("git", ["add", "--", ...files], { cwd: ctx.currentProject, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
         catch (error) { throw new HttpError(500, error?.stderr?.toString() || error.message); }
@@ -50,6 +52,7 @@ export async function handle(ctx, request, response, url) {
         if (!ctx.currentProject) throw new HttpError(400, "No project folder is open.");
         const body = await ctx.readBody(request);
         const files = Array.isArray(body.paths) ? body.paths : (body.path ? [body.path] : []);
+        if (files.some(file => typeof file !== "string" || file.includes("..") || path.isAbsolute(file))) throw new HttpError(400, "That path isn't allowed.");
         const { execFileSync } = await import("node:child_process");
         try { execFileSync("git", ["reset", "HEAD", "--", ...files], { cwd: ctx.currentProject, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
         catch (error) { throw new HttpError(500, error?.stderr?.toString() || error.message); }
@@ -85,6 +88,7 @@ export async function handle(ctx, request, response, url) {
         const body = await ctx.readBody(request);
         const name = String(body.name ?? "").trim();
         if (name === "") throw new HttpError(400, "No branch was given.");
+        if (name.startsWith("-") || !/^[A-Za-z0-9._\\/-]+$/.test(name)) throw new HttpError(400, "That branch name isn't allowed.");
         const { execFileSync } = await import("node:child_process");
         try { execFileSync("git", ["checkout", name], { cwd: ctx.currentProject, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
         catch (error) { throw new HttpError(500, error?.stderr?.toString() || error.message); }
@@ -96,6 +100,7 @@ export async function handle(ctx, request, response, url) {
         if (!directory) throw new HttpError(400, "No project folder is open.");
         const name = String(body.name ?? "").trim();
         if (name === "") throw new HttpError(400, "No branch name was given.");
+        if (name.startsWith("-") || !/^[A-Za-z0-9._\\/-]+$/.test(name)) throw new HttpError(400, "That branch name isn't allowed.");
         const { execFileSync } = await import("node:child_process");
         try { execFileSync("git", ["checkout", "-b", name], { cwd: directory, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
         catch (error) { throw new HttpError(500, error?.stderr?.toString() || error.message); }
@@ -228,6 +233,7 @@ export async function handle(ctx, request, response, url) {
           const file = typeof body?.file === "string" ? body.file : "";
           if (!directory) throw new HttpError(400, "No folder to change.");
           if (!file) throw new HttpError(400, "No file to put back.");
+          if (file.includes("..") || path.isAbsolute(file)) throw new HttpError(400, "That path isn't allowed.");
           if (!(await isGitProject(directory))) throw new HttpError(400, "That folder is not a git project.");
           await git(directory, ["checkout", "--", file]);
           return json({ ok: true, file });
@@ -318,7 +324,7 @@ export async function handle(ctx, request, response, url) {
           if (!directory) throw new HttpError(400, "No folder to commit in.");
           if (!message) throw new HttpError(400, "A commit needs a message.");
           if (!(await isGitProject(directory))) throw new HttpError(400, "That folder is not a git project.");
-          const files = Array.isArray(body?.files) ? body.files.filter(name => typeof name === "string") : [];
+          const files = Array.isArray(body?.files) ? body.files.filter(name => typeof name === "string" && !name.includes("..") && !path.isAbsolute(name)) : [];
           if (files.length) await git(directory, ["add", "--", ...files]);
           else await git(directory, ["add", "-A"]);
           await git(directory, ["commit", "-m", message]);
