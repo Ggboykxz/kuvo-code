@@ -267,28 +267,52 @@ export function AccountsPage() {
 
 /// Bots: your own, a name, a job, and the model that does it (BotEditor.swift).
 export function BotsPage() {
-  const [bots, setBots] = useState<{ id: string; name: string; personality: string; model: string }[]>(() => {
-    try { return JSON.parse(localStorage.getItem("kuvo-bots") ?? "[]"); } catch { return []; }
-  });
-  const [editing, setEditing] = useState<{ id: string; name: string; personality: string; model: string } | null>(null);
-  const save = (list: { id: string; name: string; personality: string; model: string }[]) => { setBots(list); localStorage.setItem("kuvo-bots", JSON.stringify(list)); };
-  const remove = (id: string) => save(bots.filter(bot => bot.id !== id));
-  const upsert = (bot: { id: string; name: string; personality: string; model: string }) => {
-    const list = bots.some(item => item.id === bot.id) ? bots.map(item => item.id === bot.id ? bot : item) : [...bots, bot];
-    save(list);
-    setEditing(null);
+  const [bots, setBots] = useState<Array<{ id: string; name: string; personality: string; model: string; look?: { color: string; shape: string; face: string } }>>([]);
+  const [editing, setEditing] = useState<{ id: string; name: string; personality: string; model: string; look?: { color: string; shape: string; face: string } } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    void load();
+  }, [state.project]);
+
+  const load = async () => {
+    if (!state.project) { setBots([]); setLoading(false); return; }
+    try {
+      const { bots: loaded } = await api<{ bots: Array<{ id: string; name: string; job: string; model: { id: string }; look: { color: string; shape: string; face: string } }> }>(`/api/bots`);
+      setBots(loaded.map(b => ({ id: b.id, name: b.name, personality: b.job, model: b.model.id, look: b.look })));
+    } catch { setBots([]); }
+    setLoading(false);
   };
+
+  const saveBot = async (bot: typeof editing) => {
+    if (!bot) return;
+    try {
+      await api(`/api/bots`, { method: "POST", body: bot });
+      setEditing(null);
+      await load();
+    } catch (error) { complain(error); }
+  };
+
+  const removeBot = async (id: string) => {
+    try {
+      await api(`/api/bots/${encodeURIComponent(id)}`, { method: "DELETE" });
+      await load();
+    } catch (error) { complain(error); }
+  };
+
+  if (loading) return <SettingGroup title="Bots"><div className="settings-note">Loading…</div></SettingGroup>;
+
   return (
     <>
       <SettingGroup title="Bots">
         {bots.length === 0 ? <div className="settings-note">None yet. A bot is an agent of your own: a name, a job, and the model that does it.</div> : bots.map(bot => (
           <SettingRow key={bot.id} label={bot.name} note={bot.personality || bot.model}>
             <button className="small" onClick={() => setEditing(bot)}>Edit</button>
-            <button className="small" onClick={() => remove(bot.id)}>Remove</button>
+            <button className="small" onClick={() => removeBot(bot.id)}>Remove</button>
           </SettingRow>
         ))}
         <SettingRow label="New Bot">
-          <button className="small" onClick={() => setEditing({ id: `bot-${Date.now()}`, name: "", personality: "", model: "" })}>New Bot…</button>
+          <button className="small" onClick={() => setEditing({ id: `bot-${Date.now()}`, name: "", personality: "", model: "", look: { color: "sky", shape: "round", face: "calm" } })}>New Bot…</button>
         </SettingRow>
       </SettingGroup>
       {editing ? (
@@ -297,10 +321,38 @@ export function BotsPage() {
           <input type="text" value={editing.name} onChange={event => setEditing({ ...editing, name: event.target.value })} />
           <span>Personality</span>
           <textarea value={editing.personality} onChange={event => setEditing({ ...editing, personality: event.target.value })} />
-          <span>Model</span>
-          <input type="text" value={editing.model} placeholder="provider/model" onChange={event => setEditing({ ...editing, model: event.target.value })} />
+          <span>Model (provider/model)</span>
+          <input type="text" value={editing.model} placeholder="anthropic/claude-3-sonnet" onChange={event => setEditing({ ...editing, model: event.target.value })} />
+          <span>Look</span>
+          <div className="settings-row">
+            <span>Color</span>
+            <select value={editing.look?.color || "sky"} onChange={event => setEditing({ ...editing, look: { color: event.target.value, shape: editing.look?.shape || "round", face: editing.look?.face || "calm" } })}>)
+              <option value="sky">Sky</option>
+              <option value="rose">Rose</option>
+              <option value="amber">Amber</option>
+              <option value="emerald">Emerald</option>
+              <option value="violet">Violet</option>
+              <option value="slate">Slate</option>
+            </select>
+          </div>
+          <div className="settings-row">
+            <span>Shape</span>
+            <select value={editing.look?.shape || "round"} onChange={event => setEditing({ ...editing, look: { shape: event.target.value, color: (editing.look?.color ?? "sky"), face: (editing.look?.face ?? "calm") } })}>)
+              <option value="round">Round</option>
+              <option value="square">Square</option>
+              <option value="hexagon">Hexagon</option>
+            </select>
+          </div>
+          <div className="settings-row">
+            <span>Face</span>
+            <select value={editing.look?.face || "calm"} onChange={event => setEditing({ ...editing, look: { face: event.target.value, color: (editing.look?.color ?? "sky"), shape: (editing.look?.shape ?? "round") } })}>)
+              <option value="calm">Calm</option>
+              <option value="happy">Happy</option>
+              <option value="focused">Focused</option>
+            </select>
+          </div>
           <div className="settings-editor-buttons">
-            <button className="primary" onClick={() => editing && upsert(editing)}>Save</button>
+            <button className="primary" onClick={() => editing && saveBot(editing)}>Save</button>
             <button className="small" onClick={() => setEditing(null)}>Cancel</button>
           </div>
         </div>
@@ -308,6 +360,7 @@ export function BotsPage() {
     </>
   );
 }
+
 
 /// The sessions that are put away: out of the sidebar, still here, brought back or deleted.
 export function ArchivedPage() {
