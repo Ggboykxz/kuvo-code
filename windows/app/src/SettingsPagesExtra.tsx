@@ -194,34 +194,71 @@ export function AutoPage() {
 
 /// Machines: Linux servers whose engine Kuvo Code runs over SSH (MachinesSettings.swift).
 export function MachinesPage() {
-  const [machines, setMachines] = useState<{ id: string; name: string; destination: string; status?: string }[]>(() => {
-    try { return JSON.parse(localStorage.getItem("kuvo-machines") ?? "[]"); } catch { return []; }
-  });
+  const [machines, setMachines] = useState<Array<{ id: string; name: string; destination: string; status?: string }>>([]);
   const [name, setName] = useState("");
   const [destination, setDestination] = useState("");
   const [testing, setTesting] = useState<string | null>(null);
-  const save = (list: typeof machines) => { setMachines(list); localStorage.setItem("kuvo-machines", JSON.stringify(list)); };
-  const add = () => {
-    if (!name.trim() || !destination.trim()) return;
-    save([...machines, { id: `m-${Date.now()}`, name: name.trim(), destination: destination.trim() }]);
-    setName(""); setDestination("");
+  const [installing, setInstalling] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const load = async () => {
+    try {
+      const { machines: loaded } = await api<{ machines: Array<{ id: string; name: string; destination: string; status?: string }> }>("/api/machines");
+      setMachines(loaded);
+    } catch { setMachines([]); }
+    setLoading(false);
   };
-  const remove = (id: string) => save(machines.filter(m => m.id !== id));
+
+  
+
+  const add = async () => {
+    if (!name.trim() || !destination.trim()) return;
+    try {
+      const { machine } = await api<{ machine: { id: string; name: string; destination: string; status: string } }>("/api/machines", { method: "POST", body: { name: name.trim(), destination: destination.trim() } });
+      setMachines([...machines, machine]);
+      setName(""); setDestination("");
+    } catch (error) { complain(error); }
+  };
+
+  const remove = async (id: string) => {
+    try {
+      await api(`/api/machines/${encodeURIComponent(id)}`, { method: "DELETE" });
+      setMachines(machines.filter(m => m.id !== id));
+    } catch (error) { complain(error); }
+  };
+
   const test = async (id: string) => {
     setTesting(id);
-    const machine = machines.find(m => m.id === id);
-    if (!machine) { setTesting(null); return; }
-    const result = await (window as unknown as { kuvo?: { sshCheck?: (d: string) => Promise<{ ok: boolean; error?: string }> } }).kuvo?.sshCheck?.(machine.destination);
-    save(machines.map(m => m.id === id ? { ...m, status: result?.ok ? "reachable" : `unreachable: ${result?.error ?? "unknown"}` } : m));
+    try {
+      const { status } = await api<{ status: string }>(`/api/machines/${encodeURIComponent(id)}/test`, { method: "POST" });
+      setMachines(machines.map(m => m.id === id ? { ...m, status } : m));
+    } catch (error) { complain(error); }
     setTesting(null);
   };
+
+  const install = async (id: string) => {
+    setInstalling(id);
+    try {
+      const { status } = await api<{ status: string }>(`/api/machines/${encodeURIComponent(id)}/install`, { method: "POST" });
+      setMachines(machines.map(m => m.id === id ? { ...m, status } : m));
+    } catch (error) { complain(error); }
+    setInstalling(null);
+  };
+
+  if (loading) return <SettingGroup title="Machines"><div className="settings-note">Loading…</div></SettingGroup>;
+
   return (
     <>
       <SettingGroup title="Machines">
-        <div className="settings-note">Linux servers you reach with SSH, like a home server or a VPS. Test reachability here; installing the engine on the remote and running sessions there comes next.</div>
+        <div className="settings-note">Linux servers you reach with SSH, like a home server or a VPS. Test reachability, install the engine, and run sessions there.</div>
         {machines.length === 0 ? <div className="settings-note">None yet.</div> : machines.map(machine => (
           <SettingRow key={machine.id} label={machine.name} note={`${machine.destination}${machine.status ? ` · ${machine.status}` : ""}`}>
             <button className="small" disabled={testing === machine.id} onClick={() => void test(machine.id)}>{testing === machine.id ? "Testing…" : "Test"}</button>
+            <button className="small" disabled={installing === machine.id} onClick={() => void install(machine.id)}>{installing === machine.id ? "Installing…" : "Install Engine"}</button>
             <button className="small" onClick={() => remove(machine.id)}>Remove</button>
           </SettingRow>
         ))}
@@ -237,7 +274,7 @@ export function MachinesPage() {
   );
 }
 
-/// Accounts: what's connected, the popular providers, and every other one the engine knows.
+
 export function AccountsPage() {
   const [integrations, setIntegrations] = useState<{ id: string; name?: string; connections?: unknown[] }[]>([]);
   const [loaded, setLoaded] = useState(false);
