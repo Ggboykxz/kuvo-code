@@ -138,19 +138,68 @@ export function BrowserPage() {
 /// Passwords: the sign-ins the panel's browser saved (PasswordsSettings.swift).
 export function PasswordsPage() {
   const [offers, setOffers] = useState(() => localStorage.getItem("kuvo-passwords-offers") !== "0");
+  const [credentials, setCredentials] = useState<Array<{ target: string; username: string; created: string }>>([]);
+  const [loading, setLoading] = useState(true);
+  const [newTarget, setNewTarget] = useState("");
+  const [newUsername, setNewUsername] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  const load = async () => {
+    try {
+      const { credentials: loaded } = await api<{ credentials: Array<{ target: string; username: string; created: string; hasPassword: boolean }> }>("/api/credentials");
+      setCredentials(loaded);
+    } catch { setCredentials([]); }
+    setLoading(false);
+  };
+
+  const add = async () => {
+    if (!newTarget.trim() || !newUsername.trim() || !newPassword) return;
+    try {
+      await api("/api/credentials", { method: "POST", body: { target: newTarget.trim(), username: newUsername.trim(), password: newPassword } });
+      setNewTarget(""); setNewUsername(""); setNewPassword("");
+      await load();
+    } catch (error) { complain(error); }
+  };
+
+  const remove = async (target: string) => {
+    try {
+      await api(`/api/credentials/${encodeURIComponent(target)}`, { method: "DELETE" });
+      await load();
+    } catch (error) { complain(error); }
+  };
+
+  if (loading) return <SettingGroup title="Passwords"><div className="settings-note">Loading…</div></SettingGroup>;
+
   return (
     <>
-      <SettingGroup title="Passwords">
-        <SettingRow label="Offer to save passwords" note="When you sign in to a site in the panel's browser. Click the key in its toolbar to fill one in.">
+      <SettingGroup title="Passwords & API Keys">
+        <div className="settings-note">Kept in Windows Credential Manager, where the system lists them too. Kuvo Code fills one in only when you ask, and the agent never sees them.</div>
+        <SettingRow label="Offer to save passwords">
           <input type="checkbox" checked={offers} onChange={event => { setOffers(event.target.checked); localStorage.setItem("kuvo-passwords-offers", event.target.checked ? "1" : "0"); }} />
         </SettingRow>
+        {credentials.length === 0 ? <div className="settings-note">None yet.</div> : credentials.map(cred => (
+          <SettingRow key={cred.target} label={cred.target} note={`${cred.username} · ${new Date(cred.created).toLocaleDateString()}`}>
+            <button className="small" onClick={() => remove(cred.target)}>Remove</button>
+          </SettingRow>
+        ))}
       </SettingGroup>
-      <div className="settings-note">Kept in your credential store, where the system lists them too. Kuvo Code fills one in only when you ask, and the agent never sees them.</div>
+      <SettingGroup title="Add a Credential">
+        <div className="settings-row"><span>Target (e.g. github.com, api.openai.com)</span><input type="text" value={newTarget} onChange={event => setNewTarget(event.target.value)} /></div>
+        <div className="settings-row"><span>Username / Key name</span><input type="text" value={newUsername} onChange={event => setNewUsername(event.target.value)} /></div>
+        <div className="settings-row"><span>Password / API Key</span><input type="password" value={newPassword} onChange={event => setNewPassword(event.target.value)} /></div>
+        <div className="settings-editor-buttons">
+          <button className="primary" disabled={!newTarget.trim() || !newUsername.trim() || !newPassword} onClick={add}>Save</button>
+        </div>
+      </SettingGroup>
     </>
   );
 }
 
-/// Phone: pairing Kuvo Code for iPhone with this Mac (PhoneSettings.swift).
+
 export function PhonePage() {
   return (
     <>
