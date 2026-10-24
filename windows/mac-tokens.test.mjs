@@ -1,0 +1,1314 @@
+// The Mac binding, checked: the tokens the page is painted with are the Mac's values, not the
+// retired OpenDesign direction's. These are static checks on the source of the binding, so they
+// run in CI without a browser or an engine.
+//
+//   node --test windows/mac-tokens.test.mjs
+//
+// The same checks are run twice: once over the sources as they are, and once over the same
+// sources with Windows' line endings. A rule read as text must not depend on whether the
+// file was checked out on Windows or on a Mac.
+
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const read = (...parts) => fs.readFileSync(path.join(here, ...parts), "utf8");
+
+const sources = {
+  css: read("harness", "ui", "style.css"),
+  store: read("app", "src", "store.ts"),
+  api: read("app", "src", "api.ts"),
+  over: read("app", "src", "Overlays.tsx"),
+  keys: read("app", "src", "keys.mjs"),
+  settings: [read("app", "src", "Settings.tsx"), read("app", "src", "SettingsShared.tsx"), read("app", "src", "SettingsPages.tsx"), read("app", "src", "SettingsPagesExtra.tsx"), read("app", "src", "SettingsMcp.tsx"), read("app", "src", "SettingsAgents.tsx")].join("\\n"),
+  overlays: read("app", "src", "Overlays.tsx"),
+  app: [read("app", "src", "App.tsx"), read("app", "src", "Transcript.tsx"), read("app", "src", "Header.tsx"), read("app", "src", "Sidebar.tsx"), read("app", "src", "Composer.tsx"), read("app", "src", "app-shared.ts")].join("\\n"),
+  design: read("harness", "ui", "DESIGN.md"),
+  motion: read("app", "src", "motion.ts"),
+  symbols: read("app", "src", "components", "symbols.tsx"),
+  lib: read("app", "src", "lib.ts"),
+  changes: read("app", "src", "Changes.tsx"),
+  diff: read("app", "src", "diff.mjs"),
+  filetree: read("app", "src", "filetree.mjs"),
+  review: read("app", "src", "review-comments.mjs"),
+  styles: read("harness", "ui", "style.css"),
+  shimmer: read("app", "src", "components", "ai-elements", "shimmer.tsx"),
+  logo: read("app", "src", "components", "provider-logo.tsx"),
+  spinner: read("app", "src", "components", "spinner.tsx"),
+  transcript: read("harness", "transcript.mjs"),
+  layout: read("harness", "layout.mjs"),
+  engine: read("harness", "engine.mjs"),
+  server: [read("harness", "server.mjs"), read("harness", "routes.mjs"), read("harness", "routes", "projects.mjs"), read("harness", "routes", "files.mjs"), read("harness", "routes", "git.mjs"), read("harness", "routes", "sessions.mjs"), read("harness", "routes", "models.mjs"), read("harness", "routes", "settings.mjs"), read("harness", "routes", "bots.mjs"), read("harness", "routes", "machines.mjs")].join("\\n"),
+  shell: read("electron", "main.js"),
+  preload: read("electron", "preload.js"),
+  toolCall: read("app", "src", "components", "tool-call.tsx"),
+  mac: read("..", "Packages", "OpenCodeKit", "Sources", "OpenCodeKit", "Events", "Transcript.swift"),
+  sidebar: read("..", "KuvoCode", "Views", "SidebarView.swift"),
+  main: read("..", "KuvoCode", "Views", "MainView.swift"),
+  titlebar: read("..", "KuvoCode", "Views", "TitleBar.swift"),
+  tailwind: read("app", "app", "globals.css"),
+  postcss: read("app", "postcss.config.mjs"),
+  next: read("app", "next.config.mjs"),
+  page: read("app", "app", "page.tsx"),
+  build: read("app", "build.mjs"),
+};
+
+/// The sources of one run, with the line endings of the platform put to one.
+const withEndings = (raw, windows) => {
+  const out = {};
+  for (const [name, text] of Object.entries(raw)) {
+    const flat = text.replace(/\r\n/g, "\n");
+    out[name] = windows ? flat.replace(/\n/g, "\r\n") : flat;
+  }
+  return out;
+};
+
+/// The helpers the checks read the stylesheet with.
+const reader = (css) => {
+  // Normalize line endings first
+  const norm = css.replace(/\r\n/g, "\n");
+  
+  // The Mac binding is the main design-token block (the one with --radius-card, --bg, etc.),
+  // not the retired block at the top, and not the mobile block inside @media.
+  // Find the :root block that contains the core design tokens (e.g., --radius-card).
+  const findMainRoot = (css) => {
+    let pos = 0;
+    while ((pos = css.indexOf(":root {", pos)) !== -1) {
+      const end = css.indexOf("\n}", pos);
+      if (end === -1) break;
+      const block = css.slice(pos, end);
+      // The main Mac binding block has both --bg and --radius-card
+      if (block.includes("--bg:") && block.includes("--radius-card")) {
+        return pos;
+      }
+      pos += 7;
+    }
+    // Fallback: first :root with --bg
+    pos = 0;
+    while ((pos = css.indexOf(":root {", pos)) !== -1) {
+      const end = css.indexOf("\n}", pos);
+      if (end === -1) break;
+      const block = css.slice(pos, end);
+      if (block.includes("--bg:")) return pos;
+      pos += 7;
+    }
+    return css.lastIndexOf(":root {");
+  };
+
+  const findMainDark = (css) => {
+    let pos = 0;
+    let found = -1;
+    while ((pos = css.indexOf('html[data-theme="dark"] {', pos)) !== -1) {
+      const end = css.indexOf("\n}", pos);
+      if (end === -1) break;
+      const block = css.slice(pos, end);
+      // The main dark mode block has --bg and --accent
+      if (block.includes("--bg:") && block.includes("--accent")) {
+        found = pos;
+      }
+      pos += 28;
+    }
+    return found >= 0 ? found : css.lastIndexOf('html[data-theme="dark"] {');
+  };
+
+  const mainRoot = findMainRoot(norm);
+  const mainDark = findMainDark(norm);
+
+  const tokensIn = (start, name) => {
+    assert.ok(start >= 0, "token block exists");
+    const body = norm.slice(start, norm.indexOf("\n}", start));
+    const matches = [...body.matchAll(new RegExp(`--${name}:\\s*([^;]+);`, "g"))];
+    return matches.at(-1)?.[1]?.trim();
+  };
+  const lightTokens = (name) => tokensIn(mainRoot, name);
+  const darkTokens = (name) => tokensIn(mainDark, name);
+
+  /// The rule that is written last for a selector: the one the cascade uses. A rule inside
+  /// a media query is not that one (it only applies at some widths), so those are skipped.
+  const mediaRanges = () => {
+    const ranges = [];
+    const pattern = /@media[^{]*\{/g;
+    let found;
+    while ((found = pattern.exec(css))) {
+      let depth = 1;
+      let at = found.index + found[0].length;
+      while (at < css.length && depth > 0) {
+        if (css[at] === "{") depth += 1;
+        else if (css[at] === "}") depth -= 1;
+        at += 1;
+      }
+      ranges.push([found.index, at]);
+    }
+    return ranges;
+  };
+  const rule = (selector) => {
+    const ranges = mediaRanges();
+    let start = -1;
+    let at = css.indexOf(selector);
+    while (at >= 0) {
+      if (!ranges.some(([from, to]) => at > from && at < to)) start = at;
+      at = css.indexOf(selector, at + 1);
+    }
+    assert.ok(start >= 0, `the rule for ${selector} exists`);
+    const end = css.indexOf("\n}", start);
+    return css.slice(start, end < 0 ? css.length : end);
+  };
+  return { lightTokens, darkTokens, rule };
+};
+
+const checks = [
+  ["the canvas is the Mac's warm canvas, with its two-corner ambient", ({ css, lightTokens, darkTokens }) => {
+    assert.equal(lightTokens("bg"), "#F6F4EE");
+    assert.equal(darkTokens("bg"), "#131417");
+    const ambient = lightTokens("bg-ambient");
+    assert.match(ambient, /255, 158, 107/);
+    assert.match(ambient, /107, 140, 255/);
+    assert.match(ambient, /0\.07/);
+    assert.match(ambient, /0\.0175/);
+  }],
+
+  ["cards, bubble, panel and well use the Mac's radii", ({ lightTokens }) => {
+    assert.equal(lightTokens("radius-card"), "14px");
+    assert.equal(lightTokens("radius-panel"), "14px");
+    assert.equal(lightTokens("radius-bubble"), "18px");
+    assert.equal(lightTokens("radius-palette"), "18px");
+    assert.equal(lightTokens("radius-well"), "10px");
+    assert.equal(lightTokens("radius-button"), "6px");
+  }],
+
+  ["cards cast the Mac's soft shadow, and keep a lit top edge", ({ css, lightTokens, darkTokens }) => {
+    assert.match(lightTokens("shadow-card"), /0 2px 6px/);
+    assert.doesNotMatch(lightTokens("shadow-card"), /none/);
+    assert.match(lightTokens("shadow-composer"), /inset 0 1px 0/);
+    assert.match(darkTokens("shadow-card"), /rgba\(0, 0, 0/);
+  }],
+
+  ["the accent glass is a wash with an edge, and no blur", ({ css, lightTokens, darkTokens }) => {
+    assert.match(lightTokens("bubble-fill"), /transparent 90%/);
+    assert.match(darkTokens("bubble-fill"), /transparent 78%/);
+    assert.match(lightTokens("bubble-edge"), /var\(--accent\) 28%/);
+    const bubble = css.slice(css.lastIndexOf(".entry.user .text {"));
+    assert.match(bubble, /backdrop-filter: none/);
+    assert.match(bubble, /border-radius: var\(--radius-bubble\)/);
+  }],
+
+  ["the composer is an opaque card, not glass", ({ css }) => {
+    const composer = css.slice(css.lastIndexOf(".composer {"));
+    assert.match(composer, /background: var\(--panel\)/);
+    assert.match(composer, /backdrop-filter: none/);
+    assert.match(composer, /border-radius: var\(--radius-panel\)/);
+    const editor = css.slice(css.lastIndexOf(".composer textarea {"));
+    assert.match(editor, /background: transparent/);
+    assert.match(editor, /border: 0/);
+  }],
+
+  ["the text size is a conversation size, and the Mac's four steps", ({ store, settings }) => {
+    assert.match(store, /--message-size/);
+    assert.doesNotMatch(store, /setProperty\("--text-base"/);
+    assert.match(store, /"15\.5"/);
+    assert.match(settings, /value="15\.5"/);
+    assert.match(settings, /value="17"/);
+    assert.match(store, /look\.motion === "reduced" \? "1ms" : "120ms"/);
+  }],
+
+  ["the design doc is bound to the Mac, not to OpenDesign", ({ design, settings }) => {
+    assert.match(design, /Source of truth/);
+    assert.match(design, /Surfaces\.swift/);
+    assert.match(design, /The OpenDesign direction `modern-minimal`.*is retired/s);
+    assert.doesNotMatch(settings, /The look is bound to OpenDesign/);
+  }],
+
+  ["the window's panes are on the glass, 8 pt apart, and the sidebar has no surface", ({ css }) => {
+    assert.match(css, /--pane-gap:\s*8px/);
+    const main = css.slice(css.lastIndexOf("main {"));
+    assert.match(main, /gap: var\(--pane-gap\)/);
+    assert.match(main, /padding: 0 var\(--pane-gap\) var\(--pane-gap\)/);
+    const aside = css.slice(css.lastIndexOf("/* The sessions have no card of their own"));
+    assert.match(aside, /background: transparent/);
+    assert.match(aside, /border: 0/);
+  }],
+
+  ["the conversation is a card, with the Mac's 38 pt header and 62 pt fade", ({ css, app }) => {
+    assert.match(css, /#conversation\.conversation-card\s*\{[^}]*border-radius: var\(--radius-card\)/s);
+    assert.match(css, /--card-header:\s*38px/);
+    const fade = css.slice(css.lastIndexOf(".card-fade {"));
+    assert.match(fade, /height: 62px/);
+    assert.match(fade, /mask-image: linear-gradient/);
+    assert.match(app, /className="card conversation-card"/);
+    assert.match(app, /<CardHeader\s+session=\{state\.session\}/);
+  }],
+
+  ["the conversation runs under the header, and the composer is inside the card", ({ css, app }) => {
+    assert.match(css, /#conversation #entries, #split-entries \{ padding: calc\(var\(--card-header\) \+ 16px\)/);
+    const composer = css.slice(css.lastIndexOf(".composer {"));
+    assert.match(composer, /max-width: var\(--readable-width\)/);
+    assert.match(app, /<Composer \/>/);
+    assert.match(app, /id="conversation"/);
+  }],
+
+  ["the sidebar is one search, with 44 pt rows (Windows touch target) and the state dot", ({ css, app }) => {
+    assert.match(css, /#sessions li \{ height: 44px; \}/);
+    assert.match(css, /\.session \{[^}]*height: 44px/s);
+    assert.match(app, /placeholder="Search"/);
+    assert.doesNotMatch(app, /placeholder="Search sessions…"/);
+    assert.doesNotMatch(app, /placeholder="Search messages…"/);
+    assert.match(app, /className="sidebar-new"/);
+  }],
+
+  ["the palette floats over the page, and the card inside it is the glass", ({ css }) => {
+    const palette = css.slice(css.lastIndexOf(".palette {"));
+    assert.match(palette, /position: fixed/);
+    assert.match(palette, /inset: 0/);
+    assert.match(css, /\.palette-card::before/);
+    assert.match(css, /\.gauge-pop \{ position: fixed; \}/);
+  }],
+
+  ["the title bar holds the sessions as tabs, in the Mac's glass track", ({ css, app, rule }) => {
+    const track = rule(".tab-track {");
+    assert.match(track, /height: 36px/);
+    assert.match(track, /padding: 3px/);
+    assert.match(track, /border-radius: 999px/);
+    const tab = rule(".tab {");
+    assert.match(tab, /height: 44px/);
+    assert.match(tab, /gap: 8px/);
+    assert.match(rule(".tab-title {"), /max-width: 190px/);
+    // The pill: white in the light, a lighter glass in the dark, held off the track.
+    assert.match(css, /(^|\n)\.tab-pill \{[^}]*background: #fff;/s);
+    assert.match(css, /(^|\n)html\[data-theme="dark"\] \.tab-pill \{[^}]*background: rgba\(255, 255, 255, 0\.17\)/s);
+    assert.match(app, /role="tablist" aria-label="Open sessions"/);
+    assert.match(app, /className=\{`tab \$\{active \? "active" : ""\}`\}/);
+    // The strip is the title bar's now, not the card's.
+    assert.doesNotMatch(app, /id="session-tabs"/);
+  }],
+
+  ["the project identity takes the sessions' width, and the tabs the card's", ({ css, app }) => {
+    assert.match(css, /(^|\n)\.titlebar-identity \{[^}]*flex: 0 0 var\(--sessions-width\)/s);
+    assert.match(css, /(^|\n)\.titlebar-identity \{[^}]*width: var\(--sessions-width\)/s);
+    assert.match(css, /header\.titlebar\.sidebar-hidden \.titlebar-identity \{ flex-basis: auto/);
+    assert.match(app, /className="identity-name"/);
+    assert.match(app, /className="identity-branch"/);
+    assert.match(app, /aria-label=\{sidebarOpen \? "Hide Sessions" : "Show Sessions"\}/);
+  }],
+
+  ["the panes take the Mac's terrain, and give way in its order", ({ app, css, layout, rule }) => {
+    // PaneLayout (MainView.swift:2112-2179): sessions 220…440, changes 300…900, split
+    // 380…1200, and the conversation keeps at least 380. Out of room the split goes first,
+    // then the panel, then the sessions; a pane that went early comes back if a later
+    // one's going left room for it; the rest shrink, the panel first and the split last.
+    assert.match(layout, /sessions: \{ lower: 220, upper: 440 \}/);
+    assert.match(layout, /changes: \{ lower: 300, upper: 900 \}/);
+    assert.match(layout, /split: \{ lower: 380, upper: 1200 \}/);
+    assert.ok(layout.includes("export const conversationMinimum = 380;"));
+    assert.ok(layout.includes('givesWay = ["split", "changes", "sessions"]'), "the Mac's order of giving way");
+    assert.ok(layout.includes('for (const pane of ["changes", "sessions", "split"])'), "and the Mac's order of shrinking");
+    // The page measures the window and passes what each pane asks for: the sessions and
+    // the panel only while shown, the split only while a session is beside the one in view.
+    assert.match(app, /function paneLayoutNow\(\)[\s\S]*?main\.clientWidth[\s\S]*?paneLayout\(\{[\s\S]*?sessions: state\.sidebarOpen === false \? null : state\.sessionsWidth[\s\S]*?changes: state\.drawerOpen \? state\.changesWidth : null[\s\S]*?split: state\.split \? state\.splitWidth : null/);
+    assert.ok(app.includes("hidden={!state.split || layout.split === null}"), "a split the window has no room for is put aside");
+    assert.ok(app.includes('<PaneResizer pane="split" />'), "and the split has its own handle, as the Mac's has");
+    // The pane widths come from the layout, with the Mac's defaults when there is room.
+    const pane = rule(".split-pane {");
+    assert.match(pane, /flex: 0 0 var\(--split-width\)/);
+    assert.match(css, /--split-width: 560px/);
+    assert.ok(css.includes("width: var(--changes-width, 420px)"));
+  }],
+
+  ["the panel is a card beside the conversation, with a 44 pt tab strip", ({ css, app, rule }) => {
+    const pane = rule(".drawer.utility-pane {\n  position: relative;");
+    // The panel takes its width from the layout, as the Mac's changesWidth does
+    // (MainView.swift:39) — 420 by default, and less when the window has no room.
+    assert.match(pane, /width: var\(--changes-width, 420px\)/);
+    assert.match(css, /--changes-width: 420px/);
+    assert.match(pane, /border-radius: var\(--radius-card\)/);
+    assert.match(pane, /background: var\(--panel\)/);
+    assert.match(rule(".drawer-head {"), /height: 44px/);
+    const tab = rule(".drawer-tab {");
+    assert.match(tab, /height: 44px/);
+    assert.match(tab, /border-radius: 9px/);
+    // The panel sits in the window's row, beside the conversation, not over it.
+    const main = app.indexOf("<main");
+    const drawer = app.indexOf("<Drawer />");
+    assert.ok(main >= 0 && drawer > main && drawer < app.indexOf("</main>"), "the panel is in the window's row");
+  }],
+
+  ["the palette is the Mac's card: 600 wide, 18 corner, 48 pt search, 30 pt rows", ({ css, overlays, rule }) => {
+    assert.match(rule(".palette-card {"), /width: min\(600px, 92vw\)/);
+    assert.match(rule(".palette-card {"), /border-radius: var\(--radius-palette\)/);
+    assert.match(rule(".palette-search {"), /height: 48px/);
+    assert.match(rule(".palette-item {"), /height: 30px/);
+    const overlay = rule(".palette {");
+    assert.match(overlay, /padding-top: 80px/);
+    // The Mac dims the page by a hair, not with a scrim.
+    assert.match(overlay, /background: rgba\(0, 0, 0, 0\.001\)/);
+    assert.doesNotMatch(overlay, /backdrop-filter: blur/);
+    // The sections the Mac's palette has.
+    for (const title of ["Recent Sessions", "Actions", "Sessions", "Files"]) {
+      assert.match(overlays, new RegExp(`title: "${title}"`));
+    }
+  }],
+
+  ["Settings takes the sessions' place: a sidebar on the glass, the page in a card", ({ css, settings, rule }) => {
+    assert.match(settings, /className="settings-sidebar"/);
+    assert.match(settings, /className="settings-content card"/);
+    assert.match(settings, /className="settings-nav"/);
+    assert.match(settings, /id="settings-search"/);
+    assert.match(settings, /No Results/);
+    assert.match(rule(".settings {"), /inset: var\(--header-height\) 0 0 0/);
+    assert.match(rule(".settings-content {"), /border-radius: var\(--radius-panel\)/);
+    assert.match(rule(".settings-content-head {"), /padding: 26px 49px 4px/);
+    assert.match(rule(".settings-page {"), /max-width: 798px/);
+    assert.match(rule(".settings-nav button {"), /height: 44px/);
+  }],
+
+  ["the shell leaves room for Windows' own window controls, and the page drags", ({ css, app, rule }) => {
+    const shell = rule("body.in-shell header.titlebar {");
+    assert.match(shell, /padding-right: calc\(138px \+ var\(--pane-gap\)\)/);
+    assert.match(shell, /-webkit-app-region: drag/);
+    assert.match(css, /body\.in-shell header\.titlebar button[\s\S]*?-webkit-app-region: no-drag/);
+    assert.match(app, /document\.body\.classList\.toggle\("in-shell", inShell\)/);
+    assert.doesNotMatch(app, /titlebar-drag/);
+  }],
+
+  ["the fields sit in a well, with no focus ring of their own", ({ css, rule }) => {
+    const well = rule(".search-well {\n  display: flex;");
+    assert.match(well, /height: 28px/);
+    assert.match(well, /border-radius: var\(--radius-well\)/);
+    assert.match(rule(".search-well > input {"), /background: transparent/);
+    assert.match(rule("input:focus, textarea:focus, select:focus {"), /box-shadow: none/);
+  }],
+
+  ["the app's motion is the Mac's spring, written as the analytic curve", ({ css, motion, app, lightTokens }) => {
+    // The curve: 0 at the start, a little past 1 (the Mac's spring settles with a half
+    // percent of overshoot), and 1 at the end.
+    const curve = lightTokens("ease-spring");
+    assert.ok(curve?.startsWith("linear("), "the spring is the analytic curve");
+    const points = curve.slice(7, -1).split(",").map(value => Number(value.trim()));
+    assert.equal(points[0], 0);
+    assert.equal(points.at(-1), 1);
+    assert.ok(Math.max(...points) > 1, "the spring goes a little past its mark");
+    assert.ok(Math.max(...points) < 1.01, "and not far past it");
+    // The spring's own length: the time it takes to settle.
+    assert.equal(lightTokens("motion-spring"), "450ms");
+    // The same spring, as Motion takes it: ω = 2π / 0.32, damping 2ζω.
+    assert.match(motion, /stiffness: 385\.5/);
+    assert.match(motion, /damping: 33\.8/);
+    assert.match(motion, /mass: 1/);
+    assert.match(motion, /response: 0\.32/);
+    assert.match(motion, /dampingFraction: 0\.86/);
+    // The tab's pill is drawn by it, so the pill slides the way the Mac's does.
+    assert.match(app, /layoutId="session-tab-pill"/);
+    assert.match(app, /transition=\{macSpringOrStill\(motionIsReduced\(\)\)\}/);
+  }],
+
+  ["the pointer fills a control, and the press does not squeeze it", ({ css, lightTokens, rule }) => {
+    assert.match(lightTokens("press-hover"), /var\(--ink\) 8%/);
+    assert.match(lightTokens("press-active"), /var\(--ink\) 13%/);
+    assert.equal(lightTokens("motion-hover"), "120ms");
+    assert.equal(lightTokens("ease-hover"), "cubic-bezier(0, 0, 0.2, 1)");
+    // The press is a fill: the Mac has no press scale (Pressable.swift:8-9).
+    const pressed = rule("button:active { transform: none; }");
+    assert.doesNotMatch(pressed, /scale/);
+    assert.match(pressed, /transform: none/);
+  }],
+
+  ["the thinking shimmer is AI Elements', painted in the Mac's ink", ({ css, app, shimmer, rule }) => {
+    // The component is upstream's, and says where it came from.
+    assert.match(shimmer, /AI Elements — Shimmer \(Vercel\), Apache-2\.0/);
+    assert.match(shimmer, /elements\.ai-sdk\.dev/);
+    assert.match(shimmer, /bg-clip-text/);
+    assert.match(shimmer, /motion\/react/);
+    // The app uses it for the thinking words, at the Mac's beat (Theme.swift:93).
+    assert.match(app, /<Shimmer as="span" className="thinking-shimmer" duration=\{1\.6\}>Thinking…<\/Shimmer>/);
+    assert.match(app, /function motionIsReduced\(\)/);
+    assert.match(app, /look\.motion === "reduced"/);
+    // The light that sweeps is the Mac's, and the words are its secondary ink.
+    const thinking = rule(".thinking-shimmer {");
+    assert.match(thinking, /--color-background: var\(--ink\)/);
+    assert.match(thinking, /--color-muted-foreground: var\(--ink-soft\)/);
+  }],
+
+  ["the working mark is the app's own, written at the Mac's beat", ({ css, symbols, spinner }) => {
+    // The Mac's spinner writes the app's prompt mark: the chevron first, the cursor next,
+    // a hold, and a fade, over its 1.6 s round (Spinner.swift:40-54).
+    assert.match(css, /animation: kuvo-spinner-chevron 1\.6s linear infinite/);
+    assert.match(css, /animation: kuvo-spinner-cursor 1\.6s linear infinite/);
+    assert.match(css, /animation: kuvo-spinner-fade 1\.6s linear infinite/);
+    assert.match(css, /@keyframes kuvo-spinner-chevron \{\n  0% \{ stroke-dashoffset: 1; \}/);
+    assert.match(css, /@keyframes kuvo-spinner-fade \{\n  0%, 78% \{ opacity: 1; \}/);
+    // The faint copy is the Mac's: the mark at 18 % of the ink (Spinner.swift:104-108),
+    // and the whole mark fades together (Spinner.swift:141-143).
+    assert.match(css, /\.spinner-faint \{ opacity: 0\.18; \}/);
+    assert.match(css, /\.spinner \{[^}]*animation: kuvo-spinner-fade 1\.6s linear infinite;/s);
+    // And it stands still when the system asks for less movement (Spinner.swift:19-24).
+    assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.spinner-drawn \{ display: none; \}/);
+    // The mark itself is the Mac's own: the chevron and the cursor, on the icon's
+    // coordinates, with the icon's stroke (Spinner.swift:153-177, scripts/icon.py:15-17).
+    assert.match(symbols, /export const PROMPT_CHEVRON = "M77 74L267 262 77 450"/);
+    assert.match(symbols, /export const PROMPT_CURSOR = "M377 450h230"/);
+    assert.match(symbols, /Math\.max\(1, size \* 0\.11\) \* \(PROMPT_BOX \/ size\)/);
+    // The mark is drawn in the spinner, on the box's own units.
+    assert.match(spinner, /viewBox=\{`0 0 \$\{PROMPT_BOX\} \$\{PROMPT_HEIGHT\}`\}/);
+    // And the spinner draws the faint copy under the drawn one (Spinner.swift:118-126).
+    assert.match(spinner, /className="spinner-faint"/);
+    assert.match(spinner, /className="spinner-drawn"/);
+    assert.match(spinner, /strokeDasharray=\{dash\}/);
+  }],
+
+  ["the tool rows say what the call did, in the Mac's words", ({ app, toolCall, symbols }) => {
+    // ToolCallView.swift:163-200: the words of the call. Ours said the tool's raw name.
+    assert.match(toolCall, /case "read": return `\$\{active \? "Reading " : "Read "\}/);
+    assert.match(toolCall, /case "shell": return `\$\{active \? "Running " : "Ran "\}/);
+    assert.match(toolCall, /case "grep": return `Searched for/);
+    assert.match(toolCall, /case "websearch": return `Searched the web for/);
+    // And the mark that stands for it (ToolCallView.swift:312-326), drawn.
+    assert.match(toolCall, /case "read": return "doc\.text"/);
+    assert.match(toolCall, /case "grep":\s*case "glob": return "magnifyingglass"/);
+    for (const mark of ["doc.text", "doc.badge.plus", "pencil", "terminal", "globe", "questionmark.bubble", "wand.and.stars", "wrench.and.screwdriver"]) {
+      assert.ok(symbols.includes(`"${mark}"`), `${mark} is drawn`);
+    }
+    // And the row shows them.
+    assert.match(app, /<Spinner size=\{11\} \/> : <Symbol name=\{toolSymbol\(/);
+  }],
+
+  ["the lines a call added and removed come from where the Mac reads them", ({ app, css, toolCall, transcript }) => {
+    // The Mac sums the files out of the call's own metadata — nowhere else
+    // (ToolCallView.swift:358-366; SessionEdits.swift:19-22 reads the same field) — and
+    // prints them in the row (ToolCallView.swift:106-107, Theme.swift:147-156): the
+    // system's green and red, medium weight, monospaced digits, a space of four between.
+    assert.ok(transcript.includes("metadata: block.state?.metadata ?? null"), "the stored call brings its metadata with it");
+    assert.ok(transcript.includes("part.metadata = payload.metadata ?? part.metadata"), "the outcome's metadata reaches the call");
+    assert.match(toolCall, /metadata\?\.files as/);
+    assert.ok(!toolCall.includes("input?.files"), "the input is not where the engine keeps the files");
+    assert.match(app, /toolDiffStat\(part\.metadata\)/);
+    assert.ok(app.includes("+{stat.additions}") && app.includes("−{stat.deletions}"), "the Mac's own signs, the minus and not a hyphen");
+    assert.ok(css.includes(".diff-stat { display: inline-flex; gap: 4px; font-size: var(--text-xs);"), "the stat sits in the row at the caption size");
+    assert.ok(css.includes("font-variant-numeric: tabular-nums; font-weight: 500;"), "the digits line up, at the medium weight");
+    assert.ok(css.includes(".diff-stat .added { color: var(--ok); }"), "the system's green");
+    assert.ok(css.includes(".diff-stat .removed { color: var(--danger); }"), "the system's red");
+  }],
+
+  ["a conversation with nothing in it asks the Mac's own question", ({ app, css, symbols }) => {
+    // TranscriptView.swift:69-75 overlays the empty view while there are no rows and
+    // nothing waiting; its `plain` form (1757-1767) is the Mac's mark at 34 pt light in
+    // the tertiary ink over the question at title3 medium in the secondary ink, a
+    // spacing of 10, lifted from the bottom by 120.
+    assert.ok(symbols.includes('"bubble.left.and.text.bubble.right"'), "the Mac's mark is drawn");
+    assert.match(app, /<Symbol name="bubble\.left\.and\.text\.bubble\.right" size=\{34\} stroke=\{2\.4\} \/>/);
+    assert.ok(app.includes("What should we work on in "), "the Mac's own question, about the folder");
+    assert.match(app, /state\.transcript\.entries\.length === 0 && state\.transcript\.pending\.length === 0/, "the overlay shows while the rows and the waiting are both empty");
+    assert.ok(css.includes("--text-title3: 15px"), "the Mac's title3, 15 pt on macOS");
+    assert.ok(css.includes(".empty-conversation p { margin: 0; font-size: var(--text-title3); font-weight: 500; color: var(--ink-soft); }"), "the question at title3 medium, in the secondary ink");
+    assert.ok(css.includes("padding-bottom: 120px"), "the 120 pt lift from the bottom");
+    assert.ok(css.includes("gap: 10px"), "the spacing of the stack");
+    assert.ok(css.includes(".empty-conversation > svg { color: var(--ink-faint); }"), "the mark in the tertiary ink");
+  }],
+
+  ["a message the engine has stamped finished is a turn that ended", ({ transcript }) => {
+    // The Mac's own measure reads the message itself (Message.isRunning): a reply the
+    // engine has finished ends the turn — whatever its flag still says, and however few
+    // parts it carries. The stale flag alone had kept the Stop button up over a turn that
+    // was over (the live test kept meeting it).
+    assert.ok(transcript.includes("const done = Boolean(last?.completed)"), "the message's own state is read");
+    assert.match(transcript, /transcript\.running = !done && Boolean\(running\) && \(unfinished \|\| !written\)/, "either half can end the run, and a finished message ends it first");
+  }],
+
+  ["the split pane is a card, and its head is the conversation's own", ({ app, css }) => {
+    // The Mac draws the split as a Card with the same header the conversation has
+    // (MainView.swift:733-754): its session's title, its ring, Swap and Close. Nothing
+    // there is a strip of its own — no picker, no band that could pass for a title bar.
+    assert.ok(app.includes('id="split-pane" className="card split-pane"'), "the split is a card");
+    assert.ok(!app.includes('className="split-head"') && !app.includes('id="split-session"'), "no strip of controls of its own");
+    assert.ok(css.includes("#conversation #entries, #split-entries { padding: calc(var(--card-header) + 16px)"), "its rows run under its header as the conversation's do");
+    assert.ok(app.includes("function SplitHeader()") && app.includes("<CardHeader session={split}"), "the very same CardHeader heads it");
+    assert.ok(app.includes('title="Swap the two sessions"') && app.includes('title="Close Split View"'), "the Mac's two actions");
+    assert.ok(app.includes("<ContextGauge session={split} />"), "its own ring");
+  }],
+
+  ["every open conversation follows the engine's events, and a connection re-reads them", ({ store }) => {
+    // The Mac routes each event to the model of the session it names (Workspace.swift:1458)
+    // and at a reconnection reads everything on screen again (AppModel.swift:448-459 →
+    // Workspace.resync, Workspace.swift:1347-1359). The page does the same: the split's
+    // transcript is kept current, and a connection re-reads the list and both conversations.
+    assert.ok(store.includes("state.transcripts.forEach((transcript, id) =>"), "the events reach the split's own transcript");
+    assert.ok(store.includes("source.onopen = () => { void resync(); }"), "a connection re-reads");
+    assert.match(store, /async function resync\(\)[\s\S]*?await loadSessions\(\);[\s\S]*?await openSession\(state\.session\.id\);[\s\S]*?await openSplit\(state\.split, true\);/, "the list and both open conversations");
+    assert.ok(store.includes("if (state.split && ended === state.split) await openSplit(state.split, true);"), "a turn that ends in the split is read back");
+  }],
+
+  ["a session opens beside another the Mac's way", ({ app, store }) => {
+    // Open Beside is the Mac's (SidebarView.swift:609, MainView.swift:757-775): the session
+    // opens beside the one in view — the pane never carries a picker of its own.
+    assert.ok(app.includes('label: "Open Beside"'), "the session's menu offers it");
+    assert.ok(app.includes("async function openBeside(id: string)"), "it opens the pair");
+    assert.ok(app.includes("if (!id || id === state.session?.id) return;"), "the session in view is not opened beside itself");
+    assert.ok(store.includes("export async function openSplit(id: string, force = false)"), "the split's history reads through the store");
+  }],
+
+  ["the page listens for the engine's own event names, and the transcript knows them", ({ app, transcript, mac }) => {
+    // The page was listening for names the engine never sends (`message.part.updated`), so
+    // the words of a reply arrived only on a reload, and the Stop button stayed. The names
+    // are the engine's own, and the transcript reads the same ones.
+    const names = (source, pattern) => new Set([...source.matchAll(pattern)].map(match => match[1]));
+    const listened = names(app, /"((?:session|permission|form)\.[a-z.]+)"/g);
+    const known = names(transcript, /case "([^"]+)"/g);
+    const macs = names(mac, /case "([^"]+)"/g);
+    const unheard = [...listened].filter(name => !known.has(name));
+    assert.deepEqual(unheard, [], "every event the page listens for, the transcript reads");
+    // And the names are the Mac's own, where the Mac has them.
+    const strange = [...listened].filter(name => !macs.has(name) && known.has(name));
+    assert.deepEqual(strange, [], "every event the page listens for, the Mac knows it too");
+  }],
+
+  ["the stylesheet is compiled with Tailwind, and only the AI Elements' classes are in it", ({ build, tailwind, postcss }) => {
+    // Tailwind runs through its PostCSS plugin, in Next's own build.
+    assert.match(postcss, /@tailwindcss\/postcss/);
+    // The Mac's own stylesheet rides in its own layer; the utilities sit above it.
+    assert.match(tailwind, /@layer theme, mac, utilities;/);
+    assert.match(tailwind, /@import "tailwindcss\/theme\.css" layer\(theme\);/);
+    assert.match(tailwind, /@import "tailwindcss\/utilities\.css" layer\(utilities\);/);
+    assert.match(tailwind, /@import "\.\.\/\.\.\/harness\/ui\/style\.css" layer\(mac\);/);
+    // Preflight is not imported: the Mac's rules are the base of the app.
+    assert.doesNotMatch(tailwind, /@import "tailwindcss";/);
+    // shadcn's tokens are the Mac's own.
+    assert.match(tailwind, /--color-background: var\(--panel\)/);
+    assert.match(tailwind, /--color-muted-foreground: var\(--ink-soft\)/);
+    assert.match(tailwind, /--color-primary: var\(--accent\)/);
+    // And only the AI Elements' own files are scanned.
+    assert.match(tailwind, /@source "\.\.\/src\/components\/ai-elements";/);
+    // The build copies the export where the harness looks for it.
+    assert.match(build, /ui-build/);
+    assert.match(build, /fs\.copyFileSync/);
+  }],
+
+  ["no text glyph stands for a mark: the Mac's symbols are drawn", ({ app, overlays, settings, changes, styles, symbols }) => {
+    // The Mac draws its symbols; a letter, an arrow or a cross standing in for one is a
+    // defect (docs/MAC-UI-MAP.md §7).
+    const marks = /[✕✖▾▸▴▵↺↻⇩⇧↑↓⋯]/g;
+    for (const [name, source] of Object.entries({ app, overlays, settings, changes, styles })) {
+      const found = source.match(marks);
+      assert.equal(found, null, `${name} has no glyph standing in for a mark (${found?.join(" ") ?? ""})`);
+    }
+    // The drawings themselves: the Mac's house style — a 1.5 pt stroke at 16 pt as the
+    // default, round caps and joins, in the ink of the text they sit in. A mark the Mac
+    // draws at another weight (its `.light`) asks for its own stroke beside its use, and
+    // nowhere else.
+    assert.match(symbols, /strokeWidth=\{strokeWidth\}/);
+    assert.match(symbols, /const strokeWidth = stroke \?\? \(1\.5 \* size\) \/ 16;/);
+    assert.match(symbols, /stroke="currentColor"/);
+    assert.match(symbols, /strokeLinecap="round"/);
+    assert.match(symbols, /strokeLinejoin="round"/);
+    // And the two the Mac draws rather than borrowing: the folder (a 16 × 13 grid) and the
+    // app's own prompt mark, the `>_` the spinner writes.
+    assert.match(symbols, /viewBox="0 0 16 13"/);
+    assert.match(symbols, /fillOpacity="0\.2"/);
+    assert.match(symbols, /const stroke = size \/ 11\.5;/);
+    assert.match(symbols, /export const PROMPT_BOX = 690;/);
+    assert.match(symbols, /export const PROMPT_HEIGHT = 530;/);
+    assert.match(symbols, /M77 74L267 262 77 450/);
+    assert.match(symbols, /M377 450h230/);
+  }],
+
+  ["the gauge is the Mac's: a ring with its number, in a 24 pt pill", ({ css, rule }) => {
+    // ContextGauge.swift:13-40: a 12 pt ring with a 2.5 stroke, the number beside it in
+    // the secondary ink, and orange once the window is more than eight parts full.
+    const gauge = rule(".context-gauge {");
+    assert.match(gauge, /height: 24px/);
+    assert.match(gauge, /padding: 0 6px/);
+    assert.match(gauge, /border-radius: 7px/);
+    assert.match(rule(".context-gauge::before {"), /width: 12px; height: 12px/);
+    assert.match(rule(".context-gauge::before {"), /border: 2\.5px solid/);
+    assert.match(rule(".context-gauge.warn {"), /color: var\(--warn\)/);
+    // And the details, 320 pt wide with 16 pt of padding.
+    assert.match(css, /\.gauge-pop \{[^}]*width: 320px;/s);
+    assert.match(css, /\.gauge-pop \{[\s\S]*?padding: 16px;/);
+  }],
+
+  ["the working line says what the Mac's says, and shimmers", ({ app, css }) => {
+    // TranscriptView.swift:598-610: "Working…", the time it has been at it, and the way
+    // to stop it — the words shimmering.
+    assert.match(app, /Working…/);
+    assert.match(app, /· Esc to stop/);
+    // And the time it has been at it, the Mac's way: 45s, 2m 5s, 1h 5m.
+    assert.match(app, /`\$\{Math\.floor\(seconds \/ 60\)\}m \$\{seconds % 60\}s`/);
+    assert.match(app, /`\$\{Math\.floor\(seconds \/ 3600\)\}h \$\{Math\.floor\(\(seconds % 3600\) \/ 60\)\}m`/);
+    assert.match(app, /className="thinking-shimmer"/);
+    assert.match(css, /\.working-line \{/);
+  }],
+
+  ["the steps row is the Mac's: the mark, the summary, the chevron that turns", ({ app, css, symbols }) => {
+    // StepsRow.swift:37-48.
+    assert.match(app, /<Symbol name="list\.bullet"/);
+    assert.match(app, /<Symbol name="chevron\.right" size=\{11\} className=\{open \? "turned" : ""\} \/>/);
+    assert.match(css, /\.turned \{ transform: rotate\(90deg\); \}/);
+    assert.match(symbols, /"list\.bullet":/);
+  }],
+
+  ["the settings are the Mac's grouped form: a name, and the rows in a card", ({ css, settings, rule }) => {
+    // SettingsControls.swift:350-367: a grouped Form, its sections named, their rows in a
+    // card under them.
+    assert.match(rule(".setting-group {"), /margin: 0 0 18px/);
+    assert.match(rule(".setting-group-title {"), /font-size: 13px/);
+    assert.match(rule(".setting-group-card {"), /border-radius: 10px/);
+    assert.match(rule(".setting-row-note {"), /font-size: 12px/);
+    assert.match(settings, /function SettingGroup\(/);
+    assert.match(settings, /function SettingRow\(/);
+    // The pages that use it, with the Mac's group names.
+    for (const group of ["Mode", "Colors", "Messages", "Updates", "While Agents Work"]) {
+      assert.ok(settings.includes(`title="${group}"`), `the "${group}" group is there`);
+    }
+    // And the Mac's three modes, each with a window of its own.
+    assert.match(settings, /const MODES = \[/);
+    assert.match(settings, /className=\{`mode-choice/);
+    assert.match(rule(".mode-thumb {"), /width: 84px/);
+  }],
+
+  ["a comment on a line is the Mac's own: its editor, its card, and its block", ({ changes, app, css, review, rule }) => {
+    // The editor's words and its keys (ChangesPanel.swift:1157-1212): the field says
+    // "Add a comment…", Escape cancels, Ctrl+Return saves, and the button is the Mac's.
+    assert.match(changes, /placeholder="Add a comment…"/);
+    assert.match(changes, /event\.key === "Escape"/);
+    assert.match(changes, /event\.key === "Enter" && \(event\.ctrlKey \|\| event\.metaKey\)/);
+    assert.match(changes, /title="Comment \(Ctrl\+Return\)"/);
+    assert.match(changes, />\s*Comment\s*</);
+    // The card: the user, the line it is on, and the way to take it away
+    // (ChangesPanel.swift:1088-1121).
+    assert.match(changes, /Comment on line \$/);
+    assert.match(changes, /one\.side === "old" \? "L" : "R"/);
+    assert.match(changes, />Delete</);
+    assert.match(changes, /className="comment-avatar"/);
+    // And the comments go to the agent in the Mac's block (ReviewComments.swift:27-39).
+    assert.match(app, /commentsText\(text, notes\)/);
+    assert.match(review, /<review-comments>/);
+    assert.match(review, /Comments on lines of the current changes:/);
+  }],
+
+  ["the diff folds the long unchanged stretches, the Mac's way", ({ changes, css, diff, server, symbols, rule }) => {
+    // Three lines are kept on each side of a change, and the rest is folded
+    // (ChangesPanel.swift:890-927).
+    assert.match(diff, /export const DIFF_CONTEXT = 3/);
+    assert.match(diff, /foldEnd - foldStart > 3/);
+    assert.match(changes, /foldRows\(lines, expandedFolds, file\.file\)/);
+    // The fold row: the Mac's mark, how many lines it holds, and the help that opens it
+    // (ChangesPanel.swift:929-952).
+    assert.match(changes, /unmodified lines/);
+    assert.match(changes, /title="Show these lines"/);
+    assert.match(changes, /<Symbol name="chevron\.up\.chevron\.down" size=\{10\} \/>/);
+    assert.match(changes, /<Symbol name="ellipsis" size=\{10\} \/>/);
+    assert.match(symbols, /"chevron\.up\.chevron\.down":/);
+    assert.match(symbols, /"ellipsis":/);
+    assert.match(rule(".diff-fold {"), /height: 26px/);
+    // And git is asked for the whole file, so there is something to fold
+    // (ProjectChanges.swift:5-6, 179).
+    assert.match(server, /"-U100000"/);
+    // A file too big to read through is named, not shown (ProjectChanges.swift:507-511).
+    assert.match(server, /tooBig/);
+    assert.match(changes, /file\.tooBig \? null/);
+  }],
+
+  ["a file is shown with its lines numbered, as the Mac's ruler numbers them", ({ overlays, css, rule }) => {
+    // The code, numbered in a ruler beside it (CodeTextView.swift:4-6, 119-168).
+    assert.match(overlays, /function FileView\(/);
+    assert.match(overlays, /className="file-numbers"/);
+    assert.match(overlays, /className="file-code"/);
+    // The ruler is as wide as the widest number needs, and 20 more
+    // (CodeTextView.swift:142).
+    assert.match(overlays, /digits \* 7\.5 \+ 20/);
+    // And the numbers sit 8 pt from the code, in the Mac's own ink.
+    assert.match(rule(".file-numbers {"), /padding-right: 8px/);
+    assert.match(rule(".file-numbers {"), /font-size: 11px/);
+    assert.match(rule(".file-view {"), /font-family: var\(--font-mono\)/);
+    assert.match(rule(".file-code {"), /white-space: pre-wrap/);
+  }],
+
+  ["the panel's tree is the project's, on the path the platform writes", ({ filetree }) => {
+    // The project's own folder is the root, as it is in the Mac's panel
+    // (FilesView.swift:250-275). The prefix and the files' paths are brought to one
+    // separator first: a Windows path's is the other kind, and comparing them as they
+    // came put the whole drive in the panel instead of the project.
+    assert.match(filetree, /replace\(\/\\\\\/g, "\/"\)/);
+    assert.match(filetree, /full\.startsWith\(`\$\{base\}\/`\)/);
+  }],
+
+  ["the file's lines can be sent to the composer, as the Mac's own menu does", ({ app, overlays }) => {
+    // The menu is the Mac's: *Add to Message*, with the file named as a message names it
+    // and the lines that were picked (CodeTextView.swift:91-111, FilesView.swift:389-392).
+    assert.match(overlays, /label: "Add to Message"/);
+    assert.match(overlays, /state\.addition = `@\$\{relative\}:\$\{menu\.range\}`/);
+    // And it goes to the composer, with the Mac's spacing (MainView.swift:1239-1253).
+    assert.match(app, /if \(!state\.addition\) return;/);
+    assert.match(app, /text \+ addition \+ \(isBlock \? "\\n" : " "\)/);
+  }],
+
+  ["a comment in the conversation is the Mac's own card", ({ app, css, review, symbols, rule }) => {
+    // The message is taken apart, and the comments shown above the words
+    // (AgentReferences.swift:170-179, YourMessage.swift:22, 829-831).
+    assert.match(app, /function UserWords\(/);
+    assert.match(app, /splitComments\(text\)/);
+    assert.match(app, /className="comment-reference"/);
+    // The place it points to, with the Mac's mark beside it (ChangesPanel.swift:1130).
+    assert.match(app, /<Symbol name="text\.bubble" size=\{11\} \/>/);
+    assert.match(symbols, /"text\.bubble":/);
+    // The line it was written on, with the Mac's coloured bar (ChangesPanel.swift:1135-1143).
+    assert.match(app, /one\.side === "old" \? "removed" : "added"/);
+    assert.match(rule(".comment-reference-snippet {"), /border-left: 2px solid var\(--ok\)/);
+    assert.match(rule(".comment-reference-snippet.removed {"), /var\(--danger\)/);
+    // And the rules that read a message apart are the Mac's (ReviewComments.swift:42-69).
+    assert.match(review, /export function splitComments/);
+  }],
+
+  ["the changes' rows are the Mac's own: a number in a gutter, the text, and an edge", ({ css, changes, diff, rule }) => {
+    // The rows are read as lines of their own (ProjectChanges.swift:40-48), and the
+    // number in the gutter is the old one for a removed line, the new one otherwise
+    // (ChangesPanel.swift:882-885).
+    assert.match(changes, /parsePatch\(file\.patch \?\? ""\)/);
+    assert.match(changes, /diffNumber\(line\)/);
+    assert.match(diff, /kind === "removed" \? line\.oldNumber \?\? 0 : line\.newNumber \?\? 0/);
+    // The gutter holds the number, and the text sits 8 pt after it
+    // (ChangesPanel.swift:975-999).
+    assert.match(rule(".diff-line .diff-number {"), /width: calc\(var\(--gutter/);
+    assert.match(rule(".diff-line .diff-text {"), /padding-left: 8px/);
+    // A line that changed carries a 3 pt edge, and its own number is coloured with it
+    // (ChangesPanel.swift:1026-1042).
+    assert.match(rule(".diff-line.add {"), /inset 3px 0 0 var\(--ok\)/);
+    assert.match(rule(".diff-line.del {"), /inset 3px 0 0 var\(--danger\)/);
+    assert.match(rule(".diff-line.add .diff-number {"), /var\(--ok\)/);
+    assert.match(rule(".diff-line.del .diff-number {"), /var\(--danger\)/);
+    // And the mark that writes a comment on the line is the Mac's, in the gutter
+    // (ChangesPanel.swift:980-992).
+    assert.match(changes, /title="Comment on This Line"/);
+    assert.match(css, /\.diff-comment \{[^}]*left: 2px/);
+  }],
+
+  ["the panel's files are a tree, the Mac's way (FilesView.swift:250-275)", ({ css, filetree, overlays, symbols, rule }) => {
+    assert.match(overlays, /function FileTree\(/);
+    assert.match(filetree, /export function buildTree\(/);
+    // The folders carry a chevron that turns; the files carry their own mark.
+    assert.match(overlays, /<Symbol name="chevron\.right" size=\{10\} className=\{open\[node\.path\] \? "turned" : ""\} \/>/);
+    assert.match(overlays, /<Symbol name="doc" size=\{13\} \/>/);
+    assert.match(symbols, /"doc": \[/);
+    // And the tree is the project's own: the folder it sits in is the root.
+    assert.match(filetree, /full\.startsWith\(`\$\{base\}\/`\)/);
+    assert.match(rule(".file-row {"), /gap: 6px/);
+    assert.match(rule(".file-row {"), /font-size: var\(--text-sm\)/);
+    assert.match(css, /\.file-tree \{ display: flex; flex-direction: column;/);
+  }],
+
+  ["the gestures: a name typed in its row, a handle in the gap, a shell's history", ({ app, css, rule }) => {
+    // The inline rename (InlineTitleField.swift:4-55): the name is selected, Return
+    // commits, Escape cancels, and clicking away keeps it.
+    assert.match(app, /className="session-rename"/);
+    assert.match(app, /onFocus=\{event => event\.currentTarget\.select\(\)\}/);
+    assert.match(app, /event\.key === "Enter"[\s\S]{0,120}commitRename/);
+    assert.match(app, /event\.key === "Escape"[\s\S]{0,80}setRenaming\(null\)/);
+    // The menu it is reached from (SidebarView.swift:586-590).
+    assert.match(app, /onContextMenu=\{event => \{/);
+    assert.match(app, /label: "Rename…"/);
+    // The handle in the gap (WindowGlass.swift:43-81): the gap is the handle, the capsule
+    // is 3 pt and shows at half strength, and the cursor says what it does.
+    assert.match(app, /function PaneResizer\(/);
+    assert.match(rule(".pane-resizer {"), /cursor: col-resize/);
+    assert.match(rule(".pane-resizer::after {"), /width: 3px/);
+    assert.match(rule(".pane-resizer::after {"), /top: 40px;[\s\S]*bottom: 40px/);
+    assert.match(css, /\.pane-resizer:hover::after,\n\.pane-resizer\.dragging::after \{ opacity: 0\.5; \}/);
+    // And the composer's history: up and down walk what you have sent, as in a shell
+    // (Composer.swift:22-24).
+    assert.match(app, /The composer's history/);
+    assert.match(app, /event\.key === "ArrowUp" \|\| event\.key === "ArrowDown"/);
+  }],
+
+  ["the find is invoked, and it is the Mac's bar (FindBar.swift:251-291)", ({ app, css, lib, rule }) => {
+    assert.match(app, /function FindBar\(/);
+    assert.match(app, /placeholder="Find in Conversation"/);
+    assert.match(app, /state\.findOpen = true;/);
+    assert.match(rule(".find-row {"), /height: 38px/);
+    // The count, the arrows, and Done.
+    assert.match(app, /places === 1 \? "result" : "results"/);
+    assert.match(app, /"No results"/);
+    assert.match(app, /id="find-previous"/);
+    assert.match(app, /id="find-next"/);
+    assert.match(app, /id="find-done"/);
+    // And what it found is marked in the words.
+    assert.match(lib, /mark\.className = "find-mark"/);
+    assert.match(css, /\.find-mark \{/);
+  }],
+
+  ["the popover flips, and the search can be cleared", ({ app, css, rule }) => {
+    // A popover that outgrows its side flips to the other (ScreenRoom.swift:4-33): the
+    // gauge's sits by the gauge, and never past the window's edge.
+    assert.match(app, /const wanted = button\.left \+ button\.width - box\.width;/);
+    assert.match(app, /Math\.min\(Math\.max\(8, wanted\), Math\.max\(8, window\.innerWidth - box\.width - 8\)\)/);
+    // And the clear in a search field (Pressable.swift:73-91).
+    assert.match(app, /id="session-search-clear"/);
+    assert.match(rule(".search-clear {"), /color: var\(--ink-faint\)/);
+    assert.match(css, /\.search-clear:hover \{ background: var\(--hover\); color: var\(--ink-soft\); \}/);
+  }],
+
+  ["the actions under a message are the Mac's (YourMessage.swift:41-64)", ({ app, css, rule }) => {
+    assert.match(app, /className="entry-actions"/);
+    assert.match(app, /title="Copy"/);
+    assert.match(app, /title="New Session From Here"/);
+    assert.match(app, /title="Undo From Here…"/);
+    assert.match(app, /sentAt\(entry\.created\)/);
+    // Always laid out, so nothing moves when they appear, and shown under the pointer.
+    assert.match(rule(".entry-actions {\n  display: flex;"), /opacity: 0/);
+    assert.match(rule(".entry-actions {\n  display: flex;"), /min-height: 22px/);
+    assert.match(css, /\.entry\.user:hover \.entry-actions,[\s\S]*?opacity: 1;/);
+  }],
+
+  ["a control that cannot be used is dimmed, and a remove turns red", ({ css, rule }) => {
+    // Pressable.swift:61 — a control that cannot be used is dimmed to 45 %.
+    assert.match(rule("button:disabled {"), /opacity: \.45/);
+    // Pressable.swift:93-112 — the remove turns red under the pointer, and is dimmer
+    // while it is pressed.
+    assert.match(rule(".remove-button {"), /color: var\(--ink-faint\)/);
+    assert.match(css, /\.remove-button:hover \{ background: var\(--danger-soft\); color: var\(--danger\); \}/);
+    assert.match(css, /\.remove-button:active \{ opacity: \.7; \}/);
+  }],
+
+  ["the sidebar names the project, with the Mac's drawn folder", ({ app, css, rule }) => {
+    // SidebarView.swift:795-845: the project's folder (open or closed) and its name, with
+    // the compose button showing under the pointer.
+    assert.match(app, /<FolderIcon open=\{open\}/);
+    assert.match(app, /className="project-row"/);
+    assert.match(app, /className="project-compose"/);
+    assert.match(app, /New Session in \$\{folderName\(folder\)\}/);
+    assert.match(rule("aside .project-row {"), /height: 44px/);
+    assert.match(rule("aside .project-icon {"), /flex: 0 0 18px/);
+    assert.match(css, /aside \.project-compose \{[\s\S]*?opacity: 0;/);
+  }],
+
+  ["the sidebar holds every project, with its own sessions, and the Recents", ({ app, css, rule }) => {
+    // SidebarView.swift:178-196 (the projects, under a heading of their own), 353-402
+    // (each project, its sessions, and "Show N More"), 490-493 (the Recents).
+    assert.match(app, /<SectionHeader\s+title="Projects"/);
+    assert.match(app, /<SectionHeader title="Recents"/);
+    assert.match(app, /state\.projects\.map/);
+    assert.match(app, /state\.sessionsByProject/);
+    // Five sessions to a project, then the rest on request (SidebarView.swift:62-63).
+    assert.match(app, /sessions\.slice\(0, 5\)/);
+    assert.match(app, /Show \$\{sessions\.length - 5\} More/);
+    // The eight most recent sessions across the projects.
+    assert.match(app, /\.slice\(0, 8\)/);
+    // The heading folds the section away, and the sessions of a project line their titles
+    // up with the project names above them.
+    assert.match(rule("aside .section-header {"), /height: 22px/);
+    assert.match(rule("aside .sessions .session {"), /padding-left: 38px/);
+    assert.match(rule("aside .recents .session {"), /padding-left: 10px/);
+  }],
+
+  ["a provider's mark is the Mac's: fetched, drawn in the ink, with the initial first", ({ app, css, logo }) => {
+    // ProviderLogo.swift:7-46 — the mark from models.dev, monochrome, or in the maker's own
+    // colour; the initial stands in for it at 55 % of the size, semibold and rounded.
+    assert.match(logo, /\/api\/logo\/\$\{encodeURIComponent\(id\)\}/);
+    assert.match(read("harness", "server.mjs"), /models\.opencode\.ai\/logos\/\$\{id\}\.svg/);
+    assert.match(logo, /MAKER_COLORS/);
+    assert.match(logo, /anthropic: 0xd97757/);
+    assert.match(logo, /fontSize: size \* 0\.55/);
+    assert.match(logo, /maskImage/);
+    // And the model's menu shows it beside each model (ModelPicker.swift:218).
+    assert.match(app, /logo: model\.providerID/);
+    assert.match(app, /<ProviderLogo id=\{item\.logo\} size=\{15\}/);
+    assert.match(css, /\.provider-logo\.fallback \{[\s\S]*?font-weight: 600;/);
+  }],
+
+  ["the press is the Mac's: the control darkens, it does not shrink", ({ css, rule }) => {
+    // Pressable.swift:8-9 (8 % under the pointer, 13 % while it is down) and 85 (the
+    // press is a fill) — the Mac's app has no press scale anywhere.
+    // The Mac's app has no press scale anywhere: a pressed control is filled, not squeezed.
+    assert.ok(!/button:active \{[^}]*scale\(/.test(css), "no press scale");
+    assert.match(rule("\nbutton:active {"), /transform: none/);
+    // And the fills are the Mac's own: 8 % under the pointer, 13 % while it is down.
+    assert.match(rule(":root {"), /--press-hover: color-mix\(in oklab, var\(--ink\) 8%, transparent\)/);
+    assert.match(rule(":root {"), /--press-active: color-mix\(in oklab, var\(--ink\) 13%, transparent\)/);
+    assert.match(rule("\nbutton.small:active {"), /background: var\(--press-active\)/);
+  }],
+
+  ["the settings' pages carry the Mac's own symbols, drawn", ({ settings, symbols }) => {
+    // SettingsView.swift:196-232 — the mark each page has.
+    for (const [page, name] of Object.entries({
+      appearance: "paintpalette", general: "gearshape", keyboard: "command",
+      mcp: "puzzlepiece.extension", agents: "person.2", skills: "graduationcap",
+      commands: "slash.circle", projects: "folder", providers: "person.crop.circle",
+      usage: "gauge.with.dots.needle.50percent", git: "arrow.triangle.branch",
+      archived: "archivebox", permissions: "checkmark.shield", system: "cpu",
+    })) {
+      assert.ok(symbols.includes(`"${name}"`), `the library draws ${name}`);
+      assert.ok(settings.includes(`${page}: "${name}"`), `${page} carries ${name}`);
+    }
+    // And they are drawn, not typed: the library's paths.
+    assert.match(symbols, /"gearshape": \["M/);
+    assert.match(symbols, /"paintpalette": \["M/);
+  }],
+
+  ["the menus carry the Mac's chevron", ({ app, css, rule }) => {
+    // Pressable.swift:192-198 — 8 pt, bold, in the secondary ink, after the label.
+    assert.match(app, /<Symbol name="chevron\.down" size=\{8\} className="choice-chevron" \/>/);
+    assert.match(rule(".choice-chevron {"), /flex: 0 0 8px/);
+    assert.match(css, /\.choice-chevron \{[^}]*stroke-width: 2;/s);
+  }],
+
+  ["the accent badge grows and darkens, as the Mac's does", ({ css, rule }) => {
+    // Pressable.swift:201-220 — it grows to 1.12 and darkens 7 % under the pointer, and
+    // darkens more while it is pressed.
+    assert.match(rule(".swatch {"), /transform var\(--motion-fast\) var\(--ease-spring\)/);
+    assert.match(css, /\.swatch:hover \{ transform: scale\(1\.12\); filter: brightness\(0\.93\); \}/);
+    assert.match(css, /\.swatch:active \{ transform: scale\(1\.12\); filter: brightness\(0\.85\); \}/);
+  }],
+
+  ["the changes panel says what the Mac's says", ({ changes }) => {
+    // ProjectChanges.swift:50-62 — the scopes' own names.
+    assert.match(changes, /\["uncommitted", "Uncommitted"\]/);
+    assert.match(changes, /\["unstaged", "Unstaged"\]/);
+    assert.match(changes, /\["staged", "Staged"\]/);
+    assert.match(changes, /\["branch", "Branch"\]/);
+    assert.match(changes, /\["session", "This Session"\]/);
+  }],
+
+  ["the shell has a real menu bar, and the window can be zoomed with two clicks", ({ app, css, lib, rule }) => {
+    // NativeMenu.swift:5-165 — a real menu bar, with the items the Mac has.
+    const shell = fs.readFileSync(path.join(here, "electron", "main.js"), "utf8");
+    const preload = fs.readFileSync(path.join(here, "electron", "preload.js"), "utf8");
+    assert.match(shell, /Menu\.setApplicationMenu/);
+    for (const item of [
+      "New Session", "New Chat", "New Project…", "Open Folder…", "Open Quickly…", "Export Conversation as Markdown",
+      "Close Tab", "Close Window", "Reopen Closed Tab",
+      "Stop", "Build Mode", "Plan Mode",
+      "Show Changes", "Show Files", "Run", "New Terminal", "Show Panel",
+      "Find in Conversation…",
+      "Command Palette…", "Settings…", "Show Sessions", "Show Next Tab", "Show Previous Tab", "Show Tab", "Last Tab",
+      "Kuvo Code Help", "What’s New", "Report an Issue…", "Contact Us…",
+      "Check for Updates…",
+    ]) {
+      assert.ok(shell.includes(`label: "${item}"`), `the menu has "${item}"`);
+    }
+    for (const label of ["Session", "Tools", "View"]) {
+      assert.ok(shell.includes(`label: "${label}"`), `the menu bar has the Mac's ${label} menu`);
+    }
+    assert.match(shell, /accelerator: "CmdOrCtrl\+W"/);
+    assert.match(shell, /accelerator: "CmdOrCtrl\+Shift\+T"/);
+    assert.match(shell, /accelerator: "Control\+Tab"/);
+    assert.match(shell, /accelerator: `CmdOrCtrl\+/);
+    assert.match(preload, /onMenu/);
+    assert.match(preload, /setMenuState/);
+    assert.match(preload, /closeWindow/);
+    assert.match(shell, /label: "Find in Conversation…", accelerator: "CmdOrCtrl\+F"/);
+    assert.match(shell, /label: menuState\.tabBar \? "Hide Tab Bar" : "Show Tab Bar"/);
+    assert.match(shell, /appearance-system/);
+    assert.match(shell, /ipcMain\.on\("kuvo:menu-state"/);
+    assert.match(app, /kuvo\?\.onMenu\?\./);
+    assert.match(app, /setMenuState\?\.\(\{ tabBar: state\.showsTabBar/);
+    assert.match(app, /case "appearance-system"/);
+    // The Mac's double-click on the title bar zooms (Card.swift:186-198); on Windows, the
+    // window is maximised.
+    assert.match(preload, /maximize: \(\) => ipcRenderer\.send\("kuvo:maximize"\)/);
+    assert.match(shell, /ipcMain\.on\("kuvo:maximize"/);
+    assert.match(app, /kuvo\?\.maximize\?\.\(\)/);
+    // And the code block's copy mark, which becomes a check (CodeBlockStyle.swift).
+    assert.match(lib, /doc\.on\.doc/);
+    assert.match(lib, /checkmark/);
+  }],
+
+  ["Open Quickly and the tab history are the Mac's, with its own numbers", ({ app, over, styles, keys, shell, preload }) => {
+    // Open Quickly (OpenQuickly.swift:20-104): 560 wide, a 48 pt search, 30 pt rows, the
+    // newest first, and ten matches at most.
+    const quickly = read("..", "KuvoCode", "Views", "Utilities", "OpenQuickly.swift");
+    assert.match(quickly, /\.frame\(width: 560\)/);
+    assert.match(quickly, /\.frame\(height: 48\)/);
+    assert.match(quickly, /\.frame\(height: 30\)/);
+    assert.match(quickly, /TextField\("Open a file in the project"/);
+    assert.match(quickly, /Mentions\.matches\(query, in: files\.filter \{ !\$0\.isFolder \}, limit: 10\)/);
+    assert.match(quickly, /newestFirst/);
+    assert.match(over, /id="open-quickly"/);
+    assert.match(over, /Open a file in the project/);
+    assert.match(styles, /\.open-quickly-card[\s\S]*?width: min\(560px/);
+    assert.match(styles, /\.open-quickly-search[\s\S]*?height: 48px/);
+    assert.match(styles, /\.open-quickly-row[\s\S]*?height: 30px/);
+
+    // A tab closed is remembered where it was, and comes back from the menu; the Mac keeps
+    // fifty of them (MainView.swift:51-52, 1198-1232).
+    const tabs = read("app", "src", "tab-history.mjs");
+    assert.match(tabs, /MAX_CLOSED_TABS = 50/);
+    assert.match(app, /reopenClosedTab/);
+    assert.match(app, /closeSessionTab/);
+    assert.match(keys, /keys: "Ctrl\+W"/);
+    assert.match(keys, /keys: "Ctrl\+Shift\+T"/);
+    assert.match(keys, /keys: "Ctrl\+Tab"/);
+    assert.match(shell, /label: "Close Tab", accelerator: "CmdOrCtrl\+W"/);
+    assert.match(shell, /label: "Reopen Closed Tab", accelerator: "CmdOrCtrl\+Shift\+T"/);
+    assert.match(preload, /closeWindow: \(\) => ipcRenderer\.send\("kuvo:close-window"\)/);
+    assert.match(shell, /ipcMain\.on\("kuvo:close-window"/);
+  }],
+
+  ["the session's own menu is the Mac's, in its order", ({ app, sidebar }) => {
+    // The Mac's menu for a session (SidebarView.swift:600-643): pinned or not, beside the
+    // one in view, its name, the folder it works in, the conversation as Markdown, put away
+    // or brought back, and the one that undoes.
+    const order = ["Open Beside", "Rename…", "Show in Folder", "Copy as Markdown", "Export as Markdown…", "Archive", "Delete…"];
+    let last = -1;
+    for (const label of order) {
+      const where = app.indexOf(`"${label}"`);
+      assert.ok(where > last, `the menu keeps the Mac's order (${label})`);
+      last = where;
+    }
+    // The Mac's own words, said by the Mac itself.
+    for (const label of ["Pin", "Unpin", "Open Beside", "Rename…", "Copy as Markdown", "Export as Markdown…", "Archive", "Unarchive", "Delete…"]) {
+      assert.ok(sidebar.includes(`"${label}"`), `the Mac says "${label}"`);
+    }
+    // Pinned or not, the app says both.
+    assert.ok(app.includes('"Unpin"') && app.includes('"Pin"'), "the app says Pin and Unpin");
+    assert.ok(app.includes('"Unarchive"') && app.includes('"Archive"'), "the app says Archive and Unarchive");
+    // The one that undoes is the Mac's own: red, and with the ellipsis that says a
+    // question follows.
+    assert.match(app, /label: "Delete…", danger: true/);
+    // The pinned sessions sit at the top of the sidebar, in a section of their own
+    // (SidebarView.swift:115-121, 513-515), and are not in the recents.
+    assert.match(app, /title="Pinned"/);
+    assert.match(app, /className="sessions pinned"/);
+    assert.match(app, /filter\(session => session\.metadata\?\.\["kuvo\.pinned"\] !== true\)/);
+  }],
+
+  ["the window remembers its own state, as the Mac's does", ({ app, store, settings, main, sidebar, titlebar }) => {
+    // The Mac keeps the panes' widths, what is folded away, and the row at the top
+    // (MainView.swift:38-40, 90; SidebarView.swift:32-34; TabBar.showsKey).
+    assert.match(main, /@AppStorage\("sessionsWidth"\) private var sessionsWidth = 280/);
+    assert.match(main, /@AppStorage\("changesWidth"\) private var changesWidth = 420/);
+    assert.match(main, /@AppStorage\("splitWidth"\) private var splitWidth = 560/);
+    assert.match(sidebar, /@AppStorage\("collapsedProjects"\)/);
+    assert.match(sidebar, /@AppStorage\("collapsedSections"\)/);
+    assert.match(titlebar, /static let showsKey = "showsTabBar"/);
+    // And the app keeps the same things, under its own names.
+    for (const key of ["kuvo-sessionsWidth", "kuvo-changesWidth", "kuvo-splitWidth", "kuvo-collapsed", "kuvo-showsTabBar"]) {
+      assert.ok(store.includes(key), `the app keeps ${key}`);
+    }
+    // The row at the top can be put away, as the Mac's setting says (GeneralSettings.swift:23).
+    assert.ok(settings.includes('"Show the tab bar"'), "the app says \"Show the tab bar\"");
+    assert.match(app, /no-tab-bar/);
+  }],
+
+  ["the picture the model can see, and the viewer that looks at it", ({ app, engine, motion, css }) => {
+    // The viewer's own timings (ImageViewer.swift:22, 28, 40): the picture fades in over
+    // 160 ms, goes out over 140, and the window under it dims over 150 — the system's own
+    // ease-out, every one of them.
+    assert.match(motion, /export const viewerFade = \{ duration: 0\.16, ease: "easeOut"/);
+    assert.match(motion, /export const viewerClose = \{ duration: 0\.14, ease: "easeOut"/);
+    assert.match(motion, /export const viewerDim = \{ duration: 0\.15, ease: "easeOut"/);
+    // The window under it dims to 30 % and is out of reach of a click, and the scrim is
+    // the Mac's own black at 62 %.
+    assert.match(css, /body\.viewing-image header/);
+    assert.match(css, /opacity: \.3;/);
+    assert.match(css, /background: rgba\(0, 0, 0, 0\.62\)/);
+    // A file goes to the engine as a URI and a name (OpenCodeKit's PromptFile,
+    // OpenCodeAPI.swift:437-445), where the page holds the bytes.
+    assert.match(engine, /pathToFileURL/);
+    assert.match(engine, /data:\$\{file\.mime/);
+    // And the picture you just sent stays in the conversation.
+    assert.match(app, /\(item\.files \?\? \[\]\)\.map/);
+  }],
+
+  ["the appearance keeps the Mac's own choices", ({ app, settings, store, css }) => {
+    // The Mac's window material (Look.swift:42-46), its typeface of the messages
+    // (Look.swift:52-63) and the detail of the agent's steps (StepsDetail).
+    assert.ok(settings.includes('"Window"'), "the app offers the window's material");
+    assert.ok(settings.includes('"Typeface"'), "the app offers the typeface");
+    assert.ok(settings.includes("Agent’s steps"), "the app offers the steps' detail");
+    for (const choice of ["system", "rounded", "serif", "monospaced"]) {
+      assert.ok(store.includes(choice), `the app knows the ${choice} typeface`);
+    }
+    // The glass, or a solid ground with nothing showing through.
+    assert.match(css, /:root\[data-window="solid"\]/);
+    assert.match(css, /backdrop-filter: none/);
+    // The messages take the typeface; the code stays monospaced.
+    assert.match(css, /\.entry \.text \{[^}]*font-family: var\(--message-font/);
+  }],
+
+  ["the effort a model is asked for is the Mac's own", ({ app, store, api }) => {
+    // The Mac's levels (ModelPicker.swift:5-14, 567-614): the effort a model is asked
+    // for, in a group of its own, and the model's name with the effort after it.
+    assert.ok(app.includes('"Effort"'), "the effort is a group of its own");
+    assert.match(app, /value: `effort:\$\{level\.id\}`/);
+    assert.ok(app.includes("effortTitle("), "the effort is named as the Mac names it");
+    // The conversation would use the session's model, else the one picked last, else the
+    // engine's default (Catalog.swift:219-226).
+    assert.ok(store.includes("modelInView"), "the app knows the model in view");
+    assert.ok(store.includes("loadDefaultModel"), "the engine's own default is read");
+    assert.match(api, /defaultModel: \{ providerID: string; id: string \} \| null/);
+  }],
+
+  ["the models the user keeps are the Mac's starred models", ({ app, store, symbols }) => {
+    // The Mac's picker holds the models the user keeps, in their own rail, with the mark
+    // that keeps them (ModelPicker.swift:40, 57, 436-440, 500, 732-755).
+    assert.ok(app.includes('"Starred"'), "the models the user keeps are in a group of their own");
+    assert.match(app, /className=\{`choice-star \$\{item\.star\.on \? "on" : ""\}`\}/);
+    assert.ok(store.includes("kuvo-favoriteModels"), "the models the user keeps are kept");
+    // The mark is drawn, not a text glyph (the house rule, MAC-UI-MAP.md §7).
+    assert.match(symbols, /"star": \["M8 2\.2l1\.76/);
+  }],
+
+  ["the project's command is run from the palette and from the key, as the Mac's", ({ app, keys, over }) => {
+    // The Mac's palette entry (MainView.swift:1423: "Run", the play mark, ⌘R) and the key
+    // itself; without a command yet, the editor opens on the run field
+    // (MainView.swift:1479-1487).
+    assert.ok(over.includes('title: "Run"'), "the palette offers Run");
+    assert.ok(keys.includes('id: "run"') && keys.includes('title: "Run the project'), "and the key that runs it");
+    assert.ok(over.includes("runTheProject"), "the run is the Mac's own");
+    assert.ok(app.includes('case "run":'), "and the key acts on it");
+  }],
+
+  ["a project's other folders are the agent's too, as the Mac's makes them", ({ app, store, over }) => {
+    // The Mac's folders beyond the first (Workspace.ProjectSettings.folders, Workspace.swift:196):
+    // the agent may work in them (the rules, ProjectFolders.swift:20-27) and is told of them
+    // by name (the note, ProjectFolders.swift:36-46) — the session is given both
+    // (SessionModel.swift:1379-1405).
+    assert.ok(store.includes("projectFolders"), "the app knows the project's other folders");
+    assert.ok(store.includes("folderRules"), "and the rules that allow them");
+    assert.ok(store.includes("folderInstruction"), "and the note that names them");
+    assert.ok(store.includes("syncFolders"), "and gives them to the session");
+    assert.match(store, /action: "external_directory"/);
+    assert.ok(over.includes('id="project-folder-add"'), "the editor has the folders in it");
+    assert.ok(over.includes("Sessions run in the primary folder; the agent can work in the others too."));
+  }],
+
+  ["a project runs its own command, as the Mac's does", ({ app, store, over, symbols }) => {
+    // The Mac's run command (Workspace.ProjectSettings.run, Workspace.swift:198): the
+    // title bar's button, the editor's field, and the terminal it runs in
+    // (MainView.swift:562-566, 601-610, 1479-1491).
+    assert.ok(store.includes("projectRun"), "the app knows the project's command");
+    assert.match(app, /id="run"/);
+    assert.match(app, /aria-label="Run"/);
+    assert.ok(over.includes('id="project-run"'), "the editor has the command in it");
+    assert.ok(over.includes('placeholder="npm run dev"'), "with the Mac's own prompt");
+    assert.ok(over.includes("runInTerminal"), "and the terminal runs it");
+    // The mark is drawn, not a text glyph.
+    assert.match(symbols, /"play": \["M5\.4 3\.3l7 4\.7/);
+  }],
+
+  ["a project has a name of its own, as the Mac's has", ({ app, store, over }) => {
+    // The Mac's project (Workspace.swift:179-199): a folder, and a name of its own shown
+    // instead of the folder's — changed in the editor over the window (ProjectEditor.swift:8-13),
+    // from the project's own menu (SidebarView.swift:382).
+    assert.ok(store.includes("projectName"), "the app knows the project's name");
+    assert.ok(store.includes("setProjectSettings"), "and can set it");
+    assert.ok(app.includes('"Edit Project…"'), "the project's menu offers the editor");
+    assert.match(app, /className="project-name">\{projectName\(folder\)\}/);
+    // The editor is a card over the window, as the Mac's is.
+    assert.ok(over.includes('id="project-editor"'), "the editor is drawn over the window");
+    assert.ok(over.includes('id="project-name"'), "with the project's name in it");
+  }],
+
+  ["the image viewer's own header and steps", ({ app, symbols }) => {
+    // The Mac's viewer (ImageViewer.swift:164-221): the picture's name and how many there
+    // are, the buttons that act on it, and the arrows between the pictures of the same
+    // message — with the keys the Mac takes (Escape and space put it away, the arrows
+    // step, ⌘C copies).
+    assert.match(app, /className="image-viewer-head"/);
+    assert.match(app, /className="image-viewer-step left"/);
+    assert.match(app, /className="image-viewer-step right"/);
+    assert.match(app, /`\$\{index \+ 1\} of \$\{items\.length\}`/);
+    assert.ok(app.includes('"Previous (←)"'), "the arrows say what they do");
+    assert.ok(app.includes('"Next (→)"'));
+    assert.ok(app.includes('"Copy the picture (Ctrl+C)"'));
+    // The marks are drawn, not text glyphs.
+    assert.match(symbols, /"chevron.left": \["M9\.5 3\.5L5\.5 8l4 4\.5"\]/);
+  }],
+
+  ["the mode menu keeps the Mac's tool permissions, and the last model is kept", ({ app, store }) => {
+    // The Mac's mode menu: the modes, a line, then the tool permissions
+    // (ComposerMenus.swift:120-135), with the Mac's own words.
+    assert.ok(app.includes('"Tool Permissions"'), "the menu holds the tool permissions");
+    for (const word of ["Approve All", "Ask First", "Runs tools without asking", "Asks before editing files or running commands"]) {
+      assert.ok(app.includes(`"${word}"`), `the app says "${word}"`);
+    }
+    // The model picked last is kept whole, and a new session starts with it
+    // (SessionView.swift:459-490).
+    assert.ok(store.includes("kuvo-lastModel"), "the last model is kept");
+    assert.match(store, /lastModel\(\)/);
+    assert.match(app, /rememberModel\(ref\)/);
+  }],
+
+  ["the tab's own menu is the Mac's, in its order", ({ app, titlebar }) => {
+    // The Mac's menu for a tab (TitleBar.swift:214-231): beside the one in view, its
+    // name, and the tabs to close — the other ones, and all of them.
+    const order = ["Open Beside", "Rename…", "Close Tab", "Close Other Tabs", "Close All Tabs"];
+    // The menu itself, and not the tab's own close mark, which says the same words.
+    const menu = app.slice(app.indexOf("The Mac's menu for a tab"));
+    let last = -1;
+    for (const label of order) {
+      const where = menu.indexOf(`"${label}"`);
+      assert.ok(where > last, `the tab's menu keeps the Mac's order (${label})`);
+      last = where;
+    }
+    // The Mac's own words, said by the Mac itself.
+    for (const label of order) {
+      assert.ok(titlebar.includes(`"${label}"`), `the Mac says "${label}"`);
+    }
+    // The one that closes the rest is dimmed when there is only one tab (TitleBar.swift:224).
+    assert.match(app, /label: "Close Other Tabs", disabled: state\.openSessions\.length <= 1/);
+    // And the name is written in the tab itself, where the title was (TitleBar.swift:170-200).
+    assert.match(app, /className="tab-rename"/);
+  }],
+
+  ["the window is built by Next.js, and exported as the static files the harness serves", ({ next, page, build }) => {
+    // The app talks to the engine over the harness's API: there is no server to render
+    // it, so the export is the whole app.
+    assert.match(next, /output: "export"/);
+    assert.match(next, /turbopack: \{ root:/);
+    // The page draws with the DOM, so it is the browser's: the export is the shell, and
+    // the app takes over when the page is alive.
+    assert.match(page, /"use client"/);
+    assert.match(page, /useEffect\(\(\) => setAlive\(true\)/);
+    assert.match(page, /<App \/>/);
+    // And the build puts the export where the harness serves it.
+    assert.match(build, /ui-build/);
+    assert.match(build, /out/);
+  }],
+
+  ["the shell's seams travel by the bridge, and the window pins its page", ({ preload, shell, app, overlays }) => {
+    // The title bar's room for the window's controls, and the terminal's port, are the
+    // shell's: they travel by the bridge, so a reload or a stray Back cannot take them
+    // away (a Back used to take the address's own "?shell=1" with it).
+    assert.match(preload, /isShell: true/);
+    assert.match(preload, /terminalPort: ipcRenderer\.sendSync\("kuvo:terminal-port"\)/);
+    assert.match(shell, /ipcMain\.on\("kuvo:terminal-port"/);
+    assert.match(app, /kuvo\?\.isShell === true/);
+    assert.match(overlays, /kuvo\?\.terminalPort/);
+    // And the shell pins its page: the mouse's own Back and Forward, the keyboard's
+    // Alt+Left and Alt+Right, and any navigation away from the harness.
+    assert.match(shell, /command === 'browser-backward' \|\| command === 'browser-forward'/);
+    assert.match(shell, /before-input-event/);
+    assert.match(shell, /will-navigate/);
+    // And the name of the user on this machine travels by the bridge too: the Mac's
+    // avatar beside a comment shows their initials (ChangesPanel.swift:1214-1233).
+    assert.match(preload, /userName: ipcRenderer\.sendSync\("kuvo:user-name"\)/);
+    assert.match(shell, /ipcMain\.on\("kuvo:user-name"/);
+  }],
+
+  ["a model chosen reaches the engine as its Model.ref", ({ engine, app }) => {
+    // The engine takes a Model.ref — an object (OpenCodeKit's Models/Common.swift:70,
+    // OpenCodeAPI.swift:473-476). The picker speaks "provider/id", and an id may hold
+    // slashes of its own (OpenRouter's "anthropic/claude-sonnet-4.5"), so only the first
+    // slash splits. The bare string is what the engine refused with "Expected Model.Ref
+    // at [model]".
+    assert.match(engine, /return \{ providerID: text\.slice\(0, slash\), id: text\.slice\(slash \+ 1\) \};/);
+    assert.match(engine, /body: \{ model: ref \}/);
+    // The page sends the object too, and shows the model it has at once (the Mac's
+    // SessionModel.swift:1333-1341: the model shows, and a refusal puts the old one back).
+    assert.match(app, /body: \{ model: ref \}/);
+    assert.match(app, /current\.model = ref;/);
+    assert.match(app, /current\.model = previous;/);
+  }],
+];
+
+const run = (raw, name) => {
+  const flat = {};
+  for (const [key, text] of Object.entries(raw)) flat[key] = text.replace(/\r\n/g, "\n");
+  const helpers = reader(flat.css);
+  for (const [title, check] of checks) {
+    test(`${name}: ${title}`, () => check({ ...flat, ...helpers }));
+  }
+};
+
+run(sources, "the Mac binding");
+run(withEndings(sources, true), "the Mac binding, with Windows' line endings");

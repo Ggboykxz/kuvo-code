@@ -2,8 +2,8 @@ import Foundation
 
 /// A comment on one line of the changes, kept until the next message carries it to the
 /// agent (like Codex's local comments).
-nonisolated struct ReviewComment: Identifiable, Hashable, Sendable {
-    enum Side: Sendable { case new, old }
+nonisolated struct ReviewComment: Identifiable, Hashable, Sendable, Codable {
+    enum Side: String, Sendable, Codable { case new, old }
 
     var id = UUID()
     var file: String

@@ -4,13 +4,13 @@ import SwiftUI
 /// Settings › Appearance, beyond light and dark: the accent color, the window's background, and
 /// how messages read. Each window applies them with `.appLook()`.
 enum Look {
-    static let accentKey = "appearance.accent"
+    nonisolated static let accentKey = "appearance.accent"
     static let windowKey = "appearance.window"
     static let textSizeKey = "appearance.textSize"
     static let fontKey = "appearance.font"
 
     /// The accent: macOS's own, one of its colors, or any color, written "#RRGGBB".
-    enum Accent: String, CaseIterable, Identifiable {
+    nonisolated enum Accent: String, CaseIterable, Identifiable {
         case system, blue, purple, pink, red, orange, yellow, green, graphite
 
         var id: String { rawValue }
@@ -33,7 +33,7 @@ enum Look {
     }
 
     /// The color a stored accent stands for.
-    static func accent(_ stored: String) -> Color {
+    nonisolated static func accent(_ stored: String) -> Color {
         if let preset = Accent(rawValue: stored) { return preset.color }
         return Color(hex: stored) ?? .accentColor
     }
@@ -130,7 +130,7 @@ private struct TranscriptFont: ViewModifier {
 
 extension Color {
     /// "#RRGGBB", as a color.
-    init?(hex: String) {
+    nonisolated init?(hex: String) {
         var text = hex.trimmingCharacters(in: .whitespaces)
         if text.hasPrefix("#") { text.removeFirst() }
         guard text.count == 6, let value = UInt32(text, radix: 16) else { return nil }

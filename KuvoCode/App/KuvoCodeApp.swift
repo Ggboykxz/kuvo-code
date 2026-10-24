@@ -2,7 +2,42 @@ import SwiftUI
 import OpenCodeKit
 import UsageKit
 
+/// Starts the app, or, when it only hosts the app's tests, an app that does nothing: no window,
+/// engine, menu bar item or stores reading the real data. The tests build what they need.
 @main
+enum Launch {
+    static func main() {
+        // `--write-box-files <folder>`: what a machine runs, as a release for boxes to update
+        // themselves with (the release workflow), and nothing else.
+        if let index = CommandLine.arguments.firstIndex(of: "--write-box-files"), CommandLine.arguments.indices.contains(index + 1) {
+            let folder = URL(filePath: CommandLine.arguments[index + 1])
+            #if DEBUG
+            // For a demo copy's folder on machines (a test of updates there), not ~/.kuvo-code.
+            if let root = ProcessInfo.processInfo.environment["KUVO_DEMO_MACHINE_ROOT"], !root.isEmpty { RemoteEngineInstaller.root = root }
+            #endif
+            do {
+                try MainActor.assumeIsolated { try BoxRelease.write(to: folder) }
+                exit(0)
+            } catch {
+                FileHandle.standardError.write(Data("Couldn't write the box's files: \(error.localizedDescription)\n".utf8))
+                exit(1)
+            }
+        }
+        if AppInfo.isHostingTests {
+            // Only as a copy of its own (scripts/test-app.sh): as the app itself, the tests would
+            // read and change your settings and reach your machines.
+            guard AppInfo.bundleID.hasSuffix(".tests") else {
+                FileHandle.standardError.write(Data("Run the app's tests with scripts/test-app.sh, which builds a copy of the app of their own (\(AppInfo.bundleID) is the app itself).\n".utf8))
+                exit(78)
+            }
+            NSApplication.shared.setActivationPolicy(.accessory)
+            NSApplication.shared.run()
+        } else {
+            KuvoCodeApp.main()
+        }
+    }
+}
+
 struct KuvoCodeApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
 
@@ -20,9 +55,10 @@ struct KuvoCodeApp: App {
                 .environment(delegate.model.catalog)
                 .environment(delegate.model.workspace)
                 .environment(delegate.model.bots)
-                .environment(delegate.model.groups)
+                .environment(delegate.model.chats)
                 .environment(delegate.updates)
-                .task { await delegate.model.start() }
+                // The engine starts with the app (AppDelegate), not with this window: closing the
+                // window, at login say, would cancel a start made here.
         }
         .defaultSize(width: 1180, height: 760)
         .windowToolbarStyle(.unified)
@@ -35,12 +71,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
     let updates = Updates()
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Opened from the disk image, it can't update itself: it offers to move to Applications.
+        AppLocation.offerMove()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // This Mac's box, at work from launch: at login, in the background, without the window,
+        // which goes as soon as it's there (it opens with the app); opening Kuvo Code brings it.
+        model.startedAtLogin = Self.launchedAtLogin
+        Task { [model] in await model.start() }
+        if model.startedAtLogin {
+            for delay in [0.0, 0.2, 0.6, 1.5] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    for window in NSApp.windows where window.identifier?.rawValue == "main" && window.isVisible { window.close() }
+                }
+            }
+        }
         Notifier.shared.start()
+        FieldScrolling.start()
+        // Agents' sign-in on their own, allowed before it kept its account: that account now.
+        Task.detached { Passwords.keepAgentAccounts() }
         Notifier.shared.answer = { [model] session, request, answer in model.workspace.answer(request, in: session, with: answer) }
         Notifier.shared.reply = { [model] session, text in
             // A group chat's (its meeting's): to the chat.
-            if let group = BotGroups.groupID(fromTab: session) { model.groups.send(text, to: group) } else { Task { await model.workspace.send(text, to: session) } }
+            if let group = BotGroups.groupID(fromTab: session) {
+                // Moving: kept in its composer, to send once it's there.
+                if !model.chats.send(text, to: group) {
+                    let key = BotGroups.tabKey(group)
+                    Drafts.shared[key].text = [Drafts.shared[key].text, text].filter { !$0.isEmpty }.joined(separator: "\n\n")
+                }
+            } else { Task { await model.workspace.send(text, to: session) } }
         }
         Notifier.shared.answerQuestion = { [model] session, form, field, answer in model.workspace.answerQuestion(form, in: session, field: field, with: answer) }
         Notifier.shared.toPhones = { [model] notice, machine in model.phoneLink.push(notice, from: machine) }
@@ -64,6 +125,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         #endif
+    }
+
+    /// Whether macOS opened it as a login item (Open at Login). Only readable as it finishes
+    /// launching, while the event that opened it is the one at hand.
+    private static var launchedAtLogin: Bool {
+        #if DEBUG
+        // KUVO_DEMO_LOGIN: as if opened at login.
+        if ProcessInfo.processInfo.environment["KUVO_DEMO_LOGIN"] != nil { return true }
+        #endif
+        guard let event = NSAppleEventManager.shared().currentAppleEvent, event.eventID == kAEOpenApplication else { return false }
+        return event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -91,10 +163,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let first = folders.first { model.open(.folder(first.path(percentEncoded: false))) }
     }
 
-    /// The Dock icon's menu: the latest sessions, and a new one.
+    /// The Dock icon's menu: the latest sessions and chats, and a new session.
     func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         let menu = NSMenu()
-        let sessions = model.workspace.projects.flatMap(\.sessions).filter { !Workspace.isArchived($0) }
+        let sessions = (model.workspace.projects.flatMap(\.sessions) + model.workspace.chats).filter { !Workspace.isArchived($0) }
             .sorted { $0.time.updated > $1.time.updated }.prefix(5)
         for session in sessions {
             let id = session.id
@@ -117,7 +189,7 @@ struct AppCommands: Commands {
     let updates: Updates
     @FocusedValue(\.sessionActions) private var actions
     @AppStorage(Appearance.key) private var appearance = Appearance.system
-    @AppStorage(TabBar.showsKey) private var showsTabBar = true
+    @AppStorage(TabBar.showsKey) private var showsTabBar = TabBar.showsByDefault
 
     var body: some Commands {
         CommandGroup(after: .appInfo) {
@@ -190,6 +262,8 @@ struct AppCommands: Commands {
                     .disabled(actions?.hasProject != true)
                 Button("New Terminal") { actions?.newTerminal() }
                     .keyboardShortcut("`", modifiers: .control)
+                Button("New Terminal Tab") { actions?.newTerminalTab() }
+                    .keyboardShortcut("`", modifiers: [.control, .shift])
                 Button("New Browser Tab") { actions?.newBrowser() }
                     .keyboardShortcut("b", modifiers: [.command, .option])
                 Divider()
@@ -251,6 +325,8 @@ struct SessionActions {
     var canStop: Bool
     var canReopenTab: Bool
     var newSession: () -> Void
+    /// A terminal in a tab of its own, in place of a conversation.
+    var newTerminalTab: () -> Void
     var openFolder: () -> Void
     var newProject: () -> Void
     var newBot: () -> Void

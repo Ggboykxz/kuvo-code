@@ -44,7 +44,7 @@ ROCKY = "https://dl.rockylinux.org/pub/rocky/8"
 REPOS = ["BaseOS", "AppStream"]
 
 # Servers often have no fonts at all, and pages would show boxes for text.
-FONTS = ["liberation-sans-fonts", "liberation-serif-fonts", "liberation-mono-fonts", "dejavu-sans-fonts", "google-noto-emoji-color-fonts"]
+FONTS = ["liberation-sans-fonts", "liberation-serif-fonts", "liberation-mono-fonts", "dejavu-sans-fonts", "google-noto-emoji-color-fonts", "google-droid-sans-fonts"]
 
 # The C library, which every machine that runs the engine has, and packages that hold no library
 # the browser loads (scripts, settings, the system's own services).

@@ -14,32 +14,48 @@ enum EffortLevel {
 }
 
 /// The model's effort, and the model, in one card that stays open, as Codex does: it opens on the
-/// effort, a slider, under the level and the model, which open the model list. Picking a model
-/// there turns back to its effort (a model without levels closes the card). **More models** has
-/// every model by provider, and typing searches them. What you chose goes to the session as the
-/// card closes, once.
+/// effort, a slider, under the level and the model, which open the model list. The list is by
+/// provider, as T3 Code's is: a rail of providers down its side (your starred models first, then
+/// Auto, your coding agents' accounts, each its own, and the engine's providers), and the chosen
+/// one's models, newest of each kind first with older ones folded away. Typing searches every
+/// model; ⌘1–⌘9 pick the rows in view. Picking a model turns back to its effort (a model without
+/// levels closes the card). What you chose goes to the session as the card closes, once.
 struct ModelPicker: View {
     let catalog: Catalog
     let selection: ModelRef?
     let onSelect: (ModelRef) -> Void
     let close: () -> Void
+    /// Whose models it offers: the engine's, or every one with the coding agents' and Auto.
+    var scope: ModelScope = .engine
+    /// Auto among them (not in your Auto list's own picker).
+    var offersAuto = true
     var startsExpanded = false
     /// On the model list rather than the effort (KUVO_DEMO_MENU=list).
     var startsOnList = false
-    /// The room it has on the side it opened on: its lists scroll within it. Growing past it, its
+    /// The room it has on the side it opened on: its list scrolls within it. Growing past it, its
     /// popover would jump to the chip's other side.
     var maxHeight: CGFloat = .infinity
-    @AppStorage("recentModels") private var recentStorage = ""
+    /// Opens a page of Settings (Accounts, to sign in; Auto, to edit your list).
+    var openSettings: (SettingsPage) -> Void = { _ in }
+    @AppStorage("favoriteModels") private var favoriteStorage = ""
     /// What you've picked, until the card closes.
     @State private var picked: ModelRef?
     /// The page you turned to; until then, the one it opens on.
     @State private var turnedTo: Page?
+    /// The rail's choice; until you make one, the current model's provider.
+    @State private var chosenRail: String?
+    @State private var showsOlder = false
     @State private var query = ""
     /// The row under the pointer or the arrow keys.
     @State private var highlight: String?
     @FocusState private var focus: Focus?
 
-    private enum Page { case models, all, effort }
+    private enum Page { case list, effort }
+    private enum Focus { case card, search }
+
+    /// The rail's entries that aren't providers.
+    private static let favoritesRail = "★"
+    private static let autoRail = OutsideAgents.autoProvider
 
     /// Which side of its chip the card opens on, and how tall it may be there. It opens on the side
     /// it's meant to when its longest page fits there, else on the side with more room; either
@@ -48,8 +64,8 @@ struct ModelPicker: View {
         var below = false
         var height: CGFloat = .infinity
 
-        /// The longest page: More models' search and list.
-        static let tallest: CGFloat = 401
+        /// The longest page: the search and the list.
+        static let tallest: CGFloat = 421
         /// The arrow, and a little air from the screen's edge.
         private static let margin: CGFloat = 24
 
@@ -66,28 +82,30 @@ struct ModelPicker: View {
             height = (below ? room.below : room.above) - Self.margin
         }
     }
-    private enum Focus { case card, search }
 
     /// The page in view: the effort first, for a model that has levels, else the list. Right from
     /// the first frame: turning to it once open changed the card's size, and its popover would
     /// open above the chip, then jump below it.
     private var page: Page {
-        turnedTo ?? (startsExpanded ? .all : (startsOnList || current?.variants.isEmpty != false ? .models : .effort))
+        turnedTo ?? (startsExpanded || startsOnList || selection == nil || current?.variants.isEmpty != false ? .list : .effort)
     }
 
     private var choice: ModelRef? { picked ?? selection }
-    private var current: Model? { catalog.model(choice) ?? catalog.defaultModel }
+    /// None while the model picked can't be used now, until you pick another: the list opens.
+    private var current: Model? {
+        if picked == nil, catalog.isUnavailable(selection) || selection.map({ !scope.allows($0.providerID) }) == true { return nil }
+        return catalog.model(choice) ?? (selection == nil ? catalog.defaultModel.flatMap { scope.allows($0.providerID) ? $0 : nil } : nil)
+    }
     private var variant: String? { current.flatMap { model in choice?.sameModel(as: model.ref) == true ? choice?.variant : nil } }
 
     var body: some View {
         Group {
             switch page {
-            case .models: modelsPage
-            case .all: allModelsPage
+            case .list: listPage
             case .effort: effortPage
             }
         }
-        .frame(width: 300)
+        .frame(width: 372)
         .focusable()
         .focusEffectDisabled()
         .focused($focus, equals: .card)
@@ -95,169 +113,453 @@ struct ModelPicker: View {
         .onAppear {
             // Kept, whatever you pick on it.
             turnedTo = page
-            focus = .card
-            highlight = shortList.first { $0.ref.sameModel(as: current?.ref) }.map { row($0) }
+            focus = page == .list ? .search : .card
+            highlight = current.map(rowID)
+            #if DEBUG
+            // KUVO_DEMO_RAIL: open on this entry of the rail (`★`, `auto`, a provider's ID).
+            if let rail = ProcessInfo.processInfo.environment["KUVO_DEMO_RAIL"] { chosenRail = rail }
+            // KUVO_DEMO_PICK: a moment after it opens, pick this model (`provider/model`), as a click would.
+            if let wanted = ProcessInfo.processInfo.environment["KUVO_DEMO_PICK"] {
+                Task {
+                    try? await Task.sleep(for: .seconds(1.5))
+                    if let model = providers.flatMap(\.models).first(where: { $0.key == wanted }) { pick(model) }
+                    // KUVO_DEMO_PICK_BACK: then back to the list, as clicking the model on the effort does.
+                    guard ProcessInfo.processInfo.environment["KUVO_DEMO_PICK_BACK"] != nil else { return }
+                    try? await Task.sleep(for: .seconds(1.5))
+                    go(.list)
+                }
+            }
+            #endif
         }
         .onDisappear {
             if let picked, !(picked.sameModel(as: selection) && picked.variant == selection?.variant) { onSelect(picked) }
         }
     }
 
-    // MARK: Models
+    // MARK: The list
 
-    private var modelsPage: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Select model")
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 16)
-                .padding(.top, 14)
-                .padding(.bottom, 6)
-            let list = shortList
-            let rows = VStack(spacing: 1) {
-                ForEach(list, id: \.key) { model in
-                    // The provider only where it tells two of the same model apart.
-                    modelRow(model, showsProvider: list.filter { $0.name == model.name }.count > 1)
+    private var listPage: some View {
+        HStack(spacing: 0) {
+            rail
+            Divider()
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.tertiary)
+                    TextField("Search models", text: $query)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13))
+                        .focused($focus, equals: .search)
+                        .onKeyPress(phases: .down, action: key)
+                        .onSubmit { pickHighlighted() }
+                    if !query.isEmpty {
+                        Button { query = "" } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain)
+                        .clickablePointer()
+                        .help("Clear")
+                    }
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 40)
+                Divider()
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 1) { listContent }
+                            .padding(6)
+                    }
+                    .scrollIndicators(.never)
+                    .frame(height: listHeight)
+                    .onChange(of: highlight) { _, id in
+                        guard let id else { return }
+                        proxy.scrollTo(id)
+                    }
                 }
             }
-            .padding(.horizontal, 6)
-            // Its title and More models take the rest.
-            let room = maxHeight - 100
-            if CGFloat(list.count) * 35 > room {
-                ScrollView { rows }
-                    .scrollIndicators(.never)
-                    .frame(height: max(room, 105))
-            } else {
-                rows
-            }
-            if !catalog.modelsByProvider.isEmpty {
-                Divider()
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 5)
-                navigationRow("More models", id: "more") { go(.all) }
-                    .padding(.horizontal, 6)
-            }
-            Spacer().frame(height: 6)
         }
+        .onChange(of: query) { highlight = visibleRows.first.map(rowID) }
     }
 
-    private var allModelsPage: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 6) {
-                Button { go(.models) } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 12, weight: .semibold))
-                        .frame(width: 22, height: 22)
-                        .contentShape(.rect)
+    private var listHeight: CGFloat { min(380, max(maxHeight - 41, 160)) }
+
+    @ViewBuilder private var listContent: some View {
+        if !query.isEmpty {
+            let found = results
+            if found.isEmpty {
+                note("No models match “\(query)”.")
+            } else {
+                ForEach(Array(found.enumerated()), id: \.element.key) { index, model in
+                    modelRow(model, number: index, showsProvider: true)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("Back")
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.tertiary)
-                TextField("Search models", text: $query)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .focused($focus, equals: .search)
-                    .onKeyPress(phases: .down, action: key)
-                    .onSubmit { pickHighlighted() }
             }
-            .padding(.horizontal, 10)
-            .frame(height: 40)
-            Divider()
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 1) {
-                        if query.isEmpty {
-                            ForEach(catalog.modelsByProvider, id: \.provider) { group in
-                                Text(group.provider)
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(.tertiary)
-                                    .padding(.horizontal, 10)
-                                    .padding(.top, 10)
-                                    .padding(.bottom, 3)
-                                ForEach(group.models, id: \.key) { model in
-                                    modelRow(model, showsProvider: false)
+        } else {
+            switch railSelection {
+            case Self.favoritesRail:
+                railTitle("Starred")
+                let starred = favorites
+                if starred.isEmpty {
+                    note("Star a model with ☆ to keep it here, whichever provider it's from.")
+                } else {
+                    ForEach(Array(starred.enumerated()), id: \.element.key) { index, model in
+                        modelRow(model, number: index, showsProvider: true)
+                    }
+                }
+            case Self.autoRail:
+                autoContent
+            default:
+                if let provider = selectedProvider {
+                    railTitle(provider.name)
+                    if let why = provider.unavailable {
+                        note(why)
+                        if provider.isAgent {
+                            settingsButton("Open Accounts", page: .accounts)
+                        }
+                    } else {
+                        let (newest, older) = split(provider.models)
+                        ForEach(Array(newest.enumerated()), id: \.element.key) { index, model in
+                            modelRow(model, number: index, showsProvider: false)
+                        }
+                        if !older.isEmpty {
+                            disclosureRow(older.count)
+                            if showsOlder {
+                                ForEach(Array(older.enumerated()), id: \.element.key) { index, model in
+                                    modelRow(model, number: newest.count + index, showsProvider: false)
                                 }
                             }
-                        } else if results.isEmpty {
-                            Text("No models match “\(query)”.")
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .padding(10)
-                        } else {
-                            ForEach(results, id: \.key) { model in
-                                modelRow(model)
-                            }
+                        }
+                        if let outdated = provider.outdated {
+                            note(outdated)
+                            settingsButton(catalog.machine == nil ? "Update in Accounts" : "Open Accounts", page: .accounts)
                         }
                     }
-                    .padding(6)
-                }
-                .scrollIndicators(.never)
-                .frame(height: min(360, max(maxHeight - 41, 140)))
-                .onChange(of: highlight) { _, id in
-                    guard let id else { return }
-                    proxy.scrollTo(id)
+                } else {
+                    note(scope == .all ? "Sign in to a coding agent or a provider in Settings › Accounts to use its models." : "Sign in to a provider in Settings › Accounts to use its models.")
+                    settingsButton("Open Accounts", page: .accounts)
                 }
             }
         }
-        .onChange(of: query) { highlight = results.first.map { row($0) } }
     }
 
-    private func modelRow(_ model: Model, showsProvider: Bool = true) -> some View {
-        let id = row(model)
+    /// Auto: your lists (one for bugfixes, one for features), each with its models in order; on
+    /// the one under the pointer, a way to edit it; and a way to make another.
+    @ViewBuilder private var autoContent: some View {
+        railTitle("Custom Auto")
+        let lists = catalog.auto.all
+        if catalog.outsideAgents?.api == nil {
+            note("Custom Auto runs with the coding agents, which are still starting.")
+        } else if lists.allSatisfy(\.entries.isEmpty), lists.count == 1 {
+            note("Make a list of models, from any agent or provider, to go through in your order: when one reaches its usage limit, the next goes on with the work.")
+            settingsButton("Set Up Custom Auto…", page: .auto)
+        } else {
+            ForEach(Array(lists.enumerated()), id: \.element.id) { index, list in
+                autoRow(list, number: index)
+            }
+            newListRow
+        }
+    }
+
+    private func autoRow(_ list: AutoList.Named, number: Int) -> some View {
+        let model = catalog.autoModel(list.id)
+        let id = model.map(rowID) ?? list.id
+        let isCurrent = choice?.providerID == OutsideAgents.autoProvider && catalog.auto.list(choice?.id)?.id == list.id
+        return Button {
+            if let model { pick(model) }
+        } label: {
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: "list.number")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18)
+                    .padding(.top, 2)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(list.name)
+                        .font(.system(size: 14))
+                        .lineLimit(1)
+                    // The whole of it, in order: nothing cut off.
+                    Text(flow(of: list))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .layoutPriority(1)
+                Spacer(minLength: 4)
+                // Under the pointer, editing it takes its shortcut's place.
+                ZStack(alignment: .trailing) {
+                    if number < 9 {
+                        Text("⌘\(number + 1)")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.tertiary)
+                            .fixedSize()
+                            .opacity(highlight == id ? 0 : 1)
+                    }
+                    Button {
+                        editAuto(list.id)
+                    } label: {
+                        Image(systemName: "slider.horizontal.3")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 22, height: 20)
+                            .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .clickablePointer()
+                    .help("Edit This List")
+                    .opacity(highlight == id ? 1 : 0)
+                }
+                .padding(.top, 1)
+                Image(systemName: "checkmark")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .opacity(isCurrent ? 1 : 0)
+                    .padding(.top, 1)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(highlight == id ? Color.primary.opacity(0.07) : .clear, in: .rect(cornerRadius: 10))
+            .contentShape(.rect(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .clickablePointer()
+        .onHover { if $0 { highlight = id } }
+        .id(id)
+    }
+
+    /// A list's models in order: "Gemini 4 Argon (High) → GPT-6.1-Sol High → Cursor Auto".
+    private func flow(of list: AutoList.Named) -> String {
+        guard !list.entries.isEmpty else { return "No models yet: add some to use it" }
+        return list.entries.map { entry in
+            var name = catalog.model(entry.ref)?.name ?? entry.modelID
+            // An agent's own "Auto" says whose it is.
+            if name.hasPrefix("Auto") { name = "\(catalog.providerName(entry.providerID)) \(name)" }
+            if let variant = entry.variant { name += " " + EffortLevel.title(variant) }
+            // Lines break between models, never inside a name.
+            return name.replacingOccurrences(of: " ", with: "\u{00A0}").replacingOccurrences(of: "-", with: "\u{2011}")
+        }
+        .joined(separator: "\u{00A0}→ ")
+    }
+
+    /// Another list (for bugfixes, features…): made now, and named and filled in Settings › Custom Auto.
+    private var newListRow: some View {
+        let id = "auto-new"
+        return Button(action: newAutoList) {
+            HStack(spacing: 9) {
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(width: 18)
+                Text("New List…")
+                    .font(.system(size: 13))
+                Spacer()
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .frame(height: 32)
+            .background(highlight == id ? Color.primary.opacity(0.07) : .clear, in: .rect(cornerRadius: 10))
+            .contentShape(.rect(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .clickablePointer()
+        .onHover { if $0 { highlight = id } }
+        .help("Make another list of models for Custom Auto to go through")
+    }
+
+    /// One of your Custom Auto lists, in Settings › Custom Auto.
+    private func editAuto(_ id: String) {
+        catalog.outsideAgents?.autoFocus = id
+        close()
+        openSettings(.auto)
+    }
+
+    private func newAutoList() {
+        guard let agents = catalog.outsideAgents else { return }
+        let list = AutoList.Named(id: "auto-" + UUID().uuidString.prefix(8).lowercased(), name: "New List", entries: [])
+        editAuto(list.id)
+        Task { try? await agents.saveAuto(agents.auto.all + [list]) }
+    }
+
+    private func railTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.tertiary)
+            .lineLimit(1)
+            .padding(.horizontal, 10)
+            .padding(.top, 6)
+            .padding(.bottom, 3)
+    }
+
+    private func note(_ text: String) -> some View {
+        Text(text)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(10)
+    }
+
+    private func settingsButton(_ title: String, page: SettingsPage) -> some View {
+        Button(title) {
+            close()
+            openSettings(page)
+        }
+        .buttonStyle(.glass)
+        .padding(.horizontal, 10)
+        .padding(.bottom, 6)
+    }
+
+    private func disclosureRow(_ count: Int) -> some View {
+        Button {
+            withAnimation(.snappy(duration: 0.2)) { showsOlder.toggle() }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .rotationEffect(.degrees(showsOlder ? 90 : 0))
+                Text("Older models (\(count))")
+                    .font(.system(size: 12))
+                Spacer()
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .clickablePointer()
+        .padding(.top, 2)
+    }
+
+    private func modelRow(_ model: Model, number: Int, showsProvider: Bool) -> some View {
+        let id = rowID(model)
         let isCurrent = model.ref.sameModel(as: current?.ref)
+        let isStarred = favoriteKeys.contains(model.key)
         // "Free" only for OpenCode Zen's free models; a $0 subscription model isn't free.
-        let free = model.providerID == "opencode" && model.isFree
-        let detail = showsProvider ? catalog.providerName(model.providerID) : (free && !model.name.localizedCaseInsensitiveContains("free") ? "Free" : "")
+        let free = model.providerID == "opencode" && model.isFree && !model.name.localizedCaseInsensitiveContains("free")
+        let detail = showsProvider ? catalog.providerName(model.providerID) + (free ? " · Free" : "") : (free ? "Free" : nil)
         return Button {
             pick(model)
         } label: {
             HStack(spacing: 9) {
                 ProviderLogo(id: model.makerLogoID, size: 15)
                     .frame(width: 18)
-                Text(model.name)
-                    .font(.system(size: 14))
-                    .lineLimit(1)
-                    .layoutPriority(1)
-                Text(detail)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.tertiary)
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(model.name)
+                        .font(.system(size: 14))
+                        .lineLimit(1)
+                    if let detail {
+                        Text(detail)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                .layoutPriority(1)
                 Spacer(minLength: 4)
+                if number < 9 {
+                    Text("⌘\(number + 1)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                        .fixedSize()
+                }
+                Button {
+                    toggleFavorite(model)
+                } label: {
+                    Image(systemName: isStarred ? "star.fill" : "star")
+                        .font(.system(size: 12))
+                        .foregroundStyle(isStarred ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+                        .frame(width: 20, height: 20)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .clickablePointer()
+                // Starred, or under the pointer: the star shows.
+                .opacity(isStarred || highlight == id ? 1 : 0)
+                .help(isStarred ? "Unstar" : "Star")
                 Image(systemName: "checkmark")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
                     .opacity(isCurrent ? 1 : 0)
             }
             .padding(.horizontal, 10)
-            .frame(height: 34)
+            .frame(height: detail == nil ? 34 : 42)
             .background(highlight == id ? Color.primary.opacity(0.07) : .clear, in: .rect(cornerRadius: 10))
             .contentShape(.rect(cornerRadius: 10))
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .onHover { if $0 { highlight = id } }
         .id(id)
     }
 
-    private func navigationRow(_ title: String, id: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack {
-                Text(title)
-                    .font(.system(size: 14))
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.tertiary)
+    // MARK: The rail
+
+    private var rail: some View {
+        ScrollView {
+            VStack(spacing: 4) {
+                railButton(Self.favoritesRail, name: "Starred") {
+                    Image(systemName: "star.fill")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                }
+                if showsAuto {
+                    railButton(Self.autoRail, name: "Custom Auto") {
+                        Image(systemName: "list.number")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Divider()
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                ForEach(providers) { provider in
+                    railButton(provider.id, name: provider.name, dimmed: provider.unavailable != nil) {
+                        ProviderLogo(id: provider.logo, size: 17)
+                            .overlay(alignment: .bottomTrailing) {
+                                // An account you added: marked apart from the agent's own.
+                                if let label = accountInitial(provider) {
+                                    Text(label)
+                                        .font(.system(size: 7, weight: .bold))
+                                        .foregroundStyle(.background)
+                                        .frame(width: 11, height: 11)
+                                        .background(.secondary, in: .circle)
+                                        .offset(x: 5, y: 5)
+                                }
+                            }
+                    }
+                }
             }
-            .padding(.horizontal, 10)
-            .frame(height: 34)
-            .background(highlight == id ? Color.primary.opacity(0.07) : .clear, in: .rect(cornerRadius: 10))
-            .contentShape(.rect(cornerRadius: 10))
+            .padding(.vertical, 8)
+        }
+        .scrollIndicators(.never)
+        .frame(width: 46, height: listHeight + 41)
+    }
+
+    private func railButton<Mark: View>(_ id: String, name: String, dimmed: Bool = false, @ViewBuilder mark: () -> Mark) -> some View {
+        let isSelected = query.isEmpty && railSelection == id
+        return Button {
+            query = ""
+            chosenRail = id
+            showsOlder = false
+            highlight = visibleRows.first.map(rowID)
+        } label: {
+            mark()
+                .frame(width: 32, height: 32)
+                .background(isSelected ? Color.primary.opacity(0.1) : .clear, in: .rect(cornerRadius: 8))
+                .contentShape(.rect(cornerRadius: 8))
+                .opacity(dimmed ? 0.45 : 1)
         }
         .buttonStyle(.plain)
-        .onHover { if $0 { highlight = id } }
+        .clickablePointer()
+        .hoverHighlight(in: RoundedRectangle(cornerRadius: 8), selected: isSelected)
+        .help(name)
+    }
+
+    /// The first letter of an added account's name, for its mark in the rail.
+    private func accountInitial(_ provider: Catalog.PickerProvider) -> String? {
+        guard provider.isAgent, OutsideAgents.account(provider.id) != nil else { return nil }
+        let label = provider.name.components(separatedBy: " · ").last ?? ""
+        return label.first.map { String($0).uppercased() } ?? "+"
     }
 
     // MARK: Effort
@@ -266,7 +568,7 @@ struct ModelPicker: View {
         VStack(spacing: 14) {
             ZStack {
                 // The level and the model, and only they, open the model list.
-                Button { go(.models) } label: {
+                Button { go(.list) } label: {
                     VStack(spacing: 2) {
                         Text(variant.map(EffortLevel.title) ?? "Default")
                             .font(.system(size: 17, weight: .semibold))
@@ -286,6 +588,7 @@ struct ModelPicker: View {
                     .contentShape(.rect(cornerRadius: 12))
                 }
                 .buttonStyle(.plain)
+                .clickablePointer()
                 .help("Choose another model")
                 // Room for the logo and the reset button beside it, outside what opens the list.
                 .padding(.horizontal, 32)
@@ -304,6 +607,7 @@ struct ModelPicker: View {
                             .contentShape(.rect)
                     }
                     .buttonStyle(.plain)
+                    .clickablePointer()
                     .foregroundStyle(.secondary)
                     .opacity(variant == nil ? 0 : 1)
                     .disabled(variant == nil)
@@ -323,21 +627,25 @@ struct ModelPicker: View {
     // MARK: Choosing
 
     private func go(_ next: Page) {
-        withAnimation(.snappy(duration: 0.2)) { turnedTo = next }
-        if next == .all {
-            focus = .search
-        } else {
-            query = ""
-            focus = .card
-        }
-        highlight = nil
+        // In one step: a popover animating its size between the two pages could lay itself out
+        // again and again, until AppKit stopped the app.
+        var instant = Transaction()
+        instant.disablesAnimations = true
+        withTransaction(instant) { turnedTo = next }
+        query = ""
+        focus = next == .list ? .search : .card
+        highlight = next == .list ? current.map(rowID) : nil
     }
 
     /// A model, keeping the effort you had if it has that level too; then its effort, or, for a
     /// model without levels, the card closes.
     private func pick(_ model: Model) {
+        // An Auto list with nothing in it yet: filled in first.
+        if model.providerID == OutsideAgents.autoProvider, !catalog.isAutoAvailable(model.id) {
+            editAuto(model.id)
+            return
+        }
         let keep = variant.flatMap { level in model.variants.contains { $0.id == level } ? level : nil }
-        remember(model)
         picked = ModelRef(id: model.id, providerID: model.providerID, variant: keep)
         if model.variants.isEmpty {
             close()
@@ -352,15 +660,18 @@ struct ModelPicker: View {
     }
 
     private func pickHighlighted() {
-        let models = page == .models ? shortList : (query.isEmpty ? catalog.modelsByProvider.flatMap(\.models) : results)
-        if let model = models.first(where: { row($0) == highlight }) ?? (page == .all && !query.isEmpty ? results.first : nil) {
+        if let model = visibleRows.first(where: { rowID($0) == highlight }) ?? (query.isEmpty ? nil : visibleRows.first) {
             pick(model)
-        } else if highlight == "more" {
-            go(.all)
         }
     }
 
     private func key(_ press: KeyPress) -> KeyPress.Result {
+        // ⌘1–⌘9: that row of the list in view.
+        if page == .list, press.modifiers == .command, let digit = press.characters.first?.wholeNumberValue, (1...9).contains(digit) {
+            let rows = visibleRows
+            if digit <= rows.count { pick(rows[digit - 1]) }
+            return .handled
+        }
         switch press.key {
         case .escape:
             close()
@@ -369,9 +680,13 @@ struct ModelPicker: View {
             if page == .effort { close() } else { pickHighlighted() }
             return .handled
         case .downArrow, .upArrow:
-            guard page != .effort else { return .ignored }
-            var ids = (page == .models ? shortList : (query.isEmpty ? catalog.modelsByProvider.flatMap(\.models) : results)).map(row)
-            if page == .models, !catalog.modelsByProvider.isEmpty { ids.append("more") }
+            guard page == .list else { return .ignored }
+            // ⌥↑ ⌥↓: the rail.
+            if press.modifiers.contains(.option) {
+                moveRail(press.key == .downArrow ? 1 : -1)
+                return .handled
+            }
+            let ids = visibleRows.map(rowID)
             guard !ids.isEmpty else { return .handled }
             let at = highlight.flatMap { ids.firstIndex(of: $0) }
             let next = press.key == .downArrow ? (at.map { min($0 + 1, ids.count - 1) } ?? 0) : (at.map { max($0 - 1, 0) } ?? ids.count - 1)
@@ -388,22 +703,85 @@ struct ModelPicker: View {
             break
         }
         // Typing on the list searches every model.
-        guard page == .models, press.modifiers.isEmpty || press.modifiers == .shift,
+        guard page == .list, focus != .search, press.modifiers.isEmpty || press.modifiers == .shift,
               let character = press.characters.first, character.isLetter || character.isNumber else { return .ignored }
         query = press.characters
-        go(.all)
+        focus = .search
         return .handled
+    }
+
+    private func moveRail(_ offset: Int) {
+        let ids = railIDs
+        guard let at = ids.firstIndex(of: railSelection) else { return }
+        let next = min(max(at + offset, 0), ids.count - 1)
+        query = ""
+        chosenRail = ids[next]
+        showsOlder = false
+        highlight = visibleRows.first.map(rowID)
     }
 
     // MARK: Lists
 
-    private func row(_ model: Model) -> String { model.key }
+    private func rowID(_ model: Model) -> String { model.key }
 
-    /// Every model that matches what you typed, by provider as in More Models.
+    private var showsAuto: Bool { offersAuto && scope == .all && catalog.outsideAgents != nil }
+
+    private var providers: [Catalog.PickerProvider] { catalog.pickerProviders(scope) }
+
+    private var railIDs: [String] {
+        [Self.favoritesRail] + (showsAuto ? [Self.autoRail] : []) + providers.map(\.id)
+    }
+
+    /// The rail entry in view: the one you chose; else the current model's provider (Auto, if
+    /// that's the model); else your starred models, if you have any; else the first provider.
+    private var railSelection: String {
+        if let chosenRail, railIDs.contains(chosenRail) { return chosenRail }
+        if let ref = choice {
+            if ref.providerID == OutsideAgents.autoProvider, showsAuto { return Self.autoRail }
+            if providers.contains(where: { $0.id == ref.providerID }) { return ref.providerID }
+        }
+        if !favorites.isEmpty { return Self.favoritesRail }
+        return providers.first { $0.unavailable == nil }?.id ?? providers.first?.id ?? Self.favoritesRail
+    }
+
+    private var selectedProvider: Catalog.PickerProvider? {
+        providers.first { $0.id == railSelection }
+    }
+
+    /// The rows in view, in order: what ⌘1–⌘9 and the arrow keys go through.
+    private var visibleRows: [Model] {
+        if !query.isEmpty { return results }
+        switch railSelection {
+        case Self.favoritesRail: return favorites
+        case Self.autoRail: return catalog.outsideAgents?.api == nil ? [] : catalog.autoModels
+        default:
+            guard let provider = selectedProvider, provider.unavailable == nil else { return [] }
+            let (newest, older) = split(provider.models)
+            return showsOlder ? newest + older : newest
+        }
+    }
+
+    /// A provider's models: the newest of each kind (Claude Opus, GPT Sol…) and those without a
+    /// kind, then the older ones of a kind.
+    private func split(_ models: [Model]) -> (newest: [Model], older: [Model]) {
+        var newestOfFamily: [String: Model] = [:]
+        for model in models {
+            guard let family = model.family else { continue }
+            if let kept = newestOfFamily[family], kept.time.released >= model.time.released { continue }
+            newestOfFamily[family] = model
+        }
+        let newest = models.filter { model in model.family.map { newestOfFamily[$0]?.key == model.key } ?? true }
+        let older = models.filter { model in model.family.map { newestOfFamily[$0]?.key != model.key } ?? false }
+        return (newest, older)
+    }
+
+    /// Every model that matches what you typed, from every provider here.
     private var results: [Model] {
         let words = query.lowercased().split(separator: " ").map(String.init)
         guard !words.isEmpty else { return [] }
-        return catalog.modelsByProvider.flatMap(\.models).filter { model in
+        var all = providers.filter { $0.unavailable == nil }.flatMap(\.models)
+        if showsAuto { all.insert(contentsOf: catalog.autoModels.filter { catalog.isAutoAvailable($0.id) }, at: 0) }
+        return all.filter { model in
             let text = "\(model.name) \(model.id) \(model.family ?? "") \(catalog.providerName(model.providerID))".lowercased()
             return words.allSatisfy { text.contains($0) }
         }
@@ -411,35 +789,24 @@ struct ModelPicker: View {
         .map { $0 }
     }
 
-    /// The current model, then recently used ones, then the newest model of each family (Claude
-    /// Opus, GPT Sol, Gemini Flash, …) from each provider, accounts you connected before the free
-    /// OpenCode Zen models.
-    private var shortList: [Model] {
-        let enabled = catalog.offered
-        let recent = recentStorage.split(separator: ",").compactMap { key in enabled.first { $0.key == key } }
-        var newestByFamily: [String: Model] = [:]
-        for model in enabled {
-            let family = model.providerID + "/" + (model.family ?? model.id)
-            if let existing = newestByFamily[family], existing.time.released >= model.time.released { continue }
-            newestByFamily[family] = model
-        }
-        let perProvider = Dictionary(grouping: newestByFamily.values, by: \.providerID)
-            .mapValues { Array($0.sorted { $0.time.released > $1.time.released }.prefix(4)) }
-        let providers = perProvider.keys.sorted { lhs, rhs in
-            // Free models last: someone who connected an account wants its models first.
-            (lhs == "opencode" ? 1 : 0, Catalog.featuredOrder[lhs] ?? 99, lhs) < (rhs == "opencode" ? 1 : 0, Catalog.featuredOrder[rhs] ?? 99, rhs)
-        }
-        var seen = Set<String>()
-        // The model in use leads as the card opens; picking another doesn't reorder the list.
-        let leading = catalog.model(selection) ?? catalog.defaultModel
-        let candidates = [leading].compactMap(\.self) + recent + providers.flatMap { perProvider[$0] ?? [] }
-        return candidates.filter { seen.insert($0.key).inserted }.prefix(8).map { $0 }
+    private var favoriteKeys: [String] {
+        favoriteStorage.split(separator: ",").map(String.init)
     }
 
-    private func remember(_ model: Model) {
-        var keys = recentStorage.split(separator: ",").map(String.init).filter { $0 != model.key }
-        keys.insert(model.key, at: 0)
-        recentStorage = keys.prefix(4).joined(separator: ",")
+    /// Your starred models you can use here, in the order you starred them.
+    private var favorites: [Model] {
+        let usable = providers.filter { $0.unavailable == nil }.flatMap(\.models)
+        return favoriteKeys.compactMap { key in usable.first { $0.key == key } }
+    }
+
+    private func toggleFavorite(_ model: Model) {
+        var keys = favoriteKeys
+        if let index = keys.firstIndex(of: model.key) {
+            keys.remove(at: index)
+        } else {
+            keys.append(model.key)
+        }
+        favoriteStorage = keys.joined(separator: ",")
     }
 }
 

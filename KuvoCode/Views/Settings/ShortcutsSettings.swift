@@ -43,6 +43,7 @@ struct ShortcutsSettings: View {
             Shortcut(keys: ["⌥", "⌘", "I"], title: "Changes"),
             Shortcut(keys: ["⌥", "⌘", "F"], title: "Files"),
             Shortcut(keys: ["⌃", "`"], title: "New terminal"),
+            Shortcut(keys: ["⌃", "⇧", "`"], title: "New terminal tab"),
             Shortcut(keys: ["⌘", "R"], title: "Run the project’s run command"),
             Shortcut(keys: ["⌥", "⌘", "B"], title: "New browser tab"),
             Shortcut(keys: ["⌘", "+ / −"], title: "Zoom a machine's page in or out"),
@@ -55,6 +56,11 @@ struct ShortcutsSettings: View {
             Shortcut(keys: ["/"], title: "At the start: a command"),
             Shortcut(keys: ["!"], title: "At the start: run a shell command"),
             Shortcut(keys: ["@"], title: "Mention a file"),
+        ]),
+        ("Model Picker", [
+            Shortcut(keys: ["⌘", "1 – 9"], title: "That model in the list"),
+            Shortcut(keys: ["⌥", "↑ / ↓"], title: "The provider above or below"),
+            Shortcut(keys: ["← / →"], title: "On the effort: lower or higher"),
         ]),
     ]
 

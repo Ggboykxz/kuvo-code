@@ -1,19 +1,20 @@
 import Foundation
 import OpenCodeKit
 
-/// Machines' sessions and conversations as last seen, kept in this Mac's caches: while a
-/// machine is connecting (after a dropped connection, or at launch), its sessions stay in the
-/// sidebar and show their conversations, to read, until the machine's own take their place. A
-/// copy goes with its session; a machine's list, with the machine.
+/// Sessions and conversations as last seen, kept in this Mac's caches: while a machine is
+/// connecting (after a dropped connection, or at launch), or this Mac's engine is starting, their
+/// sessions stay in the sidebar and show their conversations, to read, until the engine's own take
+/// their place. A copy goes with its session; a machine's list, with the machine.
 nonisolated enum SessionCopies {
     struct Copy: Codable, Sendable {
         var session: Session
         var messages: [Message]
     }
 
-    /// `~/Library/Caches/<bundle id>/Conversations`, a file per session.
+    /// `~/Library/Caches/<bundle id>/Conversations`, a file per session (hosting tests, their own).
     static var folder: URL {
-        URL.cachesDirectory.appending(path: Bundle.main.bundleIdentifier ?? "run.kuvo.code").appending(path: "Conversations")
+        if AppInfo.isHostingTests { return AppInfo.testRoot.appending(path: "Caches/Conversations") }
+        return URL.cachesDirectory.appending(path: Bundle.main.bundleIdentifier ?? "run.kuvo.code").appending(path: "Conversations")
     }
 
     private static func file(_ id: String) -> URL {
@@ -27,6 +28,24 @@ nonisolated enum SessionCopies {
     /// A machine's sessions as last listed.
     private static func list(_ machine: String) -> URL {
         folder.appending(path: "machines").appending(path: safe(machine) + ".json")
+    }
+
+    /// This Mac's sessions as last listed.
+    private static var localList: URL {
+        folder.appending(path: "this-mac").appending(path: "sessions.json")
+    }
+
+    static func saveLocalSessions(_ sessions: [Session]) {
+        Task.detached(priority: .utility) {
+            guard let data = try? JSONEncoder().encode(sessions) else { return }
+            try? FileManager.default.createDirectory(at: localList.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: localList, options: .atomic)
+        }
+    }
+
+    static func localSessions() -> [Session] {
+        guard let data = try? Data(contentsOf: localList) else { return [] }
+        return (try? JSONDecoder().decode([Session].self, from: data)) ?? []
     }
 
     /// Writes it in the background: a long conversation takes a moment to encode.

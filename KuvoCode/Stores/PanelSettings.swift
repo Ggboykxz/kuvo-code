@@ -12,6 +12,9 @@ nonisolated enum PanelSettings {
     static let startsWith = "panel.startsWith"
     /// The panel comes forward when the agent starts browsing.
     static let revealsForAgent = "panel.revealsForAgent"
+    /// A tab an agent opened that you never looked at closes itself a while after its last use
+    /// (`Utilities.tidyAgentTabs`), here and in your machines' browsers.
+    static let tidiesAgentTabs = "panel.tidiesAgentTabs"
 
     enum Start: String, CaseIterable {
         case changes, newTab

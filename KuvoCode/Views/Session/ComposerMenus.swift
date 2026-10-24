@@ -29,9 +29,14 @@ enum ToolApproval: String, CaseIterable {
     var rules: [PermissionRule] {
         switch self {
         case .approveAll: []
-        case .askFirst: ["edit", "write", "patch", "shell", "webfetch", "external_directory"].map { PermissionRule(action: $0, effect: .ask) }
+        // A PDF the browser saves is a file written, and an upload sends one of yours to a site. A
+        // watch runs its check, a command, whenever it's due. (A conversation's wake-ups, Kuvo
+        // Code's tools, never ask.)
+        case .askFirst: ["edit", "write", "patch", "shell", "webfetch", "external_directory", "kuvo-browser_browser_save_pdf", "kuvo-browser_browser_upload", "kuvo-browser_watch_for_change"]
+            .map { PermissionRule(action: $0, effect: .ask) }
         }
     }
+
 
     /// The session rules that give this behaviour beside Settings › Permissions' rules
     /// (`settings`). A session's rules come after those, and the last one that matches wins, so
@@ -48,12 +53,12 @@ enum ToolApproval: String, CaseIterable {
     }
 
     /// A rule a session has for something of its own, which neither its approval nor Settings
-    /// make: a folder it may work in (the project's others, a bot's), a bot's wake-up commands.
-    /// The rest are made again from its approval and Settings as they are now, so a rule taken
-    /// out of Settings goes from sessions too.
+    /// make: a folder it may work in (the project's others, a bot's). The rest are made again
+    /// from its approval and Settings as they are now, so a rule taken out of Settings goes from
+    /// sessions too, and so do the `kuvo-wake` ones an earlier version allowed (wake-ups are
+    /// tools now; those let a command that also wrote a file through).
     static func isParticular(_ rule: PermissionRule) -> Bool {
-        (rule.action == "external_directory" && rule.effect == .allow && rule.resource != "*")
-            || (rule.action == "shell" && rule.effect == .allow && rule.resource.contains("kuvo-wake"))
+        rule.action == "external_directory" && rule.effect == .allow && rule.resource != "*"
     }
 
     /// A session's rules made again from its approval and Settings › Permissions as they are now,
@@ -61,6 +66,19 @@ enum ToolApproval: String, CaseIterable {
     static func refreshed(_ current: [PermissionRule], settings: [PermissionRule]) -> [PermissionRule] {
         ToolApproval(rules: current).rules(settings: settings) + current.filter(isParticular)
     }
+
+    /// Whether a conversation with these rules asks first, but nothing has asked you about a
+    /// watch's check before its tool ran: its rules are from before watches asked, or it runs with
+    /// the coding agents (`agents`), whose bridge doesn't check Kuvo Code's tools against them.
+    /// Then the tool mustn't start it (see `WakeUps.call`).
+    static func watchWentUnasked(_ rules: [PermissionRule]?, agents: Bool) -> Bool {
+        guard ToolApproval(rules: rules) == .askFirst else { return false }
+        return agents || !(rules ?? []).contains { $0.action == "kuvo-browser_watch_for_change" && $0.effect == .ask }
+    }
+
+    /// What the agent hears instead: the same watch, as a command, which asks you with the check
+    /// written out.
+    static let watchAsCommand = "This conversation asks before running commands, and a watch runs its check by itself, so the user approves it first: start it with the shell command kuvo-wake watch <every> \"<check>\" \"<what to do when it changes>\" instead, which asks them."
 
     init(rules: [PermissionRule]?) {
         self = (rules ?? []).contains { $0.action == "shell" && $0.effect == .ask } ? .askFirst : .approveAll
@@ -179,9 +197,15 @@ struct WorkplaceChip: View {
 /// its own.
 struct ModelChip<Label: View>: View {
     @Environment(Catalog.self) private var catalog
+    @Environment(AppModel.self) private var app
     let selection: ModelRef?
     let onSelect: (ModelRef) -> Void
     var opensBelow = false
+    /// Whose models it offers: the engine's (a bot's, a machine's session), or every one with the
+    /// coding agents' and Auto (a session with the agents, a new one on this Mac).
+    var scope: ModelScope = .engine
+    /// Auto among them (not in your Auto list's own picker).
+    var offersAuto = true
     /// Drawn with the model in use and its effort.
     @ViewBuilder let label: (Model?, String?) -> Label
     @State private var isOpen = false
@@ -191,7 +215,10 @@ struct ModelChip<Label: View>: View {
     @State private var placement = ModelPicker.Placement()
     @State private var anchor = ScreenRoom()
 
-    private var current: Model? { catalog.model(selection) ?? catalog.defaultModel }
+    /// The model picked can't be used now: the chip asks for another rather than show the
+    /// default as if it were in use.
+    private var isUnavailable: Bool { catalog.isUnavailable(selection) || selection.map { !scope.allows($0.providerID) } == true }
+    private var current: Model? { isUnavailable ? nil : catalog.shownModel(selection) ?? catalog.defaultModel }
     private var variant: String? { current.flatMap { model in selection?.sameModel(as: model.ref) == true ? selection?.variant : nil } }
 
     var body: some View {
@@ -202,10 +229,21 @@ struct ModelChip<Label: View>: View {
             label(current, variant)
         }
         .buttonStyle(.plain)
-        .help("Model and effort")
+        .clickablePointer()
+        .help(isUnavailable ? "\(catalog.model(selection)?.name ?? selection?.id ?? "") isn't available now: choose another model" : "Model and effort")
         .background(ScreenRoomReader(room: anchor))
         .popover(isPresented: $isOpen, arrowEdge: placement.below ? .bottom : .top) {
-            ModelPicker(catalog: catalog, selection: selection, onSelect: onSelect, close: { isOpen = false }, startsExpanded: startsExpanded, startsOnList: startsOnList, maxHeight: placement.height)
+            ModelPicker(catalog: catalog, selection: selection, onSelect: onSelect, close: { isOpen = false }, scope: scope, offersAuto: offersAuto,
+                        startsExpanded: startsExpanded, startsOnList: startsOnList, maxHeight: placement.height,
+                        // Accounts and Custom Auto lists on the machine whose models these are
+                        // (each has its own).
+                        openSettings: { page in
+                            switch page {
+                            case .accounts: app.openAccounts(on: catalog.machine)
+                            case .auto: app.openAuto(on: catalog.machine)
+                            default: app.openSettings(page)
+                            }
+                        })
         }
         .onAppear { LogoImages.shared.prefetch(catalog.models.flatMap { [$0.makerLogoID, $0.providerID] }) }
         #if DEBUG
@@ -228,27 +266,46 @@ struct ModelChip<Label: View>: View {
 }
 
 extension ModelChip where Label == ModelChipLabel {
-    init(selection: ModelRef?, onSelect: @escaping (ModelRef) -> Void) {
-        self.init(selection: selection, onSelect: onSelect) { ModelChipLabel(model: $0, variant: $1) }
+    /// `inUse`: on Auto, the model of your list at work now, shown beside it.
+    init(selection: ModelRef?, onSelect: @escaping (ModelRef) -> Void, scope: ModelScope = .engine, offersAuto: Bool = true, inUse: ModelRef? = nil) {
+        self.init(selection: selection, onSelect: onSelect, scope: scope, offersAuto: offersAuto) { model, variant in
+            ModelChipLabel(model: model, variant: variant, inUse: model?.providerID == OutsideAgents.autoProvider ? inUse : nil)
+        }
     }
 }
 
 /// The composer's chip: the model's name, its effort, and that it opens the picker.
 struct ModelChipLabel: View {
+    @Environment(Catalog.self) private var catalog
     let model: Model?
     let variant: String?
+    /// On Auto, the model of your list at work now.
+    var inUse: ModelRef?
 
     var body: some View {
         HStack(spacing: 5) {
+            // One of your Auto lists, by its name.
+            if model?.providerID == OutsideAgents.autoProvider {
+                Image(systemName: "list.number")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
             Text(model?.name ?? "Choose a Model")
                 .lineLimit(1)
             if let variant {
                 Text(EffortLevel.title(variant))
                     .foregroundStyle(.secondary)
             }
+            if let inUse, let name = catalog.model(inUse)?.name ?? Optional(inUse.id) {
+                Text(name)
+                    .lineLimit(1)
+                    .foregroundStyle(.secondary)
+                    .help("Custom Auto is on \(name) now")
+            }
             Image(systemName: "chevron.down")
                 .font(.system(size: 9, weight: .semibold))
                 .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
         }
         .font(.callout)
         .padding(.horizontal, 8)

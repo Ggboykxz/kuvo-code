@@ -5,6 +5,7 @@ import SwiftUI
 /// subagents), and your own, each with its instructions, model and permissions.
 struct AgentsSettings: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.settingsBox) private var box
     @Environment(Catalog.self) private var catalog
     @State private var editing: AgentEdit?
     /// What to remove once its sheet has closed (and its fields are done saving).
@@ -12,7 +13,7 @@ struct AgentsSettings: View {
     /// Claude Code's agents, to bring over.
     @State private var claudeAgents: [ClaudeAgents.Agent] = []
 
-    private var config: EngineConfig { app.engineConfig }
+    private var config: EngineConfig { app.config(for: box) }
 
     /// The engine's own agents that people see; the hidden ones (titles, summaries) aren't
     /// listed, but their models can be set above.
@@ -57,7 +58,7 @@ struct AgentsSettings: View {
 
             Section {
                 ForEach(agents, id: \.id) { agent in
-                    HStack(alignment: .firstTextBaseline) {
+                    SettingsRowLayout {
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
                                 Text(agent.name)
@@ -73,9 +74,10 @@ struct AgentsSettings: View {
                                     .font(.callout)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(2)
+                                    .help(description)
                             }
                         }
-                        Spacer()
+                        .settingsText()
                         Button("Edit…") { editing = AgentEdit(agentID: agent.id, isBuiltIn: agent.isBuiltIn) }
                     }
                 }
@@ -142,8 +144,11 @@ struct AgentsSettings: View {
 
     private func removePending() {
         guard let removal else { return }
-        app.engineConfig.set(nil, at: removal)
         self.removal = nil
+        // Once the closing editor's fields have saved what you typed last, or they'd write it
+        // back into a half-made entry.
+        let config = app.config(for: box)
+        DispatchQueue.main.async { config.set(nil, at: removal) }
     }
 }
 
@@ -155,55 +160,94 @@ private struct AgentEdit: Identifiable {
     var id: String { agentID ?? "" }
 }
 
-/// One agent's settings, in the page's place. A new one is named first; after that, changes are
-/// saved as you make them.
+/// One agent's settings, in the page's place. A new one is filled in on one page and made with
+/// Create (until then it's a draft that isn't written anywhere); an existing one is saved as you
+/// change it.
 private struct AgentEditor: View {
-    /// Nil for a new one, until it's named.
-    @State var id: String?
+    /// Nil for a new one.
+    let id: String?
     let isBuiltIn: Bool
     let done: () -> Void
     /// Removes this entry, once it's closed.
     let remove: ([String]) -> Void
     @Environment(AppModel.self) private var app
+    @Environment(\.settingsBox) private var box
     @Environment(Catalog.self) private var catalog
     @State private var newName = ""
     @State private var confirmsRemoval = false
+    /// A new one's settings, as they're filled in.
+    @State private var draft: EngineConfig?
 
-    private var config: EngineConfig { app.engineConfig }
+    /// Where a new one's settings are in its draft.
+    private static let draftPath = ["agents", "new"]
+
+    init(id: String?, isBuiltIn: Bool, done: @escaping () -> Void, remove: @escaping ([String]) -> Void) {
+        self.id = id
+        self.isBuiltIn = isBuiltIn
+        self.done = done
+        self.remove = remove
+        _draft = State(initialValue: id == nil ? EngineConfig(draft: ["agents": .object(["new": .object(["mode": .string("primary")])])]) : nil)
+    }
+
+    private var config: EngineConfig { draft ?? app.config(for: box) }
+    private var path: [String] { id.map { ["agents", $0] } ?? Self.draftPath }
+
     private var name: String {
-        guard let id else { return "New Agent" }
+        guard let id else { return newName.trimmingCharacters(in: .whitespaces).isEmpty ? "New Agent" : newName.trimmingCharacters(in: .whitespaces) }
         return catalog.agents.first { $0.id == id }?.name ?? id
     }
 
-    /// The name you typed, as an agent's: lowercase, with hyphens for spaces, and only letters,
-    /// digits, hyphens and underscores.
+    /// The name you typed, as the agent is called: as you wrote it, with one space between words,
+    /// and only letters, digits, spaces, hyphens and underscores (the engine takes it as it is, as
+    /// a mode and a subagent).
     private var newID: String {
-        newName.lowercased().trimmingCharacters(in: .whitespaces)
-            .replacingOccurrences(of: " ", with: "-")
-            .filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
+        newName.filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" || $0 == " " }
+            .split(separator: " ").joined(separator: " ")
     }
 
     /// Why the name you typed can't be used, if it can't.
     private var problem: String? {
+        // Nothing would be written: the instructions you write would be lost.
+        if let broken = app.config(for: box).problem { return "The engine's settings file can't be changed here: \(broken)" }
         if newID.isEmpty {
             return newName.trimmingCharacters(in: .whitespaces).isEmpty ? nil : "A name needs a letter or a number."
         }
         // Not one the engine already has: that would change it instead.
-        let isTaken = config.value(at: ["agents", newID]) != nil || catalog.agents.contains(where: { $0.id == newID })
-            || AgentsSettings.builtIn.contains(newID) || AgentsSettings.hiddenBuiltIn.contains(newID)
+        // Bug Hunter and bug hunter would be told apart only by their case.
+        let name = newID.lowercased()
+        let configured = (app.config(for: box).value(at: ["agents"])?.object ?? [:]).keys
+        let isTaken = configured.contains { $0.lowercased() == name } || catalog.agents.contains { $0.id.lowercased() == name || $0.name.lowercased() == name }
+            || AgentsSettings.builtIn.contains(name) || AgentsSettings.hiddenBuiltIn.contains(name)
         return isTaken ? "There's an agent called \(newID) already." : nil
+    }
+
+    /// The rules added on a new one's page that aren't saved into it yet (the cursor is still in
+    /// one), which Create takes too; one left without a pattern is no rule, and isn't.
+    private var pendingRules: [PermissionRule] {
+        (draft?.items([RulesEditor.pendingKey] + Self.draftPath + ["permissions"]).compactMap(\.rule) ?? [])
+            .filter { !$0.resource.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    /// A rule written in a way that can't be made (* for a kind of action with its choice above)
+    /// keeps the agent from being created; it says why under it.
+    private var rulesProblem: Bool {
+        pendingRules.contains { RulesEditor.problem(of: $0, hiding: Set(PermissionsSettings.actions.map(\.id))) != nil }
+    }
+
+    private var mode: String {
+        config.value(at: path + ["mode"])?.string ?? id.flatMap { id in catalog.agents.first { $0.id == id }?.mode } ?? "primary"
     }
 
     var body: some View {
         SettingsDetailPage {
-            if let id {
-                editor(id)
-            } else {
-                naming
+            Group {
+                if id == nil { naming }
+                editor
             }
+            .environment(\.editedConfig, draft)
         } footer: {
-            SettingsEditorButtons(create: id == nil ? "Create Agent" : nil, canCreate: !newID.isEmpty && problem == nil, onCreate: create,
-                                  remove: id.flatMap { config.value(at: ["agents", $0]) } != nil ? (isBuiltIn ? "Reset to Built-In…" : "Delete Agent…") : nil,
+            SettingsEditorButtons(create: id == nil ? "Create Agent" : nil, canCreate: !newID.isEmpty && problem == nil && !rulesProblem, onCreate: create,
+                                  remove: id.flatMap { app.config(for: box).value(at: ["agents", $0]) } != nil ? (isBuiltIn ? "Reset to Built-In…" : "Delete Agent…") : nil,
                                   onRemove: { confirmsRemoval = true }, done: done)
         }
         .settingsDetailTitle(name)
@@ -216,70 +260,96 @@ private struct AgentEditor: View {
         }
     }
 
-    /// A new agent's name, before anything is written: what's wrong with it, or what it'll be
-    /// called when that isn't quite what you typed.
+    /// A new agent's name: what's wrong with it, or what it'll be called when that isn't quite
+    /// what you typed.
     private var naming: some View {
         Section {
-            TextField("Name", text: $newName, prompt: Text("reviewer"))
-                .onSubmit(create)
+            SettingsTextRow(title: "Name") { TextField("Name", text: $newName, prompt: Text("Bug Hunter")) }
         } footer: {
             if let problem {
                 Text(problem).foregroundStyle(.red)
             } else if !newID.isEmpty, newID != newName.trimmingCharacters(in: .whitespaces) {
                 Text(verbatim: "It'll be called \(newID).").foregroundStyle(.secondary)
             } else {
-                Text("A short name without spaces. It's how the agent is chosen.").foregroundStyle(.secondary)
+                Text("How it shows in the composer, and how other agents ask for it.").foregroundStyle(.secondary)
             }
         }
     }
 
-    @ViewBuilder private func editor(_ id: String) -> some View {
-        let path = ["agents", id]
+    @ViewBuilder private var editor: some View {
         // A built-in agent's own description, shown until you write another.
-        let builtInDescription = isBuiltIn ? catalog.agents.first(where: { $0.id == id })?.description : nil
-        Group {
-            Section {
-                ConfigTextField(title: "Description", path: path + ["description"], prompt: builtInDescription ?? "What it's for, so the agent knows when to use it", multiline: true)
-                Picker("Use as", selection: Binding(
-                    get: { config.value(at: path + ["mode"])?.string ?? catalog.agents.first { $0.id == id }?.mode ?? "primary" },
-                    set: { config.set(.string($0), at: path + ["mode"]) }
-                )) {
-                    ForEach(["primary", "subagent", "all"], id: \.self) { mode in
-                        Text(AgentsSettings.modeTitle(mode)).tag(mode)
-                    }
+        let builtInDescription = isBuiltIn ? id.flatMap { id in catalog.agents.first(where: { $0.id == id })?.description } : nil
+        Section {
+            Picker("Use as", selection: Binding(get: { mode }, set: { config.set(.string($0), at: path + ["mode"]) })) {
+                ForEach(["primary", "subagent", "all"], id: \.self) { mode in
+                    Text(AgentsSettings.modeTitle(mode)).tag(mode)
                 }
-                ConfigModelPicker(title: "Model", path: path + ["model"], defaultTitle: "The session's model")
-                ConfigNumberField(title: "Most steps per message", path: path + ["steps"], prompt: "No limit")
+            }
+            ConfigTextField(title: "Description", path: path + ["description"], prompt: builtInDescription ?? "What it's for, like: Finds bugs and explains them, without changing code", multiline: true)
+            ConfigModelPicker(title: "Model", path: path + ["model"], defaultTitle: "The session's model")
+            ConfigNumberField(title: "Most steps per message", path: path + ["steps"], prompt: "No limit")
+            if id != nil {
                 Toggle("Use this agent", isOn: Binding(
                     get: { config.value(at: path + ["disabled"])?.bool != true },
                     set: { config.set($0 ? nil : .bool(true), at: path + ["disabled"]) }
                 ))
             }
-            Section {
-                ConfigTextEditor(path: path + ["system"])
-            } header: {
-                Text("Instructions")
-            } footer: {
-                Text(isBuiltIn
-                    ? "Leave empty to keep the built-in instructions. Anything here replaces them; the project's AGENTS.md, skills and MCP servers still apply."
-                    : "How it should work. The project's AGENTS.md, skills and MCP servers still apply.")
-                    .foregroundStyle(.secondary)
-            }
-            Section {
-                RulesEditor(path: path + ["permissions"])
-            } header: {
-                Text("Permissions")
-            } footer: {
-                Text("Added after the ones in Settings › Permissions, so these win for this agent.")
-                    .foregroundStyle(.secondary)
-            }
+        } footer: {
+            Text(Self.modeDetail(mode))
+                .foregroundStyle(.secondary)
+        }
+        Section {
+            ConfigTextEditor(path: path + ["system"], prompt: isBuiltIn ? "" : "How it works: what to look for, what to leave alone, how to report back.")
+        } header: {
+            Text("Instructions")
+        } footer: {
+            Text(isBuiltIn
+                ? "Leave empty to keep the built-in instructions. Anything here replaces them; the project's AGENTS.md, skills and MCP servers still apply."
+                : "The project's AGENTS.md, skills and MCP servers apply too.")
+                .foregroundStyle(.secondary)
+        }
+        Section {
+            ActionChoices(path: path + ["permissions"], agent: id)
+        } header: {
+            Text("What It May Do")
+        } footer: {
+            Text(isBuiltIn
+                ? "Default keeps how it's built in and what Settings › Permissions says. A choice here wins over Settings › Permissions for this agent."
+                : "Default does what Settings › Permissions says. A choice here wins over it for this agent.")
+                .foregroundStyle(.secondary)
+        }
+        Section {
+            RulesEditor(path: path + ["permissions"], hiding: Set(PermissionsSettings.actions.map(\.id)))
+        } header: {
+            Text("Rules")
+        } footer: {
+            // Verbatim: as Markdown, the asterisks would turn part of the sentence into italics.
+            Text(verbatim: "For particular commands, files or sites, like letting it run \"npm test *\" while other commands ask first. * matches anything. When rules overlap, the one lower in the list wins.")
+                .foregroundStyle(.secondary)
         }
     }
 
+    /// What picking it as a mode, a subagent or both means.
+    static func modeDetail(_ mode: String) -> String {
+        switch mode {
+        case "subagent": "Other agents hand it part of their work; its description tells them when."
+        case "all": "You can pick it in the composer, and other agents can hand it part of their work."
+        default: "You pick it in the composer, as you pick Build or Plan."
+        }
+    }
+
+    /// Writes the new agent as filled in, and goes back to the list.
     private func create() {
-        guard !newID.isEmpty, problem == nil else { return }
-        config.set(.object(["mode": .string("primary"), "description": .string("")]), at: ["agents", newID])
+        guard let draft, !newID.isEmpty, problem == nil else { return }
+        var agent = draft.value(at: Self.draftPath)?.object ?? [:]
+        if agent["mode"] == nil { agent["mode"] = .string("primary") }
+        // With the rules still being typed, and each pattern without spaces around it.
+        let rules = (draft.items(Self.draftPath + ["permissions"]).compactMap(\.rule) + pendingRules).map {
+            PermissionRule(action: $0.action, resource: $0.resource.trimmingCharacters(in: .whitespacesAndNewlines), effect: $0.effect).json
+        }
+        agent["permissions"] = rules.isEmpty ? nil : .array(rules)
+        app.config(for: box).set(.object(agent), at: ["agents", newID])
         Analytics.shared.track("agent_created")
-        id = newID
+        done()
     }
 }

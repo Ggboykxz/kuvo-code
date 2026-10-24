@@ -33,16 +33,18 @@ struct ContextGauge: View {
                 .hoverHighlight(in: RoundedRectangle(cornerRadius: 7), selected: showsDetails)
             }
             .buttonStyle(.plain)
+            .clickablePointer()
             .animation(.ui, value: fraction)
             .help("Context window: \(used.compactTokens) of \(limit.compactTokens) tokens")
             .popover(isPresented: $showsDetails, arrowEdge: .bottom) {
-                ContextDetails(used: used, limit: limit, cost: model.session.cost, plan: planLimits) {
+                // A coding agent makes room in its own context, as it does in its own app.
+                ContextDetails(used: used, limit: limit, cost: model.session.cost, plan: planLimits, openUsage: {
                     showsDetails = false
                     UsageMenuBar.shared.open(.dashboard)
-                } summarize: {
+                }, summarize: OutsideAgents.isAgentSession(model.session) ? nil : {
                     showsDetails = false
                     model.compact()
-                }
+                })
             }
         }
     }
@@ -50,8 +52,13 @@ struct ContextGauge: View {
     /// What the last step sent and got back is what's in the window now.
     private var used: Int? { model.contextUsed }
 
-    private var limit: Int? {
-        catalog.model(model.session.model)?.limit.context
+    private var limit: Int? { Self.window(of: model, in: catalog) }
+
+    /// What the session's model can hold of the conversation: on Auto, the model in your list at
+    /// work now.
+    static func window(of model: SessionModel, in catalog: Catalog) -> Int? {
+        let current = model.session.model?.providerID == OutsideAgents.autoProvider ? model.modelInUse : model.session.model
+        return catalog.model(current)?.limit.usable
     }
 
     /// The limits of the account the session runs on, from the usage tracker in the menu bar.
@@ -103,7 +110,7 @@ private struct ContextDetails: View {
     let cost: Double
     let plan: PlanLimits?
     let openUsage: () -> Void
-    let summarize: () -> Void
+    let summarize: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -113,10 +120,12 @@ private struct ContextDetails: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Button("Summarize Now", action: summarize)
-                    .buttonStyle(.link)
-                    .font(.caption.weight(.medium))
-                    .help("Summarize the conversation so far, to free up the context window")
+                if let summarize {
+                    Button("Summarize Now", action: summarize)
+                        .buttonStyle(.link)
+                        .font(.caption.weight(.medium))
+                        .help("Summarize the conversation so far, to free up the context window")
+                }
             }
 
             if let plan {

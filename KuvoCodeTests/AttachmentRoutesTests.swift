@@ -1,0 +1,75 @@
+import AppKit
+import Foundation
+import OpenCodeKit
+import Testing
+@testable import KuvoCode
+
+/// What a model gets of the files you attach: what it can read, with the message (text, folders,
+/// pictures for a model that sees them, PDFs for one that reads them); the rest as paths for the
+/// agent to open, with the composer saying why; on a machine, what it reads goes inline.
+@Suite struct AttachmentRoutesTests {
+    let folder: URL
+
+    init() throws {
+        TestEnvironment.prepare()
+        folder = AppInfo.testRoot.appending(path: "Attach/\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder.appending(path: "src"), withIntermediateDirectories: true)
+        try Data("let x = 1\n".utf8).write(to: folder.appending(path: "notes.txt"))
+        try Data("KEY=value\n".utf8).write(to: folder.appending(path: "Makefile"))
+        try Data("%PDF-1.4\n".utf8).write(to: folder.appending(path: "spec.pdf"))
+        try Data([0, 1, 2, 3, 0xFF]).write(to: folder.appending(path: "blob.bin"))
+        let image = NSImage(size: NSSize(width: 4, height: 4))
+        image.lockFocus(); NSColor.red.drawSwatch(in: NSRect(x: 0, y: 0, width: 4, height: 4)); image.unlockFocus()
+        let png = NSBitmapImageRep(data: image.tiffRepresentation!)!.representation(using: .png, properties: [:])!
+        try png.write(to: folder.appending(path: "shot.png"))
+    }
+
+    private func model(input: [String]) throws -> Model {
+        try JSONDecoder().decode(Model.self, from: JSONSerialization.data(withJSONObject: [
+            "id": "m-\(input.joined())", "modelID": "m", "providerID": "p", "name": "Test Model",
+            "capabilities": ["tools": true, "input": input, "output": ["text"]], "variants": [],
+            "time": ["released": 1], "cost": [["input": 1, "output": 1]], "status": "active", "enabled": true,
+            "limit": ["context": 1000, "output": 100]]))
+    }
+
+    private func url(_ name: String) -> URL { folder.appending(path: name) }
+
+    private func isContent(_ name: String, for model: Model) -> Bool {
+        if case .content = Attachments.route(url(name), for: model) { return true }
+        return false
+    }
+
+    @Test func aModelThatSeesAndReads() throws {
+        let all = try model(input: ["text", "image", "pdf"])
+        for name in ["notes.txt", "Makefile", "src", "shot.png", "spec.pdf"] { #expect(isContent(name, for: all), "\(name)") }
+        #expect(!isContent("blob.bin", for: all))
+    }
+
+    /// A model that only reads text: pictures and PDFs as paths, and the composer says why.
+    @Test func aTextOnlyModel() throws {
+        let text = try model(input: ["text"])
+        #expect(isContent("notes.txt", for: text))
+        guard case .path(let reason, let warns) = Attachments.route(url("shot.png"), for: text) else { Issue.record("a picture went to a model that can't see"); return }
+        #expect(reason.contains("Test Model can't see images") && warns)
+        guard case .path(let pdfReason, _) = Attachments.route(url("spec.pdf"), for: text) else { Issue.record("a PDF went to a model that can't read them"); return }
+        #expect(pdfReason.contains("can't read PDFs"))
+    }
+
+    @Test func whatGoesWithTheMessage() throws {
+        let prepared = Attachments.prepare([url("notes.txt"), url("shot.png"), url("blob.bin")], for: try model(input: ["text", "image"]))
+        #expect(prepared.files.map(\.name) == ["notes.txt", "shot.png"])
+        #expect(prepared.included == [url("notes.txt").path, url("shot.png").path])
+        #expect(prepared.paths == [url("blob.bin").path])
+    }
+
+    /// On a machine, which can't read this Mac's files: what the model reads goes inline, a
+    /// folder as its listing.
+    @Test func onAMachineWhatItReadsGoesInline() throws {
+        let prepared = Attachments.prepare([url("notes.txt"), url("src")], for: try model(input: ["text"]), machine: "box")
+        #expect(prepared.files.count == 2)
+        #expect(prepared.files.allSatisfy { $0.uri.hasPrefix("data:") })
+        let notes = try #require(prepared.files.first { $0.name == "notes.txt" })
+        #expect(Data(base64Encoded: String(notes.uri.split(separator: ",").last ?? "")) == Data("let x = 1\n".utf8))
+        #expect(prepared.unsent.isEmpty && prepared.paths.isEmpty)
+    }
+}

@@ -9,7 +9,7 @@ struct MainView: View {
     @Environment(Catalog.self) private var catalog
     @Environment(Workspace.self) private var workspace
     @Environment(Bots.self) private var bots
-    @Environment(BotGroups.self) private var groups
+    @Environment(GroupChats.self) private var groups
 
     /// Open tabs, in order: session IDs, or `draft:<folder>` for a new session
     /// that doesn't exist on the server until its first message.
@@ -19,7 +19,9 @@ struct MainView: View {
     @SceneStorage("showsSidebar") private var showsSidebar = true
     /// The row at the top: the project, its branch and the tabs. Hidden, sessions are switched
     /// from the sidebar or ⌘K.
-    @AppStorage(TabBar.showsKey) private var showsTabBar = true
+    @AppStorage(TabBar.showsKey) private var showsTabBar = TabBar.showsByDefault
+    /// The window is being resized.
+    @State private var window = WindowStateReader.State()
     @SceneStorage("showsPanel") private var showsPanel = false
     /// The panel over the conversation, for room.
     /// Goes up for ⌘F in the group chat in view.
@@ -36,14 +38,16 @@ struct MainView: View {
     @AppStorage("sessionsWidth") private var sessionsWidth = 280.0
     @AppStorage("changesWidth") private var changesWidth = 420.0
     @AppStorage(Notifier.badgeKey) private var showsBadge = true
-    /// The New Project or Edit Project sheet, while it's open.
-    /// New Project or Edit Project, in the main card.
+    /// New Project or Edit Project, in a popup while it's open.
     @State private var projectEditor: ProjectEditorRequest?
     /// Making or changing a bot, in the main card while it's open.
     @State private var botEditor: BotEditorRequest?
     /// Making or changing a group chat, the same way.
     @State private var groupEditor: GroupEditorRequest?
     @State private var focus = Pane.conversation
+    /// The half of the conversation you worked in last (a click in the panel or the sidebar
+    /// isn't working in either): a tab you pick in the panel is its agent's.
+    @State private var lastHalf = Pane.conversation
     /// Tabs you closed, last one last, with where they were: ⇧⌘T opens them again.
     @State private var closedTabs: [ClosedTab] = []
     /// Goes up to put the cursor in a new session's composer.
@@ -52,6 +56,8 @@ struct MainView: View {
     @State private var showsOpenQuickly = false
     /// The command palette (⌘K) is showing.
     @State private var showsPalette = false
+    /// Terminals open as tabs, standing in for a conversation.
+    private var terminals: MainTerminals { app.mainTerminals }
     /// A tab's session being renamed, and the title being typed.
     @State private var renaming: Session?
     /// The window's content width; the title bar is sized from it.
@@ -102,7 +108,7 @@ struct MainView: View {
     private var utilities: Utilities { app.utilities }
 
     private var sessionID: String? {
-        selection.flatMap { SidebarView.draftDirectory(from: $0) == nil && BotGroups.groupID(fromTab: $0) == nil ? $0 : nil }
+        selection.flatMap { SidebarView.draftDirectory(from: $0) == nil && BotGroups.groupID(fromTab: $0) == nil && !MainTerminals.isTerminal($0) ? $0 : nil }
     }
 
     /// The group chat in view.
@@ -126,10 +132,23 @@ struct MainView: View {
         sessionID.flatMap(workspace.model(for:))
     }
 
-    /// The session you're working in: the one beside, once you've clicked into it. The menus'
-    /// commands (Stop, Find, the modes) go to it.
+    /// The session you're working in: the one beside, once you've clicked into it (and while you
+    /// use the panel or the sidebar after, as the panel stays its). The menus' commands (Stop,
+    /// Find, the modes) go to it.
     private var focusedModel: SessionModel? {
-        focus == .split ? splitModel ?? activeModel : activeModel
+        worksBeside ? splitModel : activeModel
+    }
+
+    /// The last half you worked in is the one beside: the panel is its, and the commands go to it.
+    /// It stays so while the expanded panel covers it (the panel is still its), not once it gave
+    /// way for want of room.
+    private var worksBeside: Bool {
+        lastHalf == .split && splitModel != nil && paneLayout(available: contentWidth).split != nil
+    }
+
+    /// The session beside you work in, if you do.
+    private var workedBesideID: String? {
+        worksBeside ? splitModel?.id : nil
     }
 
     /// The sessions on screen: the tab's, and the one beside it.
@@ -137,8 +156,12 @@ struct MainView: View {
         [sessionID, besideID].compactMap(\.self)
     }
 
-    /// The session beside the tab's, while it shows.
-    private var besideID: String? { splitModel?.id }
+    /// The session beside the tab's, while it shows: with room for it in the window, and not under
+    /// the expanded panel. One that gave way is out of view: not read, nor working there.
+    private var besideID: String? {
+        guard let splitModel, paneLayout(available: contentWidth).split != nil, !(showsPanel && panelExpanded) else { return nil }
+        return splitModel.id
+    }
 
     /// When the sessions on screen last finished.
     private var idlesInView: [Milliseconds?] {
@@ -152,7 +175,23 @@ struct MainView: View {
 
     /// The active tab's project folder.
     private var activeDirectory: String? {
-        activeModel?.session.location.directory ?? draftDirectory
+        activeModel?.session.location.directory ?? draftDirectory ?? selection.flatMap { terminals.entry($0)?.directory }
+    }
+
+    /// The active tab's folder when it's a project's: not the chats' folder or a bot's own.
+    private var activeProject: String? {
+        activeDirectory.flatMap { Workspace.isChat($0) || Workspace.isBotFolder($0) ? nil : $0 }
+    }
+
+    /// The folder of the session you're working in: the one beside, once you've clicked into it.
+    /// Run, a new terminal and Open Quickly go there, as Stop goes to its session.
+    private var focusedDirectory: String? {
+        worksBeside ? splitModel?.session.location.directory ?? activeDirectory : activeDirectory
+    }
+
+    /// The focused session's folder when it's a project's.
+    private var focusedProject: String? {
+        focusedDirectory.flatMap { Workspace.isChat($0) || Workspace.isBotFolder($0) ? nil : $0 }
     }
 
     /// A bot's workspace: the folder of its own it works in when it has no project.
@@ -180,16 +219,20 @@ struct MainView: View {
             let layout = paneLayout(available: proxy.size.width)
             let expands = showsPanel && panelExpanded
             HStack(spacing: 0) {
-                if let width = layout.sessions {
-                    sessionsCard
-                        .frame(width: width)
-                        .transition(.move(edge: .leading).combined(with: .opacity))
-                    PaneResizer(
-                        width: Binding(get: { width }, set: { sessionsWidth = $0 }),
-                        range: PaneLayout.sessionsRange.lowerBound...max(PaneLayout.sessionsRange.lowerBound, layout.sessionsMax),
-                        side: .leading
-                    )
-                }
+                // The sidebar's room, with the gap after it; the sidebar itself is over it
+                // (below). Growing and shrinking with the slide, so the conversation makes room
+                // as the sidebar comes in, rather than all at once ahead of it.
+                Color.clear
+                    .frame(width: layout.sessions.map { $0 + Metrics.paneGap } ?? 0)
+                    .overlay(alignment: .trailing) {
+                        if let width = layout.sessions {
+                            PaneResizer(
+                                width: Binding(get: { width }, set: { sessionsWidth = $0 }),
+                                range: PaneLayout.sessionsRange.lowerBound...max(PaneLayout.sessionsRange.lowerBound, layout.sessionsMax),
+                                side: .leading
+                            )
+                        }
+                    }
                 // With the tab bar hidden and no sidebar, the window's buttons and the sidebar
                 // button sit over this card's header.
                 let controlsInset: CGFloat = !showsTabBar && layout.sessions == nil ? 124 : 0
@@ -197,11 +240,9 @@ struct MainView: View {
                     HStack(spacing: 0) {
                         conversationCard
                             .frame(maxWidth: .infinity)
-                            // It takes its new room at once while the panel or sidebar slides, so its
-                            // text wraps once instead of at every step of the slide, which made
-                            // the conversation flicker and jump.
-                            .transaction(value: showsPanel) { $0.animation = nil }
-                            .transaction(value: showsSidebar) { $0.animation = nil }
+                            // Another session shows at once, as the tab moves to it: animated, the
+                            // last one faded out row by row under the new one, both drawn meanwhile.
+                            .transaction(value: selection) { $0.animation = nil }
                             .environment(\.windowControlsInset, controlsInset)
                             // With the tab bar hidden, the panel button sits over the rightmost card.
                             .environment(\.windowControlsTrailingInset, !showsTabBar && layout.changes == nil && layout.split == nil ? 36 : 0)
@@ -229,17 +270,22 @@ struct MainView: View {
                                 .accessibilityHidden(expands)
                                 .transition(.move(edge: .trailing).combined(with: .opacity))
                         }
-                        if let width = layout.changes {
-                            PaneResizer(
-                                width: Binding(get: { width }, set: { changesWidth = $0 }),
-                                range: PaneLayout.changesRange.lowerBound...max(PaneLayout.changesRange.lowerBound, layout.changesMax),
-                                side: .trailing
-                            )
-                            .allowsHitTesting(!expands)
-                            // The panel's room; the panel itself is over it, so expanding only
-                            // makes it wider, the one card it is.
-                            Color.clear.frame(width: width)
-                        }
+                        // The panel's room, with the gap before it; the panel itself is over it, so
+                        // expanding only makes it wider, the one card it is. Growing and shrinking
+                        // with the panel's slide, as the sidebar's does, so the conversation makes
+                        // room as the panel comes in rather than ahead of it.
+                        Color.clear
+                            .frame(width: layout.changes.map { $0 + Metrics.paneGap } ?? 0)
+                            .overlay(alignment: .leading) {
+                                if let width = layout.changes {
+                                    PaneResizer(
+                                        width: Binding(get: { width }, set: { changesWidth = $0 }),
+                                        range: PaneLayout.changesRange.lowerBound...max(PaneLayout.changesRange.lowerBound, layout.changesMax),
+                                        side: .trailing
+                                    )
+                                    .allowsHitTesting(!expands)
+                                }
+                            }
                     }
                     .onGeometryChange(for: CGFloat.self, of: \.size.width) { mainAreaWidth = $0 }
                     if showsPanel, layout.changes != nil || expands {
@@ -251,16 +297,36 @@ struct MainView: View {
                     }
                 }
             }
+            // Made once and kept while it's hidden, out past the window's left edge: showing it
+            // again only slides it in. Made again each time, it (and each of its bots) took the
+            // first tenth of a second of the slide.
+            .overlay(alignment: .topLeading) {
+                let shown = layout.sessions != nil
+                let width = layout.sessions ?? sessionsWidth
+                sessionsCard
+                    .frame(width: width)
+                    .offset(x: shown ? 0 : -(width + Metrics.paneGap * 2))
+                    .opacity(shown ? 1 : 0)
+                    .allowsHitTesting(shown)
+                    .disabled(!shown)
+                    .accessibilityHidden(!shown)
+            }
             // Settings take the window's place. The sessions stay underneath, hidden and out of
             // reach, so the panel's terminals and pages carry on and everything is where it was.
+            // Out of sight to the conversations too, whose rows (each a view of its own) would
+            // otherwise still follow the pointer and set it, under Settings' controls.
+            .environment(\.isConversationShown, !app.showsSettings)
             .opacity(app.showsSettings ? 0 : 1)
             .allowsHitTesting(!app.showsSettings)
             .disabled(app.showsSettings)
             .accessibilityHidden(app.showsSettings)
             .overlay {
                 if app.showsSettings {
+                    let widest = max(PaneLayout.sessionsRange.lowerBound, min(PaneLayout.sessionsRange.upperBound, proxy.size.width * 0.4))
                     SettingsView(
-                        sidebarWidth: min(max(layout.sessions ?? sessionsWidth, PaneLayout.sessionsRange.lowerBound), proxy.size.width * 0.4),
+                        sidebarWidth: min(max(layout.sessions ?? sessionsWidth, PaneLayout.sessionsRange.lowerBound), widest),
+                        sidebarRange: PaneLayout.sessionsRange.lowerBound...widest,
+                        resizeSidebar: { sessionsWidth = $0 },
                         topInset: keepsTitleBar ? 0 : Metrics.windowControlsHeight,
                         close: closeSettings
                     )
@@ -274,6 +340,8 @@ struct MainView: View {
         // Without the tab bar, the cards reach up into the title bar; the window's buttons sit
         // at the top of the sidebar.
         .padding(.top, keepsTitleBar ? 0 : Metrics.paneGap)
+        // The gaps around the cards move the window, as a title bar does.
+        .background { WindowGapDragArea() }
         .ignoresSafeArea(.container, edges: keepsTitleBar ? [] : .top)
         // Without the tab bar, the panel's button stays at the top right, on the rightmost card's
         // header row, so the panel can still be found.
@@ -307,11 +375,15 @@ struct MainView: View {
         // button stays, so the window's buttons keep a toolbar's height, centered on the cards'
         // header row, and the sidebar is a click away. The panel is still ⌥⌘0, and sessions ⌘K.
         .toolbar {
-            if app.showsSettings {
+            if app.showsSettings && showsTabBar {
                 // In Settings, the title bar has the way back, and the tabs once you sign in to a
                 // site: the page's, then each site's, from where the page's card starts.
                 ToolbarItem(placement: .navigation) { settingsTitleBar }
                 .sharedBackgroundVisibility(.hidden)
+            } else if app.showsSettings {
+                // Without the tab bar, only the way back, beside the window's buttons.
+                ToolbarItem(placement: .navigation) { SettingsBackButton(close: closeSettings) }
+                    .sharedBackgroundVisibility(.hidden)
             } else if showsTabBar {
                 titleBar
             } else {
@@ -320,6 +392,8 @@ struct MainView: View {
             }
         }
         .toolbar(removing: .title)
+        // Being resized (for the tabs' room), and kept out of full screen (see `WindowStateReader`).
+        .background(WindowStateReader { window = $0 })
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .iconOnlyToolbar()
         .overlay(alignment: .top) {
@@ -331,7 +405,7 @@ struct MainView: View {
         }
         .animation(.ui, value: catalog.isSlow)
         .overlay(alignment: .top) {
-            if showsOpenQuickly, let directory = activeDirectory {
+            if showsOpenQuickly, let directory = focusedDirectory {
                 ZStack(alignment: .top) {
                     // A click outside closes it.
                     Color.black.opacity(0.001)
@@ -358,7 +432,7 @@ struct MainView: View {
                         initialQuery: Self.demoPaletteQuery,
                         actions: paletteActions,
                         sessions: paletteSessions,
-                        roots: activeDirectory.map { [$0] + workspace.extraFolders($0) } ?? [],
+                        roots: focusedDirectory.map { [$0] + workspace.extraFolders($0) } ?? [],
                         openFile: { url in showInPanel { utilities.show(url) } },
                         dismiss: { showsPalette = false }
                     )
@@ -374,6 +448,8 @@ struct MainView: View {
     private var followingSessions: some View {
         windowContent
         .focusedSceneValue(\.sessionActions, actions)
+        // Escape stops the agent also when the composer doesn't have the keyboard.
+        .background(EscapeToStop(canStop: actions.canStop && !app.showsSettings, stop: actions.stop))
         // Viewed only while you're here: finished while you're in another app, it waits for you
         // on the Dock icon, and counts as seen when you come back. The session beside the tab's
         // is in view too.
@@ -382,7 +458,7 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in markViewed() }
         // The panel's browser is that of the place the session in view runs: this Mac's, or its
         // machine's.
-        .onChange(of: activeDirectory, initial: true) { _, directory in
+        .onChange(of: focusedDirectory, initial: true) { _, directory in
             utilities.place = directory.flatMap(RemoteFolder.machine(of:))
         }
         // Its agent's browsing brings pages forward; others' stay where they are.
@@ -392,14 +468,44 @@ struct MainView: View {
         }
         // The one beside it shows you files in the panel too.
         .onChange(of: besideID, initial: true) { _, id in utilities.besideInView = id }
-        // Another tab: you're back in its own conversation, not the one beside the last.
-        .onChange(of: selection) { if focus == .split { focus = .conversation } }
+        // Another tab: you're back in its own conversation, not the one beside the last (whatever
+        // had the keyboard: the panel or the sidebar keep the last half otherwise).
+        .onChange(of: selection) {
+            if focus == .split { focus = .conversation }
+            lastHalf = .conversation
+        }
+        // Another session beside: you work in the tab's until you click into it.
+        .onChange(of: splitModel?.id) { lastHalf = .conversation }
+        // New Project and Edit Project: a popup over whatever's in the window.
+        .sheet(item: $projectEditor) { projectSheet($0) }
+    }
+
+    private func projectSheet(_ request: ProjectEditorRequest) -> some View {
+        ProjectEditor(project: request.project, folders: request.folders, focusesRun: request.focusesRun) { primary, settings in
+            var settings = settings
+            // A new project on a folder that's one already adds to what it has.
+            if request.project == nil, let existing = workspace.settings[workspace.folderPath(primary)] {
+                func given(_ text: String?) -> String? { text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? text : nil }
+                settings.name = given(settings.name) ?? existing.name
+                settings.folders = existing.folders + settings.folders.filter { !existing.folders.contains($0) }
+                settings.run = given(settings.run) ?? existing.run
+                settings.terminal = given(settings.terminal) ?? existing.terminal
+            }
+            let primary = workspace.saveProject(primary, settings: settings)
+            if request.project == nil { newSession(in: primary) }
+        } close: {
+            projectEditor = nil
+        }
     }
 
     var body: some View {
         followingSessions
         // A tab you pick is the agent's of the half you work in.
-        .onChange(of: focus == .split && splitModel != nil, initial: true) { _, beside in utilities.worksBeside = beside }
+        .onChange(of: focus) { _, pane in if pane == .conversation || pane == .split { lastHalf = pane } }
+        .onChange(of: workedBesideID, initial: true) { _, id in
+            utilities.workedBeside = id
+            utilities.worksBeside = id != nil
+        }
         .onChange(of: groupID) { showBotTabs() }
         .onChange(of: groupID.flatMap { groups.group($0)?.members } ?? []) { showBotTabs() }
         .task(id: activeDirectory) {
@@ -420,6 +526,12 @@ struct MainView: View {
             guard let id else { return }
             openTab(id)
             workspace.requestedTab = nil
+        }
+        .onChange(of: workspace.swappedTab) { _, swap in
+            // Only the window the session's tab is in (another window leaves it).
+            guard let swap, tabs.contains(swap.from) || splitPairs.values.contains(swap.from) else { return }
+            workspace.swappedTab = nil
+            swapTab(swap.from, with: swap.to)
         }
         // From outside the window: a folder opened with Kuvo Code, or the Dock menu.
         .onChange(of: app.request, initial: true) { _, request in
@@ -449,57 +561,67 @@ struct MainView: View {
 
     @ToolbarContentBuilder private var titleBar: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
-            HStack(spacing: 0) {
-                ProjectIdentity(
-                    // A bot in a folder of its own has no project to name (its card names it).
-                    name: activeDirectory.flatMap { directory in isBotsOwnFolder(directory) ? nil : workspace.projectName(directory) },
-                    branch: activeDirectory.flatMap { directory in isBotsOwnFolder(directory) ? nil : workspace.branches[directory] },
-                    directory: activeDirectory,
-                    isWorktree: activeDirectory.map { workspace.worktrees[$0] != nil } ?? false,
-                    environment: app.shellEnvironment,
-                    showsSidebar: sidebarToggle
-                ) {
-                    if let activeDirectory { Task { await workspace.loadBranch(for: activeDirectory) } }
-                }
-                // Up to the middle card, so the tabs start where it does; without the sidebar
-                // there's no room for that, and the tabs follow the project.
-                .frame(width: identityWidth, alignment: .leading)
-                .padding(.trailing, identityWidth == nil ? 16 : 0)
-                if !tabItems.isEmpty {
-                    TabStrip(tabs: tabItems, selection: $selection, close: { closeTab($0) }, closeAll: closeTabs(except:), openBeside: besideOpener, closeBeside: closeBeside, closeBesideTab: closeBesideTab, swapBeside: swapBeside) { id in
-                        guard let session = workspace.session(id) else { return }
-                        // Renamed in its card's header: its tab comes forward for it.
-                        selection = id
-                        renaming = session
-                    }
-                }
-            }
-            .background(WindowXReader { titleBarX = $0 })
-            // A width from the window (minus the traffic lights and the buttons on the right), so a
-            // narrow window squeezes the tabs instead of pushing them into a » menu.
-            .frame(width: max(240, contentWidth - (runCommand == nil ? 150 : 190)), alignment: .leading)
-            // Its empty parts are the title bar's: they drag the window, and a double-click zooms it.
-            .background { WindowDragArea() }
-            .modifier(UnderImageViewer())
+            titleRow
+                // A width from the window (minus the traffic lights and the buttons on the right), so a
+                // narrow window squeezes the tabs instead of pushing them into a » menu.
+                .frame(width: max(240, contentWidth - (runCommand(of: activeProject) == nil ? 150 : 190) - resizeRoom), alignment: .leading)
+                // Its empty parts are the title bar's: they drag the window, and a double-click zooms it.
+                .background { WindowDragArea() }
+                .modifier(UnderImageViewer())
         }
         .sharedBackgroundVisibility(.hidden)
 
-        if let runCommand {
-            ToolbarItem(placement: .primaryAction) {
-                Button(action: runProject) {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 13))
-                }
-                .buttonStyle(IconButtonStyle(width: 28, height: 28, cornerRadius: 7))
-                .accessibilityLabel("Run")
-                .help("Run \(runCommand) (⌘R)")
-                .modifier(UnderImageViewer())
-            }
-            .sharedBackgroundVisibility(.hidden)
+        if runCommand(of: activeProject) != nil {
+            ToolbarItem(placement: .primaryAction) { runButton }
+                .sharedBackgroundVisibility(.hidden)
         }
 
         ToolbarItem(placement: .primaryAction) { PanelToggle(showsPanel: panelToggle).modifier(UnderImageViewer()) }
             .sharedBackgroundVisibility(.hidden)
+    }
+
+    /// The title bar's project and tabs: in the toolbar, or in full screen in a row of the
+    /// window's own.
+    private var titleRow: some View {
+        HStack(spacing: 0) {
+            ProjectIdentity(
+                // A bot in a folder of its own has no project to name (its card names it).
+                name: activeDirectory.flatMap { directory in isBotsOwnFolder(directory) ? nil : workspace.projectName(directory) },
+                branch: activeDirectory.flatMap { directory in isBotsOwnFolder(directory) ? nil : workspace.branches[directory] },
+                directory: activeDirectory,
+                isWorktree: activeDirectory.map { workspace.worktrees[$0] != nil } ?? false,
+                environment: app.shellEnvironment,
+                showsSidebar: sidebarToggle
+            ) {
+                if let activeDirectory { Task { await workspace.loadBranch(for: activeDirectory) } }
+            }
+            // Up to the middle card, so the tabs start where it does; without the sidebar
+            // there's no room for that, and the tabs follow the project.
+            .frame(width: identityWidth, alignment: .leading)
+            .padding(.trailing, identityWidth == nil ? 16 : 0)
+            if !tabItems.isEmpty {
+                TabStrip(tabs: tabItems, selection: $selection, close: { closeTab($0) }, closeAll: closeTabs(except:), openBeside: besideOpener, closeBeside: closeBeside, closeBesideTab: closeBesideTab, swapBeside: swapBeside) { id in
+                    guard let session = workspace.session(id) else { return }
+                    // Renamed in its card's header: its tab comes forward for it.
+                    selection = id
+                    renaming = session
+                }
+            }
+        }
+        .background(WindowXReader { titleBarX = $0 })
+    }
+
+    @ViewBuilder private var runButton: some View {
+        if let tabsRun = runCommand(of: activeProject) {
+            Button { runProject(activeProject) } label: {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 13))
+            }
+            .buttonStyle(IconButtonStyle(width: 28, height: 28, cornerRadius: 7))
+            .accessibilityLabel("Run")
+            .help("Run \(tabsRun)" + (focusedProject == activeProject ? " (⌘R)" : ""))
+            .modifier(UnderImageViewer())
+        }
     }
 
     /// The project's width in the title bar: up to the middle card, when the sidebar leaves
@@ -522,6 +644,9 @@ struct MainView: View {
         do {
             if let directory = SidebarView.draftDirectory(from: key) {
                 return TabItem(id: key, title: Workspace.isChat(directory) ? "New Chat" : "New Session", logo: nil, status: .idle)
+            }
+            if let entry = terminals.entry(key) {
+                return TabItem(id: key, title: entry.session.title == "Terminal" ? entry.label : entry.session.title, logo: nil, status: .idle, symbol: "apple.terminal")
             }
             if workspace.waitingMachine(for: key) != nil {
                 return TabItem(id: key, title: workspace.remoteTitle(key) ?? "Session", logo: nil, status: .idle)
@@ -580,7 +705,7 @@ struct MainView: View {
         } content: {
             SidebarView(
                 selection: Binding(get: { selection }, set: { id in if let id { openTab(id) } }),
-                newSession: newSession,
+                newSession: { newSession(in: $0) },
                 newProject: { openProjectEditor(ProjectEditorRequest(project: nil)) },
                 editProject: { openProjectEditor(ProjectEditorRequest(project: $0)) },
                 showProviders: { app.openSettings(.accounts) },
@@ -588,6 +713,8 @@ struct MainView: View {
                 editBot: { openBotEditor(bot: $0) },
                 newGroup: { openGroupEditor(group: nil) },
                 editGroup: { openGroupEditor(group: $0) },
+                newConversation: { openTab(SidebarView.draftTag($0)) },
+                closeTerminal: { closeTab($0) },
                 stagedBots: stagedBots,
                 openBeside: besideOpener
             )
@@ -609,11 +736,12 @@ struct MainView: View {
     /// The session's title, renamed in its card's header, while it's the one being renamed.
     private func rename(_ session: Session) -> CardRename? {
         guard renaming?.id == session.id else { return nil }
+        // Each ends only its own rename: one started on another session meanwhile stays.
         return CardRename(original: session.title ?? "") { title in
             Task { await workspace.rename(session.id, to: title) }
-            renaming = nil
+            if renaming?.id == session.id { renaming = nil }
         } cancel: {
-            renaming = nil
+            if renaming?.id == session.id { renaming = nil }
         }
     }
 
@@ -671,8 +799,8 @@ struct MainView: View {
             keep(.split)
             keptSplit = main
         }
-        // Its composer takes the keyboard: the menus' commands go to it.
-        focus = .split
+        // Its composer takes the keyboard, if there's room for it: the menus' commands go to it.
+        if paneLayout(available: contentWidth).split != nil { focus = .split }
     }
 
     /// Close Split View: the two go back to tabs of their own, the one beside next to `tab`.
@@ -729,21 +857,6 @@ struct MainView: View {
                     }
                 }
                 .id(request.id)
-            } else if let request = projectEditor {
-                Card(title: request.project.map { "Edit \($0.name)" } ?? "New Project", isFocused: focus == .conversation) {
-                    Image(systemName: "folder")
-                } actions: {
-                    Button("Close", systemImage: "xmark") { withAnimation(.ui) { projectEditor = nil } }
-                        .help("Close")
-                } content: {
-                    ProjectEditor(project: request.project, folders: request.folders, focusesRun: request.focusesRun) { primary, settings in
-                        let primary = workspace.saveProject(primary, settings: settings)
-                        if request.project == nil { newSession(in: primary) }
-                    } close: {
-                        withAnimation(.ui) { projectEditor = nil }
-                    }
-                }
-                .id(request.id)
             } else if let request = botEditor {
                 Card(title: request.bot.map { "Edit \($0.name)" } ?? "New Bot", isFocused: focus == .conversation) {
                     if let bot = request.bot { BotAvatar(look: bot.look, size: 18, animates: false) } else { Image(systemName: "face.smiling") }
@@ -752,18 +865,31 @@ struct MainView: View {
                         .help("Close")
                 } content: {
                     BotEditor(bot: request.bot, recipe: request.recipe) {
-                        withAnimation(.ui) { botEditor = nil }
+                        // This editor's, not one opened since (a delete that took a while).
+                        if botEditor?.id == request.id { withAnimation(.ui) { botEditor = nil } }
                     } created: { bot in
-                        openTab(bot.sessionID)
+                        // Its tab opens in place of this editor, not of one opened since.
+                        if botEditor?.id == request.id { openTab(bot.sessionID) }
                     }
                 }
                 .id(request.id)
+            } else if let key = selection, let entry = terminals.entry(key) {
+                Card(title: entry.session.title == "Terminal" ? entry.label : entry.session.title, detail: workspace.projectName(entry.directory), isFocused: focus == .conversation) {
+                    Image(systemName: "apple.terminal")
+                } actions: {
+                    Button("Close Tab", systemImage: "xmark") { closeTab(key) }
+                        .help("Close Tab")
+                } content: {
+                    TerminalHost(session: entry.session)
+                }
+                .id(key)
             } else if let id = groupID, let group = groups.group(id) {
                 Card(title: group.name, detail: groupDetail(group), isFocused: focus == .conversation) {
                     GroupAvatar(faces: faces(of: group), size: 20)
                 } actions: {
                     Button("Edit Group Chat", systemImage: "slider.horizontal.3") { openGroupEditor(group: group) }
                         .help("Edit Group Chat: its name, bots and lead")
+                        .disabled(app.moves.isMoving(group.id))
                     Button("Close Tab", systemImage: "xmark") { closeTab(BotGroups.tabKey(id)) }
                         .help("Close Tab")
                 } content: {
@@ -804,13 +930,12 @@ struct MainView: View {
                 } content: {
                     SessionView(model: model)
                         .environment(\.bot, bot)
-                        .environment(\.takesCardKeys, !(focus == .split && splitModel != nil))
+                        .environment(\.takesCardKeys, !(focus == .split && besideID != nil))
                         // Typing here is working here, however the keyboard got here.
                         .environment(\.composerFocused) { focus = .conversation }
                         .largeWidgetHost()
                 }
                 .environment(catalog(for: directory))
-                .id(id)
             } else if let id = sessionID, let engine = app.machines.engine(workspace.waitingMachine(for: id)) {
                 Card(title: workspace.remoteTitle(id) ?? "Session", detail: engine.machine.name, isFocused: focus == .conversation) {
                     Image(systemName: "server.rack")
@@ -844,6 +969,7 @@ struct MainView: View {
                         // The first takes the draft's tab and stays in view; more attempts open at the end.
                         let draft = SidebarView.draftTag(directory)
                         if tabs.contains(draft) {
+                            utilities.adoptDraft(as: session.id)
                             replaceTab(draft, with: session.id)
                         } else if !tabs.contains(session.id) {
                             tabs.append(session.id)
@@ -911,6 +1037,11 @@ struct MainView: View {
 
     /// The panel's and the sidebar's buttons, which show what's on screen.
     private var panelToggle: Binding<Bool> { Binding(get: { panelOnScreen }, set: { showPanel($0) }) }
+    /// Room kept free in the title bar while the window is dragged narrower: its width reaches
+    /// the tabs a pass late, and a strip wider than the room left would be put away in the
+    /// toolbar's overflow and back, again and again.
+    private var resizeRoom: CGFloat { window.isResizing ? 72 : 0 }
+
     private var sidebarToggle: Binding<Bool> { Binding(get: { sidebarOnScreen }, set: { showSidebar($0) }) }
 
     private func keep(_ pane: PaneLayout.Pane) {
@@ -919,16 +1050,18 @@ struct MainView: View {
     }
 
     private var utilitiesPane: some View {
+        // The panel of the session you work in (the one beside, as its panel is then): its changes,
+        // files and terminals.
         UtilitiesPane(
             utilities: utilities,
-            directory: activeDirectory,
-            folders: activeDirectory.map { [$0] + workspace.extraFolders($0) } ?? [],
-            model: activeModel,
+            directory: focusedDirectory,
+            folders: focusedDirectory.map { [$0] + workspace.extraFolders($0) } ?? [],
+            model: focusedModel,
             environment: app.shellEnvironment,
             isExpanded: $panelExpanded,
             isFocused: focus == .changes
         )
-        .environment(catalog(for: activeDirectory))
+        .environment(catalog(for: focusedDirectory))
         .simultaneousGesture(TapGesture().onEnded { focus = .changes })
     }
 
@@ -947,22 +1080,17 @@ struct MainView: View {
             panelExpanded = false
             app.showsSettings = false
             groupEditor = nil
-            projectEditor = nil
             botEditor = BotEditorRequest(bot: bot, recipe: recipe)
         }
         focus = .conversation
     }
 
-    /// Makes a project, or changes one, in the main card.
+    /// Makes a project, or changes one, in a popup over what's in the window. One open already
+    /// stays, with what's typed in it: a shortcut or a session opened from a notification
+    /// doesn't take its place.
     private func openProjectEditor(_ request: ProjectEditorRequest) {
-        withAnimation(.ui) {
-            panelExpanded = false
-            app.showsSettings = false
-            botEditor = nil
-            groupEditor = nil
-            projectEditor = request
-        }
-        focus = .conversation
+        guard projectEditor == nil else { return }
+        projectEditor = request
     }
 
     /// Makes a group chat, or changes `group`, in the main card.
@@ -971,7 +1099,6 @@ struct MainView: View {
             panelExpanded = false
             app.showsSettings = false
             botEditor = nil
-            projectEditor = nil
             groupEditor = GroupEditorRequest(group: group)
         }
         focus = .conversation
@@ -983,14 +1110,16 @@ struct MainView: View {
         return names.isEmpty ? nil : names.joined(separator: ", ")
     }
 
-    /// Settings' tabs: its pages, and the sites you're signing in to; the last one left stays.
+    /// Settings' tabs: its pages (a machine's by its name), and the sites you're signing in to;
+    /// the last one left stays.
     private var settingsTabItems: [TabItem] {
         let tabs = app.settingsTabs
         let closes = tabs.tabs.count > 1
         return tabs.tabs.compactMap { tab -> TabItem? in
             switch tab.kind {
             case .page(let page):
-                return TabItem(id: tab.id, title: page.title, logo: nil, status: .idle, symbol: page.symbol, closes: closes)
+                let title = tab.box.machine == nil ? page.title : "\(page.title) · \(app.name(of: tab.box))"
+                return TabItem(id: tab.id, title: title, logo: nil, status: .idle, symbol: page.symbol, closes: closes, isPreview: tab.id == tabs.previewTab)
             case .site(let id):
                 guard let site = tabs.site(id) else { return nil }
                 return TabItem(id: tab.id, title: site.service.title, logo: nil, status: .idle, symbol: site.service.symbol, closes: closes)
@@ -1005,10 +1134,16 @@ struct MainView: View {
         })
     }
 
-    /// The title bar keeps its row: with the tab bar, or in Settings, for its tabs (even when
-    /// you hid the tab bar, they need somewhere to be).
+    /// A page of Settings as the demo variables name it: `permissions`, or `permissions@<machine>`.
+    private static func demoPage(_ text: String) -> (SettingsPage?, SidebarBox) {
+        let parts = text.split(separator: "@", maxSplits: 1).map(String.init)
+        return (SettingsPage(rawValue: parts[0]), parts.count > 1 ? .machine(parts[1]) : .mac)
+    }
+
+    /// The title bar keeps its row with the tab bar; without it, the cards reach the top, in
+    /// Settings too (one page at a time, then).
     private var keepsTitleBar: Bool {
-        showsTabBar || app.showsSettings
+        showsTabBar
     }
 
     /// In Settings, the title bar has the way back, and Settings' tabs, from where the page's
@@ -1027,7 +1162,7 @@ struct MainView: View {
         // Its buttons each by their own name, not all by the first one's.
         .accessibilityElement(children: .contain)
         // Room from the window, as the sessions' tabs have, so titles aren't squeezed.
-        .frame(width: max(240, contentWidth - 150), alignment: .leading)
+        .frame(width: max(240, contentWidth - 150 - resizeRoom), alignment: .leading)
         // Its empty parts are the title bar's: they drag the window, and a double-click zooms it.
         .background { WindowDragArea() }
         .animation(.ui, value: app.settingsTabs.tabs.map(\.id))
@@ -1056,7 +1191,6 @@ struct MainView: View {
             app.showsSettings = false
             botEditor = nil
             groupEditor = nil
-            projectEditor = nil
         }
     }
 
@@ -1071,7 +1205,8 @@ struct MainView: View {
             Analytics.shared.sessionEnded(beside)
             splitPairs[key] = nil
         }
-        if remember { rememberClosed([ClosedTab(key: key, index: index, beside: beside)]) }
+        if remember && !MainTerminals.isTerminal(key) { rememberClosed([ClosedTab(key: key, index: index, beside: beside)]) }
+        terminals.close(key)
         withAnimation(.ui) {
             self.tabs = tabs
             if selection == key {
@@ -1084,9 +1219,10 @@ struct MainView: View {
     private func closeTabs(except key: String?) {
         // Reopened last first, so the leftmost comes back last.
         let pairs = splitPairs
-        rememberClosed(tabs.enumerated().filter { $0.element != key }.map { ClosedTab(key: $0.element, index: $0.offset, beside: pairs[$0.element]) }.reversed())
+        rememberClosed(tabs.enumerated().filter { $0.element != key && !MainTerminals.isTerminal($0.element) }.map { ClosedTab(key: $0.element, index: $0.offset, beside: pairs[$0.element]) }.reversed())
         for closed in tabs where closed != key {
             Analytics.shared.sessionEnded(closed)
+            terminals.close(closed)
             if let beside = splitPairs[closed] { Analytics.shared.sessionEnded(beside) }
         }
         withAnimation(.ui) {
@@ -1138,12 +1274,15 @@ struct MainView: View {
         }
     }
 
+    /// Where the panel's Add to Message goes: the session you work in, the one beside once you've
+    /// clicked into it (the panel is its), else the tab's.
+    private var messageTarget: String? { workedBesideID ?? selection }
+
     /// Adds a file's lines ("@src/App.swift:12-20") or a terminal's output to what's in the
-    /// composer of the tab in view, and puts the cursor there.
+    /// composer of the session you work in, and puts the cursor there.
     private func addToMessage(_ addition: String) {
-        // With no tab open, a new session gets it.
-        if selection == nil { newSession(in: nil) }
-        guard let key = selection else { return }
+        composerForAdding()
+        guard let key = messageTarget else { return }
         var text = Drafts.shared[key].text
         let isBlock = addition.hasPrefix("```")
         if !text.isEmpty {
@@ -1151,16 +1290,41 @@ struct MainView: View {
         }
         Drafts.shared[key].text = text + addition + (isBlock ? "\n" : " ")
         if SidebarView.draftDirectory(from: key) != nil { draftFocus += 1 } else { workspace.model(for: key)?.focusComposer() }
-        focus = .conversation
+        focus = worksBeside ? .split : .conversation
     }
 
-    /// Attaches files to the message in the composer of the tab in view, and puts the cursor there.
+    /// Attaches files to the message in the composer of the session you work in, and puts the
+    /// cursor there.
     private func attachToMessage(_ files: [URL]) {
-        if selection == nil { newSession(in: nil) }
-        guard let key = selection else { return }
+        composerForAdding()
+        guard let key = messageTarget else { return }
         Drafts.shared[key].files += files.filter { !Drafts.shared[key].files.contains($0) }
         if SidebarView.draftDirectory(from: key) != nil { draftFocus += 1 } else { workspace.model(for: key)?.focusComposer() }
-        focus = .conversation
+        focus = worksBeside ? .split : .conversation
+    }
+
+    /// With no composer in view to add to (no tab open, or a terminal's): a new conversation, in
+    /// the terminal's folder if one's in view, never a terminal (which would start the project's
+    /// command, and not have the text).
+    private func composerForAdding() {
+        guard selection == nil || messageTarget.map(MainTerminals.isTerminal) == true else { return }
+        newSession(in: selection.flatMap { terminals.entry($0)?.directory }, conversation: true)
+    }
+
+    /// A session that carries on in another: the new one takes its tab (or its place beside
+    /// one), and is shown.
+    private func swapTab(_ old: String, with id: String) {
+        if let tab = splitPairs.first(where: { $0.value == old })?.key {
+            splitPairs[tab] = id
+            openTab(id)
+            return
+        }
+        guard tabs.contains(old) else { return openTab(id) }
+        if let beside = splitPairs[old] {
+            splitPairs[old] = nil
+            splitPairs[id] = beside
+        }
+        replaceTab(old, with: id)
     }
 
     /// A draft became a real session: it keeps its place in the tab strip.
@@ -1207,6 +1371,12 @@ struct MainView: View {
         // A machine's sessions wait for it to connect.
         func isGone(_ key: String) -> Bool { !known.contains(key) && workspace.waitingMachine(for: key) == nil }
         for key in tabs where SidebarView.draftDirectory(from: key) == nil && isGone(key) {
+            // A terminal's tab stays while its shell runs; one restored at launch has none.
+            if MainTerminals.isTerminal(key) {
+                if terminals.entry(key) != nil { continue }
+                closeTab(key, remember: false)
+                continue
+            }
             // A group chat's tab stays as long as the chat does.
             if let id = BotGroups.groupID(fromTab: key), groups.group(id) != nil { continue }
             if let beside = splitPairs[key], !isGone(beside), !tabs.contains(beside) {
@@ -1233,10 +1403,11 @@ struct MainView: View {
         let model = focusedModel
         return SessionActions(
             hasSession: model != nil,
-            hasProject: activeDirectory != nil,
+            hasProject: focusedProject != nil,
             canStop: model?.isRunning == true,
             canReopenTab: closedTabs.contains(where: canReopen),
             newSession: { newSession(in: nil) },
+            newTerminalTab: { openTerminalTab(command: nil) },
             openFolder: openFolder,
             newProject: { openProjectEditor(ProjectEditorRequest(project: nil)) },
             newBot: { openBotEditor(bot: nil) },
@@ -1248,7 +1419,7 @@ struct MainView: View {
             togglePanel: { withAnimation(.ui) { showPanel(!panelOnScreen) } },
             showChanges: { showInPanel { utilities.showChanges() } },
             showFiles: { showInPanel { utilities.showFiles() } },
-            newTerminal: { showInPanel { utilities.newTerminal(in: activeDirectory, environment: app.shellEnvironment) } },
+            newTerminal: { showInPanel { utilities.newTerminal(in: focusedDirectory, environment: app.shellEnvironment) } },
             run: runProject,
             newBrowser: { showInPanel { utilities.newBrowser() } },
             toggleSidebar: { withAnimation(.ui) { showSidebar(!sidebarOnScreen) } },
@@ -1289,9 +1460,9 @@ struct MainView: View {
     private static let demoPaletteQuery = ""
     #endif
 
-    /// Every session not put away, the latest first, with its project.
+    /// Every session and chat not put away, the latest first, with its project.
     private var paletteSessions: [PaletteItem] {
-        workspace.projects.flatMap(\.sessions).sorted { $0.time.updated > $1.time.updated }.map { session in
+        (workspace.projects.flatMap(\.sessions) + workspace.chats).sorted { $0.time.updated > $1.time.updated }.map { session in
             PaletteItem(id: "session:" + session.id, kind: .session, title: session.title ?? "New Session", detail: workspace.projectName(session.location.directory),
                         symbol: workspace.worktrees[session.location.directory] == nil ? "bubble.left" : "arrow.triangle.branch") { openTab(session.id) }
         }
@@ -1309,6 +1480,7 @@ struct MainView: View {
             add("Run", "play.fill", "⌘R", detail: runCommand, actions.run)
         }
         add("New Terminal", "terminal", "⌃`", actions.newTerminal)
+        add("New Terminal Tab", "apple.terminal", "⌃⇧`", actions.newTerminalTab)
         add("New Browser Tab", "globe", "⌥⌘B", actions.newBrowser)
         add("Show Changes", "plusminus", "⌥⌘I", actions.showChanges)
         if actions.hasProject {
@@ -1322,7 +1494,7 @@ struct MainView: View {
         add("New Project…", "folder.badge.plus", "⇧⌘N", actions.newProject)
         add("New Bot…", "face.smiling", nil) { openBotEditor(bot: nil) }
         add("Open Folder…", "folder", "⌘O", actions.openFolder)
-        if let directory = activeDirectory {
+        if let directory = focusedProject {
             let primary = workspace.projectDirectory(directory)
             add("Edit Project…", "slider.horizontal.3", detail: workspace.projectName(primary)) {
                 openProjectEditor(ProjectEditorRequest(project: workspace.projects.first { $0.directory == primary } ?? Workspace.Project(directory: primary, sessions: [], settings: workspace.settings[primary] ?? .init())))
@@ -1348,16 +1520,21 @@ struct MainView: View {
         return items
     }
 
-    /// The active project's run command, if it has one.
-    private var runCommand: String? {
-        activeDirectory.flatMap { workspace.settings[workspace.projectDirectory($0)]?.run }
+    /// The run command of the project of the session you work in, if it has one.
+    private var runCommand: String? { runCommand(of: focusedProject) }
+
+    private func runCommand(of project: String?) -> String? {
+        project.flatMap { workspace.settings[workspace.projectDirectory($0)]?.run }
     }
 
     /// Runs the project's run command in a terminal, in the session's folder (its worktree, if it
-    /// has one). Without a command yet, Edit Project opens to set one.
-    private func runProject() {
-        guard let directory = activeDirectory else { return }
-        guard let command = runCommand else {
+    /// has one): the session you work in, or the tab's for the title bar's button, beside its name.
+    /// Without a command yet, Edit Project opens to set one.
+    private func runProject() { runProject(focusedProject) }
+
+    private func runProject(_ project: String?) {
+        guard let directory = project else { return }
+        guard let command = runCommand(of: directory) else {
             let primary = workspace.projectDirectory(directory)
             let project = workspace.projects.first { $0.directory == primary } ?? Workspace.Project(directory: primary, sessions: [], settings: workspace.settings[primary] ?? .init())
             openProjectEditor(ProjectEditorRequest(project: project, focusesRun: true))
@@ -1369,10 +1546,25 @@ struct MainView: View {
     /// Starts a draft in `directory`, or in the current project (a worktree's, for a session in one).
     /// A new session in `directory`, or the project in view, or the latest one; with no project
     /// at all, a chat. A bot's own folder isn't a project: from its conversation, the latest one.
-    private func newSession(in directory: String?) {
+    /// `conversation`: one, even in a project whose sessions open its terminal command.
+    private func newSession(in directory: String?, conversation: Bool = false) {
         let inView = activeDirectory.map(workspace.projectDirectory).flatMap { Workspace.isBotFolder($0) ? nil : $0 }
         let directory = directory ?? inView ?? workspace.projects.first?.directory ?? Workspace.chatsFolder
+        // A project that has a terminal command for its sessions opens that, not a conversation.
+        if !conversation, let command = workspace.settings[workspace.projectDirectory(directory)]?.terminal {
+            openTerminalTab(command: command, in: directory)
+            return
+        }
         openTab(SidebarView.draftTag(directory))
+    }
+
+    /// A terminal as a tab, in the folder of the tab in view (or the one given), typing `command`
+    /// in it. Without one, a plain shell: where you start `omp` or any agent yourself.
+    private func openTerminalTab(command: String?, in directory: String? = nil) {
+        // A project's folder, not a bot's own or the chats' (their agents work there).
+        let directory = directory ?? activeProject ?? NSHomeDirectory()
+        Analytics.shared.track("terminal_tab_opened", ["kind": command == nil ? "shell" : "project"])
+        openTab(terminals.open(in: directory, command: command, environment: app.shellEnvironment))
     }
 
     private func openFolder() {
@@ -1446,10 +1638,12 @@ struct MainView: View {
         if workspace.isLoaded, let list = environment["KUVO_DEMO_NEW_PROJECT"] {
             openProjectEditor(ProjectEditorRequest(project: nil, folders: list.split(separator: ",").map(String.init)))
         }
-        // KUVO_DEMO_SETTINGS=<page> opens Settings on that page, by its SettingsPage name: general,
-        // appearance, storage, accounts, agents, mcp, git, browser, passwords and so on.
+        // KUVO_DEMO_SETTINGS=<page>[@<machine>] opens Settings on that page, by its SettingsPage
+        // name: general, appearance, storage, accounts, agents, mcp, git, browser, passwords and so
+        // on; with a machine, that machine's.
         if workspace.isLoaded, let tab = environment["KUVO_DEMO_SETTINGS"] {
-            app.openSettings(SettingsPage(rawValue: tab))
+            let (page, box) = Self.demoPage(tab)
+            app.openSettings(page, on: box)
         }
         guard workspace.isLoaded, !Self.ranDemo else { return }
         Self.ranDemo = true
@@ -1457,7 +1651,9 @@ struct MainView: View {
         // the first page (KUVO_DEMO_SETTINGS) stays in view.
         if let pages = environment["KUVO_DEMO_SETTINGS_TABS"] {
             let shown = app.settingsTabs.selectedID
-            for page in pages.split(separator: ",").compactMap({ SettingsPage(rawValue: String($0)) }) { app.settingsTabs.show(page, inNewTab: true) }
+            for (page, box) in pages.split(separator: ",").map({ Self.demoPage(String($0)) }) {
+                if let page { app.settingsTabs.show(page, on: box, inNewTab: true) }
+            }
             app.settingsTabs.select(shown)
         }
         // KUVO_DEMO_WELCOME: no tabs, so the welcome card shows.
@@ -1473,7 +1669,7 @@ struct MainView: View {
         for item in (environment["KUVO_DEMO_PANEL"] ?? "").split(separator: ",").map(String.init) {
             let parts = item.split(separator: "=", maxSplits: 1).map(String.init)
             switch parts.first {
-            case "terminal": utilities.newTerminal(in: activeDirectory, environment: app.shellEnvironment)
+            case "terminal": utilities.newTerminal(in: focusedDirectory, environment: app.shellEnvironment)
             case "browser": utilities.newBrowser(parts.count > 1 ? parts[1] : nil)
             case "machine" where parts.count > 1:
                 let rest = parts[1].split(separator: "=", maxSplits: 1).map(String.init)
@@ -1483,7 +1679,12 @@ struct MainView: View {
                     utilities.newMachinePage(rest[0], address: rest.count > 1 ? rest[1] : nil)
                 }
             case "files": utilities.showFiles()
-            case "file" where parts.count > 1: utilities.open(RemoteFolder.url(parts[1]))
+            case "file" where parts.count > 1:
+                // Once the conversation is in view, so the tab is its panel's.
+                Task {
+                    try? await Task.sleep(for: .seconds(1.5))
+                    utilities.show(RemoteFolder.url(parts[1]))
+                }
             case "changes": utilities.showChanges()
             case "run": runProject()
             case "expand": panelExpanded = true
@@ -1581,6 +1782,174 @@ struct MainView: View {
                 }
             }
         }
+        Task { await PerfLayers.run() }
+        // KUVO_PERF_SWITCH=<n>: ten seconds after launch, goes to the next session tab n times,
+        // a second and a half apart, and writes how the main thread kept up to KUVO_PERF_LOG.
+        if let count = environment["KUVO_PERF_SWITCH"].flatMap(Int.init) {
+            Task {
+                try? await Task.sleep(for: .seconds(10))
+                // KUVO_PERF_SWITCH_CHECK: each tab's session with a draft of its own, and after each
+                // switch, whether the composer shows it, and takes what's typed there.
+                let check = environment["KUVO_PERF_SWITCH_CHECK"] != nil
+                if check { for (index, tab) in tabs.enumerated() { workspace.model(for: tab)?.draftText = "draft \(index)" } }
+                var wrong: [String] = []
+                let meter = PerfMeter()
+                meter.start()
+                // KUVO_PERF_SWITCH_BY=<steps>: tabs to go by, in turn ("1,1,-1,-1": back and forth
+                // among three), rather than always the next.
+                let by = environment["KUVO_PERF_SWITCH_BY"].map { $0.split(separator: ",").compactMap { Int($0) } } ?? [1]
+                for step in 0..<count {
+                    cycleTabs(by: by[step % by.count])
+                    try? await Task.sleep(for: .milliseconds(1500))
+                    if check, let id = selection, let model = workspace.model(for: id),
+                       let editor = NSApp.windows.lazy.compactMap({ $0.firstResponder as? NSTextView }).first(where: \.isFieldEditor) {
+                        if editor.string != model.draftText { wrong.append("step \(step): shows \"\(editor.string)\", draft \"\(model.draftText)\"") }
+                        editor.insertText("+", replacementRange: NSRange(location: (editor.string as NSString).length, length: 0))
+                        try? await Task.sleep(for: .milliseconds(100))
+                        if !model.draftText.hasSuffix("+") { wrong.append("step \(step): typed, draft \"\(model.draftText)\"") }
+                    } else if check {
+                        wrong.append("step \(step): no field editor")
+                    }
+                }
+                let line = "switch x\(count) among \(tabs.count) tabs: " + meter.stop() + (check ? "; check: " + (wrong.isEmpty ? "all right" : wrong.prefix(6).joined(separator: "; ")) : "") + "\n"
+                if let file = environment["KUVO_PERF_STALLS"] { try? meter.stallReport().write(toFile: file, atomically: true, encoding: .utf8) }
+                if let file = environment["KUVO_PERF_LOG"] {
+                    if let handle = FileHandle(forWritingAtPath: file) { handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close() } else { FileManager.default.createFile(atPath: file, contents: Data(line.utf8)) }
+                }
+            }
+        }
+        // KUVO_PERF_TOGGLE=<n>: ten seconds after launch, the sidebar hidden and shown n times, then
+        // the panel, as their buttons do, a second apart; how the main thread kept up with the
+        // slides goes to KUVO_PERF_LOG.
+        if let count = environment["KUVO_PERF_TOGGLE"].flatMap(Int.init) {
+            Task {
+                try? await Task.sleep(for: .seconds(10))
+                func log(_ line: String) {
+                    guard let file = environment["KUVO_PERF_LOG"] else { return }
+                    if let handle = FileHandle(forWritingAtPath: file) { handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close() } else { FileManager.default.createFile(atPath: file, contents: Data(line.utf8)) }
+                }
+                let sidebar = PerfMeter()
+                sidebar.start()
+                // KUVO_PERF_TOGGLE_ONLY=panel: the panel alone (and its profile alone).
+                let panelOnly = environment["KUVO_PERF_TOGGLE_ONLY"] == "panel"
+                for _ in 0..<(panelOnly ? 0 : count * 2) {
+                    withAnimation(.ui) { showSidebar(!showsSidebar) }
+                    try? await Task.sleep(for: .seconds(1))
+                }
+                if !panelOnly {
+                    log("toggle sidebar x\(count * 2): " + sidebar.stop() + "\n")
+                    if let file = environment["KUVO_PERF_STALLS"] { try? sidebar.stallReport().write(toFile: file, atomically: true, encoding: .utf8) }
+                }
+                let panel = PerfMeter()
+                panel.start()
+                for _ in 0..<(count * 2) {
+                    withAnimation(.ui) { showPanel(!showsPanel) }
+                    try? await Task.sleep(for: .seconds(1))
+                }
+                log("toggle panel x\(count * 2): " + panel.stop() + "\n")
+                if let file = environment["KUVO_PERF_STALLS"] { try? panel.stallReport().write(toFile: file + ".panel", atomically: true, encoding: .utf8) }
+            }
+        }
+        // KUVO_PERF_SIDEBAR=<n>: ten seconds after launch, the sidebar scrolled down and back up,
+        // n frames each way, as a trackpad does; then ten seconds left alone. How the main thread
+        // kept up with each goes to KUVO_PERF_LOG.
+        if let count = environment["KUVO_PERF_SIDEBAR"].flatMap(Int.init) {
+            Task {
+                try? await Task.sleep(for: .seconds(10))
+                func scrollViews(in view: NSView) -> [NSScrollView] { ((view as? NSScrollView).map { [$0] } ?? []) + view.subviews.flatMap(scrollViews) }
+                guard let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }), let content = window.contentView,
+                      let sidebar = scrollViews(in: content).first(where: { $0.convert($0.bounds, to: nil).minX < 60 && $0.frame.height > 200 }) else { return }
+                func log(_ line: String) {
+                    guard let file = environment["KUVO_PERF_LOG"] else { return }
+                    if let handle = FileHandle(forWritingAtPath: file) { handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close() } else { FileManager.default.createFile(atPath: file, contents: Data(line.utf8)) }
+                }
+                let meter = PerfMeter()
+                meter.start()
+                let range = max(0, (sidebar.documentView?.frame.height ?? 0) - sidebar.contentView.bounds.height)
+                // KUVO_PERF_SIDEBAR_WHEEL: by a trackpad's events (began, changed, ended), as you
+                // scroll, so SwiftUI knows it's being scrolled; otherwise moved there directly.
+                let wheel = environment["KUVO_PERF_SIDEBAR_WHEEL"] != nil
+                func send(_ delta: CGFloat, phase: CGScrollPhase) {
+                    guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: Int32(delta), wheel2: 0, wheel3: 0) else { return }
+                    event.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase.rawValue))
+                    event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+                    if let ns = NSEvent(cgEvent: event) { sidebar.scrollWheel(with: ns) }
+                }
+                for step in 0..<(count * 2) {
+                    let done = Double(step < count ? step + 1 : count * 2 - step - 1) / Double(count)
+                    if wheel {
+                        let delta = (step < count ? -1.0 : 1.0) * range / Double(count)
+                        send(delta, phase: step == 0 || step == count ? .began : .changed)
+                        if step == count - 1 || step == count * 2 - 1 { send(0, phase: .ended) }
+                    } else {
+                        let clip = sidebar.contentView
+                        clip.scroll(to: NSPoint(x: 0, y: range * done))
+                        sidebar.reflectScrolledClipView(clip)
+                    }
+                    try? await Task.sleep(for: .milliseconds(16))
+                }
+                log("sidebar scroll x\(count * 2) over \(Int(range)) pt: " + meter.stop() + "\n")
+                // KUVO_PERF_SIDEBAR_IDLE=0: not the idle part (whose profile would replace this one's).
+                guard environment["KUVO_PERF_SIDEBAR_IDLE"] != "0" else { log("sidebar idle skipped\n"); return }
+                let idle = PerfMeter()
+                idle.start()
+                try? await Task.sleep(for: .seconds(10))
+                log("sidebar idle 10 s: " + idle.stop() + "\n")
+            }
+        }
+        // KUVO_PERF_RESIZE=<n>: ten seconds after launch, goes through the next three session tabs
+        // and back, then makes the window narrower and wider again, n frames each way, and writes
+        // how the main thread kept up to KUVO_PERF_LOG.
+        if let count = environment["KUVO_PERF_RESIZE"].flatMap(Int.init) {
+            Task {
+                try? await Task.sleep(for: .seconds(10))
+                for by in [1, 1, 1, -3] {
+                    cycleTabs(by: by)
+                    try? await Task.sleep(for: .milliseconds(1500))
+                }
+                guard let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }) else { return }
+                let start = window.frame
+                let meter = PerfMeter()
+                meter.start()
+                for step in 0..<(count * 2) {
+                    let done = Double(step < count ? step + 1 : count * 2 - step - 1) / Double(count)
+                    var frame = start
+                    frame.size.width = start.width - 400 * done
+                    window.setFrame(frame, display: true)
+                    try? await Task.sleep(for: .milliseconds(16))
+                }
+                let line = "resize x\(count * 2): " + meter.stop() + "\n"
+                if let file = environment["KUVO_PERF_STALLS"] { try? meter.stallReport().write(toFile: file, atomically: true, encoding: .utf8) }
+                if let file = environment["KUVO_PERF_LOG"] {
+                    if let handle = FileHandle(forWritingAtPath: file) { handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close() } else { FileManager.default.createFile(atPath: file, contents: Data(line.utf8)) }
+                }
+            }
+        }
+        // KUVO_PERF_TYPE=<n>: ten seconds after launch, types n characters into the composer, one
+        // every 60 ms, and writes how the main thread kept up (and the longest a character took to
+        // be handled) to KUVO_PERF_LOG.
+        if let count = environment["KUVO_PERF_TYPE"].flatMap(Int.init) {
+            Task {
+                try? await Task.sleep(for: .seconds(10))
+                guard let editor = NSApp.windows.lazy.compactMap({ $0.firstResponder as? NSTextView }).first(where: \.isFieldEditor) else { return }
+                let meter = PerfMeter()
+                meter.start()
+                var longest = 0.0
+                let words = Array("the quick brown fox jumps over the lazy dog and keeps on running ")
+                for index in 0..<count {
+                    let started = CACurrentMediaTime()
+                    editor.insertText(String(words[index % words.count]), replacementRange: NSRange(location: (editor.string as NSString).length, length: 0))
+                    // Until the run loop has handled it and drawn.
+                    await Task.yield()
+                    longest = max(longest, (CACurrentMediaTime() - started) * 1000)
+                    try? await Task.sleep(for: .milliseconds(60))
+                }
+                let line = String(format: "type x%d: longest %.0f ms; ", count, longest) + meter.stop() + "\n"
+                if let file = environment["KUVO_PERF_LOG"] {
+                    if let handle = FileHandle(forWritingAtPath: file) { handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close() } else { FileManager.default.createFile(atPath: file, contents: Data(line.utf8)) }
+                }
+            }
+        }
         // KUVO_DEMO_REOPEN_WINDOW=<seconds>: closes the window after that long, and opens it again.
         if let wait = environment["KUVO_DEMO_REOPEN_WINDOW"].flatMap(Double.init) {
             Task { [app] in
@@ -1613,7 +1982,8 @@ struct MainView: View {
     }
 
     /// KUVO_DEMO_GROUP=<name>|<bot>,<bot>,…[|<message>] makes that group chat of those bots unless
-    /// one has the name, opens it, and sends it the message; KUVO_DEMO_EDIT_GROUP opens its editor.
+    /// one has the name, opens it, and sends it the message; KUVO_DEMO_EDIT_GROUP opens its editor,
+    /// and KUVO_DEMO_MOVE_GROUP=<machine> moves it there first.
     private func runDemoGroup(_ environment: [String: String]) async {
         if environment["KUVO_DEMO_NEW_GROUP"] != nil { openGroupEditor(group: nil) }
         guard let spec = environment["KUVO_DEMO_GROUP"] else { return }
@@ -1629,12 +1999,27 @@ struct MainView: View {
         if let wait = environment["KUVO_DEMO_GROUP_UNDO"].flatMap(Double.init) {
             try? await Task.sleep(for: .seconds(wait))
             if let last = groups.messages(in: group.id).last(where: { $0.author == nil && $0.kind != .note }),
-               let text = groups.undo(from: last.id, in: group.id) {
+               let text = await groups.undo(from: last.id, in: group.id) {
                 Drafts.shared[BotGroups.tabKey(group.id)].text = text
+            }
+        }
+        // KUVO_DEMO_MOVE_GROUP=<machine>: then it moves there (once the machines it moves between run
+        // group chats), or to this Mac when empty, before its message goes.
+        if let place = environment["KUVO_DEMO_MOVE_GROUP"], groups.machine(of: group.id) != (place.isEmpty ? nil : place) {
+            let machine = place.isEmpty ? nil : place
+            let ends = [machine, groups.machine(of: group.id)].compactMap { $0 }
+            for _ in 0..<180 where !ends.allSatisfy(app.machineGroups.running.contains) { try? await Task.sleep(for: .seconds(1)) }
+            do {
+                try await app.moves.move(group: group.id, to: machine)
+                print("KUVO_DEMO_MOVE_GROUP moved \(group.name)")
+            } catch {
+                print("KUVO_DEMO_MOVE_GROUP failed: \(error.localizedDescription)")
             }
         }
         guard parts.count > 2, !parts[2].isEmpty else { return }
         while app.api == nil { try? await Task.sleep(for: .seconds(1)) }
+        // One on a machine: once it's reached there, as its composer waits.
+        for _ in 0..<180 where groups.unreachable(group.id) != nil { try? await Task.sleep(for: .seconds(1)) }
         try? await Task.sleep(for: .seconds(2))
         groups.send(parts[2], to: group.id)
         // KUVO_DEMO_GROUP_LATER=<seconds>|<message>: another message, sent while they talk.
@@ -1646,8 +2031,8 @@ struct MainView: View {
     }
 
     /// KUVO_DEMO_BOT=<name>|<job>|<instructions>[|<machine>[|<project>]] makes that bot unless one has the
-    /// name, and opens it; KUVO_DEMO_BOT_PROMPT then gives it a task, and KUVO_DEMO_EDIT_BOT
-    /// opens its Edit Bot sheet.
+    /// name (on KUVO_DEMO_BOT_MODEL=<provider>/<model>, if given), and opens it;
+    /// KUVO_DEMO_BOT_PROMPT then gives it a task, and KUVO_DEMO_EDIT_BOT opens its Edit Bot sheet.
     private func runDemoBot(_ environment: [String: String]) async {
         guard let spec = environment["KUVO_DEMO_BOT"] else { return }
         let parts = spec.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
@@ -1661,8 +2046,16 @@ struct MainView: View {
             do {
                 // Its job, as it would have written it in its memory.
                 let job = (line: parts.count > 1 ? parts[1] : "", details: parts.count > 2 ? parts[2] : "")
+                let model = environment["KUVO_DEMO_BOT_MODEL"].flatMap { spec -> ModelRef? in
+                    guard let slash = spec.firstIndex(of: "/") else { return nil }
+                    return ModelRef(id: String(spec[spec.index(after: slash)...]), providerID: String(spec[..<slash]))
+                }
+                // (The coding agents' list first, for a model of theirs.)
+                if OutsideAgents.runsInBridge(model?.providerID) {
+                    while workspace.agents(forFolder: machine.map { RemoteFolder.folder("/", on: $0) } ?? "/")?.api == nil { try? await Task.sleep(for: .seconds(1)) }
+                }
                 bot = try await bots.create(name: name, job: job.line.isEmpty && job.details.isEmpty ? nil : job,
-                                            look: .random(), model: nil, machine: machine, project: parts.count > 4 && !parts[4].isEmpty ? parts[4] : nil)
+                                            look: .random(), model: model, machine: machine, project: parts.count > 4 && !parts[4].isEmpty ? parts[4] : nil)
             } catch {
                 print("KUVO_DEMO_BOT failed: \(error.localizedDescription)")
                 return
@@ -1677,6 +2070,21 @@ struct MainView: View {
         if let prompt = environment["KUVO_DEMO_BOT_PROMPT"], let model = workspace.model(for: bot.sessionID) {
             try? await Task.sleep(for: .seconds(1))
             model.submit(prompt, files: [], for: nil, queue: false, commands: [])
+        }
+        // KUVO_DEMO_MOVE_BOT=<machine, or nothing for this Mac>: once it's done, it moves there.
+        if let place = environment["KUVO_DEMO_MOVE_BOT"] {
+            let machine = place.isEmpty ? nil : place
+            if let machine, let engine = app.machines.engine(machine) {
+                while !engine.isReady { try? await Task.sleep(for: .seconds(1)) }
+            }
+            try? await Task.sleep(for: .seconds(3))
+            while workspace.isWorking(bot.sessionID) { try? await Task.sleep(for: .seconds(2)) }
+            do {
+                try await app.moves.move(bot: bot.id, to: machine)
+                print("KUVO_DEMO_MOVE_BOT moved \(bot.name)")
+            } catch {
+                print("KUVO_DEMO_MOVE_BOT failed: \(error.localizedDescription)")
+            }
         }
     }
 
@@ -1742,11 +2150,13 @@ struct MainView: View {
                 }
             }
         }
-        // KUVO_DEMO_TABS: the project's sessions as tabs, the one in view staying in view.
+        // KUVO_DEMO_TABS: the project's sessions as tabs (KUVO_DEMO_TAB_COUNT=<n>: its latest n),
+        // the one in view staying in view.
         if environment["KUVO_DEMO_TABS"] != nil,
            let project = workspace.projects.first(where: { $0.directory == activeDirectory }) ?? workspace.projects.first {
             let current = selection
-            for session in project.sessions.reversed() where !tabs.contains(session.id) { openTab(session.id) }
+            let count = environment["KUVO_DEMO_TAB_COUNT"].flatMap(Int.init) ?? .max
+            for session in project.sessions.prefix(count).reversed() where !tabs.contains(session.id) { openTab(session.id) }
             if let current { openTab(current) }
         }
         // KUVO_DEMO_COMMENT=<path in the project>:<line>:<text> adds a review comment to the
@@ -1774,6 +2184,10 @@ struct MainView: View {
         }
         // KUVO_DEMO_DRAFT: a message typed, not sent, in the new session's composer.
         if let draft = environment["KUVO_DEMO_DRAFT"] { Drafts.shared[SidebarView.draftTag(folder)].text = draft }
+        // KUVO_DEMO_DRAFT_FILES: comma-separated paths, attached there, not sent.
+        if let files = environment["KUVO_DEMO_DRAFT_FILES"] {
+            Drafts.shared[SidebarView.draftTag(folder)].files = files.split(separator: ",").map { URL(filePath: String($0)) }
+        }
         guard let prompt = environment["KUVO_DEMO_PROMPT"] else { return newSession(in: folder) }
         let parts = environment["KUVO_DEMO_MODEL"]?.split(separator: "/", maxSplits: 1).map(String.init)
         let model = parts.flatMap { $0.count == 2 ? ModelRef(id: $0[1], providerID: $0[0]) : nil }
@@ -1784,7 +2198,7 @@ struct MainView: View {
             for _ in 0..<240 where !engine.isReady || engine.catalog.defaultModel == nil { try? await Task.sleep(for: .milliseconds(250)) }
         }
         let catalog = catalog(for: folder)
-        guard let session = try? await workspace.createSession(in: folder, model: model ?? catalog.defaultModel?.ref, agent: catalog.startingAgent(chosen: app.engineConfig.value(at: ["default_agent"])?.string), worktree: environment["KUVO_DEMO_WORKTREE"] != nil) else { return }
+        guard let session = try? await workspace.createSession(in: folder, model: model ?? catalog.defaultModel?.ref, agent: catalog.startingAgent(chosen: EngineConfig.of(catalog.machine)?.value(at: ["default_agent"])?.string), worktree: environment["KUVO_DEMO_WORKTREE"] != nil) else { return }
         openTab(session.id)
         // KUVO_DEMO_FILES: comma-separated paths to attach.
         let files = environment["KUVO_DEMO_FILES"]?.split(separator: ",").map { URL(filePath: String($0)) } ?? []
@@ -1904,13 +2318,15 @@ private struct MoveToProjectButton: View {
     var body: some View {
         NativeMenuButton(opensBelow: true) {
             let menu = NSMenu()
-            let projects = workspace.projects.filter { !RemoteFolder.isRemote($0.directory) }
+            // The projects on its computer (a chat moved to a machine, that machine's).
+            let machine = workspace.session(sessionID).flatMap { RemoteFolder.machine(of: $0.location.directory) }
+            let projects = workspace.projects.filter { RemoteFolder.machine(of: $0.directory) == machine }
             menu.addItem(.sectionHeader(title: "Move to Project"))
             for project in projects {
                 menu.addItem(ActionItem(project.name, image: NSImage(systemSymbolName: "folder", accessibilityDescription: nil)) { move(to: project.directory) })
             }
             if projects.isEmpty {
-                let none = NSMenuItem(title: "No projects on this Mac", action: nil, keyEquivalent: "")
+                let none = NSMenuItem(title: machine.map { "No projects on \($0)" } ?? "No projects on this Mac", action: nil, keyEquivalent: "")
                 none.isEnabled = false
                 menu.addItem(none)
             }
@@ -1922,6 +2338,7 @@ private struct MoveToProjectButton: View {
                 .hoverHighlight(in: RoundedRectangle(cornerRadius: 6), mutesInk: true)
         }
         .help("Move to Project: carry this chat into one of your projects")
+        .accessibilityLabel("Move to Project")
     }
 
     private func move(to directory: String) {
@@ -1929,7 +2346,7 @@ private struct MoveToProjectButton: View {
             do {
                 try await workspace.move(sessionID, toProject: directory)
             } catch {
-                NSAlert(error: error).runModal()
+                Modal.show(error)
             }
         }
     }

@@ -79,6 +79,9 @@ private struct FieldView: View {
         }
     }
 
+    /// What VoiceOver calls its field: its title shows above it, not as its label.
+    private var name: String { field.title ?? field.key }
+
     @ViewBuilder private var control: some View {
         switch field.kind {
         case .string(let options, let allowsCustom, let placeholder, _, let format, _):
@@ -90,14 +93,21 @@ private struct FieldView: View {
                 if allowsCustom {
                     TextField("Something else…", text: $custom)
                         .wellField()
-                        .onChange(of: custom) { _, text in if !text.isEmpty { value = .string(text) } }
+                        .onChange(of: custom) { old, text in
+                            if !text.isEmpty { value = .string(text) }
+                            // Cleared: no answer, rather than its last letter (a choice picked
+                            // since, which empties this, stays).
+                            else if stringValue == old { value = nil }
+                        }
                 }
             } else if format == "password" {
                 SecureField(placeholder ?? "", text: stringBinding)
                     .wellField()
+                    .accessibilityLabel(name)
             } else {
                 TextField(placeholder ?? "", text: stringBinding)
                     .wellField()
+                    .accessibilityLabel(name)
             }
         case .number(let isInteger, _, _, _):
             TextField("", value: Binding(
@@ -105,6 +115,7 @@ private struct FieldView: View {
                 set: { value = $0.map { .number(isInteger ? $0.rounded() : $0) } }
             ), format: .number)
             .wellField()
+            .accessibilityLabel(name)
             .frame(maxWidth: 160)
         case .boolean:
             Toggle(field.title ?? field.key, isOn: Binding(
@@ -174,7 +185,7 @@ private struct OptionList: View {
                             .foregroundStyle(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                         VStack(alignment: .leading, spacing: 2) {
                             Text(option.label)
-                            if let description = option.description {
+                            if let description = ChoiceText.detail(option.description, label: option.label) {
                                 Text(description)
                                     .font(.callout)
                                     .foregroundStyle(.secondary)
@@ -190,5 +201,16 @@ private struct OptionList: View {
                 .buttonStyle(FilledButtonStyle(shape: .rect(cornerRadius: 10), rest: isSelected ? 0 : 0.045))
             }
         }
+    }
+}
+
+/// What a choice says under its label: its description, unless that only repeats the label
+/// ("Red" under Red), as models often write.
+enum ChoiceText {
+    static func detail(_ description: String?, label: String) -> String? {
+        guard let description = description?.trimmingCharacters(in: .whitespacesAndNewlines), !description.isEmpty,
+              description.compare(label.trimmingCharacters(in: .whitespacesAndNewlines), options: .caseInsensitive) != .orderedSame
+        else { return nil }
+        return description
     }
 }

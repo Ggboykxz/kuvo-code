@@ -1,5 +1,5 @@
 {
-  "originHash" : "b3d6a6455c75c99e75e9afb7ae96d3d5d068d2b814aa7ea23c5281f87598281c",
+  "originHash" : "5933d72297f824e0d1958452fb2c793174759103500254843f66505244b6956c",
   "pins" : [
     {
       "identity" : "keyboardshortcuts",
@@ -53,15 +53,6 @@
       "state" : {
         "revision" : "0b5c2cfaaec8d6193db206f675048eeb5ce95f71",
         "version" : "0.1.0"
-      }
-    },
-    {
-      "identity" : "textual",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/gonzalezreal/textual",
-      "state" : {
-        "revision" : "01b51875a5406eefc95f52a058cb059e7bc94dc4",
-        "version" : "0.5.0"
       }
     }
   ],

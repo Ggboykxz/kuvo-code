@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/serhatandic/kuvo-code/actions/workflows/ci.yml"><img src="https://github.com/serhatandic/kuvo-code/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
-  <a href="https://github.com/serhatandic/kuvo-code/releases"><img src="https://img.shields.io/github/v/release/serhatandic/kuvo-code?include_prereleases&label=release" alt="Release"></a>
+  <a href="https://github.com/serhatandic/kuvo-code/releases"><img src="https://img.shields.io/github/v/release/serhatandic/kuvo-code?label=release" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg" alt="License: PolyForm Noncommercial 1.0.0"></a>
 </p>
 
@@ -83,15 +83,35 @@ side panel and the usage menu.
   HTTP API and follows its event stream to show live transcripts.
 - **Its data is kept apart** from any opencode you've installed. Sessions,
   accounts and settings live in
-  `~/Library/Application Support/run.kuvo.code/opencode`.
+  `~/Library/Application Support/run.kuvo.code/opencode`. The commands the
+  agent runs still get your own folders (`~/.config` and the like) back,
+  through a small plugin in the engine's `plugins` folder, so tools such as
+  `gh` find their sign-ins.
+- **The coding agents you already have** (Claude Code, Codex, Cursor, Grok,
+  Antigravity) run beside the engine, each as its maker built it and signed in
+  as you: a small bridge of Kuvo Code's own (`Agents/`, run by the engine's
+  Bun) drives them through the Claude Agent SDK and your `claude`, Codex's
+  app-server, Cursor's SDK, and the Agent Client Protocol for Grok and
+  Antigravity, and answers the app in the engine's own API. A session there can
+  move between agents (the next one gets the conversation as a handover) and
+  run the engine's models, and Custom Auto runs down your own lists of models as
+  each reaches its limit or fails. What it keeps is in
+  `~/Library/Application Support/run.kuvo.code/agents`. Each machine runs the
+  same bridge beside its engine, with the agents installed and signed in there
+  (in `~/.kuvo-code/agents`), and there it also runs the group chats whose bots
+  all live on that machine (in `~/.kuvo-code/groups`).
 - **On a machine you add**, Kuvo Code reaches it with `ssh` and your keys. It
   sends the same engine version's Linux build, downloaded and checked on the
   Mac, to `~/.kuvo-code` there, runs it on the machine's localhost only, and
-  talks to it through an SSH tunnel. The engine outlives the connection, so a
-  task carries on while the Mac is off; it stops when the app quits with
-  nothing running, or after a day without the app, unless a bot's wake-up or
-  watch is waiting, which it sends or runs when it's due. API keys reach it in
-  memory, never written to the machine's disk.
+  talks to it through an SSH tunnel, which closes with the app however it ends.
+  The engine runs on its own, with or without
+  the app, so a task, a bot's wake-ups and group chats carry on while the Mac is
+  off, and it starts again by itself after a crash; after the machine restarts,
+  a line in your crontab there starts it again as the app last started it. Each
+  machine keeps its own settings and integrations' keys, in files only you can
+  read, never in its environment. Your Mac and machines reach each other
+  through Kuvo Code's relay, end to end encrypted, so agents on one write to
+  agents on another with the Mac off too.
 - **The agent's browser tools** are served by the app on `127.0.0.1`, with a
   new port and token each launch. They read a page the way
   [browser-use](https://github.com/browser-use/browser-use) does, as numbered
@@ -104,8 +124,9 @@ side panel and the usage menu.
   drives it over a pipe rather than a port, gives the engine the same tools,
   and streams the page to the panel over SSH.
 - **Updates** come through [Sparkle](https://sparkle-project.org), signed,
-  from this repository's releases. Releases are signed with a Developer ID and
-  notarized by Apple.
+  from this repository's releases, and its betas (prereleases) to copies with
+  Get beta updates on. Releases are signed with a Developer ID and notarized by
+  Apple.
 - **The usage menu** is UsageKit, our fork of
   [OpenUsage](https://github.com/robinebers/openusage) by Robin Ebers. It
   follows the accounts you connect in Kuvo Code and reads their usage with

@@ -47,20 +47,25 @@ nonisolated enum ProjectFiles {
     }
 
     /// git's list (tracked and new, without ignored files) in a repository; otherwise a
-    /// walk that skips the usual heavy folders.
+    /// walk that skips the usual heavy folders. So too for a folder git lists nothing in: one its
+    /// repository ignores (a dotfiles repository at home that ignores everything) has files.
     private static func listFiles(in root: URL) -> [String] {
-        if let listed = Git.run(["ls-files", "--cached", "--others", "--exclude-standard"], in: RemoteFolder.folder(of: root)) {
-            return listed.split(separator: "\n").map(String.init)
+        // Names as they are (git quotes ones with accents, CJK or emoji otherwise), once each (a
+        // file in conflict is listed for each side), as many as a walk gives.
+        if let listed = Git.run(["-c", "core.quotepath=off", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], in: RemoteFolder.folder(of: root)), !listed.isEmpty {
+            var seen = Set<String>()
+            return listed.split(separator: "\0").map(String.init).filter { seen.insert($0).inserted }.prefix(20_000).map { $0 }
         }
         let skip: Set<String> = [".git", "node_modules", "build", "DerivedData", ".build", "Pods", "dist", ".next"]
         if !root.isFileURL { return RemoteShell.files(in: root, skipping: skip, limit: 20_000) ?? [] }
         var files: [String] = []
-        let base = root
-        guard let walker = FileManager.default.enumerator(at: base, includingPropertiesForKeys: [.isDirectoryKey]) else { return [] }
-        for case let url as URL in walker {
-            if skip.contains(url.lastPathComponent) { walker.skipDescendants(); continue }
-            if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == false {
-                files.append(String(url.path.dropFirst(base.path.count + 1)))
+        // Paths relative to the folder as the walk gives them, also where the folder, or one it's
+        // in, is a link (/tmp, a cloud drive's).
+        guard let walker = FileManager.default.enumerator(atPath: root.resolvingSymlinksInPath().path) else { return [] }
+        while let path = walker.nextObject() as? String {
+            if skip.contains((path as NSString).lastPathComponent) { walker.skipDescendants(); continue }
+            if walker.fileAttributes?[.type] as? FileAttributeType != .typeDirectory {
+                files.append(path)
                 if files.count >= 20_000 { break }
             }
         }

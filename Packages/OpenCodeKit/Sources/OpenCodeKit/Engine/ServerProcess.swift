@@ -112,20 +112,53 @@ public final class ServerProcess: @unchecked Sendable {
         onExit: @escaping @Sendable (Int32) -> Void = { _ in }
     ) async throws -> ServerProcess {
         try folders.create()
+        // The commands it runs get the folders `base` had back ([CommandEnvironment]).
+        try? CommandEnvironment.install(in: folders.configFile.deletingLastPathComponent())
         let password = Self.randomPassword()
 
         var environment = base
+        for (key, value) in CommandEnvironment.variables(from: base) { environment[key] = value }
         for (key, value) in folders.environment { environment[key] = value }
         environment["OPENCODE_PASSWORD"] = password
         // Tells the server it's driven by a desktop GUI (what opencode's own desktop app sends).
         environment["OPENCODE_CLIENT"] = "desktop"
         environment.removeValue(forKey: "OPENCODE_SERVER_PASSWORD")
+        return try await launch(executable: executable, arguments: ["serve", "--stdio", "--port", "0"], environment: environment,
+                                directory: folders.workspace, password: password, timeout: timeout, onExit: onExit)
+    }
 
+    /// Starts another server that starts as the engine does (the agents bridge): it prints
+    /// `{"url": …}` once it's listening, answers only with the password it's given in
+    /// OPENCODE_PASSWORD, and stops when its stdin closes.
+    public static func start(
+        executable: URL,
+        arguments: [String],
+        environment base: [String: String],
+        directory: URL,
+        timeout: Duration = .seconds(60),
+        onExit: @escaping @Sendable (Int32) -> Void = { _ in }
+    ) async throws -> ServerProcess {
+        let password = Self.randomPassword()
+        var environment = base
+        environment["OPENCODE_PASSWORD"] = password
+        return try await launch(executable: executable, arguments: arguments, environment: environment, directory: directory,
+                                password: password, timeout: timeout, onExit: onExit)
+    }
+
+    private static func launch(
+        executable: URL,
+        arguments: [String],
+        environment: [String: String],
+        directory: URL,
+        password: String,
+        timeout: Duration,
+        onExit: @escaping @Sendable (Int32) -> Void
+    ) async throws -> ServerProcess {
         let process = Process()
         process.executableURL = executable
-        process.arguments = ["serve", "--stdio", "--port", "0"]
+        process.arguments = arguments
         process.environment = environment
-        process.currentDirectoryURL = folders.workspace
+        process.currentDirectoryURL = directory
         // Its own: a terminal's shell started meanwhile mustn't hold stdin open after the app
         // has gone.
         let stdin = Pipe.unshared()
@@ -138,7 +171,12 @@ public final class ServerProcess: @unchecked Sendable {
         let log = LogTail()
         stderr.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            if data.isEmpty { handle.readabilityHandler = nil } else { log.append(data) }
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+                log.close()
+            } else {
+                log.append(data)
+            }
         }
         process.terminationHandler = { process in onExit(process.terminationStatus) }
         try process.run()
@@ -186,8 +224,10 @@ public final class ServerProcess: @unchecked Sendable {
             line.append(byte)
         }
         guard !line.isEmpty else {
-            // stdout closed before the handshake: the server died while starting.
+            // stdout closed before the handshake: the server died while starting. What it said
+            // as it went, read to its end (not after a moment, if something it started keeps it).
             process.waitUntilExit()
+            log.waitUntilClosed(for: 1)
             throw ServerProcessError.exited(status: process.terminationStatus, output: log.text)
         }
         struct Handshake: Decodable { var url: URL }
@@ -223,14 +263,30 @@ extension Pipe {
 
 /// The last few kilobytes of a stream.
 final class LogTail: @unchecked Sendable {
-    private let lock = NSLock()
+    private let lock = NSCondition()
     private var buffer = Data()
     private let limit = 16 * 1024
+    private var isClosed = false
 
     func append(_ data: Data) {
         lock.withLock {
             buffer.append(data)
             if buffer.count > limit { buffer.removeFirst(buffer.count - limit) }
+        }
+    }
+
+    /// Everything's been read: the other end closed.
+    func close() {
+        lock.withLock {
+            isClosed = true
+            lock.broadcast()
+        }
+    }
+
+    func waitUntilClosed(for seconds: TimeInterval) {
+        let deadline = Date(timeIntervalSinceNow: seconds)
+        lock.withLock {
+            while !isClosed, lock.wait(until: deadline) {}
         }
     }
 

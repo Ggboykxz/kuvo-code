@@ -170,7 +170,7 @@ private struct StorageBar: View {
 
 /// What Kuvo Code keeps on this Mac, measured.
 nonisolated struct StorageReport: Sendable {
-    enum KindID: String, Sendable { case sessions, snapshots, logs, engine, worktrees, browser, attachments, other }
+    enum KindID: String, Sendable { case sessions, snapshots, logs, engine, agents, worktrees, browser, attachments, other }
 
     struct Kind: Identifiable, Sendable {
         let id: KindID
@@ -182,6 +182,7 @@ nonisolated struct StorageReport: Sendable {
             case .snapshots: "Undo snapshots"
             case .logs: "Logs"
             case .engine: "Engine"
+            case .agents: "Coding agents"
             case .worktrees: "Worktrees"
             case .browser: "Browser"
             case .attachments: "Attachments"
@@ -195,10 +196,11 @@ nonisolated struct StorageReport: Sendable {
             case .snapshots: "Copies of files the agent changed, so Undo From Here can put them back."
             case .logs: "What the engine and the app wrote down while running."
             case .engine: "The opencode engine, and its Linux build for machines."
+            case .agents: "Claude Code, Codex and the other coding agents, installed the first time each is used."
             case .worktrees: "Sessions’ own copies of a project."
             case .browser: "The panel browser’s website data and history."
             case .attachments: "Files you pasted into messages."
-            case .other: "Caches, command output and the usage menu’s files."
+            case .other: "Caches, command output, your bots’ and chats’ folders, and the usage menu’s files."
             }
         }
 
@@ -208,6 +210,7 @@ nonisolated struct StorageReport: Sendable {
             case .snapshots: .purple
             case .logs: .orange
             case .engine: .teal
+            case .agents: .indigo
             case .worktrees: .green
             case .browser: .pink
             case .attachments: .yellow
@@ -231,24 +234,33 @@ nonisolated struct StorageReport: Sendable {
     static func measure(worktrees: [String]) -> StorageReport {
         let home = URL.libraryDirectory
         let bundleID = Bundle.main.bundleIdentifier ?? "run.kuvo.code"
+        // What's in the data folder and none of the kinds below is Other, so they add up to all of
+        // it, whatever is added there.
+        let data = support.standardizedFileURL.path(percentEncoded: false)
+        var inData: Int64 = 0
+        func size(of url: URL) -> Int64 {
+            let bytes = Self.size(of: url)
+            if url.standardizedFileURL.path(percentEncoded: false).hasPrefix(data.hasSuffix("/") ? data : data + "/") { inData += bytes }
+            return bytes
+        }
         let sessions = ["opencode.db", "opencode.db-wal", "opencode.db-shm"].reduce(Int64(0)) { $0 + size(of: engineData.appending(path: $1)) }
             + size(of: support.appending(path: "opencode/config"))
         let snapshots = size(of: engineData.appending(path: "snapshot"))
         let logs = size(of: engineData.appending(path: "log")) + size(of: appLogs)
         let linux = size(of: linuxEngineFolder) + size(of: support.appending(path: "browser-linux"))
         let engine = size(of: support.appending(path: "engine")) + linux
+        let agents = size(of: support.appending(path: "agents"))
         let trees = worktrees.reduce(Int64(0)) { $0 + size(of: URL(filePath: $1)) }
         let browser = size(of: home.appending(path: "WebKit/\(bundleID)")) + size(of: home.appending(path: "HTTPStorages/\(bundleID)"))
             + size(of: support.appending(path: "Browser"))
         let attachments = size(of: support.appending(path: "Attachments"))
-        let other = size(of: engineData.appending(path: "shell")) + size(of: engineData.appending(path: "repos"))
-            + size(of: support.appending(path: "opencode/cache")) + size(of: support.appending(path: "opencode/state"))
-            + size(of: support.appending(path: "Usage")) + size(of: home.appending(path: "Caches/\(bundleID)"))
+        let other = max(0, Self.size(of: support) - inData) + size(of: home.appending(path: "Caches/\(bundleID)"))
         return StorageReport(kinds: [
             Kind(id: .sessions, size: sessions),
             Kind(id: .snapshots, size: snapshots),
             Kind(id: .worktrees, size: trees),
             Kind(id: .engine, size: engine),
+            Kind(id: .agents, size: agents),
             Kind(id: .browser, size: browser),
             Kind(id: .attachments, size: attachments),
             Kind(id: .logs, size: logs),
@@ -284,7 +296,15 @@ nonisolated struct StorageReport: Sendable {
             try? handle.truncate(atOffset: 0)
             try? handle.close()
         }
-        for log in (try? fm.contentsOfDirectory(at: appLogs, includingPropertiesForKeys: nil)) ?? [] { try? fm.removeItem(at: log) }
+        // The usage item's own log is open too: emptied, the rest removed.
+        for log in (try? fm.contentsOfDirectory(at: appLogs, includingPropertiesForKeys: nil)) ?? [] {
+            if log.lastPathComponent == "Usage.log", let handle = try? FileHandle(forWritingTo: log) {
+                try? handle.truncate(atOffset: 0)
+                try? handle.close()
+            } else {
+                try? fm.removeItem(at: log)
+            }
+        }
     }
 }
 
@@ -297,11 +317,15 @@ private struct OldSessions: View {
     @State private var keepsPinned = true
     @State private var isDeleting = false
 
-    /// This Mac's sessions, not a machine's, unused for the chosen time.
+    /// This Mac's sessions, not a machine's, unused for the chosen time. Not a bot's conversation
+    /// (the bot lives on in it, wake-ups and all, however long it's been quiet), nor one with a
+    /// message you started writing.
     private var old: [Session] {
         let cutoff = (Date.now.timeIntervalSince1970 - Double(days) * 86_400) * 1000
+        let bots = workspace.botSessions
         return workspace.sessions
             .filter { $0.time.updated < cutoff && !RemoteFolder.isRemote($0.location.directory) && !(keepsPinned && Workspace.isPinned($0)) && !workspace.running.contains($0.id) }
+            .filter { !bots.contains($0.id) && !Workspace.isBotFolder($0.location.directory) && Drafts.shared[$0.id].isEmpty }
             .sorted { $0.time.updated < $1.time.updated }
     }
 

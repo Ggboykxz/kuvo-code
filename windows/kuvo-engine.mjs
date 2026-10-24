@@ -44,6 +44,10 @@ export function engineFolders(root = path.join(dataRoot(), "opencode"), temporar
 /// The environment ServerProcess hands the engine, with Windows' own names for the temporary
 /// folder beside TMPDIR.
 export function engineEnvironment(folders, password, platform = process.platform) {
+  // The engine's own folders: this app's settings, its skills, its data. The Mac app's
+  // v0.5.21 lets the commands the agent runs find the user's own sign-ins, by sharing the
+  // user's config home with the engine; that would cost us our settings and our skills
+  // (the engine reads them from this folder), so it stays ours for now.
   const environment = {
     XDG_DATA_HOME: path.join(folders.root, "data"),
     XDG_CONFIG_HOME: path.join(folders.root, "config"),
@@ -290,8 +294,9 @@ export async function e2e({ log = console.log } = {}) {
 
 // ---- Command line ----
 
-const main = process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
-if (main) {
+// Wrapped, not top-level: the harness's executable bundling (build-exe.mjs) packs this file
+// into a CommonJS binary, where top-level await has no form.
+async function cli() {
   const [command] = process.argv.slice(2);
   try {
     if (command === "install") {
@@ -319,3 +324,9 @@ if (main) {
     process.exit(1);
   }
 }
+
+// True only when this file is what was started. Bundled into the harness's executable
+// (windows/harness/build-exe.mjs) it never is — that banner sets KUVO_BUNDLED before anything
+// runs — so the command line below stays out of that binary.
+const main = process.env.KUVO_BUNDLED !== "1" && process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
+if (main) cli();

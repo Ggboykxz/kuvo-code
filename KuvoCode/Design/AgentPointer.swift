@@ -151,26 +151,27 @@ struct AgentPointerOverlay: View {
     @State private var shown: BrowserSession.AgentStep?
     @State private var visible = false
     @State private var pulse = false
+    @Environment(\.accent) private var accent
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             if let shown {
                 if shown.action == .type || shown.action == .select {
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.accentColor, lineWidth: 2)
+                        .stroke(accent, lineWidth: 2)
                         .frame(width: shown.rect.width + 6, height: shown.rect.height + 6)
                         .offset(x: shown.rect.minX - 3, y: shown.rect.minY - 3)
                         .opacity(pulse ? 0 : 1)
                 }
                 Circle()
-                    .fill(Color.accentColor.opacity(0.25))
-                    .overlay(Circle().stroke(Color.accentColor, lineWidth: 2))
+                    .fill(accent.opacity(0.25))
+                    .overlay(Circle().stroke(accent, lineWidth: 2))
                     .frame(width: 32, height: 32)
                     .scaleEffect(pulse ? 1.4 : 0.3)
                     .opacity(shown.action == .click && pulse ? 0 : shown.action == .click ? 0.9 : 0)
                     .offset(x: shown.rect.midX - 16, y: shown.rect.midY - 16)
                 ArrowShape()
-                    .fill(Color.accentColor)
+                    .fill(accent)
                     .overlay(ArrowShape().stroke(.white, style: StrokeStyle(lineWidth: 1.5, lineJoin: .round)))
                     .frame(width: 14, height: 21)
                     .shadow(color: .black.opacity(0.3), radius: 3, y: 1)

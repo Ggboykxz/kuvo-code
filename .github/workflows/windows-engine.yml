@@ -2,11 +2,12 @@ name: Windows engine
 
 on:
   workflow_dispatch:
+  # No path filter: a pull request has to be able to satisfy the checks the protected
+  # branches require, whatever it touches.
   pull_request:
-    paths:
-      - "windows/**"
-      - "Packages/KuvoLink/**"
-      - ".github/workflows/windows-engine.yml"
+  # The working line and main: the executable the release ships is built here.
+  push:
+    branches: [windows/harness, main]
 
 permissions:
   contents: read
@@ -27,16 +28,24 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            windows/app/package-lock.json
+            windows/harness/package-lock.json
+            windows/electron/package-lock.json
 
       - name: Test the engine bootstrap
         run: node --test "windows/*.test.mjs"
 
+      - name: Test the conversation view's client, transcript and server
+        run: node --test "windows/harness/harness.test.mjs"
+
       - name: Test the link bridge
         run: node --test "Packages/KuvoLink/Tests/Bridge/*.test.js"
 
-  windows:
-    name: engine on Windows, end to end
-    runs-on: windows-latest
+  audit:
+    name: dependency audit
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -46,13 +55,175 @@ jobs:
         with:
           node-version: 22
 
+      # Production dependencies only: a vulnerable runtime package should stop a
+      # release, while a dev-only advisory is handled by Dependabot.
+      - name: Audit the Windows client's runtime dependencies
+        run: |
+          for dir in windows/app windows/harness windows/electron; do
+            echo "::group::$dir"
+            (cd "$dir" && npm audit --omit=dev --audit-level=high --package-lock-only)
+            echo "::endgroup::"
+          done
+
+  windows:
+    name: engine on Windows, end to end
+    runs-on: windows-latest
+    # A build that hangs is a build that fails: the job is stopped rather than left to
+    # wait for ever, so a release is never made from a run that did not finish.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            windows/app/package-lock.json
+            windows/harness/package-lock.json
+            windows/electron/package-lock.json
+
       - name: Test the engine bootstrap
         run: node --test "windows/*.test.mjs"
 
+      - name: Test the conversation view's client, transcript and server
+        run: node --test "windows/harness/harness.test.mjs"
+
       - name: Test the link bridge
         run: node --test "Packages/KuvoLink/Tests/Bridge/*.test.js"
+
+      # The conversation view: React and TypeScript, built into the page the harness serves.
+      - name: Build the app's interface
+        working-directory: windows/app
+        run: |
+          npm install --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
+          # Linted and type-checked first: the code is read before it is shipped.
+          npm run lint
+          npm run typecheck
+          npm run build
+          # The third-party terms travel with the app: the list is written from the
+          # packages that are installed, and this fails when it is out of date.
+          node ../tools/third-party-licenses.mjs --check
 
       # Downloads the pinned Windows build, checks it against npm's checksum, starts it and
       # asks it for its info: the same road a client takes, on the platform it ships to.
       - name: Install and run the pinned engine
         run: node windows/kuvo-engine.mjs e2e
+
+      # And the whole loop the page takes, on the engine that step installed: a session, a
+      # prompt, the answer streaming in, and the page's own code in a DOM reading it back.
+      # The engine answers it with one of its public free models, so this needs no account.
+      - name: The live loop, and the page against the real engine
+        env:
+          KUVO_HARNESS_LIVE: "1"
+        working-directory: windows/harness
+        run: |
+          npm install --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
+          # The page is read in a real browser: Playwright's Chromium, fetched once.
+          npx playwright install chromium
+          npm run test:live
+
+      # The same harness packed into one executable: this runner's own node.exe, the bundled
+      # code, and the page carried inside. Windows is where an .exe can be made — and driven.
+      - name: Build the Windows executable
+        working-directory: windows/harness
+        run: |
+          npm install --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
+          npm run build:exe
+
+      - name: Prove the executable serves the page by itself
+        working-directory: windows/harness
+        run: npm run smoke:exe -- build/kuvo-windows-harness.exe
+
+      - name: Keep the executable for the release
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kuvo-windows-harness-x64
+          path: windows/harness/build/kuvo-windows-harness.exe
+          if-no-files-found: error
+
+  shell:
+    name: native shell (Electron) on Windows
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            windows/app/package-lock.json
+            windows/harness/package-lock.json
+            windows/electron/package-lock.json
+
+      # The shell wraps the harness executable, so build that first — with the page it shows.
+      - name: Build the app's interface
+        working-directory: windows/app
+        run: |
+          npm install --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
+          # Linted and type-checked first: the code is read before it is shipped.
+          npm run lint
+          npm run typecheck
+          npm run build
+          # The third-party terms travel with the app: the list is written from the
+          # packages that are installed, and this fails when it is out of date.
+          node ../tools/third-party-licenses.mjs --check
+
+      - name: Build the harness executable
+        working-directory: windows/harness
+        run: |
+          npm install --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
+          npm run build:exe
+
+      # node-pty is a native module: it needs the MSVC developer environment to build.
+      - name: Set up the MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # node-gyp 9 (bundled with Node 22) still wants distutils, which Python 3.12
+      # removed: setuptools provides the shim node-gyp is looking for.
+      - name: Install setuptools for node-gyp
+        run: python -m pip install --upgrade setuptools
+
+      - name: Build the shell
+        working-directory: windows/electron
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          npm install --no-audit --no-fund --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000
+          # Before electron-builder rebuilds node-pty for Electron's ABI, prove the same
+          # ConPTY/WebSocket road the page takes: a shell in a folder, a resize, an exit,
+          # and a second shell. A terminal that cannot start must not become an installer.
+          npm run test:terminal
+          npm run build
+
+      - name: Prove the shell starts
+        working-directory: windows/electron
+        run: npm run smoke -- "dist/win-unpacked/Kuvo Code.exe"
+
+      - name: Sign the harness executable (if a certificate is configured)
+        working-directory: windows/harness
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        shell: powershell
+        run: |
+          if ("$env:CSC_LINK" -eq "") { Write-Host "No certificate configured; leaving the executable unsigned."; exit 0 }
+          $bytes = [Convert]::FromBase64String($env:CSC_LINK)
+          $certPath = Join-Path $env:RUNNER_TEMP "kuvo-cert.pfx"
+          [IO.File]::WriteAllBytes($certPath, $bytes)
+          signtool sign /fd sha256 /f $certPath /p $env:CSC_KEY_PASSWORD build/kuvo-windows-harness.exe
+          Remove-Item $certPath
+
+      - name: Keep the installer and the portable build
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: kuvo-windows-shell-x64
+          path: |
+            windows/electron/dist/*.exe
+          if-no-files-found: error

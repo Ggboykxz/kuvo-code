@@ -30,7 +30,7 @@ actor CodeHighlighter {
         for pair in pairs {
             guard let piece = pair.first as? String else { continue }
             let type = pair.count > 1 ? (pair[1] as? String ?? "") : ""
-            let parts = piece.split(separator: "\n", omittingEmptySubsequences: false)
+            let parts = piece.split(omittingEmptySubsequences: false) { $0 == "\n" || $0 == "\r\n" }
             for (index, part) in parts.enumerated() {
                 if index > 0 { lines.append([]) }
                 if !part.isEmpty { lines[lines.count - 1].append(Run(text: String(part), type: type)) }

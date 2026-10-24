@@ -4,6 +4,7 @@ import SwiftUI
 /// Slash commands: prompts you use often, run by typing "/" and their name in the composer.
 struct CommandsSettings: View {
     @Environment(AppModel.self) private var app
+    @Environment(\.settingsBox) private var box
     @Environment(Catalog.self) private var catalog
     @State private var editing: CommandEdit?
     /// What to remove once its sheet has closed (and its fields are done saving).
@@ -11,12 +12,21 @@ struct CommandsSettings: View {
     /// Claude Code's commands, to bring over.
     @State private var claudeCommands: [ClaudeCommands.Command] = []
 
-    private var config: EngineConfig { app.engineConfig }
+    private var config: EngineConfig { app.config(for: box) }
     static let path = ["commands"]
 
     private var names: [String] { (config.value(at: Self.path)?.object?.keys).map { $0.sorted() } ?? [] }
     /// The engine's own, and ones from plugins and MCP servers.
     private var others: [Command] { catalog.commands.filter { !names.contains($0.name) } }
+
+    /// The name a Claude Code command comes over as: its own, or with "-claude" where it's one of
+    /// the engine's (/init, /review), which it would take the place of.
+    private func importedName(_ command: ClaudeCommands.Command) -> String {
+        others.contains { $0.name == command.id } || Self.engineOwn.contains(command.id) ? command.id + "-claude" : command.id
+    }
+
+    /// The engine's own commands, taken also before its list has loaded.
+    private static let engineOwn: Set<String> = ["init", "review"]
 
     var body: some View {
         ScrollingSettingsForm {
@@ -53,9 +63,10 @@ struct CommandsSettings: View {
             if !claudeCommands.isEmpty {
                 Section {
                     ForEach(claudeCommands) { command in
+                        let name = importedName(command)
                         HStack(alignment: .firstTextBaseline) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text("/" + command.id)
+                                Text("/" + name)
                                 if !command.description.isEmpty {
                                     Text(command.description)
                                         .font(.callout)
@@ -64,13 +75,13 @@ struct CommandsSettings: View {
                                 }
                             }
                             Spacer()
-                            if config.value(at: Self.path + [command.id]) != nil {
+                            if config.value(at: Self.path + [name]) != nil {
                                 Label("Imported", systemImage: "checkmark")
                                     .font(.callout)
                                     .foregroundStyle(.secondary)
                             } else {
                                 Button("Import") {
-                                    config.set(.object(["template": .string(command.template), "description": .string(command.description)]), at: Self.path + [command.id])
+                                    config.set(.object(["template": .string(command.template), "description": .string(command.description)]), at: Self.path + [name])
                                     Analytics.shared.track("command_created", ["from": "claude"])
                                 }
                             }
@@ -111,8 +122,11 @@ struct CommandsSettings: View {
 
     private func removePending() {
         guard let removal else { return }
-        app.engineConfig.set(nil, at: removal)
         self.removal = nil
+        // Once the closing editor's fields have saved what you typed last, or they'd write it
+        // back into a half-made entry.
+        let config = app.config(for: box)
+        DispatchQueue.main.async { config.set(nil, at: removal) }
     }
 }
 
@@ -131,11 +145,12 @@ private struct CommandEditor: View {
     /// Removes this entry, once it's closed.
     let remove: ([String]) -> Void
     @Environment(AppModel.self) private var app
+    @Environment(\.settingsBox) private var box
     @Environment(Catalog.self) private var catalog
     @State private var newName = ""
     @State private var confirmsRemoval = false
 
-    private var config: EngineConfig { app.engineConfig }
+    private var config: EngineConfig { app.config(for: box) }
     private var title: String { name.map { "/" + $0 } ?? "New Command" }
 
     /// The name you typed, without spaces around it or a "/" in front.
@@ -152,6 +167,8 @@ private struct CommandEditor: View {
 
     /// Why the name you typed can't be used, if it can't.
     private var problem: String? {
+        // Nothing would be written: what you fill in would be lost.
+        if let broken = config.problem { return "The engine's settings file can't be changed here: \(broken)" }
         if newID.isEmpty {
             return typedName.isEmpty ? nil : "A name needs a letter or a number."
         }
@@ -185,8 +202,10 @@ private struct CommandEditor: View {
     /// be called when that isn't quite what you typed.
     private var naming: some View {
         Section {
-            TextField("Name", text: $newName, prompt: Text("test"))
-                .onSubmit(create)
+            SettingsTextRow(title: "Name") {
+                TextField("Name", text: $newName, prompt: Text("test"))
+                    .onSubmit(create)
+            }
         } footer: {
             if let problem {
                 Text(problem).foregroundStyle(.red)

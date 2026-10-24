@@ -38,6 +38,8 @@ struct CodexAuthState: Hashable, Sendable {
         case file(path: String)
         case keychain(account: String)
         case pi(CodexPiCredentialSource)
+        /// The host's ChatGPT sign-in (fork addition).
+        case host
     }
 
     var auth: CodexAuth
@@ -60,6 +62,11 @@ enum CodexAuthError: Error, LocalizedError, Equatable {
     case tokenExpired
     case usageAPIKey
     case invalidAuthPayload
+    /// The host's ChatGPT sign-in has lapsed; its engine renews it when it next uses ChatGPT.
+    /// (Fork addition.)
+    case hostExpired
+    /// This card's account isn't the one signed in to ChatGPT in the host. (Fork addition.)
+    case hostOtherAccount
 
     var errorDescription: String? {
         switch self {
@@ -77,6 +84,10 @@ enum CodexAuthError: Error, LocalizedError, Equatable {
             return "Usage not available for API key."
         case .invalidAuthPayload:
             return "Codex auth data is invalid."
+        case .hostExpired:
+            return "Updates the next time you use a ChatGPT model in \(HostApp.name)."
+        case .hostOtherAccount:
+            return "Not the ChatGPT account signed in to \(HostApp.name)."
         }
     }
 
@@ -84,7 +95,7 @@ enum CodexAuthError: Error, LocalizedError, Equatable {
         switch self {
         case .sessionExpired, .tokenConflict, .tokenRevoked, .tokenExpired:
             return true
-        case .notLoggedIn, .usageAPIKey, .invalidAuthPayload:
+        case .notLoggedIn, .usageAPIKey, .invalidAuthPayload, .hostExpired, .hostOtherAccount:
             return false
         }
     }
@@ -107,6 +118,10 @@ struct CodexAuthStore: Sendable {
     /// write back. Empty for the plain card, which writes wherever it reads.
     var writableAuthHomes: Set<String>
     var piCredentialSources: [CodexPiCredentialSource]
+    /// The host's ChatGPT sign-in, if it has one (fork addition).
+    var hostSignIn: @Sendable () -> HostCredential?
+    /// Asks the host for its accounts again, for a sign-in whose token has lapsed here.
+    var rereadHost: @Sendable () async -> Void
 
     init(
         environment: EnvironmentReading = ProcessEnvironmentReader(),
@@ -116,7 +131,9 @@ struct CodexAuthStore: Sendable {
         expectedIdentity: CodexAccountIdentity? = nil,
         additionalAuthHomes: [String] = [],
         writableAuthHomes: Set<String> = [],
-        piCredentialSources: [CodexPiCredentialSource] = []
+        piCredentialSources: [CodexPiCredentialSource] = [],
+        hostSignIn: @escaping @Sendable () -> HostCredential? = { HostAccounts.signIn(for: "openai") },
+        rereadHost: @escaping @Sendable () async -> Void = { await HostAccounts.reread() }
     ) {
         self.environment = environment
         self.files = files
@@ -126,6 +143,17 @@ struct CodexAuthStore: Sendable {
         self.additionalAuthHomes = additionalAuthHomes
         self.writableAuthHomes = writableAuthHomes
         self.piCredentialSources = piCredentialSources
+        self.hostSignIn = hostSignIn
+        self.rereadHost = rereadHost
+    }
+
+    /// The host's ChatGPT sign-in, as its engine keeps it (fork addition). The engine renews the
+    /// token, and OpenAI rotates refresh tokens, so it's read-only here: renewing or saving it would
+    /// sign the engine out.
+    func hostCandidate() -> CodexAuthState? {
+        guard let credential = hostSignIn() else { return nil }
+        let tokens = CodexTokens(accessToken: credential.secret, accountID: credential.accountID?.nilIfEmpty)
+        return CodexAuthState(auth: CodexAuth(tokens: tokens), source: .host, readOnly: true)
     }
 
     func loadAuthCandidates() -> [CodexAuthState] {
@@ -187,7 +215,7 @@ struct CodexAuthStore: Sendable {
             try files.writeText(path, text)
         case .keychain(let account):
             try keychain.writeGenericPassword(service: Self.keychainService, account: account, value: text)
-        case .pi:
+        case .pi, .host:
             throw CodexAuthError.tokenConflict
         }
     }

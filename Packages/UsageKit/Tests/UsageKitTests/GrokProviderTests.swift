@@ -389,6 +389,33 @@ final class GrokProviderTests: XCTestCase {
         XCTAssertEqual(creditsAuths, ["Bearer host-token", "Bearer token"])
     }
 
+    func testGrokCLILoginIsOnlyReadBesideTheHostSignIn() async {
+        // Fork: with the host's sign-in, the Grok CLI's login is the CLI's; it's never renewed or saved.
+        let httpClient = RecordingHTTPClient { request in
+            if request.url == GrokUsageClient.creditsConfigURL {
+                return HTTPResponse(statusCode: 401, headers: [:], body: Data())
+            }
+            return Self.defaultRoutes(request)
+        }
+        let files = FakeFiles([GrokAuthStore.authPath: Self.cliAuth])
+        let now = OpenUsageISO8601.date(from: "2026-06-30T23:58:00.000Z")!
+        let provider = GrokProvider(
+            authStore: GrokAuthStore(files: files, now: { now }, hostSecret: { "host-token" }),
+            usageClient: GrokUsageClient(httpClient: httpClient),
+            logUsageScanner: noLogScanner(),
+            now: { now },
+            pricing: { TestPricing.bundled }
+        )
+
+        let snapshot = await provider.refresh()
+
+        XCTAssertEqual(snapshot.errorCategory, .authExpired)
+        XCTAssertFalse(httpClient.requests.contains { $0.url == GrokUsageClient.refreshURL })
+        XCTAssertEqual(files.files[GrokAuthStore.authPath], Self.cliAuth)
+    }
+
+    private static let cliAuth = #"{"https://auth.x.ai::client":{"key":"token","refresh_token":"refresh","expires_at":"2026-07-01T00:00:00.000Z"}}"#
+
     private static func defaultRoutes(_ request: HTTPRequest) -> HTTPResponse {
         if request.url == GrokUsageClient.creditsConfigURL {
             return HTTPResponse(statusCode: 200, headers: [:], body: GrokCreditsFixtures.capturedResponseBody)

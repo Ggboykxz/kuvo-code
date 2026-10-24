@@ -21,9 +21,11 @@ final class AppModel {
     /// The login shell's environment (PATH and the like), for the engine and terminals.
     private(set) var shellEnvironment = ProcessInfo.processInfo.environment
 
-    let catalog = Catalog()
+    let catalog = Catalog(isMac: true)
     /// The right panel's tools; one window, so one set.
     let utilities = Utilities()
+    /// Terminals that are tabs of the window, in place of a conversation; they end with it.
+    let mainTerminals = MainTerminals()
     /// What the agent asks you for while it browses: sign-ins, codes, steps only you can do.
     let browserAsks = BrowserAsks()
     /// The panel's browser as MCP tools for the agent.
@@ -34,11 +36,27 @@ final class AppModel {
     let usage = UsageAccounts()
     /// Bots: named agents with one job each, on this Mac or a machine.
     let bots = Bots()
+    /// Bots' and sessions' wake-ups and watches.
+    let wakeUps = WakeUps()
     let groups = BotGroups()
+    /// Group chats that live on your machines, which their machines run.
+    let machineGroups = MachineGroups()
+    /// Every group chat, this Mac's and your machines', as the window and the phone show them.
+    @ObservationIgnored private(set) lazy var chats = GroupChats(mac: groups, machines: machineGroups)
+    /// What this Mac keeps, brought up to date with this version once, as it launches.
+    let calibration = Calibration()
+    /// Bots and chats moving to another computer.
+    let moves = Moves()
     /// Kuvo Code for iPhone's way in (off until it's switched on; see PhoneLink).
     let phoneLink = PhoneLink()
+    /// The coding agents you already have (Claude Code, Codex, Cursor, Grok, Antigravity), run by
+    /// the agents bridge beside the engine.
+    let agents = OutsideAgents()
+    @ObservationIgnored private var agentsActivation: (any NSObjectProtocol)?
     /// The engine's settings file, for Settings.
     @ObservationIgnored private(set) lazy var engineConfig = EngineConfig(file: engineFolders.configFile)
+    /// Machines taking settings changed here, a moment after the last change (`settingsSaved`).
+    @ObservationIgnored var settingsSync: Task<Void, Never>?
     /// Engines to start again with new settings once nothing's at work in them: "" for this Mac's,
     /// else a machine's ID (see `renewEngines`).
     @ObservationIgnored var renewals: Set<String> = []
@@ -47,14 +65,38 @@ final class AppModel {
     var skillsFolder: URL { engineFolders.configFile.deletingLastPathComponent().appending(path: "skills") }
     /// Brings the main window back (set by the window itself; the usage menu's "Open Kuvo Code").
     var openMainWindow: (() -> Void)?
+    /// Opened at login (Open at Login): this Mac's box runs in the background, its engine, bots and
+    /// phone link at work, and the window waits until you open Kuvo Code.
+    var startedAtLogin = false
+    /// A start under way, from launch or from the window: one at a time.
+    @ObservationIgnored private var isStarting = false
     /// Settings fill the main window in place of the sessions while this is on.
     var showsSettings = false
+    /// Settings › Accounts of `machine` (nil: this Mac): each computer signs in on its own.
+    func openAccounts(on machine: String?) {
+        openSettings(.accounts, on: SidebarBox(machine: machine))
+    }
+
+    /// A conversation carried on with the coding agents (`Workspace.moveToAgents`): a bot's goes on
+    /// as the bot's, which keeps it (true); any other's panel goes with it, its terminals, pages
+    /// and files as they were.
+    func movedToAgents(from old: String, to new: Session) async -> Bool {
+        if await bots.movedToAgents(from: old, to: new) { return true }
+        utilities.handOver(from: old, to: new.id)
+        return false
+    }
+
+    /// Settings › Custom Auto of `machine` (nil: this Mac): each has its own lists.
+    func openAuto(on machine: String?) {
+        openSettings(.auto, on: SidebarBox(machine: machine))
+    }
     /// Settings' tabs: the page, and the sites you're signing in to.
     let settingsTabs = SettingsTabs()
 
-    /// Shows Settings in the main window, on `page` if one is given (otherwise the last one open).
-    func openSettings(_ page: SettingsPage? = nil) {
-        if let page { settingsTabs.show(page) }
+    /// Shows Settings in the main window, on `page` of `box` if one is given (otherwise the last
+    /// one open).
+    func openSettings(_ page: SettingsPage? = nil, on box: SidebarBox = .mac) {
+        if let page { settingsTabs.show(page, on: box) }
         if page == .accounts { Analytics.shared.onboardingStep("accounts") }
         #if DEBUG
         let background = ProcessInfo.processInfo.environment["KUVO_DEMO_BACKGROUND"] != nil
@@ -107,6 +149,10 @@ final class AppModel {
     private var launch = UUID()
     /// The Mac waking from sleep, watched once for the machines (see `startMachines`).
     @ObservationIgnored var wakeWatch: (any NSObjectProtocol)?
+    /// Each minute: agents' letters by mail, again until they're there, and this Mac's agents told.
+    @ObservationIgnored var mailTick: Task<Void, Never>?
+    /// This launch started the engine over once already for getting stuck starting.
+    @ObservationIgnored var restartedStuckEngine = false
     private let log = Logger(subsystem: "run.kuvo.code", category: "engine")
 
     private var engineFolders: EngineFolders {
@@ -121,23 +167,37 @@ final class AppModel {
         }
     }
 
-    /// The engine this Mac runs (KUVO_OPENCODE_BINARY's, or the one installed), once there is one.
-    var engineBinary: URL? {
-        if let override = ProcessInfo.processInfo.environment["KUVO_OPENCODE_BINARY"] { return URL(filePath: override) }
-        return installer.installed()
+    /// The engine this Mac runs (KUVO_OPENCODE_BINARY's, or the one installed), once it has started.
+    private(set) var engineBinary: URL?
+    /// When the engine running now came up, for a phone to tell it from the one before a restart.
+    @ObservationIgnored private(set) var engineStarted: Date?
+
+    /// A macOS prompt is on screen, like "would like to access files in your Desktop folder":
+    /// those come from UserNotificationCenter, whose windows show only while it asks.
+    static var systemPromptShowing: Bool {
+        let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        return windows.contains { $0[kCGWindowOwnerName as String] as? String == "UserNotificationCenter" }
     }
 
     private var installer: EngineInstaller {
         EngineInstaller(root: AppInfo.supportDirectory.appending(path: "engine"))
     }
 
-    /// Downloads the engine if needed, starts it, and connects the stores.
+    /// Downloads the engine if needed, starts it, and connects the stores. At launch, whether or
+    /// not the window opens (this Mac is a box of its own, at work in the background too).
     func start() async {
         // Already on its way (restart stops it first).
         switch engine {
         case .ready, .starting, .downloading: return
         case .preparing, .failed: break
         }
+        // Asked twice before the first got as far as saying so (launch, and the window opening).
+        guard !isStarting else { return }
+        isStarting = true
+        defer { isStarting = false }
+        // What you keep here, up to date with this version (once, after an update), before the
+        // engine starts.
+        await calibration.run(self)
         let launch = UUID()
         self.launch = launch
         engineStoppedWhileRunning = false
@@ -151,7 +211,8 @@ final class AppModel {
             let binary: URL
             if let override = ProcessInfo.processInfo.environment["KUVO_OPENCODE_BINARY"] {
                 binary = URL(filePath: override)
-            } else if let installed = installer.installed() {
+            } else if let installed = await Task.detached(operation: { [installer] in installer.installed() }).value {
+                // Checking its signature reads all of it, a second or so: off the main thread.
                 binary = installed
             } else {
                 engine = .downloading(progress: 0)
@@ -165,6 +226,7 @@ final class AppModel {
                 guard launch == self.launch else { return }
             }
 
+            engineBinary = binary
             engine = .starting
             stage = "launch"
             var shell = await environment
@@ -175,6 +237,7 @@ final class AppModel {
             try? Launcher.install(in: Bots.command.deletingLastPathComponent(), engine: binary)
             shell["PATH"] = Bots.command.deletingLastPathComponent().path + ":" + (shell["PATH"] ?? "/usr/bin:/bin")
             shell["KUVO_BOTS"] = Bots.root.path
+            shell["KUVO_WAKES"] = WakeUps.root.path
             // Keys you brought for integrations, in the files their settings name with {file:…}
             // (not the engine's environment, where the agent's commands would see them), and a
             // folder for what their servers keep (a sign-in).
@@ -188,6 +251,7 @@ final class AppModel {
             #endif
             // Read off the main thread: the keychain can wait on you (a prompt to allow it).
             await Task.detached { IntegrationKeys.writeFiles() }.value
+            IntegrationKeys.keepFresh()
             let integrations = AppInfo.supportDirectory.appending(path: "integrations")
             try? FileManager.default.createDirectory(at: integrations, withIntermediateDirectories: true)
             shell["KUVO_INTEGRATIONS"] = integrations.path
@@ -195,6 +259,7 @@ final class AppModel {
             // search that works unless it chose otherwise.
             engineConfig.addDefaults()
             Integrations.upgrade(engineConfig)
+            MCPCatalog.upgrade(engineConfig)
             MCPSettings.upgrade(engineConfig)
             // What some providers need until opencode handles it (see ProviderCompatibility).
             let compatibility = ProviderCompatibility.config
@@ -204,6 +269,8 @@ final class AppModel {
             do {
                 _ = try await browserTools.start()
                 if let config = browserTools.engineConfig { shell["OPENCODE_CONFIG_CONTENT"] = Self.merged(config, into: shell["OPENCODE_CONFIG_CONTENT"]) }
+                agents.toolServer = browserTools.agentsServer
+                browserTools.owner = { [weak self] id in await self?.workspace.engineRunOwner(id) }
             } catch {
                 log.error("Browser tools didn't start: \(error.localizedDescription, privacy: .public)")
             }
@@ -226,26 +293,68 @@ final class AppModel {
             guard launch == self.launch else { return }
             self.api = api
             catalog.api = api
+            // An engine stuck starting (one of its own fetches never ended) is started over, once
+            // a launch: after that, a stall is left to show. Not while macOS asks you something
+            // (access to a folder the engine reads): it waits on your answer, and starting it over
+            // would only take the prompt away and ask again. The catalog fills once it's answered.
+            catalog.onStalled = { [weak self] in
+                guard let self, !restartedStuckEngine, !Self.systemPromptShowing else { return }
+                restartedStuckEngine = true
+                Analytics.shared.track("engine_failed", ["reason": "stalled"])
+                Task { await self.restart() }
+            }
             Analytics.shared.catalog = catalog
             workspace.api = api
             workspace.machineAPI = { [weak self] machine in self?.machines.engine(machine)?.api }
+            workspace.machineAgents = { [weak self] machine in self?.machines.engine(machine)?.agents }
             bots.app = self
+            wakeUps.app = self
             groups.app = self
+            machineGroups.app = self
+            moves.app = self
+            // A move cut short (the app quit) is finished or taken back.
+            Task { await moves.recover() }
+            workspace.onMovedToAgents = { [weak self] from, to in await self?.movedToAgents(from: from, to: to) ?? false }
+            workspace.runsOnAgents(bots.agentSessionIDs)
             workspace.botSessions = bots.sessionIDs
-            workspace.seats = groups.seatIDs
+            // Bots' keys of their own, in their folders' settings as integrations are now.
+            Task { await BotKeys.applyAll(on: nil, app: self) }
+            workspace.runsOnAgents(groups.agentSeatIDs.union(machineGroups.agentSeatIDs))
+            workspace.seats = groups.seatIDs.union(machineGroups.seatIDs)
             usage.api = api
+            engineStarted = .now
             engine = .ready
             #if DEBUG
             E2E.note(server.endpoint)
             #endif
             phoneLink.readyMachines = { [weak self] in self?.machines.engines.values.filter(\.isReady) ?? [] }
+            // With machines, this Mac meets them at the relay, phone or not.
+            phoneLink.hasMachines = { [weak self] in !(self?.machines.list.isEmpty ?? true) }
+            phoneLink.movedSessions = { [weak self] in self?.moves.livePlaces ?? [:] }
+            Machines.linkKey = { [weak self] in self?.phoneLink.macKey }
             phoneLink.bots = bots
+            phoneLink.wakeUps = wakeUps
             phoneLink.browserAsks = browserAsks
-            phoneLink.groups = groups
+            phoneLink.groups = chats
+            phoneLink.workspace = workspace
             phoneLink.machineName = { [weak self] id in self?.machines.list.first { $0.id == id }?.name }
+            phoneLink.agents = agents
+            phoneLink.endedSignIns = { [weak self] in self?.catalog.endedProviders ?? [] }
+            phoneLink.forgetSignIn = { [weak self] provider in
+                // One of your plans, as Settings › Accounts lists them; never an integration's server.
+                guard let self, catalog.integrations.contains(where: { $0.id == provider && !$0.isMCP }) else { return false }
+                forgetSignIn(provider)
+                return true
+            }
+            phoneLink.isMoving = { [weak self] id in self?.moves.underWay[id] != nil || Moves.isFrozen(id) }
+            phoneLink.engineConfig = engineConfig
+            phoneLink.engineStarted = { [weak self] in self?.engineStarted }
+            phoneLink.restartEngine = { [weak self] in Task { await self?.restart() } }
             phoneLink.start(endpoint: server.endpoint)
             Analytics.shared.trackOnce("engine_ready", ["seconds": Int((SuspendingClock.now - began).components.seconds), "downloaded": downloaded])
             listen(to: api)
+            agents.engineEndpoint = server.endpoint
+            startAgents(engine: binary)
             Task { await usage.sync() }
             // In parallel: the catalog can wait on the engine's plugins (and they on a
             // macOS permission prompt); sessions shouldn't wait with it.
@@ -275,13 +384,59 @@ final class AppModel {
                 }
             }
             log.error("Engine failed to start: \(reason, privacy: .public)")
-            Analytics.shared.track("engine_failed", ["reason": stage])
+            Analytics.shared.track("engine_failed", ["reason": stage, "kind": EngineInstallError.kind(of: error)])
             // Nothing is left running (a server that never got ready is stopped). A start after an
             // automatic restart failing means the engine stopped.
             stop()
             automaticRestarts.removeAll { $0 < .now.addingTimeInterval(-300) }
             engineStoppedWhileRunning = !automaticRestarts.isEmpty
             engine = .failed(reason)
+            workspace.macEngineStopped()
+        }
+    }
+
+    /// An account you signed in to again, or switched to another of: Custom Auto tries it again,
+    /// here and on your machines (each holds its own limits).
+    func releaseLimit(_ provider: String) {
+        Task {
+            await agents.releaseLimit(provider)
+            for engine in machines.engines.values where engine.isReady { await engine.agents.releaseLimit(provider) }
+        }
+    }
+
+    /// The agents bridge, with the engine's Bun, once: it goes on through the engine's restarts.
+    private func startAgents(engine binary: URL) {
+        workspace.agents = agents
+        catalog.outsideAgents = agents
+        usage.follow(catalog)
+        agents.onEvent = { [weak self] event in
+            self?.catalog.handle(event)
+            self?.workspace.handleAgents(event)
+        }
+        agents.onStopped = { [weak self] in
+            self?.catalog.forgetAgents()
+            self?.workspace.agentsStopped()
+        }
+        agents.onConnected = { [weak self] in
+            Task {
+                await self?.catalog.refreshAgents()
+                await self?.workspace.refreshAgents()
+            }
+        }
+        var environment = shellEnvironment
+        // Bots' wake-up command by name, and where their folders are, for their sessions with the
+        // coding agents too, as the engine's commands have them.
+        let bin = Bots.command.deletingLastPathComponent().path
+        environment["PATH"] = bin + ":" + (environment["PATH"] ?? "/usr/bin:/bin")
+        environment["KUVO_BOTS"] = Bots.root.path
+        environment["KUVO_WAKES"] = WakeUps.root.path
+        environment["KUVO_BIN"] = bin
+        Task { await agents.start(engine: binary, environment: environment) }
+        // Back in the app, you may have installed an agent or signed in to one in Terminal.
+        if agentsActivation == nil {
+            agentsActivation = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.catalog.refreshAgentsIfStale() }
+            }
         }
     }
 
@@ -299,7 +454,9 @@ final class AppModel {
             }
         }
         merge(config, into: &base)
-        let data = (try? JSONSerialization.data(withJSONObject: base)) ?? Data()
+        // Sorted, so the same settings read the same each time (a machine's engine is started
+        // over when what it started with reads differently).
+        let data = (try? JSONSerialization.data(withJSONObject: base, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data()
         return String(decoding: data, as: UTF8.self)
     }
 
@@ -356,8 +513,8 @@ final class AppModel {
                 case .event(let event):
                     // The file changed, here or elsewhere: show what it says now.
                     if event.type == "config.updated" { engineConfig.reload() }
-                    // A sign-in made or renewed here reaches the machines.
-                    if event.type == "credential.updated" { syncSignIns() }
+                    // An account or sign-in added, renewed or switched to here reaches the machines.
+                    if event.type == "credential.updated" || event.type == "credential.switched" { syncSignIns() }
                     catalog.handle(event)
                     workspace.handle(event)
                     usage.handle(event)
@@ -385,6 +542,7 @@ final class AppModel {
         }
         engineStoppedWhileRunning = true
         engine = .failed("It stopped unexpectedly (exit code \(status)), and again after starting over.\(output.isEmpty ? "" : "\n\n" + String(output.suffix(600)))")
+        workspace.macEngineStopped()
     }
 }
 

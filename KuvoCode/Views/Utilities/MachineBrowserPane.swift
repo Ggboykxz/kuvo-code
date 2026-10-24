@@ -745,7 +745,7 @@ final class RemotePageView: NSView, @preconcurrency NSTextInputClient, PictureVi
     // KUVO_DEMO_PAGE_INPUT: what you'd do on the page, steps separated by `;`, through the same
     // handlers as real events: `wait:<s>`, `click:<x>,<y>` (points from the page's top left),
     // `type:<text>`, `key:<code>` (a Mac key code), `scroll:<x>,<y>,<dy>`, `selectAll`, `copy`, `paste`,
-    // `zoom:in`, `zoom:out`.
+    // `zoom:in`, `zoom:out`, `go:<address>`, `swipe:<x>,<y>,<dy>,<n>`.
     private static var demoStarted = false
 
     override func viewDidMoveToWindow() {
@@ -768,6 +768,13 @@ final class RemotePageView: NSView, @preconcurrency NSTextInputClient, PictureVi
                 case "copy": copy(nil)
                 case "paste": paste(nil)
                 case "zoom": browser.zoom(in: value == "in")
+                case "go": browser.load(value)
+                // swipe:<x>,<y>,<dy>,<n>: n scrolls of dy, 8 ms apart, as a trackpad sends them.
+                case "swipe" where numbers.count == 4:
+                    for _ in 0..<Int(numbers[3]) {
+                        demoScroll(CGPoint(x: numbers[0], y: numbers[1]), dy: numbers[2])
+                        try? await Task.sleep(for: .milliseconds(8))
+                    }
                 default: break
                 }
                 try? await Task.sleep(for: .milliseconds(150))

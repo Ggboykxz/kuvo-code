@@ -94,8 +94,10 @@ public struct OpenCodeAPI: Sendable {
         try await get("api/websearch/provider", directory: directory, as: LocatedEnvelope<[WebSearchProvider]>.self).data
     }
 
-    public func savedPermissions() async throws -> [SavedPermission] {
-        try await get("api/permission/saved", as: DataEnvelope<[SavedPermission]>.self).data
+    /// One project's approvals saved with Always: `projectID`'s, or by default the engine's own
+    /// folder's (the folders outside any project's).
+    public func savedPermissions(projectID: String? = nil) async throws -> [SavedPermission] {
+        try await get("api/permission/saved", query: ["projectID": projectID], as: DataEnvelope<[SavedPermission]>.self).data
     }
 
     public func removeSavedPermission(_ id: String) async throws {
@@ -218,15 +220,16 @@ public struct OpenCodeAPI: Sendable {
         try await get("api/credential", as: DataEnvelope<[CredentialEntry]>.self).data
     }
 
-    /// Stores a sign-in made elsewhere (another engine's), for `integration`, as its active one.
-    public func storeCredential(_ entry: CredentialEntry, for integration: String) async throws {
+    /// Stores a sign-in made elsewhere (another engine's), for `integration`: with `activate`, as
+    /// its active one.
+    public func storeCredential(_ entry: CredentialEntry, for integration: String, activate: Bool = true) async throws {
         struct Body: Encodable {
             var integrationID: String
             var label: String
             var value: JSONValue
-            var activate = true
+            var activate: Bool
         }
-        try await send("POST", "api/credential", body: Body(integrationID: integration, label: entry.label, value: entry.value))
+        try await send("POST", "api/credential", body: Body(integrationID: integration, label: entry.label, value: entry.value, activate: activate))
     }
 
     /// Stores a sign-in for `integration`, as its active one, in the engine's own form (a key,
@@ -267,6 +270,27 @@ public struct OpenCodeAPI: Sendable {
         return page
     }
 
+    /// The sessions a session's agent started (its subagents'), newest first.
+    public func children(of session: String, limit: Int = 50) async throws -> [Session] {
+        let page: Page<Session> = try await get("api/session", query: ["limit": String(limit), "order": "desc", "parentID": session])
+        return page.data.map(appSession)
+    }
+
+    /// Every session a session's agent started, newest first, page after page.
+    public func allChildren(of session: String) async throws -> [Session] {
+        let size = 100
+        var page: Page<Session> = try await get("api/session", query: ["limit": String(size), "order": "desc", "parentID": session])
+        var all = page.data
+        var seen = Set(all.map(\.id))
+        while page.data.count == size, let next = page.cursor?.next {
+            page = try await get("api/session", query: ["limit": String(size), "cursor": next])
+            let new = page.data.filter { seen.insert($0.id).inserted }
+            guard !new.isEmpty else { break }
+            all += new
+        }
+        return all.map(appSession)
+    }
+
     /// Every session (the root ones, unless `roots` is false), newest first, page after page.
     public func allSessions(directory: String? = nil, roots: Bool = true) async throws -> [Session] {
         let size = 100
@@ -305,6 +329,31 @@ public struct OpenCodeAPI: Sendable {
         struct Body: Encodable { var title: String?; var agent: String?; var model: ModelRef?; var location: Location; var permissions: [PermissionRule]? }
         let body = Body(title: title, agent: agent, model: model, location: Location(directory: enginePath(directory)), permissions: permissions)
         return appSession(try await send("POST", "api/session", body: body, as: DataEnvelope<Session>.self).data)
+    }
+
+    /// A new session with a conversation from elsewhere (the agents bridge takes one from the
+    /// engine): its messages as they were, carried on here.
+    public func importSession(directory: String, title: String?, agent: String?, model: ModelRef, permissions: [PermissionRule]?, messages: [Message], waiting: [WaitingPrompt] = []) async throws -> Session {
+        struct Body: Encodable { var title: String?; var agent: String?; var model: ModelRef; var location: Location; var permissions: [PermissionRule]?; var messages: [Message]; var waiting: [WaitingPrompt] }
+        let body = Body(title: title, agent: agent, model: model, location: Location(directory: enginePath(directory)), permissions: permissions, messages: messages, waiting: waiting)
+        return appSession(try await send("POST", "api/session/import", body: body, as: DataEnvelope<Session>.self).data)
+    }
+
+    /// A conversation whole, as the engine keeps it (its session, with its metadata and
+    /// permissions, and every message), for another engine to carry on with
+    /// (`importSession(exported:directory:)`): a bot or chat moving to another computer. Kept as
+    /// the engine wrote it, so nothing is lost on the way.
+    public func exportSession(_ id: String) async throws -> JSONValue {
+        try await get("api/experimental/session/\(id.pathEscaped)/export", as: DataEnvelope<JSONValue>.self).data
+    }
+
+    /// A conversation another engine exported (`exportSession`), carried on here at `directory`
+    /// under the same ID. An engine that has one with that ID already refuses it (409).
+    public func importSession(exported: JSONValue, directory: String) async throws -> Session {
+        struct Body: Encodable { var info: JSONValue; var messages: JSONValue; var location: Location }
+        guard let info = exported["info"], let messages = exported["messages"] else { throw URLError(.cannotParseResponse) }
+        let body = Body(info: info, messages: messages, location: Location(directory: enginePath(directory)))
+        return appSession(try await send("POST", "api/experimental/session/import", body: body, as: DataEnvelope<Session>.self).data)
     }
 
     public func renameSession(_ id: String, title: String) async throws {
@@ -376,11 +425,46 @@ public struct OpenCodeAPI: Sendable {
         try await get("api/session/\(session.pathEscaped)/inbox", as: DataEnvelope<[InboxItem]>.self).data
     }
 
+    /// The shell commands running in `directory`'s location: agents', those left running in the
+    /// background among them.
+    public func shells(directory: String? = nil) async throws -> [ShellJob] {
+        try await get("api/shell", directory: directory, as: LocatedEnvelope<[ShellJob]>.self).data
+    }
+
+    /// One shell command, with its process once it has started and its exit once it has ended.
+    public func shell(_ id: String, directory: String? = nil) async throws -> ShellJob {
+        try await get("api/shell/\(id.pathEscaped)", directory: directory, as: LocatedEnvelope<ShellJob>.self).data
+    }
+
+    /// A shell command's output from byte `cursor` on (the start without), `limit` bytes at most.
+    public func shellOutput(_ id: String, from cursor: Int? = nil, limit: Int? = nil, directory: String? = nil) async throws -> ShellOutput {
+        try await get("api/shell/\(id.pathEscaped)/output", query: ["cursor": cursor.map(String.init), "limit": limit.map(String.init)],
+                      directory: directory, as: LocatedEnvelope<ShellOutput>.self).data
+    }
+
+    /// Stops a shell command and drops the output it kept.
+    public func removeShell(_ id: String, directory: String? = nil) async throws {
+        try await send("DELETE", "api/shell/\(id.pathEscaped)", directory: directory)
+    }
+
     public func diff(session: String) async throws -> [FileDiff] {
         try await get("api/session/\(session.pathEscaped)/diff", as: DataEnvelope<[FileDiff]>.self).data
     }
 
     // MARK: Running
+
+    /// A message you sent that waits its turn, carried into an imported session (still waiting).
+    public struct WaitingPrompt: Encodable, Sendable {
+        public var id: String
+        public var text: String
+        public var files: [PromptFile]
+
+        public init(id: String, text: String, files: [PromptFile]) {
+            self.id = id
+            self.text = text
+            self.files = files
+        }
+    }
 
     public struct PromptFile: Encodable, Sendable {
         public var uri: String
@@ -424,10 +508,12 @@ public struct OpenCodeAPI: Sendable {
     }
 
     /// Stops the current run. With `resume`, the agent goes straight on with the input waiting
-    /// to steer it, so that input goes in now instead of at the next step.
-    public func interrupt(session: String, resume: Bool = false) async throws {
+    /// to steer it, so that input goes in now instead of at the next step. Whether there was a run
+    /// to stop.
+    @discardableResult
+    public func interrupt(session: String, resume: Bool = false) async throws -> Bool {
         struct Response: Decodable { var interrupted: Bool }
-        try await send("POST", "api/session/\(session.pathEscaped)/interrupt", query: ["resume": resume ? "true" : nil], as: Response.self)
+        return try await send("POST", "api/session/\(session.pathEscaped)/interrupt", query: ["resume": resume ? "true" : nil], as: Response.self).interrupted
     }
 
     /// Removes waiting input before the agent gets it. Input already delivered is left alone.

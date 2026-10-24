@@ -51,7 +51,6 @@ final class BotMotionView: NSView {
     private let dots = (0..<10).map { _ in CALayer() }
     private let zs = (0..<3).map { _ in CALayer() }
     private let star = CALayer()
-    private var faces: [BotLook.Face: CGImage] = [:]
 
     init() {
         super.init(frame: .zero)
@@ -93,13 +92,50 @@ final class BotMotionView: NSView {
 
     // MARK: Pictures
 
+    /// A bot's pictures, drawn once for its look at its size: the sidebar coming back makes all
+    /// of its bots again, and drawing them took most of the slide's first frames.
+    private final class Pictures {
+        var glow: CGImage?
+        var body: CGImage?
+        var dots: [CGImage?] = []
+        var letter: CGImage?
+        var star: CGImage?
+        var faces: [BotLook.Face: CGImage] = [:]
+    }
+
+    private struct PicturesKey: Hashable {
+        var look: BotLook
+        var size: CGFloat
+        var scheme: ColorScheme
+        var scale: CGFloat
+    }
+
+    private static var pictureCache: [PicturesKey: Pictures] = [:]
+    private var pictures = Pictures()
+
     private func draw(_ spec: Spec) {
         let size = spec.size
         let center = CGPoint(x: size / 2, y: size / 2)
+        let key = PicturesKey(look: spec.look, size: size, scheme: spec.scheme, scale: spec.scale)
+        let cached = Self.pictureCache[key]
+        let pictures = cached ?? Pictures()
+        self.pictures = pictures
         func picture(_ view: some View) -> CGImage? {
             let renderer = ImageRenderer(content: view.environment(\.colorScheme, spec.scheme))
             renderer.scale = spec.scale
             return renderer.cgImage
+        }
+        if cached == nil {
+            pictures.glow = picture(Circle().fill(Color.orange).frame(width: size, height: size))
+            pictures.body = picture(BotAvatar.body(spec.look, size: size)
+                .shadow(color: .black.opacity(size > 40 ? 0.12 : 0.08), radius: size / 24, y: size / 48)
+                .padding(size * 0.25))
+            let tint = spec.look.color.color
+            pictures.dots = (0..<dots.count).map { index in picture(BotAvatar.sparkDot(step: index % 5, tint: tint, size: size)) }
+            pictures.letter = picture(BotAvatar.zLetter(size: size).fixedSize())
+            pictures.star = picture(BotAvatar.star(size: size))
+            if Self.pictureCache.count > 64 { Self.pictureCache = [:] }
+            Self.pictureCache[key] = pictures
         }
         func place(_ layer: CALayer, _ image: CGImage?, at position: CGPoint) {
             layer.contents = image
@@ -109,7 +145,7 @@ final class BotMotionView: NSView {
             layer.position = position
         }
 
-        glow.contents = picture(Circle().fill(Color.orange).frame(width: size, height: size))
+        glow.contents = pictures.glow
         glow.bounds = CGRect(x: 0, y: 0, width: size, height: size)
         glow.position = center
 
@@ -118,31 +154,25 @@ final class BotMotionView: NSView {
         figure.position = CGPoint(x: size / 2, y: size)
 
         // With room for its shadow.
-        let room = size * 0.25
-        place(body, picture(BotAvatar.body(spec.look, size: size)
-            .shadow(color: .black.opacity(size > 40 ? 0.12 : 0.08), radius: size / 24, y: size / 48)
-            .padding(room)), at: center)
+        place(body, pictures.body, at: center)
 
-        faces = [:]
         face.bounds = CGRect(x: 0, y: 0, width: size * 0.5, height: size * 0.3)
         face.position = CGPoint(x: center.x + size * 0.04, y: center.y + BotAvatar.faceOffset(spec.look.shape, size: size))
         face.contentsScale = spec.scale
 
-        let tint = spec.look.color.color
         for (index, dot) in dots.enumerated() {
-            place(dot, picture(BotAvatar.sparkDot(step: index % 5, tint: tint, size: size)), at: center)
+            place(dot, index < pictures.dots.count ? pictures.dots[index] : nil, at: center)
         }
-        let letter = picture(BotAvatar.zLetter(size: size).fixedSize())
-        for z in zs { place(z, letter, at: center) }
-        place(star, picture(BotAvatar.star(size: size)), at: center)
+        for z in zs { place(z, pictures.letter, at: center) }
+        place(star, pictures.star, at: center)
     }
 
     private func faceImage(_ kind: BotLook.Face, _ spec: Spec) -> CGImage? {
-        if let image = faces[kind] { return image }
+        if let image = pictures.faces[kind] { return image }
         let renderer = ImageRenderer(content: BotFace(face: kind, deep: spec.look.color.isDeep).frame(width: spec.size * 0.5, height: spec.size * 0.3))
         renderer.scale = spec.scale
         let image = renderer.cgImage
-        faces[kind] = image
+        pictures.faces[kind] = image
         return image
     }
 
@@ -168,8 +198,60 @@ final class BotMotionView: NSView {
         }
     }
 
+    /// One part's motion: its value at the start, and, if it moves, its keyframes over a round.
+    private struct Recipe {
+        var layer: Int
+        var keyPath: String
+        var first: Any
+        var values: [Any]?
+        var duration: Double
+        var discrete = false
+    }
+
+    private struct MotionKey: Hashable {
+        var look: BotLook
+        var size: CGFloat
+        var mood: BotMood
+        var noticed: Bool
+        var seed: Double
+        var scheme: ColorScheme
+        var scale: CGFloat
+    }
+
+    /// Bots' motion as last worked out: a bot made again (the sidebar coming back) plays it at
+    /// once, rather than working out a round of poses again.
+    private static var motionCache: [MotionKey: [Recipe]] = [:]
+
+    private var parts: [CALayer] { [glow, figure, body, face, star] + dots + zs }
+
+    private func apply(_ recipes: [Recipe]) {
+        let parts = parts
+        let now = CACurrentMediaTime()
+        for recipe in recipes {
+            let layer = parts[recipe.layer]
+            layer.setValue(recipe.first, forKeyPath: recipe.keyPath)
+            guard let values = recipe.values else { continue }
+            let animation = CAKeyframeAnimation(keyPath: recipe.keyPath)
+            animation.values = values
+            animation.duration = recipe.duration
+            animation.repeatCount = .infinity
+            animation.isRemovedOnCompletion = false
+            if recipe.discrete { animation.calculationMode = .discrete }
+            // Where in the round it is now: bots that came in at different times still move apart.
+            animation.beginTime = layer.convertTime(now, from: nil) - now.truncatingRemainder(dividingBy: recipe.duration)
+            layer.add(animation, forKey: recipe.keyPath)
+        }
+    }
+
     private func animate(_ spec: Spec) {
-        for layer in [glow, figure, body, face, star] + dots + zs { layer.removeAllAnimations() }
+        for layer in parts { layer.removeAllAnimations() }
+        let key = MotionKey(look: spec.look, size: spec.size, mood: spec.mood, noticed: spec.noticed, seed: spec.seed, scheme: spec.scheme, scale: spec.scale)
+        if let recipes = Self.motionCache[key] {
+            apply(recipes)
+            return
+        }
+        var recipes: [Recipe] = []
+        let parts = parts
         let (length, rate) = Self.cycle(spec.mood, noticed: spec.noticed)
         let count = Int((length * rate).rounded())
         let poses = (0..<count).map { index in
@@ -177,9 +259,6 @@ final class BotMotionView: NSView {
         }
         let size = spec.size
         let center = CGPoint(x: size / 2, y: size / 2)
-        // Where in the round it is now: bots that came in at different times still move apart.
-        let now = CACurrentMediaTime()
-        let into = now.truncatingRemainder(dividingBy: length)
 
         /// Each pose's value, back to the first at the end, as the round starts again. A part
         /// with a rhythm of its own (the sparks' orbit) goes round in `round`, `over` its poses.
@@ -192,19 +271,8 @@ final class BotMotionView: NSView {
             } else {
                 values.allSatisfy { CFEqual($0 as CFTypeRef, values[0] as CFTypeRef) }
             }
-            if still {
-                layer.setValue(values[0], forKeyPath: keyPath)
-                return
-            }
-            layer.setValue(values[0], forKeyPath: keyPath)
-            let animation = CAKeyframeAnimation(keyPath: keyPath)
-            animation.values = values
-            animation.duration = round
-            animation.repeatCount = .infinity
-            animation.isRemovedOnCompletion = false
-            if discrete { animation.calculationMode = .discrete }
-            animation.beginTime = layer.convertTime(now, from: nil) - now.truncatingRemainder(dividingBy: round)
-            layer.add(animation, forKey: keyPath)
+            let index = parts.firstIndex { $0 === layer } ?? 0
+            recipes.append(Recipe(layer: index, keyPath: keyPath, first: values[0], values: still ? nil : values, duration: round, discrete: discrete))
         }
 
         let degrees = Double.pi / 180
@@ -229,16 +297,10 @@ final class BotMotionView: NSView {
             }
             turned += step(poses[poses.count - 1].spin, poses[0].spin)
             values.append(turned * degrees)
-            let animation = CAKeyframeAnimation(keyPath: "transform.rotation.z")
-            animation.values = values
-            animation.duration = length
-            animation.repeatCount = .infinity
-            animation.isRemovedOnCompletion = false
-            animation.beginTime = body.convertTime(now, from: nil) - into
-            body.setValue(poses[0].spin * degrees, forKeyPath: "transform.rotation.z")
-            if values.contains(where: { abs($0) > 0.0001 }) { body.add(animation, forKey: "transform.rotation.z") }
+            let moves = values.contains { abs($0) > 0.0001 }
+            recipes.append(Recipe(layer: 2, keyPath: "transform.rotation.z", first: poses[0].spin * degrees, values: moves ? values : nil, duration: length))
         } else {
-            body.setValue(0.0, forKeyPath: "transform.rotation.z")
+            recipes.append(Recipe(layer: 2, keyPath: "transform.rotation.z", first: 0.0, values: nil, duration: length))
         }
 
         let faceWidth = Double(size * 0.5)
@@ -294,5 +356,9 @@ final class BotMotionView: NSView {
         star.position = CGPoint(x: center.x + starAt.width, y: center.y + starAt.height)
         play(star, "transform.scale") { Double($0.twinkle) }
         play(star, "transform.rotation.z") { Double($0.twinkle) * 45 * degrees }
+
+        apply(recipes)
+        if Self.motionCache.count > 64 { Self.motionCache = [:] }
+        Self.motionCache[key] = recipes
     }
 }

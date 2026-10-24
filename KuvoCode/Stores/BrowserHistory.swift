@@ -69,8 +69,12 @@ final class BrowserHistory {
     func clear() {
         sites = []
         icons = [:]
+        cleared += 1
         try? FileManager.default.removeItem(at: folder)
     }
+
+    /// Goes up with each Clear: an icon on its way from before it isn't kept.
+    @ObservationIgnored private var cleared = 0
 
     func icon(for site: Site) -> NSImage? {
         if let icon = icons[site.host] { return icon }
@@ -82,13 +86,17 @@ final class BrowserHistory {
     }
 
     private func loadIcon(for host: String, from url: URL?) {
-        guard let url, !fetching.contains(host) else { return }
-        fetching.insert(host)
+        // One at a time for each site, since the last Clear: one on its way from before it doesn't
+        // stop a new one.
+        let key = "\(cleared) \(host)"
+        guard let url, !fetching.contains(key) else { return }
+        fetching.insert(key)
+        let asked = cleared
         Task {
-            defer { fetching.remove(host) }
+            defer { fetching.remove(key) }
             guard let (data, _) = try? await URLSession.shared.data(from: url),
                   let image = NSImage(data: data), image.isValid,
-                  let png = image.pngData(side: 64) else { return }
+                  let png = image.pngData(side: 64), cleared == asked else { return }
             try? FileManager.default.createDirectory(at: iconFolder, withIntermediateDirectories: true)
             try? png.write(to: iconFolder.appending(path: host + ".png"))
             icons[host] = NSImage(data: png)

@@ -73,6 +73,8 @@ struct CodeTextView: NSViewRepresentable {
             // Only if it still matches (the text may have changed meanwhile).
             guard colored.string == text || colored.string == text.replacingOccurrences(of: "\r\n", with: "\n") else { return }
             textView.textStorage?.setAttributedString(colored)
+            // Windows line endings come back as "\n": the line numbers go by the text shown.
+            coordinator.ruler?.update(text: colored.string)
         }
     }
 

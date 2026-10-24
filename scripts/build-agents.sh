@@ -1,0 +1,36 @@
+#!/bin/sh
+# Builds the agents bridge (Agents/src) into KuvoCode/Resources/kuvo-agents.js, the one file the
+# app ships and runs with the engine's Bun. Run it after changing anything in Agents/src, and
+# commit the result. The agents' SDKs aren't in it: the bridge downloads each one the first time
+# it's needed. Its last line names what it was built from (a hash of Agents/src and the
+# packages), and `--check` says whether that's what's here now, as CI checks.
+#   BUN   the Bun to build with (default: `bun` on PATH, else the engine Kuvo Code installed,
+#         which is Bun with BUN_BE_BUN=1)
+set -eu
+cd "$(dirname "$0")/.."
+
+sources() {
+  { find Agents/src -type f; echo Agents/package.json; echo Agents/bun.lock; } | LC_ALL=C sort | while read -r file; do
+    printf '%s %s\n' "$file" "$(shasum -a 256 <"$file" | cut -d' ' -f1)"
+  done | shasum -a 256 | cut -d' ' -f1
+}
+stamp="// Built from Agents/src $(sources)"
+
+if [ "${1:-}" = "--check" ]; then
+  [ "$(tail -n 1 KuvoCode/Resources/kuvo-agents.js)" = "$stamp" ] && exit 0
+  echo "KuvoCode/Resources/kuvo-agents.js isn't built from Agents/src as it is: run ./scripts/build-agents.sh and commit it." >&2
+  exit 1
+fi
+
+if [ -z "${BUN:-}" ]; then
+  if command -v bun >/dev/null 2>&1; then
+    BUN=bun
+  else
+    BUN=$(ls -d "$HOME/Library/Application Support/run.kuvo.code/engine/"*/opencode 2>/dev/null | tail -n 1)
+    [ -n "$BUN" ] || { echo "No Bun: install it, or launch Kuvo Code once so it downloads its engine." >&2; exit 1; }
+  fi
+fi
+
+BUN_BE_BUN=1 "$BUN" build Agents/src/main.ts --target=bun --outfile KuvoCode/Resources/kuvo-agents.js
+echo "$stamp" >>KuvoCode/Resources/kuvo-agents.js
+echo "Built KuvoCode/Resources/kuvo-agents.js"

@@ -23,15 +23,21 @@ nonisolated extension Git {
             let candidate = suffix == 1 ? name : "\(name)-\(suffix)"
             guard run(["rev-parse", "--verify", "--quiet", "refs/heads/" + candidate], in: directory) == nil else { continue }
             guard let complaint = report(["switch", "--quiet", "-c", candidate], in: directory, environment: [:]) else { return candidate }
+            // Made and checked out, but a hook complained after (Git LFS's, say, without git-lfs
+            // on the app's PATH): it's the branch all the same.
+            if currentBranch(in: directory) == candidate { return candidate }
             failure = complaint
         }
         throw GitFailure(message: failure.isEmpty ? "Couldn't make a branch for the worktree." : failure)
     }
 
-    /// A branch name made from a title: "Trim note titles" is trim-note-titles.
+    /// A branch name made from a title: "Trim note titles" is trim-note-titles, "Giriş düzeltmesi"
+    /// giris-duzeltmesi (in Latin letters, without their marks, rather than without the letters).
     static func slug(_ title: String, limit: Int = 40) -> String {
+        let latin = (title.applyingTransform(.toLatin, reverse: false) ?? title)
+            .applyingTransform(.stripDiacritics, reverse: false)?.replacingOccurrences(of: "ı", with: "i") ?? title
         var name = ""
-        for word in title.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }) {
+        for word in latin.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }) {
             let ascii = word.filter(\.isASCII)
             guard !ascii.isEmpty else { continue }
             let next = name.isEmpty ? String(ascii) : name + "-" + ascii
@@ -53,9 +59,15 @@ nonisolated extension Git {
         return nil
     }
 
-    /// Changes that aren't committed, new files included.
-    static func hasUncommittedChanges(in directory: String) -> Bool {
-        !(run(["status", "--porcelain"], in: directory) ?? "").isEmpty
+    /// Changes that aren't committed, new files included; and, when git can't say (a machine's
+    /// connection dropped), as if there were, so nothing is thrown away on a guess.
+    /// New files count whatever git's settings say, as the Changes panel lists them.
+    /// `includingHidden`: also changes in submodules their `ignore` setting leaves out, for
+    /// before a worktree is removed, which would delete them unasked.
+    static func hasUncommittedChanges(in directory: String, includingHidden: Bool = false) -> Bool {
+        let hidden = ["--untracked-files=normal"] + (includingHidden ? ["--ignore-submodules=none"] : [])
+        guard let status = run(["status", "--porcelain"] + hidden, in: directory) else { return true }
+        return !status.isEmpty
     }
 
     /// How many commits `directory`'s branch has that `base` doesn't.
@@ -74,10 +86,14 @@ nonisolated extension Git {
     /// taken back, so the folder is as it was.
     static func merge(_ branch: String, into directory: String, environment: [String: String]) -> MergeResult {
         guard let failure = report(["merge", "--no-edit", branch], in: directory, environment: environment) else { return .merged }
-        let conflicted = (run(["diff", "--name-only", "--diff-filter=U"], in: directory) ?? "").split(separator: "\n").map(String.init)
-        guard !conflicted.isEmpty else { return .failed(failure) }
-        _ = report(["merge", "--abort"], in: directory, environment: environment)
-        return .conflict(conflicted)
+        // By their names as they are: not quoted or escaped, whatever letters are in them.
+        let conflicted = (run(["-c", "core.quotepath=off", "diff", "--name-only", "-z", "--diff-filter=U"], in: directory) ?? "").split(separator: "\0").map(String.init)
+        // Stopped partway for another reason (a hook, signing the commit): taken back too, or the
+        // folder stays in the middle of a merge.
+        if run(["rev-parse", "-q", "--verify", "MERGE_HEAD"], in: directory) != nil {
+            _ = report(["merge", "--abort"], in: directory, environment: environment)
+        }
+        return conflicted.isEmpty ? .failed(failure) : .conflict(conflicted)
     }
 
     /// Pushes what `directory` has checked out to `origin`, and returns the page that opens a
@@ -159,6 +175,38 @@ nonisolated extension Git {
     }
 }
 
+/// Bringing a worktree session's work back: Merge in its Changes panel.
+nonisolated extension Workspace.Worktree {
+    enum MergeOutcome: Equatable, Sendable {
+        case merged(into: String)
+        /// Nothing changed: the merge stopped on these files.
+        case conflict([String], into: String)
+        case failed(String)
+    }
+
+    /// Merges what's committed on the worktree's branch (`directory` is the session's folder in
+    /// it) into the project's folder, on the branch it was made from.
+    func mergeBack(from directory: String, environment: [String: String]) -> MergeOutcome {
+        guard let target = Git.currentBranch(in: project) else { return .failed("The project’s folder isn’t on a branch.") }
+        if let base, target != base {
+            return .failed("The project’s folder is on \(target) now. Switch it back to \(base) to merge, or create a pull request.")
+        }
+        if let reason = unready(in: directory, against: target) { return .failed(reason) }
+        return switch Git.merge(branch, into: project, environment: environment) {
+        case .merged: .merged(into: target)
+        case .conflict(let files): .conflict(files, into: target)
+        case .failed(let message): .failed(message)
+        }
+    }
+
+    /// Why the work can't go anywhere yet, if it can't.
+    func unready(in directory: String, against target: String) -> String? {
+        if Git.hasUncommittedChanges(in: directory) { return "Commit the changes first. Only what’s committed goes." }
+        if Git.commitsAhead(of: target, in: directory) == 0 { return "\(branch) has nothing \(target) doesn’t have yet." }
+        return nil
+    }
+}
+
 /// What git said when it refused.
 struct GitFailure: LocalizedError {
     var message: String
@@ -174,8 +222,17 @@ nonisolated enum GitPreferences {
     static let defaultBranchPrefix = "kuvo/"
 
     /// What a session's own branch starts with ("kuvo/").
+    /// As git takes it in a branch's name: without spaces around it (one typed at the end of
+    /// the field doesn't show), the characters a branch can't have (~ ^ : ? * [ \), "..", or a
+    /// start in - / or .; else every worktree's branch would fail to be made.
     static var branchPrefix: String {
-        UserDefaults.standard.string(forKey: branchPrefixKey) ?? defaultBranchPrefix
+        let typed = UserDefaults.standard.string(forKey: branchPrefixKey) ?? defaultBranchPrefix
+        var prefix = typed.trimmingCharacters(in: .whitespacesAndNewlines).filter { character in
+            !" ~^:?*[\\".contains(character) && !character.isWhitespace && !(character.asciiValue.map { $0 < 32 || $0 == 127 } ?? false)
+        }
+        while prefix.contains("..") { prefix = prefix.replacingOccurrences(of: "..", with: ".") }
+        while let first = prefix.first, "-/.".contains(first) { prefix.removeFirst() }
+        return prefix
     }
 
     /// A prompt for a commit message or pull request, with your instructions for it added.
