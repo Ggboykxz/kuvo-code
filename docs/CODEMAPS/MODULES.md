@@ -97,6 +97,7 @@ them without a bundler:
 - models, agents, commands, providers, credentials, integrations;
 - usage and plan usage;
 - agents detection;
+- bots on this computer (read-only) and machines (list, add, remove, SSH test);
 - permissions and questions;
 - event stream `/event`.
 
@@ -164,7 +165,9 @@ non-blocking `ssh … echo ok` reachability check.
 
 ## Tools — `windows/tools`
 
-- `verify.mjs` — the whole static gate (tests, lint, typecheck, build).
+- `verify.mjs` — the whole static gate (tests, contrast, lint, typecheck, build).
+- `contrast-check.mjs` — reads the effective light, narrow and dark palettes from
+  `ui/style.css` and fails when an ink on a surface is under 4.5:1.
 - `coverage.mjs` — Node coverage for the port and harness tests.
 - `publish-release.py` — waits for CI and uploads the four assets.
 - `third-party-licenses.mjs` — generates/checks the Windows license list.

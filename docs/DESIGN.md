@@ -6,15 +6,18 @@ Adapted from the Open Design "Neutral Modern" + "Linear" aesthetic.
 
 ## 01 · Color
 
-OKLch-inspired palette with semantic role names. Light default, dark via `prefers-color-scheme`.
+The Mac's own palette, bound in `windows/harness/ui/style.css`; light by default, dark via
+`prefers-color-scheme` or `data-theme="dark"`. Every ink is measured against every surface by
+`node windows/tools/contrast-check.mjs` (WCAG 2.1 AA, 4.5:1), including the narrow-window palette.
 
-- Background: `#fafafa` (`--bg`), Surface: `#ffffff` (`--panel`), Surface 2: `#f5f5f3` (`--panel-2`), Code: `#f1f1ee` (`--code-bg`)
-- Foreground: `#111111` (`--ink`), Secondary: `#5a5a5a` (`--ink-soft`), Faint: `#9a9a9f` (`--ink-faint`)
-- Border: `#e5e5e5` (`--line`), Border soft: `#efefec` (`--line-soft`)
-- Accent: `#2a66d8` cobalt (`--accent`) — primary CTAs, links, one hero element per screen. Never on gradients.
-- Semantic: Success `#168f45`, Warn `#c89600`, Danger `#dc2626` (each with a `-soft` variant at 12% opacity)
-- Dark mode: background `#0a0a0a`, panel `#141414`, ink `#ececec`, accent `#6f9dff`
-- Never pure black; never pure white for backgrounds.
+- Background: `#F6F4EE` (`--bg`), Surface: `#FFFFFF` (`--panel`), Surface 2: `#F9F7F1` (`--panel-2`), Code: `rgba(15, 23, 42, 0.035)` over the panel (`--code-bg`)
+- Foreground: `#1D1D1F` (`--ink`), Secondary: `rgba(29, 29, 31, 0.70)` (`--ink-soft`), Faint: `rgba(29, 29, 31, 0.62)` (`--ink-faint`)
+- Border: `rgba(15, 23, 42, 0.07)` (`--line`), Border soft: `rgba(15, 23, 42, 0.05)` (`--line-soft`)
+- Accent: `#0062CC` cobalt (`--accent`, hover `#0051A8`) — primary CTAs, links, one hero element per screen. Never on gradients.
+- Semantic: Success `#1E7B34`, Warn `#9A5B00`, Danger `#C4271E` (each with a `-soft` variant)
+- Dark mode: background `#131417`, panel `#181A1F`, panel 2 `#202228`, ink `#F5F5F7`, accent `#2F97FF`
+- Narrow windows (≤760 px): background `#F6F4EE`, secondary `#6B6B6B`, faint `#67676C`, accent `#1F5FD6`
+- Never pure black. The light canvas is warm ivory; white is a card on it, not the ground.
 
 ## 02 · Typography
 
@@ -63,13 +66,13 @@ OKLch-inspired palette with semantic role names. Light default, dark via `prefer
 
 ## 08 · Brand
 
-- Cobalt accent (#2f6feb) — used sparingly: primary CTAs, links, one hero element per screen
+- Cobalt accent (#0062CC) — used sparingly: primary CTAs, links, one hero element per screen
 - Never on gradients
 - Clear space around logo: ≥ 8px
 
 ## 09 · Anti-patterns
 
-- Forbidden: purple gradient hero backgrounds; emoji icons in CTAs; the word "AI" in body copy; auto-scale on hover; bouncy easings; heavy shadows; pure black/white backgrounds
+- Forbidden: purple gradient hero backgrounds; emoji icons in CTAs; the word "AI" in body copy; auto-scale on hover; bouncy easings; heavy shadows; pure black backgrounds
 - No scale-on-hover, no shadow change on hover
 - Cards have no shadow by default
 - Inputs use focus rings, not border-only changes

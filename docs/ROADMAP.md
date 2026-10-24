@@ -45,33 +45,37 @@ historical reference. This file tracks what we build next, in our own order.
   inside, focus returns to the opener.
 - The SSH reachability check is async and rejects option-like destinations.
 
-## Now (0.7.x)
+## 0.7.0 — honest surfaces, measured colour
 
-- [x] **Bots, complete**: the richer editor (look, keys, machine, project,
-  wake-ups), bot keys, group chats, sub-agents and @-mentions.
-- [x] **Machines, complete**: install the engine on a remote over SSH, run sessions
-  there, show status and wake.
-- [x] **Auto rail**: offer the detected coding agents in the model picker and route
-  to their CLI through the agents bridge.
-- [x] **Passwords**: a real credential store (Windows Credential Manager) instead of
-  `localStorage`.
-- [x] **Browser settings** wired to the harness (search engine, history, website data).
+- [x] Split `server.mjs`, `routes`, `Settings.tsx` and `App.tsx` into modules under
+  roughly 800 lines.
+- [x] Harden the shell: filesystem containment, IPC validation, CSP, sanitizer and
+  git path guards, async agent detection, installer filename validation.
+- [x] Settings tell the truth: Bots is read-only, Machines keeps a list and a real
+  SSH reachability test, and Browser, Passwords, Phone, Notifications and Panel say
+  they are not here yet.
+- [x] Auto reports the coding agents installed on this computer; sessions through
+  them are not wired.
+- [x] Measure the effective light, narrow and dark palettes; all 87 ink/surface
+  pairs at WCAG 2.1 AA, gated in `verify.mjs`.
+- [x] 44 px touch targets, an off-canvas sidebar at 760 px and narrower, and a
+  reduced-motion rule that actually applies.
+- [x] Fix the three CI failures: the harness executable's bundle, the invalid
+  reduced-motion rule, and the bridge handshake race.
 
-## Later (0.8.x)
+## Next (0.8.x)
 
-- [ ] New Browser Tab / integrated browser surface (needs a WebView2 host).
-- [ ] Tab-pair style (needs a split conversation view).
-- [ ] Offline/air-gapped mode.
-- [ ] Auto-update channel choice (stable/beta).
-- [ ] Split `store.ts`, `Overlays.tsx` into modules under ~800 lines.
-
-## Later
-
-- [ ] New Browser Tab / integrated browser surface (needs a WebView2 host).
-- [ ] Tab-pair style (needs a split conversation view).
-- [ ] Offline/air-gapped mode.
-- [ ] Auto-update channel choice (stable/beta).
-- [ ] Split `App.tsx`, `Settings.tsx` and `server.mjs` into modules under ~800 lines.
+- [ ] The panel's browser: a WebView2 host, its search engine, history and website
+  data, and Passwords in Windows Credential Manager.
+- [ ] Machines: install the engine over SSH and run sessions there.
+- [ ] Coding agents: run sessions through Claude Code, Codex, Cursor, Grok and
+  Antigravity.
+- [ ] The phone link.
+- [ ] Notifications and the Mac's side-panel preferences.
+- [ ] Bots: create and edit on Windows, once the Mac's kit and instructions writer
+  has a Windows equivalent.
+- [ ] Split `store.ts` and `Overlays.tsx` into modules under roughly 800 lines.
+- [ ] Offline/air-gapped mode and an update channel choice (stable/beta).
 
 ## Decisions
 

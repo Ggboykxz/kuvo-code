@@ -63,8 +63,11 @@ The Windows client is three processes and one engine.
   `useStore()`; mutations call `render()`.
 - The engine is the source of truth for sessions, messages and configuration.
 - The shell's `config.json` holds window/project preferences.
-- `localStorage` holds a few client-only surfaces (bots, machines, some panel
-  preferences). This is a known limitation, not the target architecture.
+- Bots and machines live in the harness (`~/.kuvo-code/bots`, `machines.json`),
+  not in the page.
+- `localStorage` still holds a few surfaces the page hasn't wired yet
+  (notifications, panel preferences, the analytics notice). Those pages say so;
+  moving them to the harness is the target architecture.
 
 ## Security boundaries
 
