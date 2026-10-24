@@ -2,7 +2,6 @@
 // them (PROTOCOL.md, `kuvo/bots` and `kuvo/wakes`). Run with
 // `node --test Packages/KuvoLink/Tests/Bridge/*.test.js`.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -14,6 +13,7 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-link-bots-"));
 process.env.KUVO_HOME = home;
 after(() => fs.rmSync(home, { recursive: true, force: true }));
 const link = await import("../../Sources/KuvoLink/Resources/kuvo-link.js");
+import { agentsBridge } from "./bridge-process.js";
 
 const bots = path.join(home, "bots");
 const write = (file, text) => {
@@ -41,13 +41,6 @@ beforeEach(() => {
   fs.rmSync(path.join(home, "wakes"), { recursive: true, force: true });
   fs.rmSync(path.join(home, "run"), { recursive: true, force: true });
 });
-
-// The agents' bridge as the bridge finds it: a live process whose command line names it.
-function agentsBridge(t) {
-  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "kuvo-agents"], { stdio: "ignore" });
-  t.after(() => child.kill());
-  return child;
-}
 
 // What the handler answers a phone's request, whole.
 async function ask(handle, method, p, body) {
@@ -210,7 +203,7 @@ test("Wake Up Now sends the whole note to its session, then a one-off is done an
 test("Wake Up Now for one that runs with the coding agents goes to their bridge; with nothing running, it says so", async t => {
   const bridge = await fakeEngine();
   t.after(bridge.close);
-  const agents = agentsBridge(t);
+  const agents = await agentsBridge(t);
   const scout = bot("bot_scout00001");
   write(path.join(scout, "via"), "bridge");
   write(path.join(scout, "wakes", "1792000500-AbC123"), "once");
@@ -386,7 +379,7 @@ test("what's missing or unknown is said, and nothing is made", async () => {
 test("with the Mac closed, a group chat of this machine's bots is made here and listed", async t => {
   bot("bot_ada0000001", { name: "Ada" });
   bot("bot_ben0000001", { name: "Ben" });
-  const bridge = agentsBridge(t);
+  const bridge = await agentsBridge(t);
   const agents = await makingEngine();
   try {
     const handle = link.engineHandler(() => { throw new Error("not needed"); }, { name: "my-server" }, () => ({ port: agents.port, password: "p", pid: bridge.pid }));
@@ -411,7 +404,7 @@ test("with the Mac closed, a group chat of this machine's bots is made here and 
 test("with the Mac closed, a group chat's meeting is set up here, by the bridge that runs it, and the chat changed from a phone", async t => {
   bot("bot_ada0000001", { name: "Ada" });
   bot("bot_ben0000001", { name: "Ben" });
-  const bridge = agentsBridge(t);
+  const bridge = await agentsBridge(t);
   const agents = await makingEngine();
   try {
     const handle = link.engineHandler(() => { throw new Error("not needed"); }, { name: "my-server" }, () => ({ port: agents.port, password: "p", pid: bridge.pid }));

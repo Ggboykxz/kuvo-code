@@ -1,84 +1,61 @@
 #!/usr/bin/env node
+// This computer's bots, read from their own folders under ~/.kuvo-code/bots, as the machine's
+// link lists them (kuvo-link.js, `listBots`). A bot is made and changed in Kuvo Code on a Mac,
+// which writes what it is told; this side lists the ones that live here and never edits them.
+//
+// The folders are read here rather than through kuvo-link.js because the harness ships as one
+// executable: the bridge uses `import.meta.url` and would not survive the bundle.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { HttpError } from "../server.mjs";
 
+// Read when asked, not when this file loads: the tests point KUVO_HOME at a folder of their own.
+const botsFolder = () => path.join(process.env.KUVO_HOME || path.join(os.homedir(), ".kuvo-code"), "bots");
+
+function textOf(file) {
+  try { return fs.readFileSync(file, "utf8"); } catch { return null; }
+}
+
+function namesIn(folder) {
+  try { return fs.readdirSync(folder); } catch { return []; }
+}
+
+// Each bot by its session, with what its folder says now: paused, its wake-ups, its watches.
+function listBots() {
+  const bots = [];
+  const home = botsFolder();
+  for (const id of namesIn(home)) {
+    if (!/^bot_[A-Za-z0-9]+$/.test(id)) continue;
+    const folder = path.join(home, id);
+    let described;
+    try { described = JSON.parse(textOf(path.join(folder, "bot.json")) ?? ""); } catch { continue; }
+    const session = (textOf(path.join(folder, "session")) ?? "").trim();
+    if (described?.kuvo !== 1 || described.id !== id || typeof described.name !== "string" || !session) continue;
+    bots.push({
+      id,
+      session,
+      name: described.name,
+      job: typeof described.job === "string" ? described.job : "",
+      look: described.look ?? null,
+      model: described.model ?? null,
+      paused: fs.existsSync(path.join(folder, "paused")),
+      wakes: namesIn(path.join(folder, "wakes")).length,
+      watching: namesIn(path.join(folder, "watches")).length,
+      agents: (textOf(path.join(folder, "via")) ?? "").trim() === "bridge",
+      created: String(described.created ?? ""),
+    });
+  }
+  // In the order they were made, as the Mac's list is.
+  return bots.sort((a, b) => a.created.localeCompare(b.created));
+}
+
 export async function handle(ctx, request, response, url) {
-  const json = (what) => {
-    response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify(what));
-  };
-
-  // List bots from the machine's bridge
-  if (url.pathname === "/api/bots" && request.method === "GET") {
-    if (!ctx.currentProject) throw new HttpError(400, "No project folder is open.");
-    const link = await import("../../Packages/KuvoLink/Sources/KuvoLink/Resources/kuvo-link.js");
-    try {
-      const bots = link.listBots(ctx.currentProject);
-      return json({ bots });
-    } catch (error) {
-      throw new HttpError(500, error.message);
-    }
+  if (url.pathname !== "/api/bots") return false;
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    throw new HttpError(405, "Bots are read with GET.");
   }
-
-  // Create or update a bot
-  if (url.pathname === "/api/bots" && request.method === "POST") {
-    if (!ctx.currentProject) throw new HttpError(400, "No project folder is open.");
-    const body = await ctx.readBody(request);
-    const { id, name, personality, model, look, machine, project, wakeUps, keys } = body;
-    if (!name || !name.trim()) throw new HttpError(400, "A bot needs a name.");
-    if (!model || !model.trim()) throw new HttpError(400, "A bot needs a model.");
-
-    const link = await import("../../Packages/KuvoLink/Sources/KuvoLink/Resources/kuvo-link.js");
-    try {
-      const botDir = path.join(link.K, "bots", id || `bot_${Date.now()}`);
-      fs.mkdirSync(path.join(botDir, "wakes"), { recursive: true });
-      fs.writeFileSync(path.join(botDir, "MEMORY.md"), `# ${name}'s memory\n`);
-      fs.writeFileSync(path.join(botDir, "session"), `ses_${path.basename(botDir)}`);
-      const descriptor = {
-        kuvo: 1,
-        id: path.basename(botDir),
-        name: name.trim(),
-        job: personality || "Watches the build",
-        look: look || { color: "sky", shape: "round", face: "calm" },
-        model: { id: model.trim(), providerID: "opencode" },
-        created: new Date().toISOString(),
-        updated: new Date().toISOString(),
-      };
-      fs.writeFileSync(path.join(botDir, "bot.json"), JSON.stringify(descriptor, null, 2));
-      if (project) fs.writeFileSync(path.join(botDir, "project"), project);
-      if (wakeUps) fs.writeFileSync(path.join(botDir, "wakeUps"), JSON.stringify(wakeUps));
-      if (keys) fs.writeFileSync(path.join(botDir, "keys"), JSON.stringify(keys));
-      return json({ ok: true, id: descriptor.id });
-    } catch (error) {
-      throw new HttpError(500, error.message);
-    }
-  }
-
-  // Delete a bot
-  if (url.pathname.startsWith("/api/bots/") && request.method === "DELETE") {
-    const id = decodeURIComponent(url.pathname.slice("/api/bots/".length));
-    const link = await import("../../Packages/KuvoLink/Sources/KuvoLink/Resources/kuvo-link.js");
-    try {
-      const botDir = path.join(link.K, "bots", id);
-      if (fs.existsSync(botDir)) fs.rmSync(botDir, { recursive: true, force: true });
-      return json({ ok: true });
-    } catch (error) {
-      throw new HttpError(500, error.message);
-    }
-  }
-
-  // Get bot templates
-  if (url.pathname === "/api/bots/templates" && request.method === "GET") {
-    const link = await import("../../Packages/KuvoLink/Sources/KuvoLink/Resources/kuvo-link.js");
-    try {
-      const templates = link.botTemplates?.() ?? [];
-      return json({ templates });
-    } catch {
-      return json({ templates: [] });
-    }
-  }
-
-  return false;
+  response.writeHead(200, { "content-type": "application/json" });
+  response.end(JSON.stringify({ bots: listBots() }));
+  return true;
 }

@@ -13,7 +13,7 @@
     radial-gradient(100% 70% at 88% 0%, rgba(47, 191, 175, 0.05) 0%, rgba(47, 191, 175, 0) 50%);
   --surface: oklch(100% 0 0);
   --fg: oklch(18% 0.012 250);
-  --muted: oklch(54% 0.012 250);
+  --muted: oklch(50% 0.012 250);
   --border: oklch(92% 0.005 250);
   --accent-signal: oklch(56% 0.18 255);
   /* Surfaces — the app's own names, bound to the direction's. */
@@ -26,23 +26,22 @@
   /* Text */
   --ink: var(--fg);
   --ink-soft: var(--muted);
-  --ink-faint: oklch(66% 0.01 250);
+  --ink-faint: oklch(55% 0.01 250);
   /* Border — a hairline that shows the shape without drawing a stroke around everything. */
   --line: var(--border);
   --line-soft: oklch(94% 0.004 250);
   --lit: rgba(255, 255, 255, 0.9);
   /* Accent — the user's pick (cobalt by default, the direction's own blue), interactive only. */
-  /* Accent — the user's pick (cobalt by default, the direction's own blue), interactive only. */
-  --accent: oklch(56% 0.18 255);
+  --accent: oklch(55% 0.18 255);
   --accent-ink: #ffffff;
   --accent-hover: oklch(52% 0.18 255);
   --accent-soft: color-mix(in oklab, var(--accent), transparent 88%);
   /* Semantic — colour with a meaning, never colour alone. */
   --danger: oklch(55% 0.22 25);
   --danger-soft: color-mix(in oklab, var(--danger), transparent 90%);
-  --ok: oklch(54% 0.18 140);
+  --ok: oklch(53% 0.18 140);
   --ok-soft: color-mix(in oklab, var(--ok), transparent 90%);
-  --warn: oklch(56% 0.18 85);
+  --warn: oklch(55% 0.18 85);
   --warn-soft: color-mix(in oklab, var(--warn), transparent 90%);
   /* Radius — quiet, small, consistent. */
   --radius: 8px;
@@ -1355,9 +1354,9 @@ li.unread .session { position: relative; padding-left: 16px; }
 @media (prefers-reduced-motion: reduce) {
   /* Only disable non-essential decorative animations. Keep state-change transitions
      (focus, hover, drawer slide, modal fade, loading) and focus indicators. */
-  .shimmer,
-  @keyframes kuvo-shimmer,
-  @keyframes kuvo-pulse { animation: none !important; }
+  /* Keyframes can't be switched off from a selector list: the rule would be dropped whole,
+     and the shimmer would keep moving. The class that wears them stops instead. */
+  .thinking-shimmer { animation: none !important; }
   * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
   /* Exemptions: keep these at their full duration for usability */
   .drawer:not([hidden]),
@@ -1737,9 +1736,9 @@ body.viewing-image main {
   /* System ink, not slate: slate is the hairline (Surfaces.swift:12-22). */
   --fg: #1D1D1F;
   --ink: #1D1D1F;
-  --muted: rgba(29, 29, 31, 0.62);
-  --ink-soft: rgba(29, 29, 31, 0.62);
-  --ink-faint: rgba(29, 29, 31, 0.38);
+  --muted: rgba(29, 29, 31, 0.70);
+  --ink-soft: rgba(29, 29, 31, 0.70);
+  --ink-faint: rgba(29, 29, 31, 0.62);
   --border: rgba(15, 23, 42, 0.07);
   --line: rgba(15, 23, 42, 0.07);
   --line-soft: rgba(15, 23, 42, 0.05);
@@ -1752,18 +1751,18 @@ body.viewing-image main {
   --well-border: rgba(15, 23, 42, 0.07);
 
   /* Accent: the user's pick; the wash is 10 % in light, 22 % in dark. */
-  --accent: #007AFF;
-  --accent-hover: #0062CC;
+  --accent: #0062CC;
+  --accent-hover: #0051A8;
   --accent-soft: color-mix(in oklab, var(--accent), transparent 90%);
   --bubble-fill: color-mix(in oklab, var(--accent), transparent 90%);
   --bubble-edge: color-mix(in srgb, var(--accent) 28%, white 72%);
 
   /* macOS system colours, the Mac's semantic set. */
-  --danger: #FF3B30;
+  --danger: #C4271E;
   --danger-soft: color-mix(in oklab, var(--danger), transparent 90%);
-  --ok: #34C759;
+  --ok: #1E7B34;
   --ok-soft: color-mix(in oklab, var(--ok), transparent 90%);
-  --warn: #FF9500;
+  --warn: #9A5B00;
   --warn-soft: color-mix(in oklab, var(--warn), transparent 90%);
 
   /* Radii: 14 card/composer, 18 bubble/palette, 10 well, 8 row, 7 list,
@@ -1835,7 +1834,7 @@ body.viewing-image main {
     --ink: #F5F5F7;
     --muted: rgba(245, 245, 247, 0.62);
     --ink-soft: rgba(245, 245, 247, 0.62);
-    --ink-faint: rgba(245, 245, 247, 0.38);
+    --ink-faint: rgba(245, 245, 247, 0.50);
     --border: rgba(255, 255, 255, 0.08);
     --line: rgba(255, 255, 255, 0.08);
     --line-soft: rgba(255, 255, 255, 0.06);
@@ -1844,8 +1843,8 @@ body.viewing-image main {
     --code-bg: rgba(0, 0, 0, 0.30);
     --well: rgba(0, 0, 0, 0.30);
     --well-border: rgba(255, 255, 255, 0.07);
-    --accent: #0A84FF;
-    --accent-hover: #409CFF;
+    --accent: #2F97FF;
+    --accent-hover: #4AA3FF;
     --accent-soft: color-mix(in oklab, var(--accent), transparent 78%);
     --bubble-fill: color-mix(in oklab, var(--accent), transparent 78%);
     --bubble-edge: color-mix(in srgb, var(--accent) 45%, rgba(255, 255, 255, 0.35));
@@ -1877,7 +1876,7 @@ html[data-theme="dark"] {
   --ink: #F5F5F7;
   --muted: rgba(245, 245, 247, 0.62);
   --ink-soft: rgba(245, 245, 247, 0.62);
-  --ink-faint: rgba(245, 245, 247, 0.38);
+  --ink-faint: rgba(245, 245, 247, 0.50);
   --border: rgba(255, 255, 255, 0.08);
   --line: rgba(255, 255, 255, 0.08);
   --line-soft: rgba(255, 255, 255, 0.06);
@@ -1886,8 +1885,8 @@ html[data-theme="dark"] {
   --code-bg: rgba(0, 0, 0, 0.30);
   --well: rgba(0, 0, 0, 0.30);
   --well-border: rgba(255, 255, 255, 0.07);
-  --accent: #0A84FF;
-  --accent-hover: #409CFF;
+  --accent: #2F97FF;
+  --accent-hover: #4AA3FF;
   --accent-soft: color-mix(in oklab, var(--accent), transparent 78%);
   --bubble-fill: color-mix(in oklab, var(--accent), transparent 78%);
   --bubble-edge: color-mix(in srgb, var(--accent) 45%, rgba(255, 255, 255, 0.35));
@@ -2350,11 +2349,11 @@ header { border-bottom: 0; }
     --panel: #FFFFFF;
     --ink: #111111;
     --ink-soft: #6B6B6B;
-    --ink-faint: #9A9A9F;
+    --ink-faint: #67676C;
     --line: #E5E5E5;
     --line-soft: #EFEFEC;
-    --accent: #2F6FEB;
-    --accent-soft: rgba(47, 111, 235, 0.12);
+    --accent: #1F5FD6;
+    --accent-soft: rgba(31, 95, 214, 0.12);
     --code-bg: #F1F1EE;
     --panel-2: #F5F5F3;
     --radius-sm: 6px;

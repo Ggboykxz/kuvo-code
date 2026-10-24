@@ -5,8 +5,8 @@
 //   node windows/tools/verify.mjs --no-build
 //   node windows/tools/verify.mjs --coverage --no-build
 //
-// It runs the port tests, the harness tests, the link bridge, then lint, typecheck
-// and the page build. The first failure stops the run and exits non-zero, so CI and
+// It runs the port tests, the harness tests, the link bridge, the SSH check, the colour
+// contrast check, then lint, typecheck and the page build. The first failure stops the run and exits non-zero, so CI and
 // a local check agree on what "green" means.
 
 import { spawnSync } from "node:child_process";
@@ -66,6 +66,9 @@ run(
   node,
   ["--test", ...testFlag, "windows/electron/ssh.test.js"],
 );
+
+// Every ink on every surface, measured from the stylesheet's own tokens (WCAG 2.1 AA).
+run("contrast", node, ["windows/tools/contrast-check.mjs"]);
 
 run("lint", npm, ["run", "lint"], app, windowsShell);
 run("typecheck", npm, ["run", "typecheck"], app, windowsShell);

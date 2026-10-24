@@ -41,7 +41,7 @@ const sources = {
   transcript: read("harness", "transcript.mjs"),
   layout: read("harness", "layout.mjs"),
   engine: read("harness", "engine.mjs"),
-  server: [read("harness", "server.mjs"), read("harness", "routes.mjs"), read("harness", "routes", "projects.mjs"), read("harness", "routes", "files.mjs"), read("harness", "routes", "git.mjs"), read("harness", "routes", "sessions.mjs"), read("harness", "routes", "models.mjs"), read("harness", "routes", "settings.mjs"), read("harness", "routes", "misc.mjs")].join("\\n"),
+  server: [read("harness", "server.mjs"), read("harness", "routes.mjs"), read("harness", "routes", "projects.mjs"), read("harness", "routes", "files.mjs"), read("harness", "routes", "git.mjs"), read("harness", "routes", "sessions.mjs"), read("harness", "routes", "models.mjs"), read("harness", "routes", "settings.mjs"), read("harness", "routes", "bots.mjs"), read("harness", "routes", "machines.mjs")].join("\\n"),
   shell: read("electron", "main.js"),
   preload: read("electron", "preload.js"),
   toolCall: read("app", "src", "components", "tool-call.tsx"),

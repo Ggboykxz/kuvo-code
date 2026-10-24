@@ -1219,3 +1219,97 @@ test("each pane knows how wide it may be dragged right now", () => {
   const roomy = paneLayout({ available: 3000, sessions: 280, split: 560 });
   assert.equal(roomy.changesMax, 900, "at a roomy window the panel opens at its full width");
 });
+
+// ---- Machines and bots: what the settings pages read and write ----
+
+/** A folder of its own for the machine's files, as the link keeps them. */
+function machineHome(t) {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-machine-home-"));
+  const before = process.env.KUVO_HOME;
+  process.env.KUVO_HOME = folder;
+  t.after(() => {
+    if (before === undefined) delete process.env.KUVO_HOME;
+    else process.env.KUVO_HOME = before;
+    fs.rmSync(folder, { recursive: true, force: true });
+  });
+  return folder;
+}
+
+test("a machine is kept here, its address checked, and ssh asked whether it answers", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const home = machineHome(t);
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+  const post = (path, body) => fetch(`${url}${path}`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+
+  // A destination is an argument to ssh: one that begins with a dash would be read as an
+  // option of ssh's own, so it never gets that far.
+  for (const destination of ["-oProxyCommand=calc", "user@host; rm -rf /", "user host", "@host", "user@", ""]) {
+    const refused = await post("api/machines", { name: "Home", destination });
+    assert.equal(refused.status, 400, `"${destination}" is refused`);
+  }
+
+  const added = await post("api/machines", { name: "Home server", destination: "kuvo@127.0.0.1" });
+  assert.equal(added.status, 200);
+  const { machine } = await added.json();
+  assert.equal(machine.name, "Home server");
+  assert.equal(machine.destination, "kuvo@127.0.0.1");
+  assert.equal(machine.status, "unknown");
+  assert.match(machine.id, /^m_[a-z0-9]+$/);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, "machines.json"), "utf8")).map(each => each.destination), ["kuvo@127.0.0.1"]);
+
+  assert.equal((await post("api/machines", { name: "Again", destination: "kuvo@127.0.0.1" })).status, 409);
+  assert.deepEqual((await (await fetch(`${url}api/machines`)).json()).machines.map(each => each.name), ["Home server"]);
+
+  // ssh is asked for real. Nothing listens there, or ssh isn't installed: either way it says
+  // why, and the row keeps the answer.
+  const tested = await post(`api/machines/${machine.id}/test`, {});
+  assert.equal(tested.status, 200);
+  const answer = await tested.json();
+  assert.equal(answer.ok, false);
+  assert.match(answer.status, /^unreachable: /);
+  const kept = (await (await fetch(`${url}api/machines`)).json()).machines[0];
+  assert.equal(kept.status, answer.status);
+
+  assert.equal((await fetch(`${url}api/machines/${machine.id}`, { method: "DELETE" })).status, 200);
+  assert.deepEqual((await (await fetch(`${url}api/machines`)).json()).machines, []);
+  assert.equal((await fetch(`${url}api/machines/${machine.id}`, { method: "DELETE" })).status, 404);
+  assert.equal((await post("api/machines/m_gone/test", {})).status, 404);
+});
+
+test("this computer's bots are read from their folders, and never written", async t => {
+  const engine = await fakeEngine();
+  t.after(engine.close);
+  const home = machineHome(t);
+  const { harness, url } = await inFront(engine);
+  t.after(() => harness.close());
+
+  const bot = (id, described) => {
+    const folder = path.join(home, "bots", id);
+    fs.mkdirSync(path.join(folder, "wakes"), { recursive: true });
+    fs.writeFileSync(path.join(folder, "bot.json"), JSON.stringify({ kuvo: 1, id, ...described }));
+    return folder;
+  };
+  const pal = bot("bot_pal0000001", { name: "Pal", job: "Watches the build", model: { id: "flint-40b-free", providerID: "opencode" }, created: "2026-10-21T09:00:00Z" });
+  fs.writeFileSync(path.join(pal, "session"), "ses_pal");
+  fs.writeFileSync(path.join(pal, "wakes", "1792000500-AbC123"), "once");
+  fs.writeFileSync(path.join(pal, "paused"), "");
+  // One with no conversation yet, and one that isn't a bot's folder: neither is listed.
+  bot("bot_new0000001", { name: "New", created: "2026-10-22T09:00:00Z" });
+  bot("notabot", { name: "Not a bot" });
+  fs.mkdirSync(path.join(home, "bots", "bot_bad0000001"));
+  fs.writeFileSync(path.join(home, "bots", "bot_bad0000001", "bot.json"), "not json");
+
+  const listed = await (await fetch(`${url}api/bots`)).json();
+  assert.deepEqual(listed.bots.map(each => [each.id, each.name, each.session, each.job, each.model.id, each.paused, each.wakes]), [
+    ["bot_pal0000001", "Pal", "ses_pal", "Watches the build", "flint-40b-free", true, 1],
+  ]);
+
+  // The page reads them; nothing here makes or changes one (that is the Mac's job).
+  const wrote = await fetch(`${url}api/bots`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Mine", model: "flint-40b-free" }) });
+  assert.equal(wrote.status, 405);
+  assert.deepEqual(fs.readdirSync(path.join(home, "bots")).sort(), ["bot_bad0000001", "bot_new0000001", "bot_pal0000001", "notabot"]);
+});

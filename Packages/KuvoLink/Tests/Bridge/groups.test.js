@@ -2,7 +2,6 @@
 // its own, from the coding agents' bridge there, which runs them. Run with
 // `node --test Packages/KuvoLink/Tests/Bridge/*.test.js`.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -13,6 +12,7 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-link-groups-"));
 process.env.KUVO_HOME = home;
 after(() => fs.rmSync(home, { recursive: true, force: true }));
 const link = await import("../../Sources/KuvoLink/Resources/kuvo-link.js");
+import { agentsBridge } from "./bridge-process.js";
 
 // Two bots in their folders, as the app keeps them on a machine.
 for (const [id, name] of [["bot_pal", "Pal"], ["bot_lb", "Lokum Builder"]]) {
@@ -77,8 +77,7 @@ async function fakeRunner() {
 test("a machine's group chats, as a Mac lists and sends its own", async t => {
   const runner = await fakeRunner();
   t.after(runner.close);
-  const named = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "kuvo-agents"], { stdio: "ignore" });
-  t.after(() => named.kill());
+  const named = await agentsBridge(t);
   const handle = link.engineHandler(() => ({ port: 1, password: "engine", version: "2.0.32" }), { name: "box" }, () => ({ pid: named.pid, port: runner.port, password: "agents" }));
 
   // The list: one moving here isn't in it yet; times in seconds; the last thing said, not a note,
@@ -124,8 +123,7 @@ test("a machine's group chats, as a Mac lists and sends its own", async t => {
 test("a chat's next line leaves out its messages when only who's talking or what they do changed", async t => {
   const runner = await fakeRunner();
   t.after(runner.close);
-  const named = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "kuvo-agents"], { stdio: "ignore" });
-  t.after(() => named.kill());
+  const named = await agentsBridge(t);
   const handle = link.engineHandler(() => ({ port: 1, password: "engine", version: "2.0.32" }), { name: "box" }, () => ({ pid: named.pid, port: runner.port, password: "agents" }));
   const abort = new AbortController();
   const lines = [];
@@ -136,7 +134,7 @@ test("a chat's next line leaves out its messages when only who's talking or what
     if (lines.length === 2) break;
   }
   abort.abort();
-  assert.equal(lines[0].messages.length, 4);
+  assert.equal(lines[0].messages?.length, 4, `the first line carries the messages: ${JSON.stringify(lines[0]).slice(0, 200)}`);
   assert.equal(lines[1].messages, undefined, "the phone keeps the ones it has");
   assert.deepEqual(lines[1].activity, [{ kind: "thinking", text: "Checking the tag" }]);
   assert.equal(lines[1].speaking, "bot_lb");
@@ -150,8 +148,7 @@ test("a bridge there but not answering now is asked again, not taken as having n
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   t.after(() => { server.closeAllConnections(); server.close(); });
-  const named = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "kuvo-agents"], { stdio: "ignore" });
-  t.after(() => named.kill());
+  const named = await agentsBridge(t);
   const handle = link.engineHandler(() => ({ port: 1, password: "engine", version: "2.0.32" }), { name: "box" }, () => ({ pid: named.pid, port: server.address().port, password: "agents" }));
   for (const route of ["kuvo/groups", "kuvo/groups/events", "kuvo/groups/grp_box0000001/events"]) {
     assert.equal((await ask(handle, "GET", route)).status, 503, route);

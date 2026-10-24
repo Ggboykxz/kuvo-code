@@ -103,156 +103,40 @@ export function IntegrationsPage() {
   );
 }
 
-/// Browser: the panel's browser, its search engine, history and website data (BrowserSettings.swift).
+/// Browser: the panel's browser, its search engine, history and website data
+/// (BrowserSettings.swift). The Windows client has no browser surface yet, so this page says
+/// so rather than keeping settings nothing reads.
 export function BrowserPage() {
-  const [engine, setEngine] = useState("google");
-  const [historyCount, setHistoryCount] = useState(0);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    void load();
-  }, []);
-
-  const load = async () => {
-    try {
-      const { engine: loaded } = await api<{ engine: string }>("/api/browser/search-engine");
-      setEngine(loaded);
-    } catch { setEngine("google"); }
-    try {
-      const { count } = await api<{ count: number }>("/api/browser/history");
-      setHistoryCount(count);
-    } catch { setHistoryCount(0); }
-    setLoading(false);
-  };
-
-  const set = async (value: string) => {
-    try {
-      await api("/api/browser/search-engine", { method: "POST", body: { engine: value } });
-      setEngine(value);
-    } catch (error) { complain(error); }
-  };
-
-  const clearHistory = async () => {
-    try {
-      await api("/api/browser/history", { method: "DELETE" });
-      setHistoryCount(0);
-    } catch (error) { complain(error); }
-  };
-
-  const clearCookies = async () => {
-    try {
-      await api("/api/browser/cookies", { method: "DELETE" });
-    } catch (error) { complain(error); }
-  };
-
-  if (loading) return <SettingGroup title="Search"><div className="settings-note">Loading…</div></SettingGroup>;
-
   return (
-    <>
-      <SettingGroup title="Search">
-        <SettingRow label="Search engine" note="For anything you type in the address field that isn't an address.">
-          <select value={engine} onChange={event => set(event.target.value)}>
-            <option value="google">Google</option>
-            <option value="bing">Bing</option>
-            <option value="duckduckgo">DuckDuckGo</option>
-          </select>
-        </SettingRow>
-        <SettingRow label="Browsing history" note={historyCount ? `${historyCount} sites, which the new tab page suggests.` : "None yet."}>
-          <button className="small" onClick={clearHistory}>Clear</button>
-        </SettingRow>
-      </SettingGroup>
-      <SettingGroup title="Website Data">
-        <SettingRow label="Website data" note="Sign-ins, cookies and what sites store, kept apart from your other browsers. Removing a site's data signs you out of it.">
-          <button className="small" onClick={clearCookies}>Remove All…</button>
-        </SettingRow>
-      </SettingGroup>
-    </>
+    <SettingGroup title="The Panel's Browser">
+      <div className="settings-note">Kuvo Code for Windows doesn't have the panel's browser yet. When it arrives, its search engine, history and website data will be set here.</div>
+    </SettingGroup>
   );
 }
 
 
-/// Passwords: the sign-ins the panel's browser saved (PasswordsSettings.swift).
+/// Passwords: the sign-ins the panel's browser saved (PasswordsSettings.swift). Without the
+/// browser there is nothing to keep, so this page says what comes rather than storing secrets
+/// nothing can fill in.
 export function PasswordsPage() {
-  const [offers, setOffers] = useState(() => localStorage.getItem("kuvo-passwords-offers") !== "0");
-  const [credentials, setCredentials] = useState<Array<{ target: string; username: string; created: string }>>([]);
-  const [loading, setLoading] = useState(true);
-  const [newTarget, setNewTarget] = useState("");
-  const [newUsername, setNewUsername] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-
-  useEffect(() => {
-    void load();
-  }, []);
-
-  const load = async () => {
-    try {
-      const { credentials: loaded } = await api<{ credentials: Array<{ target: string; username: string; created: string; hasPassword: boolean }> }>("/api/credentials");
-      setCredentials(loaded);
-    } catch { setCredentials([]); }
-    setLoading(false);
-  };
-
-  const add = async () => {
-    if (!newTarget.trim() || !newUsername.trim() || !newPassword) return;
-    try {
-      await api("/api/credentials", { method: "POST", body: { target: newTarget.trim(), username: newUsername.trim(), password: newPassword } });
-      setNewTarget(""); setNewUsername(""); setNewPassword("");
-      await load();
-    } catch (error) { complain(error); }
-  };
-
-  const remove = async (target: string) => {
-    try {
-      await api(`/api/credentials/${encodeURIComponent(target)}`, { method: "DELETE" });
-      await load();
-    } catch (error) { complain(error); }
-  };
-
-  if (loading) return <SettingGroup title="Passwords"><div className="settings-note">Loading…</div></SettingGroup>;
-
   return (
-    <>
-      <SettingGroup title="Passwords & API Keys">
-        <div className="settings-note">Kept in Windows Credential Manager, where the system lists them too. Kuvo Code fills one in only when you ask, and the agent never sees them.</div>
-        <SettingRow label="Offer to save passwords">
-          <input type="checkbox" checked={offers} onChange={event => { setOffers(event.target.checked); localStorage.setItem("kuvo-passwords-offers", event.target.checked ? "1" : "0"); }} />
-        </SettingRow>
-        {credentials.length === 0 ? <div className="settings-note">None yet.</div> : credentials.map(cred => (
-          <SettingRow key={cred.target} label={cred.target} note={`${cred.username} · ${new Date(cred.created).toLocaleDateString()}`}>
-            <button className="small" onClick={() => remove(cred.target)}>Remove</button>
-          </SettingRow>
-        ))}
-      </SettingGroup>
-      <SettingGroup title="Add a Credential">
-        <div className="settings-row"><span>Target (e.g. github.com, api.openai.com)</span><input type="text" value={newTarget} onChange={event => setNewTarget(event.target.value)} /></div>
-        <div className="settings-row"><span>Username / Key name</span><input type="text" value={newUsername} onChange={event => setNewUsername(event.target.value)} /></div>
-        <div className="settings-row"><span>Password / API Key</span><input type="password" value={newPassword} onChange={event => setNewPassword(event.target.value)} /></div>
-        <div className="settings-editor-buttons">
-          <button className="primary" disabled={!newTarget.trim() || !newUsername.trim() || !newPassword} onClick={add}>Save</button>
-        </div>
-      </SettingGroup>
-    </>
+    <SettingGroup title="Passwords">
+      <div className="settings-note">Kuvo Code for Windows doesn't have the panel's browser yet, so there are no saved sign-ins to list. When it arrives they'll be kept in Windows Credential Manager, never in the page.</div>
+    </SettingGroup>
   );
 }
 
 
 export function PhonePage() {
   return (
-    <>
-      <SettingGroup title="Pair">
-        <div className="settings-note">Pair a phone from the Kuvo Code app on your iPhone: scan the QR code it shows. The phone link is switched on in General.</div>
-        <SettingRow label="Pair a Phone…">
-          <button className="small" disabled>Pair a Phone…</button>
-        </SettingRow>
-      </SettingGroup>
-      <SettingGroup title="Phones">
-        <div className="settings-note">None yet.</div>
-      </SettingGroup>
-    </>
+    <SettingGroup title="Phone">
+      <div className="settings-note">The phone link isn't part of Kuvo Code for Windows yet. On the Mac, Kuvo Code for iPhone reaches its engine, and your machines', through an encrypted relay; pairing will live here when it arrives.</div>
+    </SettingGroup>
   );
 }
 
-/// Auto: your lists of models, one for bugfixes and one for features (AutoSettings.swift).
+/// Auto: the coding agents found on this computer (AutoSettings.swift). Detection is real;
+/// running a session through them on Windows arrives with the coding agents work.
 export function AutoPage() {
   const [agents, setAgents] = useState<{ id: string; name: string; installed: boolean }[]>([]);
   useEffect(() => {
@@ -268,22 +152,21 @@ export function AutoPage() {
             <span className="where">{agent.installed ? "Installed" : "Not found"}</span>
           </SettingRow>
         ))}
-        <div className="settings-note">Custom Auto runs with these coding agents, each on its own account. A session on Auto tries the models in your list in order, and moves on when one reaches a limit.</div>
+        <div className="settings-note">Kuvo Code for Windows finds these agents on this computer, but doesn't run sessions through them yet. That arrives with the coding agents work; until then this page only reports what's installed.</div>
       </SettingGroup>
       <SettingGroup title="Custom Auto">
-        <div className="settings-note">Your lists of models — one for bugfixes, one for features — go here, each tried in order when one reaches a limit. Editing the lists needs the coding agents above.</div>
+        <div className="settings-note">Not here yet. On the Mac, Auto tries your models in order — one list for bugfixes, one for features — and moves on when one reaches a limit.</div>
       </SettingGroup>
     </>
   );
 }
 
-/// Machines: Linux servers whose engine Kuvo Code runs over SSH (MachinesSettings.swift).
 export function MachinesPage() {
   const [machines, setMachines] = useState<Array<{ id: string; name: string; destination: string; status?: string }>>([]);
   const [name, setName] = useState("");
   const [destination, setDestination] = useState("");
   const [testing, setTesting] = useState<string | null>(null);
-  const [installing, setInstalling] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -298,40 +181,30 @@ export function MachinesPage() {
     setLoading(false);
   };
 
-  
-
   const add = async () => {
     if (!name.trim() || !destination.trim()) return;
+    setFailure(null);
     try {
       const { machine } = await api<{ machine: { id: string; name: string; destination: string; status: string } }>("/api/machines", { method: "POST", body: { name: name.trim(), destination: destination.trim() } });
-      setMachines([...machines, machine]);
+      setMachines(current => [...current, machine]);
       setName(""); setDestination("");
-    } catch (error) { complain(error); }
+    } catch (error) { setFailure(error instanceof Error ? error.message : String(error)); }
   };
 
   const remove = async (id: string) => {
     try {
       await api(`/api/machines/${encodeURIComponent(id)}`, { method: "DELETE" });
-      setMachines(machines.filter(m => m.id !== id));
-    } catch (error) { complain(error); }
+      setMachines(current => current.filter(machine => machine.id !== id));
+    } catch (error) { setFailure(error instanceof Error ? error.message : String(error)); }
   };
 
   const test = async (id: string) => {
     setTesting(id);
     try {
       const { status } = await api<{ status: string }>(`/api/machines/${encodeURIComponent(id)}/test`, { method: "POST" });
-      setMachines(machines.map(m => m.id === id ? { ...m, status } : m));
-    } catch (error) { complain(error); }
+      setMachines(current => current.map(machine => machine.id === id ? { ...machine, status } : machine));
+    } catch (error) { setFailure(error instanceof Error ? error.message : String(error)); }
     setTesting(null);
-  };
-
-  const install = async (id: string) => {
-    setInstalling(id);
-    try {
-      const { status } = await api<{ status: string }>(`/api/machines/${encodeURIComponent(id)}/install`, { method: "POST" });
-      setMachines(machines.map(m => m.id === id ? { ...m, status } : m));
-    } catch (error) { complain(error); }
-    setInstalling(null);
   };
 
   if (loading) return <SettingGroup title="Machines"><div className="settings-note">Loading…</div></SettingGroup>;
@@ -339,12 +212,11 @@ export function MachinesPage() {
   return (
     <>
       <SettingGroup title="Machines">
-        <div className="settings-note">Linux servers you reach with SSH, like a home server or a VPS. Test reachability, install the engine, and run sessions there.</div>
+        <div className="settings-note">Computers you reach with SSH, like a home server or a VPS. Test asks this computer's own ssh whether it gets in; running a session there arrives with the machines work.</div>
         {machines.length === 0 ? <div className="settings-note">None yet.</div> : machines.map(machine => (
           <SettingRow key={machine.id} label={machine.name} note={`${machine.destination}${machine.status ? ` · ${machine.status}` : ""}`}>
             <button className="small" disabled={testing === machine.id} onClick={() => void test(machine.id)}>{testing === machine.id ? "Testing…" : "Test"}</button>
-            <button className="small" disabled={installing === machine.id} onClick={() => void install(machine.id)}>{installing === machine.id ? "Installing…" : "Install Engine"}</button>
-            <button className="small" onClick={() => remove(machine.id)}>Remove</button>
+            <button className="small" onClick={() => void remove(machine.id)}>Remove</button>
           </SettingRow>
         ))}
       </SettingGroup>
@@ -352,8 +224,9 @@ export function MachinesPage() {
         <div className="settings-row"><span>Name</span><input type="text" value={name} onChange={event => setName(event.target.value)} /></div>
         <div className="settings-row"><span>SSH destination</span><input type="text" value={destination} placeholder="user@host" onChange={event => setDestination(event.target.value)} /></div>
         <div className="settings-editor-buttons">
-          <button className="primary" disabled={!name.trim() || !destination.trim()} onClick={add}>Add Machine…</button>
+          <button className="primary" disabled={!name.trim() || !destination.trim()} onClick={() => void add()}>Add Machine…</button>
         </div>
+        {failure ? <div className="settings-note">{failure}</div> : null}
       </SettingGroup>
     </>
   );
@@ -387,39 +260,37 @@ export function AccountsPage() {
   );
 }
 
-/// Bots: your own, a name, a job, and the model that does it (BotEditor.swift).
+/// Bots: the ones that live on this computer, as their folders describe them (BotEditor.swift).
+/// Kuvo Code on a Mac makes and changes them; this side lists them.
+type HarnessBot = {
+  id: string;
+  session: string;
+  name: string;
+  job?: string;
+  model?: { id?: string; providerID?: string } | null;
+  paused?: boolean;
+  wakes?: number;
+  watching?: number;
+  agents?: boolean;
+};
+
 export function BotsPage() {
-  const [bots, setBots] = useState<Array<{ id: string; name: string; personality: string; model: string; look?: { color: string; shape: string; face: string } }>>([]);
-  const [editing, setEditing] = useState<{ id: string; name: string; personality: string; model: string; look?: { color: string; shape: string; face: string } } | null>(null);
+  const [bots, setBots] = useState<HarnessBot[]>([]);
+  const [failure, setFailure] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     void load();
-  }, [state.project]);
+  }, []);
 
   const load = async () => {
-    if (!state.project) { setBots([]); setLoading(false); return; }
     try {
-      const { bots: loaded } = await api<{ bots: Array<{ id: string; name: string; job: string; model: { id: string }; look: { color: string; shape: string; face: string } }> }>(`/api/bots`);
-      setBots(loaded.map(b => ({ id: b.id, name: b.name, personality: b.job, model: b.model.id, look: b.look })));
-    } catch { setBots([]); }
+      const { bots: loaded } = await api<{ bots: HarnessBot[] }>("/api/bots");
+      setBots(loaded);
+    } catch (error) {
+      setFailure(error instanceof Error ? error.message : String(error));
+    }
     setLoading(false);
-  };
-
-  const saveBot = async (bot: typeof editing) => {
-    if (!bot) return;
-    try {
-      await api(`/api/bots`, { method: "POST", body: bot });
-      setEditing(null);
-      await load();
-    } catch (error) { complain(error); }
-  };
-
-  const removeBot = async (id: string) => {
-    try {
-      await api(`/api/bots/${encodeURIComponent(id)}`, { method: "DELETE" });
-      await load();
-    } catch (error) { complain(error); }
   };
 
   if (loading) return <SettingGroup title="Bots"><div className="settings-note">Loading…</div></SettingGroup>;
@@ -427,58 +298,19 @@ export function BotsPage() {
   return (
     <>
       <SettingGroup title="Bots">
-        {bots.length === 0 ? <div className="settings-note">None yet. A bot is an agent of your own: a name, a job, and the model that does it.</div> : bots.map(bot => (
-          <SettingRow key={bot.id} label={bot.name} note={bot.personality || bot.model}>
-            <button className="small" onClick={() => setEditing(bot)}>Edit</button>
-            <button className="small" onClick={() => removeBot(bot.id)}>Remove</button>
-          </SettingRow>
-        ))}
-        <SettingRow label="New Bot">
-          <button className="small" onClick={() => setEditing({ id: `bot-${Date.now()}`, name: "", personality: "", model: "", look: { color: "sky", shape: "round", face: "calm" } })}>New Bot…</button>
-        </SettingRow>
+        {bots.length === 0 ? <div className="settings-note">None on this computer.</div> : bots.map(bot => {
+          const where = [
+            bot.model?.id ? bot.model.id : null,
+            bot.agents ? "runs with the coding agents" : null,
+            bot.paused ? "paused" : null,
+            bot.wakes ? `${bot.wakes} wake-up${bot.wakes === 1 ? "" : "s"}` : null,
+            bot.watching ? `watching ${bot.watching}` : null,
+          ].filter(Boolean).join(" · ");
+          return <SettingRow key={bot.id} label={bot.name} note={where || bot.job || bot.session} />;
+        })}
+        {failure ? <div className="settings-note">{failure}</div> : null}
       </SettingGroup>
-      {editing ? (
-        <div className="settings-row column">
-          <span>Name</span>
-          <input type="text" value={editing.name} onChange={event => setEditing({ ...editing, name: event.target.value })} />
-          <span>Personality</span>
-          <textarea value={editing.personality} onChange={event => setEditing({ ...editing, personality: event.target.value })} />
-          <span>Model (provider/model)</span>
-          <input type="text" value={editing.model} placeholder="anthropic/claude-3-sonnet" onChange={event => setEditing({ ...editing, model: event.target.value })} />
-          <span>Look</span>
-          <div className="settings-row">
-            <span>Color</span>
-            <select value={editing.look?.color || "sky"} onChange={event => setEditing({ ...editing, look: { color: event.target.value, shape: editing.look?.shape || "round", face: editing.look?.face || "calm" } })}>)
-              <option value="sky">Sky</option>
-              <option value="rose">Rose</option>
-              <option value="amber">Amber</option>
-              <option value="emerald">Emerald</option>
-              <option value="violet">Violet</option>
-              <option value="slate">Slate</option>
-            </select>
-          </div>
-          <div className="settings-row">
-            <span>Shape</span>
-            <select value={editing.look?.shape || "round"} onChange={event => setEditing({ ...editing, look: { shape: event.target.value, color: (editing.look?.color ?? "sky"), face: (editing.look?.face ?? "calm") } })}>)
-              <option value="round">Round</option>
-              <option value="square">Square</option>
-              <option value="hexagon">Hexagon</option>
-            </select>
-          </div>
-          <div className="settings-row">
-            <span>Face</span>
-            <select value={editing.look?.face || "calm"} onChange={event => setEditing({ ...editing, look: { face: event.target.value, color: (editing.look?.color ?? "sky"), shape: (editing.look?.shape ?? "round") } })}>)
-              <option value="calm">Calm</option>
-              <option value="happy">Happy</option>
-              <option value="focused">Focused</option>
-            </select>
-          </div>
-          <div className="settings-editor-buttons">
-            <button className="primary" onClick={() => editing && saveBot(editing)}>Save</button>
-            <button className="small" onClick={() => setEditing(null)}>Cancel</button>
-          </div>
-        </div>
-      ) : null}
+      <div className="settings-note">A bot is made and changed in Kuvo Code on a Mac, which writes what it is told. This computer keeps the ones that live here, and lists them above.</div>
     </>
   );
 }
