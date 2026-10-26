@@ -2,10 +2,14 @@
 // the changes of a session, and the little note that says what happened.
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import { api } from "./api";
+import type { Toast as Note } from "./api";
 import { errorText } from "./lib";
 import { ChangesPanel } from "./Changes";
-import { complain, loadProjectFiles, loadSessions, notify, openProjectFile, openSession, projectName, projectRun, render, setProjectSettings, state, useStore, newSession, exportConversation, stopRun } from "./store";
+import { complain, dismissToast, loadProjectFiles, loadSessions, notify, openProjectFile, openSession, projectName, projectRun, render, setProjectSettings, state, useStore, newSession, exportConversation, stopRun } from "./store";
+import { motionIsReduced } from "./app-shared";
 import { keysOf } from "./shortcuts";
 import { useDialogFocus } from "./focus";
 import { buildTree, type TreeNode } from "./filetree.mjs";
@@ -1121,16 +1125,64 @@ export function DiffModal() {
   );
 }
 
-// ---- The little note ----
+// ---- The little notes ----
 
-export function Toast() {
+/// Three notes at most, newest at the front, the two behind peeking out above it. Point
+/// at the stack and it springs apart into a list; a note leaves after five seconds, or
+/// when it is clicked, and waits while the pointer is on it.
+export function Toasts() {
   useStore();
-  if (!state.toast) return null;
+  const [expanded, setExpanded] = useState(false);
+  // The live region stays in the document even when it is empty: a screen reader only
+  // announces what arrives in a region it already knows.
   return (
-    <div className="toast" role="status" onClick={() => { state.toast = null; render(); }}>
-      <strong>{state.toast.title}</strong>
-      <span>{state.toast.body}</span>
+    <div
+      className={`toast-stack ${expanded ? "expanded" : ""}`}
+      onMouseEnter={() => setExpanded(true)}
+      onMouseLeave={() => setExpanded(false)}
+      onFocus={() => setExpanded(true)}
+      onBlur={event => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setExpanded(false);
+      }}
+    >
+      <AnimatePresence initial={false}>
+        {state.toasts.map((toast, index) => (
+          <ToastCard
+            key={toast.id}
+            toast={toast}
+            depth={state.toasts.length - 1 - index}
+            paused={expanded}
+          />
+        ))}
+      </AnimatePresence>
     </div>
+  );
+}
+
+function ToastCard({ toast, depth, paused }: { toast: Note; depth: number; paused: boolean }) {
+  useEffect(() => {
+    if (paused) return;
+    const timer = window.setTimeout(() => dismissToast(toast.id), 5200);
+    return () => window.clearTimeout(timer);
+  }, [paused, toast.id]);
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 6 }}
+      transition={motionIsReduced() ? { duration: 0 } : { type: "spring", stiffness: 420, damping: 34 }}
+      className={`toast ${toast.tone}`}
+      style={{ zIndex: 10 - depth, "--depth": depth } as CSSProperties}
+    >
+      <div className="toast-copy" role="status" onClick={() => dismissToast(toast.id)}>
+        <strong>{toast.title}</strong>
+        <span>{toast.body}</span>
+      </div>
+      <button className="toast-close" aria-label="Dismiss notification" onClick={() => dismissToast(toast.id)}>
+        <Symbol name="xmark" size={10} />
+      </button>
+    </motion.div>
   );
 }
 

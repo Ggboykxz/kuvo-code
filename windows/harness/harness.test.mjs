@@ -705,6 +705,19 @@ test("what opencode's own settings hold can be brought over, in the shape the en
 test("the shell's own settings are read and written, so the page can speak to the app", async t => {
   const engine = await fakeEngine();
   t.after(engine.close);
+  // The shell keeps its settings beside the app's data. Point that at this run's own folder
+  // so the test starts from an empty file rather than from the machine's real choices.
+  const appData = fs.mkdtempSync(path.join(home, "app-data-"));
+  // The route prefers an existing file, so the empty one has to be there before the first
+  // read; otherwise it would find the machine's own settings further down the list.
+  fs.mkdirSync(path.join(appData, "Kuvo Code"), { recursive: true });
+  fs.writeFileSync(path.join(appData, "Kuvo Code", "config.json"), "{}");
+  const before = process.env.APPDATA;
+  process.env.APPDATA = appData;
+  t.after(() => {
+    if (before === undefined) delete process.env.APPDATA;
+    else process.env.APPDATA = before;
+  });
   const { harness, url } = await inFront(engine);
   t.after(() => harness.close());
 
@@ -712,14 +725,23 @@ test("the shell's own settings are read and written, so the page can speak to th
   assert.equal(typeof first.updates, "boolean");
   assert.equal(typeof first.startAtLogin, "boolean");
   assert.equal(typeof first.keepAwake, "boolean");
+  assert.equal(first.sounds, "off");
 
   const written = await (await fetch(`${url}api/app-settings`, {
     method: "PUT", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ updates: false, keepAwake: true }),
+    body: JSON.stringify({ updates: false, keepAwake: true, sounds: "subtle" }),
   })).json();
   assert.equal(written.updates, false);
   assert.equal(written.keepAwake, true);
+  assert.equal(written.sounds, "subtle");
   assert.equal(written.startAtLogin, first.startAtLogin);
+
+  // Only the two values the setting has are taken; anything else leaves it as it was.
+  const ignored = await (await fetch(`${url}api/app-settings`, {
+    method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ sounds: "loud" }),
+  })).json();
+  assert.equal(ignored.sounds, "subtle");
 });
 
 test("a session can be put away and brought back, the way the Mac app does it", async t => {

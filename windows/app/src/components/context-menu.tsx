@@ -42,6 +42,7 @@ export function ContextMenu({ x, y, items, onClose }: {
           role="menuitem"
           disabled={item.disabled}
           className={item.danger ? "danger" : undefined}
+          style={{ animationDelay: `${Math.min(index, 8) * 14}ms` }}
           onClick={() => { onClose(); item.run?.(); }}
         >{item.label}</button>
       ))}

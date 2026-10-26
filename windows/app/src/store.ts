@@ -4,12 +4,13 @@
 
 import { useEffect, useState } from "react";
 import { api } from "./api";
-import type { Agent, AppState, Attachment, Command, FormRequest, McpServer, Model, SessionDiff, SessionSummary, Transcript, VcsInfo } from "./api";
+import type { Agent, AppState, Attachment, Command, FormRequest, McpServer, Model, SessionDiff, SessionSummary, Toast, Transcript, VcsInfo } from "./api";
 import { apply, emptyTranscript, fromHistory, sessionOf } from "../../harness/transcript.mjs";
 import { conversationMarkdown } from "../../harness/markdown.mjs";
 import { toolSummary } from "./components/tool-call";
 import { compatibilitySettings, copilotClaude } from "./compatibility.mjs";
 import { cycledTab, rememberClosed, tabAfterClose, tabAt, takeClosed } from "./tab-history.mjs";
+import { playSound, setSoundEnabled } from "./sound";
 
 // ---- What the window remembers ----
 
@@ -134,7 +135,8 @@ export const state: AppState = {
   drawerOpen: false,
   pickerOpen: false,
   openFileContent: undefined,
-  toast: null,
+  toasts: [],
+  sounds: "off",
   lineComments: [],
   quote: undefined,
   viewing: null,
@@ -207,6 +209,9 @@ export function applyLook() {
   root.style.setProperty("--message-size", `${look.textSize}px`);
   root.style.setProperty("--motion-base", look.motion === "reduced" ? "1ms" : "320ms");
   root.style.setProperty("--motion-fast", look.motion === "reduced" ? "1ms" : "120ms");
+  // A class for the few animations that carry their own duration (the skeleton's shimmer),
+  // so "Motion: Reduced" stops them as well as the ones that use the tokens.
+  root.dataset.motion = look.motion;
   // The window's own material (Look.swift:42-46: the glass, or a solid ground).
   root.dataset.window = look.window;
   // The typeface of the messages (Look.swift:52-63). The code stays monospaced.
@@ -233,15 +238,51 @@ export function loadLook() {
 
 // ---- Saying what went wrong ----
 
-export function complain(error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  state.toast = { title: "Kuvo Code", body: message };
+let nextToast = 1;
+let soundsChosen = false;
+
+/// A note joins the stack. The same words twice in a row are one note: a loop that fails
+/// every second should not fill the corner.
+export function pushToast(title: string, body: string, tone: Toast["tone"] = "info") {
+  const last = state.toasts[state.toasts.length - 1];
+  if (last && last.title === title && last.body === body) return;
+  state.toasts = [...state.toasts, { id: nextToast++, title, body, tone }].slice(-3);
   render();
 }
 
-export function notify(title: string, body: string) {
-  state.toast = { title, body };
+export function dismissToast(id: number) {
+  state.toasts = state.toasts.filter(toast => toast.id !== id);
   render();
+}
+
+export function complain(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  pushToast("Kuvo Code", message, "error");
+  playSound("error");
+}
+
+/// The sound setting lives in the shell's settings file, not only in this page: it should
+/// survive a profile reset like the rest of the shell's choices. Picking it plays it, so
+/// "Subtle" says what it means before the first run finishes.
+export function setSounds(value: AppState["sounds"]) {
+  soundsChosen = true;
+  const before = state.sounds;
+  state.sounds = value;
+  setSoundEnabled(value === "subtle");
+  render();
+  if (value === "subtle") playSound("copy");
+  void api("/api/app-settings", { method: "PUT", body: { sounds: value } }).catch(error => {
+    // The file did not take it: put the switch back rather than show a choice that
+    // will be gone at the next start.
+    state.sounds = before;
+    setSoundEnabled(before === "subtle");
+    render();
+    complain(error);
+  });
+}
+
+export function notify(title: string, body: string) {
+  pushToast(title, body);
   try {
     if (typeof Notification === "undefined") return;
     if (Notification.permission === "default") void Notification.requestPermission().catch(() => {});
@@ -426,7 +467,6 @@ export async function renameSession(id: string, title: string) {
 
 export async function deleteSession(session: SessionSummary) {
   try {
-    if (!confirm(`Delete “${session.title || "Untitled"}”?`)) return;
     await api(`/api/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
     if (state.session?.id === session.id) {
       state.session = null;
@@ -540,6 +580,12 @@ function handleEvent(event: { type: string; data?: unknown }) {
     // there are.
     if (event.type === "session.execution.succeeded" || event.type === "session.execution.failed" || event.type === "session.execution.interrupted") {
       const ended = sessionOf(event as never);
+      // A cue for the turn that just ended, when it is one on screen. An interrupted run
+      // was stopped on purpose and says nothing.
+      if (ended === state.session?.id || ended === state.split) {
+        if (event.type === "session.execution.succeeded") playSound("done");
+        if (event.type === "session.execution.failed") playSound("error");
+      }
       void (async () => {
         await openSession(state.session!.id);
         await loadSessions();
@@ -874,6 +920,7 @@ export async function sendPrompt(text: string, files: Attachment[] = [], deliver
     // ⌘Return on the Mac queues the message for after the run; here it is the same key.
     if (delivery === "queue") body.delivery = "queue";
     await api(`/api/sessions/${encodeURIComponent(state.session.id)}/prompt`, { method: "POST", body });
+    playSound("send");
     const transcript = state.transcript ?? emptyTranscript();
     transcript.pending = [...transcript.pending, { id: `local_${Date.now()}`, text, files }];
     state.transcript = transcript;
@@ -956,12 +1003,33 @@ export async function exportMarkdownOf(session: SessionSummary) {
   }
 }
 
+/// Text on the clipboard, with the app's quiet tick. `note` says so in the corner when the
+/// copy happened somewhere that closes, like a menu: there is nowhere else to show it.
+/// Returns whether the clipboard took it, so a button can say "Copied" only when it did.
+export async function copyText(text: string, note?: string): Promise<boolean> {
+  // `clipboard` is absent outside a secure context, and optional chaining would make that
+  // look like a successful copy. Say so instead.
+  if (!navigator.clipboard) {
+    pushToast("Kuvo Code", "This window cannot reach the clipboard.", "error");
+    return false;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+    playSound("copy");
+    if (note) pushToast("Copied", note);
+    return true;
+  } catch (error) {
+    complain(error);
+    return false;
+  }
+}
+
 /// The conversation on the clipboard, as Markdown (the Mac's "Copy as Markdown",
 /// SidebarView.swift:626-634).
 export async function copyMarkdown(session: SessionSummary) {
   try {
     const text = await markdownOf(session);
-    await navigator.clipboard?.writeText(text);
+    await copyText(text, "The conversation is on the clipboard.");
   } catch (error) {
     complain(error);
   }
@@ -1178,6 +1246,15 @@ export async function boot() {
   state.projects = info.project ? [info.project] : [];
   render();
   connectEvents();
+  // The shell's own choices, which outlive this page's storage: whether it may make its
+  // quiet sounds. Read before the first run can end.
+  void api<{ sounds?: string }>("/api/app-settings").then(answer => {
+    // A choice made while this was in flight is the later one; leave it alone.
+    if (soundsChosen) return;
+    state.sounds = answer.sounds === "subtle" ? "subtle" : "off";
+    setSoundEnabled(state.sounds === "subtle");
+    render();
+  }).catch(() => {});
   if (state.project) {
     await loadSessions();
     // The projects, with their own names and folders: the session in view is given them

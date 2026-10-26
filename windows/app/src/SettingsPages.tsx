@@ -22,12 +22,14 @@ import {
   rememberTabBar,
   render,
   saveConfig,
+  setSounds,
   state,
 } from "./store";
 import {
   MODES,
   SettingGroup,
   SettingRow,
+  SkeletonRows,
 } from "./SettingsShared";
 
 export function AppearancePage() {
@@ -108,6 +110,14 @@ export function AppearancePage() {
           <select id="setting-motion" value={look.motion} onChange={event => { look.motion = event.target.value; applyLook(); render(); }}>
             <option value="full">Full</option>
             <option value="reduced">Reduced</option>
+          </select>
+        </SettingRow>
+      </SettingGroup>
+      <SettingGroup title="Sound">
+        <SettingRow label="Interface sounds" note="A quiet cue when a message is sent, a run finishes or something fails. Off unless you ask for it; the sounds are made here, not downloaded.">
+          <select id="setting-sounds" value={state.sounds} onChange={event => setSounds(event.target.value as "off" | "subtle")}>
+            <option value="off">Off</option>
+            <option value="subtle">Subtle</option>
           </select>
         </SettingRow>
       </SettingGroup>
@@ -465,7 +475,7 @@ export function PlansSection() {
       .then(answer => { setPlans(answer.plans ?? []); setLoading(false); })
       .catch(() => { setPlans([]); setLoading(false); });
   }, []);
-  if (loading) return <div className="where">Loading…</div>;
+  if (loading) return <SkeletonRows label="Loading permissions" />;
   if (plans.length === 0) return <div className="where">No connected account with a plan to follow. Sign in under Providers.</div>;
   return (
     <>

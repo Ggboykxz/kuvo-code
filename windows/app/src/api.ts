@@ -180,6 +180,13 @@ export type ReviewComment = {
   text: string;
 };
 
+export type Toast = {
+  id: number;
+  title: string;
+  body: string;
+  tone: "info" | "error";
+};
+
 export interface AppState {
   project: string | null;
   engine: EngineState | null;
@@ -246,7 +253,10 @@ export interface AppState {
   drawerOpen: boolean;
   pickerOpen: boolean;
   openFileContent?: string;
-  toast: { title: string; body: string } | null;
+  /** What just happened, newest last. At most three are kept; the view stacks them. */
+  toasts: Toast[];
+  /** Interface sounds: off unless asked for. They are made here, not fetched. */
+  sounds: "off" | "subtle";
   /** A comment on a line of the changes, the Mac's own (ReviewComments.swift:6-18). */
   lineComments?: ReviewComment[];
   quote?: string;

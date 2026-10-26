@@ -20,7 +20,8 @@ import {
 } from "./store";
 import {
   SettingGroup,
-  SettingRow
+  SettingRow,
+  SkeletonRows
 } from "./SettingsShared";
 
 export function WorktreesPage() {
@@ -207,7 +208,7 @@ export function MachinesPage() {
     setTesting(null);
   };
 
-  if (loading) return <SettingGroup title="Machines"><div className="settings-note">Loading…</div></SettingGroup>;
+  if (loading) return <SettingGroup title="Machines"><SkeletonRows label="Loading machines" /></SettingGroup>;
 
   return (
     <>
@@ -245,7 +246,7 @@ export function AccountsPage() {
   return (
     <>
       <SettingGroup title="Accounts">
-        {!loaded ? <div className="settings-note">Loading…</div> : integrations.length === 0 ? <div className="settings-note">The engine did not report any integrations.</div> : integrations.map(one => (
+        {!loaded ? <SkeletonRows rows={2} label="Loading integrations" /> : integrations.length === 0 ? <div className="settings-note">The engine did not report any integrations.</div> : integrations.map(one => (
           <SettingRow key={one.id} label={one.name ?? one.id} note={(one.connections ?? []).length ? "Connected" : "Not connected"}>
             {(one.connections ?? []).length ? (
               <span className="where">Connected</span>
@@ -293,7 +294,7 @@ export function BotsPage() {
     setLoading(false);
   };
 
-  if (loading) return <SettingGroup title="Bots"><div className="settings-note">Loading…</div></SettingGroup>;
+  if (loading) return <SettingGroup title="Bots"><SkeletonRows label="Loading bots" /></SettingGroup>;
 
   return (
     <>

@@ -54,6 +54,7 @@ export async function handle(ctx, request, response, url) {
             updates: settings.autoUpdate !== false,
             startAtLogin: Boolean(settings.autoStart),
             keepAwake: Boolean(settings.keepAwake),
+            sounds: settings.sounds === "subtle" ? "subtle" : "off",
             git: {
               branchPrefix: typeof settings.git?.branchPrefix === "string" ? settings.git.branchPrefix : "",
               commitInstructions: typeof settings.git?.commitInstructions === "string" ? settings.git.commitInstructions : "",
@@ -69,6 +70,7 @@ export async function handle(ctx, request, response, url) {
           if (typeof next.updates === "boolean") settings.autoUpdate = next.updates;
           if (typeof next.startAtLogin === "boolean") settings.autoStart = next.startAtLogin;
           if (typeof next.keepAwake === "boolean") settings.keepAwake = next.keepAwake;
+          if (next.sounds === "off" || next.sounds === "subtle") settings.sounds = next.sounds;
           if (next.git && typeof next.git === "object") settings.git = { ...(settings.git ?? {}), ...next.git };
           fs.mkdirSync(path.dirname(file), { recursive: true });
           fs.writeFileSync(file, JSON.stringify(settings, null, 2));

@@ -90,7 +90,11 @@ export function renderMarkdown(text: string, files: string[] = [], query = ""): 
     button.addEventListener("click", () => {
       void navigator.clipboard?.writeText(pre.querySelector("code")?.textContent ?? "").catch(() => {});
       button.innerHTML = mark("checkmark");
-      setTimeout(() => { button.innerHTML = mark("doc.on.doc"); }, 1200);
+      button.classList.add("copied");
+      setTimeout(() => {
+        button.innerHTML = mark("doc.on.doc");
+        button.classList.remove("copied");
+      }, 1200);
     });
     pre.style.position = "relative";
     pre.append(button);

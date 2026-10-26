@@ -8,6 +8,7 @@ import { commentLocation, splitComments } from "./review-comments.mjs";
 import {
   answerPermission,
   complain,
+  copyText,
   dismissForm,
   loadSessions,
   openSession,
@@ -453,6 +454,28 @@ export function EmptyConversation({ directory }: { directory: string }) {
   );
 }
 
+/// The copy under your words: it says "Copied" for a moment, with the check the Mac's
+/// code blocks use (CodeBlockStyle.swift), so the hand gets an answer where it clicked.
+function CopyEntryButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1400);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+  return (
+    <button
+      className={`entry-action ${copied ? "copied" : ""}`}
+      title="Copy"
+      aria-label={copied ? "Copied" : "Copy"}
+      onClick={async () => { if (await copyText(text)) setCopied(true); }}
+    >
+      <Symbol name={copied ? "checkmark" : "doc"} size={12} />
+      <span className="entry-action-text">{copied ? "Copied" : "Copy"}</span>
+    </button>
+  );
+}
+
 export function EntryNodes({ transcript }: { transcript: Transcript }) {
   // The message that started the turn: what "Try Again" sends again.
   const lastMessage = [...transcript.entries].reverse().find(entry => entry.kind === "user")?.text ?? "";
@@ -479,19 +502,7 @@ export function EntryNodes({ transcript }: { transcript: Transcript }) {
                   shown under the pointer, so nothing moves when they appear. */}
               <div className="entry-actions">
                 <span className="entry-time">{sentAt(entry.created)}</span>
-                {entry.text ? (
-                  <button
-                    className="entry-action"
-                    title="Copy"
-                    aria-label="Copy"
-                    onClick={async () => {
-                      await navigator.clipboard?.writeText(entryText(entry)).catch(() => {});
-                    }}
-                  >
-                    <Symbol name="doc" size={12} />
-                    <span className="entry-action-text">Copy</span>
-                  </button>
-                ) : null}
+                {entry.text ? <CopyEntryButton text={entryText(entry)} /> : null}
                 {entry.id ? (
                   <button
                     className="entry-action"
@@ -561,7 +572,7 @@ export function EntryNodes({ transcript }: { transcript: Transcript }) {
           y={menu.y}
           onClose={() => setMenu(null)}
           items={[
-            { label: "Copy", run: () => { const found = transcript.entries.find(item => item.id === menu.id); void navigator.clipboard?.writeText(found ? entryText(found) : "").catch(() => {}); } },
+            { label: "Copy", run: () => { const found = transcript.entries.find(item => item.id === menu.id); void copyText(found ? entryText(found) : "", "The message is on the clipboard."); } },
             { label: "New Session From Here", run: () => { const found = transcript.entries.find(item => item.id === menu.id); if (found) void forkSessionFrom(found); } },
             { label: "Undo From Here…", run: () => { const found = transcript.entries.find(item => item.id === menu.id); if (found) void undoFromHere(found); } },
           ]}

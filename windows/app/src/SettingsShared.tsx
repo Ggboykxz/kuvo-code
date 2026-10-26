@@ -3,6 +3,21 @@
 import { type ReactNode } from "react";
 import { type SymbolName } from "./components/symbols";
 
+/// What a list looks like before it arrives: rows of the shape it will have, shimmering
+/// rather than saying "Loading…". The shimmer stops when motion is reduced.
+export function SkeletonRows({ rows = 3, label = "Loading" }: { rows?: number; label?: string }) {
+  return (
+    <div className="skeleton-rows" role="status" aria-label={label}>
+      {Array.from({ length: rows }, (_, index) => (
+        <div className="skeleton-row" key={index} aria-hidden="true">
+          <span className="skeleton-dot" />
+          <span className="skeleton-line" style={{ width: `${58 + (index % 3) * 12}%` }} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export const PAGES = [
   ["appearance", "Appearance"],
   ["general", "General"],

@@ -58,6 +58,7 @@ export function Sidebar() {
   // A session being renamed, in its row where Rename was chosen (SidebarView.swift:41-52),
   // and the rows' own menus, which are where the Mac offers it (SidebarView.swift:586).
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [projectMenu, setProjectMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   // Which project shows all its sessions, and which only the first few
@@ -125,23 +126,52 @@ export function Sidebar() {
             {running || unread ? <span className={`session-state ${running ? "running" : "unread"}`} aria-hidden="true" /> : null}
           </button>
         )}
-        <button
-          className="session-delete"
-          title="Put this session away (Settings › Archived sessions brings it back)"
-          onClick={async () => {
-            try {
-              await api(`/api/sessions/${encodeURIComponent(session.id)}/archive`, { method: "POST", body: { archived: true } });
-              if (state.session?.id === session.id) { state.session = null; state.transcript = null; }
-              await loadSessions();
-              await loadProjectSessions();
-            } catch (error) { complain(error); }
-          }}
-        >
-          <Symbol name="tray.and.arrow.down" size={12} />
-        </button>
-        <button className="session-delete" title="Delete this session" aria-label="Delete this session" onClick={() => void deleteSession(session)}>
-          <Symbol name="xmark" size={10} />
-        </button>
+        {confirmingDelete === session.id ? (
+          <span
+            className="session-confirm"
+            role="group"
+            aria-label={`Delete “${session.title || "New Session"}”?`}
+            onBlur={event => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setConfirmingDelete(null);
+            }}
+          >
+            <button
+              className="session-confirm-no"
+              autoFocus
+              onClick={() => setConfirmingDelete(null)}
+              onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); setConfirmingDelete(null); } }}
+            >
+              Keep
+            </button>
+            <button
+              className="session-confirm-yes"
+              onClick={() => { setConfirmingDelete(null); void deleteSession(session); }}
+              onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); setConfirmingDelete(null); } }}
+            >
+              Delete
+            </button>
+          </span>
+        ) : (
+          <>
+            <button
+              className="session-delete"
+              title="Put this session away (Settings › Archived sessions brings it back)"
+              onClick={async () => {
+                try {
+                  await api(`/api/sessions/${encodeURIComponent(session.id)}/archive`, { method: "POST", body: { archived: true } });
+                  if (state.session?.id === session.id) { state.session = null; state.transcript = null; }
+                  await loadSessions();
+                  await loadProjectSessions();
+                } catch (error) { complain(error); }
+              }}
+            >
+              <Symbol name="tray.and.arrow.down" size={12} />
+            </button>
+            <button className="session-delete" title="Delete this session" aria-label="Delete this session" onClick={() => setConfirmingDelete(session.id)}>
+              <Symbol name="xmark" size={10} />
+            </button>
+          </>
+        )}
       </li>
     );
   };
@@ -292,7 +322,7 @@ export function Sidebar() {
               { label: "Export as Markdown…", run: () => { if (found) void exportMarkdownOf(found); } },
               { label: "", separator: true },
               { label: isArchived ? "Unarchive" : "Archive", run: () => { if (found) void archiveSession(found, !isArchived); } },
-              { label: "Delete…", danger: true, run: () => { if (found) void deleteSession(found); } },
+              { label: "Delete…", danger: true, run: () => { if (found) setConfirmingDelete(found.id); } },
             ]}
           />
         );

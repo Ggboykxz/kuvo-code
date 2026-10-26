@@ -398,6 +398,27 @@ aside {
 .session-sub { font-size: var(--text-xs); color: var(--ink-soft); }
 .session-delete { border: 0; color: var(--ink-faint); padding: 4px 6px; font-size: var(--text-xs); }
 .session-delete:hover { color: var(--danger); }
+/* Deleting asks in the row itself, where the session is, rather than in a system dialog
+   that covers the list. Keep is first and takes the focus, so Return does not delete. */
+.session-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  animation: kuvo-fade var(--motion-quick) var(--ease-out) both;
+}
+.session-confirm button {
+  height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: var(--text-xs);
+}
+.session-confirm-no { color: var(--ink-soft); }
+.session-confirm-no:hover { background: var(--hover); color: var(--ink); }
+.session-confirm-yes { color: var(--danger); }
+.session-confirm-yes:hover { background: var(--danger-soft); }
 
 #conversation { display: flex; flex-direction: column; min-height: 0; }
 
@@ -934,6 +955,38 @@ main { display: flex; }
   font-size: var(--text-sm);
 }
 .settings-note { font-size: var(--text-sm); color: var(--ink-soft); }
+
+/* A list on its way: the rows it will have, shimmering. */
+.skeleton-rows { display: flex; flex-direction: column; gap: 6px; padding: 4px 0; }
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-row);
+  background: var(--panel);
+}
+.skeleton-dot,
+.skeleton-line {
+  display: block;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, var(--line-soft) 0%, var(--hover) 50%, var(--line-soft) 100%);
+  background-size: 200% 100%;
+  animation: kuvo-shimmer 1.4s linear infinite;
+}
+.skeleton-dot { width: 18px; height: 18px; flex: none; }
+.skeleton-line { height: 10px; }
+@keyframes kuvo-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-dot, .skeleton-line { animation: none; }
+}
+html[data-motion="reduced"] .skeleton-dot,
+html[data-motion="reduced"] .skeleton-line { animation: none; }
 .settings-card .primary { align-self: flex-end; }
 .swatches { display: flex; gap: var(--space-2); }
 .swatch {
@@ -1320,6 +1373,69 @@ li.unread .session { position: relative; padding-left: 16px; }
 .picker-modal.shown { animation: kuvo-fade var(--motion-fast) var(--ease-standard) both; }
 .picker-modal.shown .picker-card { animation: kuvo-rise var(--motion-base) var(--ease-spring) both; }
 .toast { animation: kuvo-rise var(--motion-base) var(--ease-spring) both; }
+
+/* The notes: newest in front, the two behind peeking out above it. Point at the stack
+   and it opens into a list. The cards' heights are their own, so the overlap is a margin
+   rather than a fixed box. */
+.toast-stack {
+  position: fixed;
+  top: calc(var(--header-height) + 12px);
+  right: 16px;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  width: min(380px, calc(100vw - 32px));
+  pointer-events: none;
+}
+.toast-stack .toast {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: 10px 10px 10px 12px;
+  border-radius: var(--radius-panel);
+  color: var(--ink);
+  pointer-events: auto;
+  animation: none;
+  transition: margin-top var(--motion-base) var(--ease-spring);
+}
+.toast-stack .toast + .toast { margin-top: -46px; }
+.toast-stack.expanded .toast + .toast { margin-top: 8px; }
+.toast-stack:not(.expanded) .toast:not(:last-child) { opacity: 0.88; }
+.toast-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+  cursor: pointer;
+}
+.toast-copy strong { font-size: var(--text-sm); font-weight: 600; }
+.toast-copy span {
+  color: var(--ink-soft);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.toast.error { border-color: color-mix(in oklab, var(--danger) 45%, var(--line)); }
+.toast.error strong { color: var(--danger); }
+.toast-close {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-faint);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+.toast-close:hover { background: var(--hover); color: var(--ink); }
+@media (prefers-reduced-motion: reduce) {
+  .toast-stack .toast { transition: none; }
+}
 
 /* What arrives in the conversation arrives gently. */
 .entry { animation: kuvo-rise var(--motion-base) var(--ease-standard) both; }
@@ -1796,6 +1912,9 @@ body.viewing-image main {
   --motion-base: 320ms;
   --motion-slow: 500ms;
   --motion-hover: 120ms;
+  /* The standard beat, named separately for the reduced-motion exemptions that need a
+     duration even when every other animation is held. */
+  --motion-standard: 320ms;
   /* The spring's own length: the time it takes to settle (98 % by 0.23 s). */
   --motion-spring: 450ms;
   --ease-hover: cubic-bezier(0, 0, 0.2, 1);
@@ -3616,10 +3735,14 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
   gap: 2px;
   min-height: 22px;
   opacity: 0;
-  transition: opacity var(--motion-hover) var(--ease-hover);
+  /* Laid out all along; the last two pixels are the only movement, so nothing around
+     them shifts when they appear. */
+  transform: translateY(2px);
+  transition: opacity var(--motion-hover) var(--ease-hover),
+              transform var(--motion-hover) var(--ease-hover);
 }
 .entry.user:hover .entry-actions,
-.entry.user:focus-within .entry-actions { opacity: 1; }
+.entry.user:focus-within .entry-actions { opacity: 1; transform: none; }
 .entry-time {
   color: var(--ink-faint);
   font-size: var(--text-xs);
@@ -3725,7 +3848,12 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
 
 /* The Mac's menu chevron: 8 pt, bold, in the secondary ink, after the label
    (Pressable.swift:192-198). */
-.choice-chevron { flex: 0 0 8px; color: var(--ink-faint); stroke-width: 2; }
+.choice-chevron {
+  flex: 0 0 8px;
+  color: var(--ink-faint);
+  stroke-width: 2;
+  transition: transform var(--motion-quick) var(--ease-spring);
+}
 .choice-button { display: inline-flex; align-items: center; gap: 5px; }
 
 /* The accent badge (Pressable.swift:201-220): it grows to 1.12 and darkens a little under
@@ -3860,3 +3988,200 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
   color: var(--ink-soft);
   font-size: 12px;
 }
+
+/* ==========================================================================
+   Micro-interactions
+
+   The small answers a native app gives the hand: a chrome-less control fills
+   under the pointer and deepens while it is pressed, a mark leans toward what
+   it does, a copy says it copied, a list marks the row in use. The motion is
+   the Mac binding's own — the 120 ms hover beat and the spring — so "Motion:
+   Reduced" and the system's setting stop it with everything else.
+   ========================================================================== */
+
+/* A control without a border answers with a fill, never a squeeze: the Mac's
+   Pressable is a shade under the pointer and a darker one while it is down
+   (Pressable.swift:8-9). Bordered buttons already answer with their own edge. */
+button.small:active:not(:disabled),
+button.icon:active:not(:disabled),
+.entry-action:active,
+.titlebar-icon:active,
+.card-action:active,
+.toast-close:active,
+.session-delete:active,
+.project-compose:active,
+.settings-nav button:active,
+.project-row:active,
+.session:active,
+.open-quickly-row:active,
+.drawer-tab:active,
+.changes-file-toggle:active,
+.choice-item:active,
+.choice-button:active,
+.sidebar-new:active,
+.section-action-button:active,
+.tab-close:active {
+  background: var(--press-active);
+}
+.palette-item:active,
+.context-menu button:active:not(:disabled) {
+  background: var(--press-active);
+}
+.tab:active:not(.active) { background: var(--press-active); }
+
+/* The marks: a copy leans toward the words it copies, a close turns as it is
+   reached for, a compose pencil lifts off the page, a chevron follows the panel
+   it opens. The move is a pixel or two, so the row never shifts. */
+.entry-action svg,
+.toast-close svg,
+.tab-close svg,
+.session-delete svg,
+.project-compose svg,
+.section-action-button svg,
+.sidebar-new svg,
+.settings-nav button svg,
+.changes-file-toggle svg {
+  transition: transform var(--motion-quick) var(--ease-spring),
+              color var(--motion-quick) var(--ease-standard);
+}
+.entry-action:hover svg { transform: translateX(1px); }
+.toast-close:hover svg,
+.tab-close:hover svg,
+.session-delete[aria-label="Delete this session"]:hover svg { transform: rotate(90deg); }
+.project-compose:hover svg { transform: rotate(-8deg) scale(1.06); }
+.section-action-button:hover svg { transform: scale(1.12); }
+.sidebar-new:hover svg { transform: translate(1px, -1px); }
+.settings-nav button:hover svg { transform: translateX(1px); }
+.project-row:hover .project-icon { transform: translateY(-1px); }
+.project-icon { transition: transform var(--motion-quick) var(--ease-spring); }
+.changes-file-toggle:hover .turned { transform: rotate(90deg) scale(1.1); }
+.choice-button[aria-expanded="true"] .choice-chevron:is(svg) { transform: rotate(180deg); }
+
+/* Copied: the check the Mac's code blocks use (CodeBlockStyle.swift), where the
+   hand asked, for a moment. */
+.entry-action.copied { color: var(--ok); }
+.entry-action.copied svg { animation: kuvo-check-pop var(--motion-base) var(--ease-spring) both; }
+.code-copy.copied { color: var(--ok); }
+@keyframes kuvo-check-pop {
+  0% { transform: scale(0.5); opacity: 0.25; }
+  55% { transform: scale(1.18); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* The row in use: a short accent bar at its edge, growing in like a mark drawn
+   rather than painted. */
+.palette-item,
+.open-quickly-row,
+.settings-nav button,
+.sessions li { position: relative; }
+.palette-item.selected::before,
+.open-quickly-row.selected::before,
+.settings-nav button.active::before,
+.sessions li.current::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  width: 2px;
+  height: 14px;
+  margin-top: -7px;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: kuvo-accent-in var(--motion-fast) var(--ease-spring) both;
+}
+.settings-nav button.active svg { color: var(--accent); }
+.sessions li.current::before { height: 18px; margin-top: -9px; left: 0; }
+@keyframes kuvo-accent-in {
+  from { transform: scaleY(0.2); opacity: 0; }
+  to { transform: scaleY(1); opacity: 1; }
+}
+
+/* A session working: its dot breathes, as the tab's does. */
+.session-state.running { animation: kuvo-pulse 1.2s var(--ease-standard) infinite; }
+
+/* What appears without a panel around it: the clear in a search field, the offer
+   to come back to the newest words, the menu over selected text. */
+.search-clear,
+.quote-button { animation: kuvo-pop var(--motion-fast) var(--ease-spring) both; }
+#jump-latest:not([hidden]) { animation: kuvo-jump-in var(--motion-fast) var(--ease-spring) both; }
+@keyframes kuvo-jump-in {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* A menu arrives as one piece, and its items follow in a short run, so the eye
+   reads the list in order rather than all at once. */
+.context-menu { animation: kuvo-pop var(--motion-fast) var(--ease-spring) both; }
+.context-menu button { animation: kuvo-menu-item var(--motion-quick) var(--ease-standard) both; }
+@keyframes kuvo-menu-item {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* A settings page pushes in, the Mac's own way (SettingsView), a little shorter
+   than the detail page's rise so switching pages stays quick. */
+.settings-page:not([hidden]) { animation: kuvo-page-in var(--motion-base) var(--ease-standard) both; }
+@keyframes kuvo-page-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* A link's underline grows from the left, the way a hand would draw it. */
+.markdown a {
+  background-image: linear-gradient(currentColor, currentColor);
+  background-repeat: no-repeat;
+  background-position: 0 calc(100% - 1px);
+  background-size: 0 1px;
+  transition: background-size var(--motion-fast) var(--ease-standard);
+}
+.markdown a:hover { text-decoration: none; background-size: 100% 1px; }
+
+/* The search well deepens when the caret is in it, and its mark takes the accent. */
+.search-well {
+  transition: background var(--motion-fast) var(--ease-standard),
+              color var(--motion-fast) var(--ease-standard);
+}
+.search-well:focus-within { background: color-mix(in oklab, var(--ink) 6%, transparent); }
+.search-well:focus-within > svg { color: var(--accent); }
+
+/* The primary action lifts a hair under the pointer, and settles back under the
+   hand; the press is still a fill, not a squeeze. */
+button.primary {
+  transition: background var(--motion-fast) var(--ease-standard),
+              border-color var(--motion-fast) var(--ease-standard),
+              box-shadow var(--motion-fast) var(--ease-standard),
+              transform var(--motion-quick) var(--ease-spring);
+}
+button.primary:hover {
+  box-shadow: 0 3px 10px color-mix(in oklab, var(--accent) 24%, transparent);
+  transform: translateY(-1px);
+}
+button.primary:active:not(:disabled) {
+  box-shadow: none;
+  filter: brightness(0.94);
+  transform: translateY(0);
+}
+#attach svg { transition: transform var(--motion-quick) var(--ease-spring); }
+#attach:hover svg { transform: rotate(-10deg); }
+
+/* The accent badge answers a choice: its ring draws itself in when it becomes
+   the chosen one. */
+.swatch.selected { animation: kuvo-swatch-in var(--motion-base) var(--ease-spring) both; }
+@keyframes kuvo-swatch-in {
+  from { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px transparent; }
+  to { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--accent); }
+}
+
+/* The system and the app's own setting both ask for less: the new moves stop,
+   and the menu's stagger does not leave its items waiting. */
+@media (prefers-reduced-motion: reduce) {
+  .entry-actions { transform: none; }
+  .context-menu button { animation-delay: 0ms !important; }
+  .entry-action.copied svg,
+  .swatch.selected { animation: none; }
+}
+html[data-motion="reduced"] .entry-actions { transform: none; }
+html[data-motion="reduced"] .context-menu button { animation: none; }
+html[data-motion="reduced"] .session-state.running { animation: none; }
+html[data-motion="reduced"] .entry-action.copied svg,
+html[data-motion="reduced"] .swatch.selected { animation: none; }

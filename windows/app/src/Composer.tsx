@@ -7,6 +7,7 @@ import type { Attachment } from "./api";
 import {
   approval,
   complain,
+  copyText,
   favoriteModels,
   loadInbox,
   modelInView,
@@ -541,7 +542,7 @@ export function ImageViewer() {
       if (event.key === "+" || event.key === "=") setZoomed(true);
       if (event.key === "-") setZoomed(false);
       if ((event.key === "c" || event.key === "C") && (event.ctrlKey || event.metaKey)) {
-        void navigator.clipboard?.writeText(picture?.source ?? "").catch(() => {});
+        void copyText(picture?.source ?? "", "The picture is on the clipboard.");
       }
     };
     window.addEventListener("keydown", onKey);
@@ -586,7 +587,7 @@ export function ImageViewer() {
               className="card-action icon"
               title="Copy the picture (Ctrl+C)"
               aria-label="Copy the picture"
-              onClick={event => { event.stopPropagation(); void navigator.clipboard?.writeText(picture?.source ?? "").catch(() => {}); }}
+              onClick={event => { event.stopPropagation(); void copyText(picture?.source ?? "", "The picture is on the clipboard."); }}
             >
               <Symbol name="doc.on.doc" size={13} />
             </button>
@@ -676,7 +677,7 @@ export function Choice({ id, title, groups, value, onPick, empty, suffix }: {
 
   return (
     <span className="choice">
-      <button id={id} className="choice-button" title={title} onClick={() => { setOpen(value => !value); setQuery(""); }}>
+      <button id={id} className="choice-button" title={title} aria-expanded={open} aria-haspopup="listbox" onClick={() => { setOpen(value => !value); setQuery(""); }}>
         {current?.label ?? empty}
         {suffix ? <span className="choice-suffix">{suffix}</span> : null}
         {/* The Mac's menu chevron: 8 pt, bold, in the secondary ink, after the label

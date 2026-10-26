@@ -32,7 +32,7 @@ import {
   useStore,
 } from "./store";
 import { Settings } from "./Settings";
-import { DiffModal, Drawer, OpenQuickly, Palette, Picker, ProjectEditor, openTerminal, runTheProject, Toast } from "./Overlays";
+import { DiffModal, Drawer, OpenQuickly, Palette, Picker, ProjectEditor, openTerminal, runTheProject, Toasts } from "./Overlays";
 import { Symbol } from "./components/symbols";
 import { EmptyConversation, EntryNodes, WorkingLine, FindBar, PermissionCard, FormCard } from "./Transcript";
 import { Header, CardHeader, ContextGauge, SplitHeader, SplitEntries, toggleSplit } from "./Header";
@@ -383,7 +383,7 @@ export function App() {
       <Settings />
       <DiffModal />
       <ProjectEditor />
-      <Toast />
+      <Toasts />
       <ImageViewer />
       <AnalyticsNotice />
       {!ready ? <div className="fatal">Starting…</div> : null}
