@@ -51,11 +51,26 @@ The Mac's own palette, bound in `windows/harness/ui/style.css`; light by default
 
 ## 06 · Motion
 
-- Hover: 150ms ease-standard
-- State change: 200ms ease-standard
-- Page transition: 300ms ease-out
-- Easing: cubic-bezier(0.2, 0, 0, 1) standard, cubic-bezier(0, 0, 0.2, 1) out
-- No bouncy easings. No scale-on-hover. No shadow changes on hover.
+The Mac binding in `windows/harness/ui/style.css` is the source of truth.
+
+- Hover and small answers: 120ms (`--motion-hover`, `--motion-quick`), ease-out
+- State change: 320ms (`--motion-base`)
+- The spring: 450ms, the Mac's `.spring(response: 0.32, dampingFraction: 0.86)`
+  written as a `linear()` curve — a little past 1, then home
+- Press is a fill, never a squeeze: 8% under the pointer and 13% while it is
+  down (`--press-hover`, `--press-active`)
+
+What moves: chrome-less controls fill; marks lean or turn a pixel or two toward
+what they do; the row in use grows a 2px accent bar; menus arrive as one piece
+with their items following in a 14ms run; a Settings page pushes in 4px; the
+search well deepens; the primary action lifts 1px; links underline from the
+left; a copy says “Copied” with the Mac's check; the toast stack keeps three,
+newest in front, and opens under the pointer; a working session's dot breathes.
+
+Reduced motion: “Motion: Reduced” sets the tokens to 1ms and
+`html[data-motion="reduced"]` stops the hard-coded loops (the working dot, the
+skeleton shimmer, the menu stagger). The system's `prefers-reduced-motion` does
+the same for the CSS animations.
 
 ## 07 · Voice
 
@@ -72,8 +87,9 @@ The Mac's own palette, bound in `windows/harness/ui/style.css`; light by default
 
 ## 09 · Anti-patterns
 
-- Forbidden: purple gradient hero backgrounds; emoji icons in CTAs; the word "AI" in body copy; auto-scale on hover; bouncy easings; heavy shadows; pure black backgrounds
-- No scale-on-hover, no shadow change on hover
-- Cards have no shadow by default
+- Forbidden: purple gradient hero backgrounds; emoji icons in CTAs; the word "AI" in body copy; pure black backgrounds
+- No scale on layout, rows or text; a mark may answer at 1.06–1.12, and the chosen swatch may grow
+- A control's hover is a fill or a 1px lift, never a squeeze of the whole row
+- Cards have no shadow by default; only the primary action and lifted surfaces gain one
 - Inputs use focus rings, not border-only changes
 - Scrollbars are thin (8px) and subtle

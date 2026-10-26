@@ -63,6 +63,21 @@ historical reference. This file tracks what we build next, in our own order.
 - [x] Fix the three CI failures: the harness executable's bundle, the invalid
   reduced-motion rule, and the bridge handshake race.
 
+## 0.7.1 — the app answers the hand
+
+- [x] Interface sounds, off by default, synthesized with Web Audio and kept in
+  the shell's `config.json`.
+- [x] A stack of notes: three at most, newest in front, hovering expands it,
+  5.2 s each, and the same words twice in a row are one note.
+- [x] Delete a session in its row: Keep is focused first, Escape or moving the
+  focus away keeps it, and the native confirm dialog is gone.
+- [x] Skeleton rows for Bots, Machines, Accounts and Usage plans.
+- [x] Micro-interactions across the page: press fills, icon nudges, selection
+  bars, menu stagger, page push, link underlines, copy confirmations, search
+  focus, primary lift, swatch ring and the working dot.
+- [x] “Motion: Reduced” stops the hard-coded loops as well as the token-driven
+  transitions.
+
 ## Next (0.8.x)
 
 - [ ] The panel's browser: a WebView2 host, its search engine, history and website

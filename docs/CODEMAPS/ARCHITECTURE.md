@@ -28,7 +28,7 @@ The Windows client is three processes and one engine.
 │ React page — windows/app/src                                 │
 │  App.tsx       title bar, sessions, transcript, composer     │
 │  Settings.tsx  every Settings page                           │
-│  Overlays.tsx  palette, picker, drawer, diff, toast          │
+│  Overlays.tsx  palette, picker, drawer, diff, toasts        │
 │  store.ts      state, look, sessions, worktrees              │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -62,7 +62,8 @@ The Windows client is three processes and one engine.
 - `store.ts` is the page's single mutable store. Components subscribe through
   `useStore()`; mutations call `render()`.
 - The engine is the source of truth for sessions, messages and configuration.
-- The shell's `config.json` holds window/project preferences.
+- The shell's `config.json` holds window/project preferences and the interface
+  sound choice.
 - Bots and machines live in the harness (`~/.kuvo-code/bots`, `machines.json`),
   not in the page.
 - `localStorage` still holds a few surfaces the page hasn't wired yet

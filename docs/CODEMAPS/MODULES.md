@@ -16,21 +16,25 @@ Key pieces: `App`, `Header`, `SessionTabs`, `Sidebar`, `Conversation`,
 
 Every Settings page and the settings shell (sidebar, search, page switch).
 
-Key pieces: `Settings`, `SettingGroup`, `SettingRow`, `PAGES`, `PAGE_GROUPS`,
-`PAGE_SUBTITLES`, `PAGE_SYMBOLS`, and the page components (`AppearancePage`,
-`GeneralPage`, `McpPage`, `AgentsPage`, `BotsPage`, `SkillsPage`, `CommandsPage`,
-`ProjectsPage`, `ProvidersPage`, `AccountsPage`, `UsagePage`, `GitPage`,
-`WorktreesPage`, `StoragePage`, `IntegrationsPage`, `BrowserPage`,
-`PasswordsPage`, `PhonePage`, `AutoPage`, `MachinesPage`, `ArchivedPage`,
-`PermissionsPage`, `NotificationsPage`, `PrivacyPage`, `PanelPage`,
-`SystemPage`).
+Key pieces: `Settings`, `SettingGroup`, `SettingRow`, `SkeletonRows`, `PAGES`,
+`PAGE_GROUPS`, `PAGE_SUBTITLES`, `PAGE_SYMBOLS`, and the page components
+(`AppearancePage`, `GeneralPage`, `McpPage`, `AgentsPage`, `BotsPage`,
+`SkillsPage`, `CommandsPage`, `ProjectsPage`, `ProvidersPage`, `AccountsPage`,
+`UsagePage`, `GitPage`, `WorktreesPage`, `StoragePage`, `IntegrationsPage`,
+`BrowserPage`, `PasswordsPage`, `PhonePage`, `AutoPage`, `MachinesPage`,
+`ArchivedPage`, `PermissionsPage`, `NotificationsPage`, `PrivacyPage`,
+`PanelPage`, `SystemPage`).
+
+`SettingsShared.tsx` holds the pieces every page uses: `SettingGroup`,
+`SettingRow`, `SkeletonRows`, `PAGES`, `PAGE_GROUPS`, `PAGE_SUBTITLES` and
+`PAGE_SYMBOLS`.
 
 To add a page, see `AGENTS.md`.
 
 ### `Overlays.tsx`
 
 What floats over the conversation: `Palette`, `OpenQuickly`, `Picker`,
-`Drawer` (Files / Changes / Terminal), `DiffModal`, `ProjectEditor`, `Toast`,
+`Drawer` (Files / Changes / Terminal), `DiffModal`, `ProjectEditor`, `Toasts`,
 `ImageViewer`, `AnalyticsNotice`.
 
 ### `store.ts`
@@ -39,7 +43,14 @@ The page's state and the actions that change it: `state`, `render`, `useStore`,
 `look`/`applyLook`/`loadLook`, `loadSessions`, `openSession`, `openSplit`,
 `closeSessionTab`, `cycleTab`, `renameSession`, `deleteSession`, `connectEvents`,
 `loadModels`, `loadAgents`, `loadCommands`, `loadProjects`, `saveConfig`,
-`worktrees`, `createWorktree`, `removeWorktree`, `notify`, `complain`.
+`worktrees`, `createWorktree`, `removeWorktree`, `notify`, `complain`,
+`pushToast`/`dismissToast`, `copyText`, `setSounds`.
+
+### `sound.ts`
+
+The interface's cues, synthesized with the Web Audio API (`send`, `done`,
+`error`, `copy`). `setSoundEnabled()` follows the shell's `sounds` setting;
+`playSound()` is a no-op while it is off.
 
 ### `api.ts`
 
