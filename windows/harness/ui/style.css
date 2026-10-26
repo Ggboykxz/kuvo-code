@@ -972,7 +972,7 @@ main { display: flex; }
 .skeleton-line {
   display: block;
   border-radius: var(--radius-pill);
-  background: linear-gradient(90deg, var(--line-soft) 0%, var(--hover) 50%, var(--line-soft) 100%);
+  background: linear-gradient(90deg, var(--press-hover) 0%, var(--press-active) 50%, var(--press-hover) 100%);
   background-size: 200% 100%;
   animation: kuvo-shimmer 1.4s linear infinite;
 }
