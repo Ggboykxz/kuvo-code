@@ -1,6 +1,6 @@
 // Transcript components and helpers.
 
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import type { Attachment, FormRequest, PermissionRequest, SessionSummary, Transcript, TranscriptEntry } from "./api";
 import { brief, errorText, renderMarkdown } from "./lib";
@@ -26,6 +26,7 @@ import { Symbol } from "./components/symbols";
 import { toolDiffStat, toolSummary, toolSymbol } from "./components/tool-call";
 import { Shimmer } from "./components/ai-elements/shimmer";
 import { motionIsReduced, duration, stepKind, stepPhrase, entryText, countOf } from "./app-shared";
+import { findRanges } from "./find.mjs";
 
 
 export function ToolCard({ part }: { part: TranscriptEntry["parts"] extends (infer P)[] | undefined ? P : never }) {
@@ -109,14 +110,15 @@ export function LongText({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   const long = text.length > 900;
   const files = state.projectFiles;
-  if (!long) return <div className="text markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(text, files) }} />;
+  const query = state.findOpen ? state.findQuery : "";
+  if (!long) return <div className="text markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(text, files, query) }} />;
   const cut = text.slice(0, 700);
   const line = cut.lastIndexOf("\n", 700);
   return (
     <div className="text markdown">
       <div
         dangerouslySetInnerHTML={{
-          __html: renderMarkdown(open ? text : cut.slice(0, line > 200 ? line : 700), files),
+          __html: renderMarkdown(open ? text : cut.slice(0, line > 200 ? line : 700), files, query),
         }}
       />
       {/* The Mac's own words, and the same way round: it folds and unfolds. */}
@@ -185,6 +187,8 @@ export function FindBar() {
   const query = state.findQuery.trim();
   const [at, setAt] = useState(0);
   const input = useRef<HTMLInputElement>(null);
+  // The mark the next render should bring into view, when the arrows are used.
+  const pending = useRef<number | null>(null);
   // What the find reads: the messages that have come, and the ones still on their way.
   const messages = [
     ...(state.transcript?.entries ?? []).filter(entry => entry.kind === "user" || entry.kind === "assistant"),
@@ -203,18 +207,27 @@ export function FindBar() {
   const step = (delta: number) => {
     if (!places) return;
     const next = (current + delta + places) % places;
-    setAt(next);
-    // The message the match is in is brought into view.
-    let seen = 0;
-    for (const item of matches) {
-      seen += item.count;
-      if (next < seen) {
-        const node = document.querySelector(`[data-entry="${item.entry.id ?? ""}"]`);
-        node?.scrollIntoView({ block: "center" });
-        break;
-      }
+    // The mark itself is brought into view, not just the message it is in: a long reply
+    // can hold several matches, and the count says which one you are on.
+    const marks = Array.from(document.querySelectorAll<HTMLElement>("#entries .find-mark"));
+    marks.forEach((mark, index) => mark.classList.toggle("current", index === next));
+    if (next === current) {
+      marks[next]?.scrollIntoView({ block: "center" });
+      return;
     }
+    pending.current = next;
+    setAt(next);
   };
+  // The marks are new on every render — the conversation streams, and a new query marks
+  // again — so the current one is put back each time. Only the arrows scroll.
+  useEffect(() => {
+    const marks = Array.from(document.querySelectorAll<HTMLElement>("#entries .find-mark"));
+    marks.forEach((mark, index) => mark.classList.toggle("current", index === current));
+    if (pending.current !== null) {
+      marks[pending.current]?.scrollIntoView({ block: "center" });
+      pending.current = null;
+    }
+  });
   return (
     <div id="find-bar" className="find-bar">
       <div className="find-row">
@@ -232,7 +245,7 @@ export function FindBar() {
             if (event.key === "Escape") { event.preventDefault(); state.findOpen = false; render(); }
           }}
         />
-        <span className="find-count">
+        <span className="find-count" aria-live="polite" key={`${current}:${places}`}>
           {query.length < 2 ? "" : places ? `${current + 1} / ${places} ${places === 1 ? "result" : "results"}` : "No results"}
         </span>
         <button id="find-previous" className="find-action" title="Previous Result (Shift+Return)" aria-label="Previous Result" disabled={!places} onClick={() => step(-1)}>
@@ -280,10 +293,28 @@ export function sentAt(created?: number) {
 }
 
 
+/// The words with a find's marks in them, so your own messages are marked too — the
+/// count reads both sides of the conversation, and so should the marks.
+function markedWords(text: string, query: string): ReactNode {
+  const ranges = findRanges(text, query);
+  if (!ranges.length) return text;
+  const parts: ReactNode[] = [];
+  let at = 0;
+  ranges.forEach((range, index) => {
+    if (range.start > at) parts.push(text.slice(at, range.start));
+    parts.push(<mark className="find-mark" key={index}>{text.slice(range.start, range.end)}</mark>);
+    at = range.end;
+  });
+  if (at < text.length) parts.push(text.slice(at));
+  return parts;
+}
+
 /// A message you sent: the words, and the comments on the changes that went with them
 /// (AgentReferences.swift:170-179, YourMessage.swift:22, 829-831).
 export function UserWords({ text }: { text: string }) {
+  useStore();
   const { text: words, comments } = splitComments(text);
+  const query = state.findOpen ? state.findQuery.trim() : "";
   return (
     <>
       {comments.map((one, index) => (
@@ -300,7 +331,7 @@ export function UserWords({ text }: { text: string }) {
           <div className="comment-reference-text">{one.text}</div>
         </div>
       ))}
-      <div className="text">{words}</div>
+      <div className="text">{markedWords(words, query)}</div>
     </>
   );
 }
@@ -346,8 +377,10 @@ export function StepsRow({ entry }: { entry: TranscriptEntry }) {
 }
 
 export function AssistantEntry({ entry }: { entry: TranscriptEntry }) {
+  useStore();
   const [quote, setQuote] = useState<{ text: string; top: number; left: number } | null>(null);
   const blockRef = useRef<HTMLElement>(null);
+  const query = state.findOpen ? state.findQuery : "";
 
   // The Mac app's selection menu: select a passage, and ask for it in your own message.
   const onSelect = () => {
@@ -374,7 +407,7 @@ export function AssistantEntry({ entry }: { entry: TranscriptEntry }) {
                   ? <Shimmer as="span" className="thinking-shimmer" duration={1.6}>Thinking…</Shimmer>
                   : "Thinking…"}
               </summary>
-              <div className="text markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(part.text ?? "", state.projectFiles) }} />
+              <div className="text markdown" dangerouslySetInnerHTML={{ __html: renderMarkdown(part.text ?? "", state.projectFiles, query) }} />
             </details>
           );
         }

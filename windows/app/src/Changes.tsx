@@ -4,6 +4,7 @@
 
 import { useEffect, useState } from "react";
 import { Symbol } from "./components/symbols";
+import { ConfirmAction } from "./components/confirm-action";
 import { api } from "./api";
 import { diffGutterWidth, diffNumber, diffSide, foldRows, parsePatch, type DiffLine } from "./diff.mjs";
 import { commentMatches, type ReviewComment } from "./review-comments.mjs";
@@ -176,18 +177,18 @@ export function ChangesPanel() {
                   <span className="where">{`+${file.additions ?? 0} −${file.deletions ?? 0}`}</span>
                 </button>
                 {scope !== "session" ? (
-                  <button
-                    className="small"
+                  <ConfirmAction
                     title="Put this file back as it was"
-                    onClick={async () => {
-                      if (!confirm(`Put ${file.file} back as it was?`)) return;
+                    question={`Put ${file.file} back as it was?`}
+                    confirmLabel="Revert"
+                    onConfirm={async () => {
                       try {
                         await api("/api/changes/revert", { method: "POST", body: { directory: state.project, file: file.file } });
                       } catch (error) { complain(error); }
                     }}
                   >
                     Revert
-                  </button>
+                  </ConfirmAction>
                 ) : null}
               </div>
               {isOpen ? (

@@ -4,6 +4,7 @@
 import katex from "katex";
 import { marked } from "marked";
 import { fileIn } from "./filelinks.mjs";
+import { findRanges } from "./find.mjs";
 
 export const escapeHtml = (text: unknown) =>
   String(text).replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]) as string);
@@ -27,22 +28,28 @@ export function sanitizeHtml(html: string): string {
 }
 
 /// The matches of a find, marked in the text — the text nodes only, so the markup the
-/// markdown made is left as it is.
+/// markdown made is left as it is. Every occurrence is marked, not just the first in a
+/// node, so the marks agree with the count and the find can step through them.
 function highlight(root: Node, query: string) {
-  const needle = query.toLowerCase();
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const texts: Text[] = [];
   while (walker.nextNode()) texts.push(walker.currentNode as Text);
   for (const node of texts) {
     const value = node.textContent ?? "";
-    const at = value.toLowerCase().indexOf(needle);
-    if (at < 0) continue;
-    const mark = document.createElement("mark");
-    mark.className = "find-mark";
-    mark.textContent = value.slice(at, at + needle.length);
-    const rest = document.createTextNode(value.slice(at + needle.length));
-    const before = document.createTextNode(value.slice(0, at));
-    node.replaceWith(before, mark, rest);
+    const ranges = findRanges(value, query);
+    if (!ranges.length) continue;
+    const marked = document.createDocumentFragment();
+    let at = 0;
+    for (const range of ranges) {
+      if (range.start > at) marked.append(value.slice(at, range.start));
+      const mark = document.createElement("mark");
+      mark.className = "find-mark";
+      mark.textContent = value.slice(range.start, range.end);
+      marked.append(mark);
+      at = range.end;
+    }
+    if (at < value.length) marked.append(value.slice(at));
+    node.replaceWith(marked);
   }
 }
 

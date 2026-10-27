@@ -400,14 +400,17 @@ aside {
 .session-delete:hover { color: var(--danger); }
 /* Deleting asks in the row itself, where the session is, rather than in a system dialog
    that covers the list. Keep is first and takes the focus, so Return does not delete. */
-.session-confirm {
+.session-confirm,
+.confirm-action {
   display: inline-flex;
   align-items: center;
   gap: 2px;
   flex: none;
+  white-space: nowrap;
   animation: kuvo-fade var(--motion-quick) var(--ease-out) both;
 }
-.session-confirm button {
+.session-confirm button,
+.confirm-action button {
   height: 22px;
   padding: 0 6px;
   border: 0;
@@ -415,10 +418,14 @@ aside {
   background: transparent;
   font-size: var(--text-xs);
 }
-.session-confirm-no { color: var(--ink-soft); }
-.session-confirm-no:hover { background: var(--hover); color: var(--ink); }
-.session-confirm-yes { color: var(--danger); }
-.session-confirm-yes:hover { background: var(--danger-soft); }
+.session-confirm-no,
+.confirm-keep { color: var(--ink-soft); }
+.session-confirm-no:hover,
+.confirm-keep:hover { background: var(--hover); color: var(--ink); }
+.session-confirm-yes,
+.confirm-yes { color: var(--danger); }
+.session-confirm-yes:hover,
+.confirm-yes:hover { background: var(--danger-soft); }
 
 #conversation { display: flex; flex-direction: column; min-height: 0; }
 
@@ -473,6 +480,7 @@ aside {
   padding-bottom: 120px;
   pointer-events: none;
   text-align: center;
+  animation: kuvo-rise var(--motion-base) var(--ease-spring) both;
 }
 .empty-conversation > svg { color: var(--ink-faint); }
 .empty-conversation p { margin: 0; font-size: var(--text-title3); font-weight: 500; color: var(--ink-soft); }
@@ -1049,7 +1057,9 @@ html[data-motion="reduced"] .skeleton-line { animation: none; }
   padding: 2px 10px; border-radius: var(--radius-sm);
   background: var(--panel-2); border: 1px solid var(--line);
   font-size: var(--text-xs); color: var(--ink); text-decoration: none;
+  animation: kuvo-pop var(--motion-fast) var(--ease-spring) both;
 }
+.attachment-pill { animation: kuvo-pop var(--motion-fast) var(--ease-spring) both; }
 
 /* ---- @-mentions and slash commands (the Mac app's GroupMentions popup) ---- */
 .autocomplete {
@@ -1088,6 +1098,9 @@ html[data-motion="reduced"] .skeleton-line { animation: none; }
 .queue-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-soft); }
 .queue-meta { color: var(--ink-faint); font-size: var(--text-xs); flex-shrink: 0; }
 .queue-dock .small { align-self: flex-end; }
+.queue-dock.open { animation: kuvo-fade var(--motion-quick) var(--ease-out) both; }
+.queue-dock.open .queue-item:nth-child(2) { animation-delay: 24ms; }
+.queue-dock.open .queue-item:nth-child(3) { animation-delay: 48ms; }
 
 /* ---- Fork affordance ---- */
 .entry-action { opacity: 0; transition: opacity var(--motion-fast) var(--ease-standard); }
@@ -1397,6 +1410,8 @@ li.unread .session { position: relative; padding-left: 16px; }
   border-radius: var(--radius-panel);
   color: var(--ink);
   pointer-events: auto;
+  position: relative;
+  overflow: hidden;
   animation: none;
   transition: margin-top var(--motion-base) var(--ease-spring);
 }
@@ -1433,8 +1448,27 @@ li.unread .session { position: relative; padding-left: 16px; }
   border-radius: var(--radius-sm);
 }
 .toast-close:hover { background: var(--hover); color: var(--ink); }
+/* The note's time left, drawn under it: it runs out over 5.2 s and stops while the
+   stack is held open, as the timer does. */
+.toast-timer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--accent);
+  transform-origin: left center;
+  animation: kuvo-toast-timer 5200ms linear both;
+}
+.toast.error .toast-timer { background: var(--danger); }
+.toast-stack.expanded .toast-timer { animation-play-state: paused; }
+@keyframes kuvo-toast-timer {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
 @media (prefers-reduced-motion: reduce) {
   .toast-stack .toast { transition: none; }
+  .toast-timer { display: none; }
 }
 
 /* What arrives in the conversation arrives gently. */
@@ -1523,6 +1557,7 @@ li.unread .session { position: relative; padding-left: 16px; }
   font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.55;
   border-top: 1px solid var(--line-soft);
   background: var(--code-bg);
+  animation: kuvo-fade var(--motion-quick) var(--ease-out) both;
 }
 /* A row is the Mac's own: the number in a gutter, the text without the patch's signs,
    and a coloured edge on a line that changed (ChangesPanel.swift:959-1042). */
@@ -1540,14 +1575,18 @@ li.unread .session { position: relative; padding-left: 16px; }
 /* The mark that writes a comment on the line: the Mac's, in the gutter, under the
    pointer (ChangesPanel.swift:980-992). */
 .diff-comment {
-  position: absolute; left: 2px; top: 50%; transform: translateY(-50%);
+  position: absolute; left: 2px; top: 50%; transform: translateY(-50%) scale(0.85);
   width: 16px; height: 16px; padding: 0; border: 0; border-radius: 4px;
   display: inline-flex; align-items: center; justify-content: center;
   background: var(--accent); color: var(--accent-ink);
   opacity: 0; pointer-events: none;
+  transition: opacity var(--motion-quick) var(--ease-standard),
+              transform var(--motion-quick) var(--ease-spring),
+              filter var(--motion-quick) var(--ease-standard);
 }
-.diff-line:hover .diff-comment { opacity: 1; pointer-events: auto; }
+.diff-line:hover .diff-comment { opacity: 1; pointer-events: auto; transform: translateY(-50%) scale(1); }
 .diff-comment:hover { filter: brightness(1.08); }
+.diff-comment:active { transform: translateY(-50%) scale(0.94); filter: brightness(0.96); }
 .diff-draft { display: inline-flex; gap: var(--space-1); align-items: center; }
 .diff-draft input {
   width: 220px; padding: 2px var(--space-2);
@@ -2220,6 +2259,11 @@ main.sidebar-hidden aside {
 .search-empty { padding: 2px 4px 4px; color: var(--ink-soft); font-size: 12px; }
 .search-results .hit { padding: 4px; border-radius: var(--radius-row); }
 .search-results .hit:hover { background: var(--hover); color: var(--ink); }
+.search-results .hit { animation: kuvo-fade var(--motion-quick) var(--ease-out) both; }
+.search-results .hit:nth-child(3) { animation-delay: 20ms; }
+.search-results .hit:nth-child(4) { animation-delay: 40ms; }
+.search-results .hit:nth-child(5) { animation-delay: 60ms; }
+.search-results .hit:nth-child(n+6) { animation-delay: 80ms; }
 
 /* The Mac's projects in the sidebar (SidebarView.swift:178-196, 723-845): a heading per
    section with a chevron that folds it away, every project with its own sessions, and
@@ -3516,9 +3560,15 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
   background: transparent;
   color: var(--ink-soft);
   font-size: 12px;
+  transition: background var(--motion-quick) var(--ease-standard),
+              border-color var(--motion-quick) var(--ease-standard),
+              color var(--motion-quick) var(--ease-standard),
+              transform var(--motion-quick) var(--ease-spring);
 }
-.mode-choice:hover { background: var(--hover); color: var(--ink); }
+.mode-choice:hover { background: var(--hover); color: var(--ink); transform: translateY(-1px); }
+.mode-choice:active { transform: translateY(0); }
 .mode-choice.active { border-color: var(--accent); color: var(--ink); }
+.mode-choice.active .mode-thumb { box-shadow: 0 2px 8px color-mix(in oklab, var(--accent) 22%, transparent); }
 .mode-thumb {
   display: block;
   width: 84px;
@@ -3558,10 +3608,21 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   text-align: left;
+  transition: background var(--motion-quick) var(--ease-standard),
+              color var(--motion-quick) var(--ease-standard);
 }
+.file-node { animation: kuvo-fade var(--motion-quick) var(--ease-out) both; }
 .file-row:hover { background: var(--hover); }
 .file-row.dir { color: var(--ink-soft); }
-.file-row svg { flex: 0 0 auto; color: var(--ink-soft); }
+.file-row svg {
+  flex: 0 0 auto;
+  color: var(--ink-soft);
+  transition: transform var(--motion-quick) var(--ease-spring),
+              color var(--motion-quick) var(--ease-standard);
+}
+.file-row:hover svg { color: var(--ink); }
+.file-row.dir:hover svg:not(.turned) { transform: translateX(1px); }
+.file-row:hover .turned { transform: rotate(90deg) scale(1.08); }
 .file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* The row's own menu (SidebarView.swift:586-590), and the name being typed in the row
@@ -3660,6 +3721,11 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
   background: var(--panel);
   border-bottom: 1px solid var(--line);
   box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
+  animation: kuvo-find-in var(--motion-base) var(--ease-spring) both;
+}
+@keyframes kuvo-find-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
 }
 .find-row {
   display: flex;
@@ -3686,6 +3752,11 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
   color: var(--ink-faint);
   font-size: var(--text-xs);
   font-variant-numeric: tabular-nums;
+  animation: kuvo-count-in var(--motion-quick) var(--ease-spring) both;
+}
+@keyframes kuvo-count-in {
+  from { opacity: 0.4; transform: translateY(-2px); }
+  to { opacity: 1; transform: none; }
 }
 .find-action {
   width: 26px;
@@ -3699,13 +3770,26 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
   background: transparent;
   color: var(--ink-soft);
 }
+.find-action svg { transition: transform var(--motion-quick) var(--ease-spring); }
+#find-previous:hover:not(:disabled) svg { transform: translateY(-1px); }
+#find-next:hover:not(:disabled) svg { transform: translateY(1px); }
+#find-done:hover svg { transform: rotate(90deg); }
 .find-action:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
 .find-action:disabled { opacity: 0.4; }
-/* What the find found is marked in the words. */
+/* What the find found is marked in the words, and the one you are on is the accent. */
 .find-mark {
   background: color-mix(in oklab, var(--warn) 35%, transparent);
   color: inherit;
   border-radius: 3px;
+}
+.find-mark.current {
+  background: var(--accent);
+  color: var(--accent-ink);
+  animation: kuvo-mark-in var(--motion-fast) var(--ease-spring) both;
+}
+@keyframes kuvo-mark-in {
+  from { box-shadow: 0 0 0 2px var(--accent-soft); }
+  to { box-shadow: 0 0 0 2px transparent; }
 }
 
 /* The clear in a search field (Pressable.swift:73-91): quiet at rest, brighter under the
@@ -3779,6 +3863,8 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
 }
 .remove-button:hover { background: var(--danger-soft); color: var(--danger); }
 .remove-button:active { opacity: .7; }
+.remove-button svg { transition: transform var(--motion-quick) var(--ease-spring); }
+.remove-button:hover svg { transform: rotate(90deg); }
 
 /* The quote you are answering (QuoteViews.swift:5-33): a bar of the accent, what you are
    replying to, and a way to drop it — in a well, over the composer. */
@@ -3791,6 +3877,7 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
   border-radius: 10px;
   background: var(--well);
   border: 1px solid var(--well-border);
+  animation: kuvo-rise var(--motion-fast) var(--ease-spring) both;
 }
 .quote-bar {
   flex: 0 0 3px;
@@ -4020,7 +4107,14 @@ button.icon:active:not(:disabled),
 .choice-button:active,
 .sidebar-new:active,
 .section-action-button:active,
-.tab-close:active {
+.tab-close:active,
+.find-action:active,
+.file-row:active,
+.confirm-keep:active,
+.confirm-yes:active,
+.mode-choice:active,
+.search-results .hit:active,
+.diff-fold:active {
   background: var(--press-active);
 }
 .palette-item:active,
@@ -4043,6 +4137,10 @@ button.icon:active:not(:disabled),
 .changes-file-toggle svg {
   transition: transform var(--motion-quick) var(--ease-spring),
               color var(--motion-quick) var(--ease-standard);
+}
+.steps-summary svg,
+.tool-chevron svg {
+  transition: transform var(--motion-quick) var(--ease-spring);
 }
 .entry-action:hover svg { transform: translateX(1px); }
 .toast-close:hover svg,
@@ -4185,3 +4283,5 @@ html[data-motion="reduced"] .context-menu button { animation: none; }
 html[data-motion="reduced"] .session-state.running { animation: none; }
 html[data-motion="reduced"] .entry-action.copied svg,
 html[data-motion="reduced"] .swatch.selected { animation: none; }
+html[data-motion="reduced"] .toast-timer { display: none; }
+html[data-motion="reduced"] .mode-choice:hover { transform: none; }

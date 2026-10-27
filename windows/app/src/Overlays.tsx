@@ -1160,10 +1160,21 @@ export function Toasts() {
 }
 
 function ToastCard({ toast, depth, paused }: { toast: Note; depth: number; paused: boolean }) {
+  // The note's time left, so pausing it does not give it a fresh five seconds: the line
+  // under it and the timer stop and start together.
+  const remaining = useRef(5200);
+  const started = useRef(0);
   useEffect(() => {
     if (paused) return;
-    const timer = window.setTimeout(() => dismissToast(toast.id), 5200);
-    return () => window.clearTimeout(timer);
+    started.current = Date.now();
+    const timer = window.setTimeout(() => dismissToast(toast.id), remaining.current);
+    return () => {
+      if (started.current) {
+        remaining.current = Math.max(0, remaining.current - (Date.now() - started.current));
+        started.current = 0;
+      }
+      window.clearTimeout(timer);
+    };
   }, [paused, toast.id]);
   return (
     <motion.div
@@ -1182,6 +1193,7 @@ function ToastCard({ toast, depth, paused }: { toast: Note; depth: number; pause
       <button className="toast-close" aria-label="Dismiss notification" onClick={() => dismissToast(toast.id)}>
         <Symbol name="xmark" size={10} />
       </button>
+      <span className="toast-timer" aria-hidden="true" />
     </motion.div>
   );
 }

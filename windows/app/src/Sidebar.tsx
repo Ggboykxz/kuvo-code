@@ -30,6 +30,7 @@ import { Symbol, FolderIcon } from "./components/symbols";
 import { ContextMenu } from "./components/context-menu";
 import { openBeside } from "./Header";
 import { folderName } from "./app-shared";
+import { findRanges } from "./find.mjs";
 /// The Mac's section heading (SidebarView.swift:1039-1088): the title, a chevron that
 /// folds the section away, and what the section has on the right.
 export function SectionHeader({ title, folded, onToggle, action }: { title: string; folded: boolean; onToggle: () => void; action?: React.ReactNode }) {
@@ -408,6 +409,22 @@ export function PaneResizer({ pane }: { pane: "sessions" | "split" | "changes" }
   );
 }
 
+/// The words of a search result with what was looked for marked, so the eye finds it in
+/// the snippet without reading the whole line.
+function markedSnippet(text: string, query: string): React.ReactNode {
+  const ranges = findRanges(text, query);
+  if (!ranges.length) return text;
+  const parts: React.ReactNode[] = [];
+  let at = 0;
+  ranges.forEach((range, index) => {
+    if (range.start > at) parts.push(text.slice(at, range.start));
+    parts.push(<mark className="find-mark" key={index}>{text.slice(range.start, range.end)}</mark>);
+    at = range.end;
+  });
+  if (at < text.length) parts.push(text.slice(at));
+  return parts;
+}
+
 /// What was said, in every session: the one sidebar search looks in the titles and in the
 /// conversations, the way the Mac app's does (SidebarView.swift:84-112).
 export function MessageSearch({ query }: { query: string }) {
@@ -433,7 +450,7 @@ export function MessageSearch({ query }: { query: string }) {
         <div className="hit" key={match.session.id}>
           <div>{match.session.title || match.session.id}</div>
           {match.hits.map((hit, index) => (
-            <div className="where" key={index} onClick={() => { void openSession(match.session.id); const main = document.querySelector("main"); if (main) main.classList.remove("sidebar-open"); }}>{hit.snippet}</div>
+            <div className="where" key={index} onClick={() => { void openSession(match.session.id); const main = document.querySelector("main"); if (main) main.classList.remove("sidebar-open"); }}>{markedSnippet(hit.snippet, query)}</div>
           ))}
         </div>
       ))}

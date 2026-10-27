@@ -5,6 +5,7 @@ import {
 import {
   Symbol
 } from "./components/symbols";
+import { ConfirmAction } from "./components/confirm-action";
 import {
   api
 } from "./api";
@@ -358,11 +359,12 @@ export function ArchivedPage() {
           >
             Unarchive
           </button>
-          <button
-            className="small"
+          <ConfirmAction
             title="Delete it for good"
-            onClick={async () => {
-              if (!confirm("Delete it for good?")) return;
+            ariaLabel="Delete it for good"
+            question={`Delete “${session.title || "Untitled"}” for good?`}
+            confirmLabel="Delete"
+            onConfirm={async () => {
               try {
                 await api(`/api/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
                 await load();
@@ -370,7 +372,7 @@ export function ArchivedPage() {
             }}
           >
             <Symbol name="xmark" size={11} />
-          </button>
+          </ConfirmAction>
         </div>
       ))}
     </>

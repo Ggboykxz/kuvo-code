@@ -6,6 +6,7 @@ import {
 import {
   api
 } from "./api";
+import { ConfirmAction } from "./components/confirm-action";
 
 import {
   bootConfig,
@@ -310,10 +311,11 @@ export function McpEditor({ id }: { id: string | null }) {
         />
       </div>
       <div className="settings-editor-buttons">
-        <button
+        <ConfirmAction
           className="danger small"
-          onClick={async () => {
-            if (!confirm("Remove it?")) return;
+          question="Remove this server?"
+          confirmLabel="Remove"
+          onConfirm={async () => {
             cfgSet(base, null);
             await saveConfig();
             state.cfgEditor = null;
@@ -322,7 +324,7 @@ export function McpEditor({ id }: { id: string | null }) {
           }}
         >
           Remove Server…
-        </button>
+        </ConfirmAction>
         <button className="primary" onClick={() => { state.cfgEditor = null; state.settingsSection = "mcp"; render(); }}>Done</button>
       </div>
     </EditorShell>
@@ -407,10 +409,11 @@ export function AgentEditor({ id }: { id: string | null }) {
         />
       </div>
       <div className="settings-editor-buttons">
-        <button
+        <ConfirmAction
           className="danger small"
-          onClick={async () => {
-            if (!confirm("Remove it?")) return;
+          question="Remove this agent?"
+          confirmLabel="Remove"
+          onConfirm={async () => {
             cfgSet(base, null);
             await saveConfig();
             state.cfgEditor = null;
@@ -419,7 +422,7 @@ export function AgentEditor({ id }: { id: string | null }) {
           }}
         >
           Remove Agent…
-        </button>
+        </ConfirmAction>
         <button className="primary" onClick={() => { state.cfgEditor = null; state.settingsSection = "agents"; render(); }}>Done</button>
       </div>
     </EditorShell>
@@ -473,10 +476,11 @@ export function SkillEditor({ id }: { id: string | null }) {
       </div>
       <div className="settings-editor-buttons">
         {id ? (
-          <button
+          <ConfirmAction
             className="danger small"
-            onClick={async () => {
-              if (!confirm("Delete this skill?")) return;
+            question="Delete this skill?"
+            confirmLabel="Delete"
+            onConfirm={async () => {
               await api(`/api/skill-file/${id}`, { method: "DELETE" }).catch(error => complain(error));
               await bootConfig();
               state.cfgEditor = null;
@@ -485,7 +489,7 @@ export function SkillEditor({ id }: { id: string | null }) {
             }}
           >
             Delete Skill…
-          </button>
+          </ConfirmAction>
         ) : null}
         <button className="primary" onClick={() => void save()}>Save Skill</button>
       </div>
@@ -531,10 +535,11 @@ export function CommandEditor({ id }: { id: string | null }) {
       ) : null}
       <div className="settings-editor-buttons">
         {base ? (
-          <button
+          <ConfirmAction
             className="danger small"
-            onClick={async () => {
-              if (!confirm("Remove it?")) return;
+            question="Delete this command?"
+            confirmLabel="Delete"
+            onConfirm={async () => {
               cfgSet(base, null);
               await saveConfig();
               state.cfgEditor = null;
@@ -543,7 +548,7 @@ export function CommandEditor({ id }: { id: string | null }) {
             }}
           >
             Delete Command…
-          </button>
+          </ConfirmAction>
         ) : null}
         <button
           className="primary"

@@ -59,15 +59,4 @@ export function entryText(entry: { kind?: string; text?: string; parts?: { type:
   return (entry.parts ?? []).map(part => (part.type === "text" || part.type === "reasoning" ? part.text ?? "" : "")).join("\n");
 }
 
-export function countOf(text: string, query: string) {
-  if (query.length < 2) return 0;
-  const haystack = text.toLowerCase();
-  const needle = query.toLowerCase();
-  let count = 0;
-  let at = haystack.indexOf(needle);
-  while (at >= 0) {
-    count += 1;
-    at = haystack.indexOf(needle, at + needle.length);
-  }
-  return count;
-}
+export { countOf } from "./find.mjs";
