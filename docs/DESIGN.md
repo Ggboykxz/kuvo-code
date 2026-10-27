@@ -67,10 +67,21 @@ search well deepens; the primary action lifts 1px; links underline from the
 left; a copy says “Copied” with the Mac's check; the toast stack keeps three,
 newest in front, and opens under the pointer; a working session's dot breathes.
 
+Find and the tree: every match is marked in the words, the one you are on in
+the accent; the arrows step the marks themselves, not just the message; the
+bar slides down over the card and the count pops when it changes; the file
+tree's rows fade in as folders open and their chevrons turn; a search result's
+snippet shows the matched words.
+
+Ask in place: a destructive action asks in its own row — “Keep” takes the
+focus first, Escape or moving the focus away leaves things as they were — never
+in a system dialog over the page. The toast shows its time left as a line under
+it that stops while the stack is held open.
+
 Reduced motion: “Motion: Reduced” sets the tokens to 1ms and
 `html[data-motion="reduced"]` stops the hard-coded loops (the working dot, the
-skeleton shimmer, the menu stagger). The system's `prefers-reduced-motion` does
-the same for the CSS animations.
+skeleton shimmer, the menu stagger, the toast's countdown line). The system's
+`prefers-reduced-motion` does the same for the CSS animations.
 
 ## 07 · Voice
 

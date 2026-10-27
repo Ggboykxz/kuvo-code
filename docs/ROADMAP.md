@@ -78,6 +78,16 @@ historical reference. This file tracks what we build next, in our own order.
 - [x] “Motion: Reduced” stops the hard-coded loops as well as the token-driven
   transitions.
 
+## 0.7.2 — find marks every match, and ask in place
+
+- [x] Find marks every match on both sides of the conversation, steps the marks
+  themselves, and the sidebar's search results mark the matched words.
+- [x] The native confirm dialog is gone: Revert, Remove Server, Remove Agent,
+  Delete Skill, Delete Command and archived delete all ask in their rows.
+- [x] Toast countdown line that pauses with the stack; file-tree rows fade in;
+  attachments pop; queue dock staggers; diff and comment mark move; search
+  results stagger; mode thumbnails lift; empty conversation rises.
+
 ## Next (0.8.x)
 
 - [ ] The panel's browser: a WebView2 host, its search engine, history and website
@@ -90,6 +100,8 @@ historical reference. This file tracks what we build next, in our own order.
 - [ ] Bots: create and edit on Windows, once the Mac's kit and instructions writer
   has a Windows equivalent.
 - [ ] Split `store.ts` and `Overlays.tsx` into modules under roughly 800 lines.
+- [ ] Find: search the agent's steps and the app's own panels, not only the
+  conversation's words.
 - [ ] Offline/air-gapped mode and an update channel choice (stable/beta).
 
 ## Decisions
