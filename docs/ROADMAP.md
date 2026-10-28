@@ -88,6 +88,20 @@ historical reference. This file tracks what we build next, in our own order.
   attachments pop; queue dock staggers; diff and comment mark move; search
   results stagger; mode thumbnails lift; empty conversation rises.
 
+## 0.7.3 — the update installs
+
+- [x] The check and the download use Electron's network stack, so the system's
+  proxy and certificate store apply; the releases feed answers when the GitHub
+  API is limited.
+- [x] The installer streams to `%APPDATA%\Kuvo Code\updates` under a unique name,
+  is checked for length and `MZ`, and is launched detached; old installers are
+  swept after a day.
+- [x] `update.log` records every attempt, failures are shown rather than
+  swallowed, and Settings › General shows the version, Check Now, Install and a
+  way to the log.
+- [x] Windows toasts work again through the app's Application User Model ID, and
+  the app menu and tray carry the waiting update.
+
 ## Next (0.8.x)
 
 - [ ] The panel's browser: a WebView2 host, its search engine, history and website
