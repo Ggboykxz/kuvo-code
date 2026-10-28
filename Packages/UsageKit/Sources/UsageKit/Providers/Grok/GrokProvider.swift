@@ -69,27 +69,36 @@ final class GrokProvider: ProviderRuntime {
         // A login the server turns away doesn't hide the next one (fork change): an old Grok CLI
         // login, say, after the host's sign-in.
         var rejected: GrokAuthError?
+        // With the host's sign-in, the Grok CLI's login is only read, never renewed or saved: that
+        // belongs to the CLI (fork change).
+        let renews = !candidates.contains { $0.entryKey == GrokAuthStore.hostEntryKey }
 
         for var state in candidates {
             do {
                 // The host's: used as it is while it lasts, never refreshed here.
                 if state.entryKey == GrokAuthStore.hostEntryKey {
                     if authStore.isExpired(entry: state.entry, token: state.token) {
-                        sawExpiredHost = true
-                        continue
+                        // The engine may have renewed it since the host last said.
+                        await authStore.rereadHost()
+                        guard let current = authStore.hostCandidate(),
+                              !authStore.isExpired(entry: current.entry, token: current.token) else {
+                            sawExpiredHost = true
+                            continue
+                        }
+                        state = current
                     }
-                    return try await probe(state: &state, accessToken: state.token)
+                    return try await probe(state: &state, accessToken: state.token, renews: false)
                 }
                 if authStore.needsRefresh(entry: state.entry, token: state.token) {
-                    if let refreshed = await refreshAccessToken(state: &state) {
-                        return try await probe(state: &state, accessToken: refreshed)
+                    if renews, let refreshed = await refreshAccessToken(state: &state) {
+                        return try await probe(state: &state, accessToken: refreshed, renews: renews)
                     }
                     if authStore.isExpired(entry: state.entry, token: state.token) {
                         sawExpiredCandidate = true
                         continue
                     }
                 }
-                return try await probe(state: &state, accessToken: state.token)
+                return try await probe(state: &state, accessToken: state.token, renews: renews)
             } catch let error as GrokAuthError where error == .expired || error == .hostExpired {
                 rejected = rejected ?? error
             }
@@ -107,12 +116,13 @@ final class GrokProvider: ProviderRuntime {
         throw GrokAuthError.invalidAuth
     }
 
-    private func probe(state: inout GrokAuthState, accessToken: String) async throws -> ProviderSnapshot {
+    /// `renews`: whether a token the server turns away may be refreshed and saved.
+    private func probe(state: inout GrokAuthState, accessToken: String, renews: Bool) async throws -> ProviderSnapshot {
         // The weekly shared-pool meter and pay-as-you-go badge come from the billing endpoint with
         // `?format=credits` — the call the Grok CLI itself makes. This is the provider's primary
         // remote fetch; a failure here fails the provider like any other usage call, except the
         // documented team-principal 412 which has no weekly pool to show.
-        let creditsResponse = try await fetchCreditsConfigWithRetry(accessToken: accessToken, state: &state)
+        let creditsResponse = try await fetchCreditsConfigWithRetry(accessToken: accessToken, state: &state, renews: renews)
         var mapped: GrokMappedUsage
         var warning: String?
         if GrokUsageMapper.isTeamBillingUnavailable(creditsResponse) {
@@ -161,15 +171,25 @@ final class GrokProvider: ProviderRuntime {
         )
     }
 
-    private func fetchCreditsConfigWithRetry(accessToken: String, state: inout GrokAuthState) async throws -> HTTPResponse {
+    private func fetchCreditsConfigWithRetry(
+        accessToken: String, state: inout GrokAuthState, renews: Bool
+    ) async throws -> HTTPResponse {
         var working = state
         defer { state = working }
         return try await ProviderAuthRetry.fetch(
             token: accessToken,
             attempt: { try await self.usageClient.fetchCreditsConfig(accessToken: $0) },
             refreshAccessToken: {
-                guard working.entryKey != GrokAuthStore.hostEntryKey else { throw GrokAuthError.hostExpired }
-                guard let refreshed = await self.refreshAccessToken(state: &working) else {
+                if working.entryKey == GrokAuthStore.hostEntryKey {
+                    // Turned away: the engine may have renewed it since the host last said.
+                    await self.authStore.rereadHost()
+                    guard let current = self.authStore.hostCandidate(), current.token != working.token else {
+                        throw GrokAuthError.hostExpired
+                    }
+                    working = current
+                    return current.token
+                }
+                guard renews, let refreshed = await self.refreshAccessToken(state: &working) else {
                     throw GrokAuthError.expired
                 }
                 return refreshed

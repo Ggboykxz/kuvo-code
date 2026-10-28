@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import OpenCodeKit
 
@@ -24,6 +25,9 @@ enum OpencodeImport {
         var signIns: [String] = []
         /// opencode's skills folders, for the engine to find skills in too.
         var skillFolders: [String] = []
+        /// Why opencode's settings couldn't be read, when they couldn't: its keys and skills come
+        /// over anyway.
+        var settingsFailure: String?
 
         var isEmpty: Bool { settings.isEmpty && accounts.isEmpty && skillFolders.isEmpty }
 
@@ -77,8 +81,10 @@ enum OpencodeImport {
     /// for integrations `connected` doesn't, skills folders the engine doesn't look in.
     static func plan(engine: URL, config: [String: JSONValue], connected: Set<String>) async throws -> Plan {
         var plan = Plan()
-        if let read = try await settings(engine: engine) {
-            plan.settings = missing(from: read, in: config)
+        do {
+            if let read = try await settings(engine: engine) { plan.settings = missing(from: read, in: config) }
+        } catch {
+            plan.settingsFailure = error.localizedDescription
         }
         let found = accounts().filter { !connected.contains($0.integration) }
         plan.accounts = found.filter { $0.value["type"]?.string == "key" }
@@ -98,22 +104,38 @@ enum OpencodeImport {
         guard !present.isEmpty || !folders.isEmpty else { return nil }
         let root = manager.temporaryDirectory.appending(path: Bundle.main.bundleIdentifier ?? "run.kuvo.code").appending(path: "opencode-import-\(UUID().uuidString)")
         let copy = root.appending(path: "config/opencode")
-        try manager.createDirectory(at: copy, withIntermediateDirectories: true)
-        try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
-        for name in present { try manager.copyItem(at: configFolder.appending(path: name), to: copy.appending(path: name)) }
-        for name in folders { try manager.copyItem(at: configFolder.appending(path: name), to: copy.appending(path: name)) }
-        let home = root.appending(path: "home")
-        try manager.createDirectory(at: home, withIntermediateDirectories: true)
-
         let engineFolders = EngineFolders(root: root)
-        let server = try await ServerProcess.start(executable: engine, folders: engineFolders, environment: ["PATH": "/usr/bin:/bin", "HOME": home.path])
-        let sources = try? await OpenCodeAPI(endpoint: server.endpoint).configSources(directory: engineFolders.workspace.path)
+        let server: ServerProcess
+        do {
+            try manager.createDirectory(at: copy, withIntermediateDirectories: true)
+            try? manager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: root.path)
+            // `{env:…}` and `{file:…}` come over as written, not as the engine would fill them in
+            // here (from an empty environment, a file's secret pasted in): kept from it, then
+            // put back.
+            for name in present {
+                let text = try String(contentsOf: configFolder.appending(path: name), encoding: .utf8)
+                try Data(Self.keep(text).utf8).write(to: copy.appending(path: name))
+            }
+            for name in folders { try manager.copyItem(at: configFolder.appending(path: name), to: copy.appending(path: name)) }
+            let home = root.appending(path: "home")
+            try manager.createDirectory(at: home, withIntermediateDirectories: true)
+            server = try await ServerProcess.start(executable: engine, folders: engineFolders, environment: ["PATH": "/usr/bin:/bin", "HOME": home.path])
+        } catch {
+            // The copy holds opencode's settings, keys and all: it doesn't stay behind.
+            try? manager.removeItem(at: root)
+            throw error
+        }
+        var sources: JSONValue?
+        var failure: Error?
+        do { sources = try await OpenCodeAPI(endpoint: server.endpoint).configSources(directory: engineFolders.workspace.path) } catch { failure = error }
         // Its folder goes once it has stopped.
         server.stop()
         Task.detached {
             for _ in 0..<40 where server.isRunning { try? await Task.sleep(for: .milliseconds(250)) }
             try? FileManager.default.removeItem(at: root)
         }
+        // Not read (a settings file it can't make sense of): said, rather than nothing to bring.
+        if let failure { throw failure }
         guard case .array(let sources)? = sources else { return nil }
         // Each source's settings, later ones over earlier, as the engine layers them.
         var merged: [String: JSONValue] = [:]
@@ -121,7 +143,112 @@ enum OpencodeImport {
             guard let info = source["info"]?.object else { continue }
             merged = deepMerged(merged, info)
         }
-        return merged
+        return restored(.object(merged)).object ?? [:]
+    }
+
+    private static let keptEnv = "{kuvo-kept-env:"
+    private static let keptFile = "{kuvo-kept-file:"
+
+    /// opencode's settings with their references in a form the engine leaves alone.
+    static func keep(_ text: String) -> String {
+        text.replacingOccurrences(of: "{env:", with: keptEnv).replacingOccurrences(of: "{file:", with: keptFile)
+    }
+
+    /// The references back as written; a file's relative to opencode's settings folder, where
+    /// they were, now named from anywhere.
+    static func restored(_ value: JSONValue) -> JSONValue {
+        switch value {
+        case .string(let text):
+            guard text.contains("{kuvo-kept-") else { return value }
+            var result = text.replacingOccurrences(of: keptEnv, with: "{env:")
+            while let range = result.range(of: keptFile) {
+                let after = result[range.upperBound...]
+                let relative = !(after.hasPrefix("/") || after.hasPrefix("~"))
+                result.replaceSubrange(range, with: "{file:" + (relative ? configFolder.path + "/" : ""))
+            }
+            return .string(result)
+        case .array(let items): return .array(items.map(restored))
+        case .object(let fields):
+            // A name can hold one too (a header named by a variable).
+            return .object(Dictionary(fields.map { (restored(.string($0.key)).string ?? $0.key, restored($0.value)) }, uniquingKeysWith: { first, _ in first }))
+        default: return value
+        }
+    }
+
+    /// Where the files opencode's settings name (`{file:…}`) are copied to, so Kuvo Code's don't
+    /// depend on opencode's folder: only you can read them.
+    static var filesFolder: URL { AppInfo.supportDirectory.appending(path: "opencode-files") }
+
+    /// `value` with each file it names outside Kuvo Code's folder copied into `filesFolder`, and
+    /// named there; one that isn't there anymore reads as nothing, as a missing variable does.
+    static func ownFiles(_ value: JSONValue) -> JSONValue {
+        naming(value) { own($0) }
+    }
+
+    /// `value` as `ownFiles` would make it, without copying anything: to tell what's been brought
+    /// over before.
+    static func owned(_ value: JSONValue) -> JSONValue {
+        naming(value) { FileManager.default.fileExists(atPath: $0) ? copyPath(of: $0) : nil }
+    }
+
+    /// `value` with each file it names (`{file:…}`) named as `name` says, or left out.
+    private static func naming(_ value: JSONValue, _ name: (String) -> String?) -> JSONValue {
+        switch value {
+        case .string(let text):
+            guard text.contains("{file:") else { return value }
+            var result = ""
+            var rest = Substring(text)
+            while let open = rest.range(of: "{file:"), let close = rest[open.upperBound...].firstIndex(of: "}") {
+                result += rest[..<open.lowerBound]
+                let path = (String(rest[open.upperBound..<close]) as NSString).expandingTildeInPath
+                result += name(path).map { "{file:\($0)}" } ?? ""
+                rest = rest[rest.index(after: close)...]
+            }
+            return .string(result + rest)
+        case .array(let items): return .array(items.map { naming($0, name) })
+        case .object(let fields): return .object(fields.mapValues { naming($0, name) })
+        default: return value
+        }
+    }
+
+    /// Where the copy of the file at `path` goes: named after the file and where it is, so it's
+    /// the same copy each time it's brought over (the path itself when it's there already).
+    static func copyPath(of path: String) -> String {
+        if path.hasPrefix(filesFolder.path + "/") { return path }
+        let place = SHA256.hash(data: Data(path.utf8)).prefix(4).map { String(format: "%02x", $0) }.joined()
+        return filesFolder.appending(path: "\(place)-\((path as NSString).lastPathComponent)").path
+    }
+
+    /// `json`, settings as text, with what the files in `filesFolder` it names say written in, as
+    /// the engine reads them: for a machine, which doesn't have them (in the private settings it
+    /// gets, which go when its engine stops).
+    static func inlined(_ json: String) -> String {
+        let prefix = "{file:" + filesFolder.path + "/"
+        guard json.contains(prefix) else { return json }
+        var result = ""
+        var rest = Substring(json)
+        while let open = rest.range(of: prefix), let close = rest[open.upperBound...].firstIndex(of: "}") {
+            result += rest[..<open.lowerBound]
+            let path = filesFolder.path + "/" + rest[open.upperBound..<close]
+            let text = (try? String(contentsOfFile: path, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            // As the inside of the JSON string it's in.
+            let encoded = (try? JSONEncoder().encode(text)).map { String(decoding: $0, as: UTF8.self) } ?? "\"\""
+            result += encoded.dropFirst().dropLast()
+            rest = rest[rest.index(after: close)...]
+        }
+        return result + rest
+    }
+
+    /// A copy of the file at `path` in `filesFolder`, as it says now (the path itself when it's
+    /// there already).
+    private static func own(_ path: String) -> String? {
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: path) else { return nil }
+        let copy = copyPath(of: path)
+        if copy == path { return path }
+        try? manager.createDirectory(at: filesFolder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        guard let data = manager.contents(atPath: path), manager.createFile(atPath: copy, contents: data, attributes: [.posixPermissions: 0o600]) else { return path }
+        return copy
     }
 
     private static func deepMerged(_ base: [String: JSONValue], _ over: [String: JSONValue]) -> [String: JSONValue] {
@@ -147,11 +274,18 @@ enum OpencodeImport {
             let new = theirs.filter { ours[$0.key] == nil }
             if !new.isEmpty { plan[key] = .object(new) }
         }
-        let servers = (read["mcp"]?["servers"]?.object ?? [:]).filter { config["mcp"]?["servers"]?[$0.key] == nil }
+        // A server named as one of Kuvo Code's integrations is opencode's own, not that: named
+        // apart, so it isn't taken for it (upgraded, removed with it).
+        var servers: [String: JSONValue] = [:]
+        for (name, server) in read["mcp"]?["servers"]?.object ?? [:] {
+            let named = Integrations.service(name) == nil ? name : name + "-opencode"
+            if config["mcp"]?["servers"]?[named] == nil { servers[named] = server }
+        }
         if !servers.isEmpty { plan["mcp"] = .object(["servers": .object(servers)]) }
+        // As they'd be once brought over: a file they name is the copy in Kuvo Code's folder.
         for key in ["plugins", "instructions", "permissions"] {
             let ours = config[key]?.array ?? []
-            let new = (read[key]?.array ?? []).filter { !ours.contains($0) }
+            let new = (read[key]?.array ?? []).filter { !ours.contains(owned($0)) }
             if !new.isEmpty { plan[key] = .array(new) }
         }
         return plan
@@ -215,7 +349,7 @@ enum OpencodeImport {
         var count = 0
         // All in one write, so the engine reloads its settings once.
         var changes: [(path: [String], value: JSONValue?)] = []
-        for (key, value) in plan.settings {
+        for (key, value) in plan.settings.mapValues(ownFiles) {
             switch key {
             case "model":
                 changes.append((["model"], value))
@@ -228,7 +362,8 @@ enum OpencodeImport {
             case "plugins", "instructions", "permissions":
                 let ours = config.value(at: [key])?.array ?? []
                 let new = (value.array ?? []).filter { !ours.contains($0) }
-                if !new.isEmpty { changes.append(([key], .array(ours + new))) }
+                // The last permission rule that matches wins: yours stay after the ones brought over.
+                if !new.isEmpty { changes.append(([key], .array(key == "permissions" ? new + ours : ours + new))) }
                 count += new.count
             default:
                 for (name, entry) in value.object ?? [:] {

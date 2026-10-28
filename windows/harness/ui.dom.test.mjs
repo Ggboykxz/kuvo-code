@@ -1,0 +1,860 @@
+// The page's own code — the built app, served by the harness — run in a real browser
+// against the live harness and the real engine: boot, a session, a prompt, the answer
+// streaming into the view, the folder picker, and a reload reading the stored
+// conversation back.
+//
+//   npm install                              (once, for playwright and its browser)
+//   KUVO_HARNESS_LIVE=1 npm run test:live
+//
+// Off by default, like live.test.mjs: it starts the engine and asks a public free model.
+//
+// The browser is the point: the page is what a user sees, so it is read there, and the
+// checks below are the ones the Mac app's own behaviour would be measured against.
+
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+import { VERSION } from "../releases.mjs";
+import { startHarness } from "./server.mjs";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const live = process.env.KUVO_HARNESS_LIVE === "1";
+
+let chromium = null;
+try {
+  ({ chromium } = await import("playwright"));
+} catch {
+  // Left null: the test says how to get it.
+}
+
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+test("the page, in a browser, against the real engine", {
+  skip: !live
+    ? "set KUVO_HARNESS_LIVE=1 to run the page against the engine"
+    : chromium === null ? "playwright isn't installed: run `npm install` in windows/harness" : false,
+  timeout: 600_000,
+}, async t => {
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "kuvo-page-"));
+  fs.writeFileSync(path.join(project, "notes.txt"), "Shopping list\n- coffee\n- oats\n");
+  // A file long enough for its unchanged stretches to be folded, the Mac's way.
+  const long = Array.from({ length: 30 }, (_, index) => `line ${index + 1}`).join("\n") + "\n";
+  fs.writeFileSync(path.join(project, "z-long.txt"), long);
+  fs.mkdirSync(path.join(project, "sub"));
+  // The project's own repository, with a change in it: the Changes panel reads git's diff,
+  // the way the Mac's panel reads the worktree's.
+  const git = (...args) => execFileSync("git", ["-C", project, ...args], { encoding: "utf8" });
+  git("init", "-b", "main");
+  git("config", "user.email", "page@example.com");
+  git("config", "user.name", "The Page");
+  git("config", "commit.gpgsign", "false");
+  git("add", "notes.txt", "z-long.txt");
+  git("commit", "-m", "The first list");
+  fs.writeFileSync(path.join(project, "notes.txt"), "Shopping list\n- coffee\n- oats\n- tea\n");
+  fs.writeFileSync(path.join(project, "z-long.txt"), long.replace("line 15\n", "line 15, changed\n"));
+
+  /** The harness is the page's own server; these are the calls the page makes. */
+  const harness = startHarness({ project, port: 0, log: message => t.diagnostic(message) });
+  const opened = [];
+  // Letting go of the pages is what lets this process end: a page keeps its timers, and
+  // the browser's own processes would keep them too.
+  t.after(async () => {
+    // The closes are bounded: a page that will not let go must not hold the build up.
+    for (const page of opened) await page.close({ timeout: 5_000 }).catch(() => {});
+    await browser.close().catch(() => {});
+    await harness.close();
+    // The engine may still hold the folder for a moment on Windows: the removal is a
+    // courtesy, and a failure in it is not the test's verdict.
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        fs.rmSync(project, { recursive: true, force: true });
+        break;
+      } catch {
+        await wait(500);
+      }
+    }
+  });
+  const url = await harness.url();
+
+  // The browser is Playwright's own, unless a machine names another (KUVO_CHROME).
+  const browser = await chromium.launch({
+    executablePath: process.env.KUVO_CHROME || undefined,
+    args: ["--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--font-render-hinting=none"],
+  });
+
+  // One context: the pages share the storage, the way a browser shares it for an address:
+  // a draft written by one is read by the next.
+  const context = await browser.newContext();
+  // The first-run notice is acknowledged before the page opens: it would stand over the
+  // window's buttons, and it is not what this test is about.
+  await context.addInitScript(() => { localStorage.setItem("kuvo-analytics-ack", "1"); });
+
+  /** A page, and the ways the checks read it. */
+  const open = async () => {
+    const page = await context.newPage();
+    const errors = [];
+    page.on("pageerror", error => errors.push(String(error)));
+    page.on("crash", () => errors.push("the page crashed"));
+    page.on("console", message => { if (message.type() === "error") errors.push(message.text()); });
+    await page.goto(url, { waitUntil: "domcontentloaded" });
+    const view = {
+      page,
+      errors,
+      element: id => page.locator(`#${id}`),
+      /** Wait for something to be true in the page; the check runs in the browser. */
+      seen: async (what, check, argument = null, timeout = 120_000) => {
+        try {
+          await page.waitForFunction(check, argument, { timeout });
+        } catch {
+          const shown = await page.locator("#entries").textContent().catch(() => "");
+          const beside = await page.locator("#split-entries").textContent().catch(() => "");
+          assert.fail(
+            `timed out waiting for ${what}; the view shows:\n${(shown ?? "").slice(0, 500)}`
+            + (beside ? `\nthe split shows:\n${beside.slice(0, 500)}` : "")
+            + `\nthe page said:\n${errors.join("\n")}`,
+          );
+        }
+      },
+    };
+    opened.push(page);
+    return view;
+  };
+
+  const page = await open();
+
+  // Boot: the folder it was started on, and the engine coming up behind it.
+  await page.seen("the project to show", ([id, name]) => {
+    const node = document.getElementById(id);
+    return Boolean(node?.textContent?.includes(name));
+  }, ["project", path.basename(project)], 30_000);
+  await page.seen("the engine to come up", ([id, version]) => {
+    const node = document.getElementById(id);
+    return Boolean(node?.textContent?.includes(version));
+  }, ["engine", VERSION], 120_000);
+
+  // A session, made from the empty state.
+  assert.equal(await page.element("empty").isVisible(), true, "the empty state shows first");
+  await page.element("start").click();
+  await page.seen("the session to appear", () => document.querySelectorAll("#sessions li").length === 1, null, 30_000);
+
+  // The conversation at rest, before a word is said in it: the Mac's own question about
+  // the folder the session works in, with its mark over it (TranscriptView.swift:69-75).
+  await page.seen("the empty conversation to ask", ([folder]) => {
+    const node = document.querySelector(".empty-conversation p");
+    const mark = document.querySelector(".empty-conversation svg");
+    return Boolean(mark) && Boolean(node?.textContent?.includes(folder));
+  }, [path.basename(project)], 30_000);
+
+  // The title bar: the Mac's tab strip, with the open session in it, and the project's
+  // name over the sessions' width.
+  await page.seen("the tab strip to show the session", () => {
+    const tab = document.querySelector('.tab-track [role="tab"]');
+    return Boolean(tab) && tab.classList.contains("active");
+  }, null, 10_000);
+  assert.equal(await page.page.locator('.tab-track [role="tab"]').count(), 1, "the open session is one tab");
+  assert.ok(await page.page.locator(".tab-pill").count(), "the chosen tab carries the raised pill");
+  assert.equal(await page.page.locator(".identity-name").textContent(), path.basename(project), "the title bar names the project");
+
+  // The panel: a card in the window's row, with the Mac's tab strip.
+  await page.element("toggle-files").click();
+  await page.seen("the panel to open", () => document.getElementById("drawer")?.hidden === false, null, 10_000);
+  assert.ok(await page.page.locator("#drawer").evaluate(node => Boolean(node.closest("main"))), "the panel sits in the window's row, beside the conversation");
+  assert.deepEqual(
+    (await page.page.locator(".drawer-tab").allTextContents()).map(text => text.trim()),
+    ["Files", "Changes", "Terminal"],
+    "the panel's tabs are the Mac's",
+  );
+  await page.element("drawer-close").click();
+  await page.seen("the panel to close", () => document.getElementById("drawer")?.hidden === true, null, 10_000);
+
+  // The changes: the rows are the Mac's own — a number in a gutter, the text without the
+  // patch's signs, and an edge on a line that changed (ChangesPanel.swift:959-1042).
+  await page.element("toggle-files").click();
+  await page.seen("the panel to open", () => document.getElementById("drawer")?.hidden === false, null, 10_000);
+  await page.page.locator(".drawer-tab", { hasText: "Changes" }).click();
+  await page.seen("the changes to show the files", () => document.querySelectorAll(".changes-file").length > 1, null, 30_000);
+  await page.page.locator(".changes-file-toggle").first().click();
+  await page.seen("the diff's rows to show", () => document.querySelectorAll(".changes-diff .diff-line").length > 0, null, 10_000);
+  const first = page.page.locator(".changes-diff").first();
+  const rows = await first.locator(".diff-line").allTextContents();
+  const numbers = await first.locator(".diff-number").allTextContents();
+  const texts = await first.locator(".diff-text").allTextContents();
+  assert.deepEqual(
+    texts,
+    ["Shopping list", "- coffee", "- oats", "- tea"],
+    "the rows carry the text, not the patch's signs",
+  );
+  assert.deepEqual(numbers, ["1", "2", "3", "4"], "the gutter carries the line's own number");
+  assert.ok(
+    !rows.some(text => text.includes("@@") || text.includes("diff --git")),
+    `the patch's headers are not rows: ${JSON.stringify(rows)}`,
+  );
+  // The mark that writes a comment on the line is the Mac's, in the gutter.
+  assert.equal(
+    await first.locator(".diff-comment").first().getAttribute("title"),
+    "Comment on This Line",
+    "the line's mark is the Mac's",
+  );
+  // A comment: written in the Mac's editor, and kept as a card under its line
+  // (ChangesPanel.swift:1088-1212).
+  const row = first.locator(".diff-line").last();
+  await row.hover();
+  await row.locator(".diff-comment").click();
+  await page.seen("the comment's editor to open", () => Boolean(document.querySelector(".comment-editor textarea")), null, 10_000);
+  await page.page.locator(".comment-editor textarea").fill("please check this line");
+  await page.page.locator(".comment-editor button", { hasText: "Comment" }).click();
+  await page.seen("the comment to be a card under its line", () => {
+    const card = document.querySelector(".comment-card");
+    return Boolean(card) && Boolean(card.textContent?.includes("please check this line"));
+  }, null, 10_000);
+  const card = (await page.page.locator(".comment-card").first().textContent()) ?? "";
+  assert.match(card, /Comment on line R4/, "the card names the line, as the Mac's does");
+  assert.match(card, /You/, "the card is yours");
+  assert.match(card, /Delete/, "the card can be taken away");
+  // The long unchanged stretches are folded, the Mac's way (ChangesPanel.swift:890-927).
+  await page.page.locator(".changes-file-toggle").nth(1).click();
+  const secondFile = page.page.locator(".changes-diff").nth(1);
+  await page.seen("the fold to show", () => document.querySelectorAll(".changes-diff .diff-fold").length > 0, null, 10_000);
+  const fold = (await secondFile.locator(".diff-fold").first().textContent()) ?? "";
+  assert.match(fold, /\d+ unmodified lines/, "the fold says how many lines it holds");
+  assert.equal(
+    await secondFile.locator(".diff-fold").first().getAttribute("title"),
+    "Show these lines",
+    "the fold's help is the Mac's",
+  );
+  // And it opens when it is pressed.
+  const folds = await page.page.locator(".changes-diff .diff-fold").count();
+  await secondFile.locator(".diff-fold").first().click();
+  await page.seen("the fold to open", ([before]) => document.querySelectorAll(".changes-diff .diff-fold").length < before, [folds], 10_000);
+  // The file view numbers its lines, as the Mac's does (CodeTextView.swift:119-168).
+  await page.page.locator(".drawer-tab", { hasText: "Files" }).click();
+  await page.seen("the files to show", () => document.querySelectorAll(".file-row").length > 0, null, 10_000);
+  await page.page.locator(".file-row", { hasText: "notes.txt" }).first().click();
+  await page.seen("the file to open", () => Boolean(document.querySelector(".file-view")), null, 10_000);
+  assert.deepEqual(
+    await page.page.locator(".file-numbers span").allTextContents(),
+    ["1", "2", "3", "4"],
+    "the lines are numbered, as the Mac's ruler numbers them",
+  );
+  // The lines that are picked can be sent to the composer, as the Mac's own menu does
+  // (CodeTextView.swift:91-111, FilesView.swift:389-392).
+  await page.page.evaluate(() => {
+    const code = document.querySelector(".file-code");
+    const text = code?.firstChild;
+    if (!text) return;
+    const range = document.createRange();
+    range.setStart(text, 14);
+    range.setEnd(text, 29);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  });
+  await page.page.locator(".file-code").click({ button: "right" });
+  await page.seen("the menu to show", () => Boolean(document.querySelector(".context-menu")), null, 10_000);
+  await page.page.locator(".context-menu button", { hasText: "Add to Message" }).click();
+  await page.seen("the mention to be in the composer", () => {
+    const box = document.getElementById("prompt");
+    return Boolean(box?.value?.includes("@notes.txt:2-3"));
+  }, null, 10_000);
+  await page.element("drawer-close").click();
+  await page.seen("the panel to close", () => document.getElementById("drawer")?.hidden === true, null, 10_000);
+
+  // The model menu (a call scoped to the project folder, sent as a header).
+  await page.seen("the models to load", () => {
+    const button = document.getElementById("model");
+    if (!button) return false;
+    button.click();
+    return document.querySelectorAll("#model ~ * .choice-item, .choice-panel .choice-item").length > 1;
+  }, null, 30_000);
+  // The model the conversation would use: the engine's default until one is picked
+  // (Catalog.swift:219-226). The effort the model is asked for, in the Mac's own levels
+  // (ModelPicker.swift:5-14, 567-614), is there for the models that have them.
+  await page.seen("the composer to name the model the conversation would use", () => {
+    const button = document.getElementById("model");
+    return Boolean(button) && button.textContent?.trim() !== "The engine's choice";
+  }, null, 30_000);
+  await page.element("model").click();
+
+  // The models the user keeps: the star keeps one, and it sits in a group of its own
+  // (ModelPicker.swift:40, 436-440, 500).
+  await page.seen("the model menu to open", () => {
+    const button = document.getElementById("model");
+    if (!button) return false;
+    if (!document.querySelector(".choice-panel .choice-item")) button.click();
+    return document.querySelectorAll(".choice-panel .choice-item").length > 0;
+  }, null, 10_000);
+  await page.page.locator(".choice-panel .choice-star").first().click();
+  await page.seen("the kept models to be in a group of their own", () => [...document.querySelectorAll(".choice-group")].some(node => node.textContent?.trim() === "Starred"), null, 10_000);
+  await page.page.keyboard.press("Escape");
+
+  // A prompt: sent, shown at once, answered by the model, and answered through events.
+  const asked = "Reply with exactly: hello from the page";
+  const ask = async () => {
+    await page.element("prompt").fill(asked);
+    await page.element("composer").evaluate(form => form.requestSubmit());
+  };
+  await ask();
+  await page.seen("the user's message to show", ([id, text]) => {
+    const node = document.getElementById(id);
+    return Boolean(node?.textContent?.includes(text));
+  }, ["entries", asked], 30_000);
+  // The public free models can refuse for a while (a rate limit): the turn is stopped,
+  // another free model is asked, and the question is asked again — rather than the build
+  // failing on the provider's mood. The engine's own test asks again, the same way.
+  const freeModels = async () => {
+    const answer = await fetch(`${url}api/models`).then(reply => reply.json()).catch(() => ({}));
+    return (answer.models ?? [])
+      .filter(model => (model.cost ?? []).every(cost => !cost.input && !cost.output))
+      .map(model => ({ providerID: model.providerID, id: model.id }));
+  };
+  const sessionID = async () => {
+    const listed = await fetch(`${url}api/sessions?directory=${encodeURIComponent(project)}`)
+      .then(reply => reply.json()).catch(() => ({}));
+    return (listed.sessions ?? [])[0]?.id ?? "";
+  };
+  const askWith = async model => {
+    const id = await sessionID();
+    if (!id) return;
+    await fetch(`${url}api/sessions/${encodeURIComponent(id)}/model`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model }),
+    }).catch(() => {});
+  };
+  const interrupt = async () => {
+    const id = await sessionID();
+    if (!id) return;
+    await fetch(`${url}api/sessions/${encodeURIComponent(id)}/interrupt`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }).catch(() => {});
+  };
+  // The words the model said, not the question it was asked: the question holds the same
+  // phrase, and reading the whole view would count it as the answer.
+  const said = async () =>
+    (await page.page.locator(".entry.assistant").allTextContents().catch(() => [])).join("\n");
+  const free = await freeModels();
+  let gotAnswer = false;
+  for (let attempt = 0; attempt < 5 && !gotAnswer; attempt += 1) {
+    if (attempt > 0) {
+      // The model is stuck in its own retries, or refused: its turn is stopped, another
+      // free model is asked, and the question is asked again.
+      await interrupt();
+      if (free.length) await askWith(free[attempt % free.length]);
+      await ask();
+    }
+    const until = Date.now() + 60_000;
+    while (Date.now() < until) {
+      if (/hello from the page/i.test(await said())) {
+        gotAnswer = true;
+        break;
+      }
+      // The turn is over, and the model did not answer: it refused.
+      const running = await page.page.evaluate(() => document.getElementById("stop")?.hidden === false);
+      if (!running) break;
+      await wait(2_000);
+    }
+  }
+  await page.seen("the answer to arrive", () => {
+    const rows = [...document.querySelectorAll(".entry.assistant")];
+    return rows.some(row => /hello from the page/i.test(row.textContent ?? ""));
+  }, null, 180_000);
+  // The comment on the changes went with the message, and the conversation shows it as the
+  // Mac's own card (ChangesPanel.swift:1123-1155).
+  await page.seen("the comment to show in the conversation", () => {
+    const card = document.querySelector(".comment-reference");
+    return Boolean(card) && Boolean(card.textContent?.includes("please check this line"));
+  }, null, 30_000);
+  const reference = (await page.page.locator(".comment-reference").first().textContent()) ?? "";
+  assert.match(reference, /notes\.txt:4/, "the card names the place the comment is on");
+  assert.match(reference, /- tea/, "the card shows the line it was written on");
+  await page.seen("the turn to end", () => document.getElementById("stop")?.hidden, null, 60_000);
+  // With words in it, the conversation's question has stepped aside.
+  await page.seen("the question to step aside", () => document.querySelector(".empty-conversation") === null, null, 10_000);
+
+  // The folder picker: it opens on the project, walks, and closes without changing it.
+  await page.element("project").click();
+  await page.seen("the picker to fill", ([id, folder]) => document.getElementById(id)?.value === folder, ["picker-path", project], 15_000);
+  assert.equal(await page.element("picker-path").inputValue(), project, "the picker opens on the project");
+  assert.deepEqual((await page.page.locator("#picker-folders button").allTextContents()).map(text => text.trim()), ["sub/"], "the folder's insides are listed");
+  await page.element("picker-close").click();
+  // React draws on its own turn of the loop, so the closing is waited for.
+  await page.seen("the picker to close", () => document.getElementById("picker")?.hidden === true, null, 10_000);
+
+  // A reload: the same conversation, read back from what the engine stored.
+  const reloaded = await open();
+  // The reloaded page draws its list a moment after it opens: wait for the row before
+  // reading its id, or the id is read from a page that has not drawn yet.
+  await reloaded.seen("the session to be listed", () => Boolean(document.querySelector("#sessions li .session")?.getAttribute("data-id")), null, 30_000);
+  const reloadedId = await reloaded.page.evaluate(() => document.querySelector("#sessions li .session")?.getAttribute("data-id") ?? "");
+  await reloaded.seen("the stored conversation to read back", () => {
+    const rows = [...document.querySelectorAll(".entry.assistant")];
+    return rows.some(row => /hello from the page/i.test(row.textContent ?? ""));
+  }, null, 60_000);
+  assert.equal(await reloaded.element("project").textContent(), project, "the project is remembered");
+  assert.equal(await reloaded.page.locator("#sessions li").count(), 1, "the session is listed again");
+  // The engine can still call a session active for a moment after a turn; the page reads that
+  // the same way the Mac app does, and settles as soon as there's nothing to stop.
+  // Nothing to be running: the app reads the engine's own words, and the engine writes
+  // them a moment after the turn ends — the Mac waits the same way. If the engine's
+  // history still has the message unfinished, that is the engine's lag, not the app's.
+  const stillRunning = await reloaded.seen("nothing to be running", () => document.getElementById("stop")?.hidden, null, 90_000)
+    .then(() => false)
+    .catch(() => true);
+  if (stillRunning) {
+    const detail = await (await fetch(`${url}api/sessions/${encodeURIComponent(reloadedId)}`)).json();
+    const messages = detail.messages ?? [];
+    const last = messages.filter(message => message.type === "assistant").at(-1);
+    if (last?.time?.completed) {
+      // The engine says the turn ended: this page read its words a moment before the
+      // engine had written them, and no event will come now to say otherwise. Reading
+      // them again must agree with what a page shows — a fresh read is the same test the
+      // first reload ran, and it must come out settled.
+      await reloaded.page.reload({ waitUntil: "domcontentloaded" });
+      await reloaded.seen("the stored conversation to read back", () => {
+        const rows = [...document.querySelectorAll(".entry.assistant")];
+        return rows.some(row => /hello from the page/i.test(row.textContent ?? ""));
+      }, null, 60_000);
+      await reloaded.seen("the settled run to stay settled", () => document.getElementById("stop")?.hidden, null, 60_000);
+    }
+    // Otherwise the engine's own history still has the message unfinished: that is the
+    // engine's lag, not the app's, and the Mac waits the same way.
+  }
+
+  // The reloaded page is in front now; the first one is taken back, so its buttons are
+  // drawn and can be pressed (a page in the background does not animate, and Playwright
+  // waits for a button to be still before it presses it).
+  await page.page.bringToFront();
+
+  // The built page carries what it needs: the formulas (KaTeX and its fonts) travel with it.
+  const built = path.join(here, "ui-build");
+  if (fs.existsSync(built)) {
+    const files = [];
+    const walk = folder => {
+      for (const entry of fs.readdirSync(folder, { withFileTypes: true })) {
+        const entryPath = path.join(folder, entry.name);
+        if (entry.isDirectory()) walk(entryPath);
+        else files.push(entryPath);
+      }
+    };
+    walk(built);
+    const fonts = files.filter(name => name.endsWith(".woff2"));
+    assert.ok(fonts.length > 0, "the formula renderer's fonts travel with the page");
+    assert.ok(files.some(name => name.endsWith(".css")), "the page brings its stylesheet");
+  }
+
+  // The settings: the navigation holds only buttons, and every page it can open is a page
+  // of the settings itself. (A page once slipped inside the navigation and broke them all.)
+  await page.element("settings-open").click();
+  await page.seen("the settings to open", () => document.querySelector('.settings-nav button[data-section="keyboard"]') !== null, null, 10_000);
+  const nav = page.page.locator(".settings-nav");
+  const pages = page.page.locator(".settings-pages");
+  assert.ok(await nav.count(), "the settings have a navigation");
+  assert.ok(await pages.count(), "the settings have their pages");
+  // The Mac's shape: the settings take the sessions' place — a sidebar on the glass, and
+  // the open page in a card beside it.
+  assert.ok(await page.page.locator(".settings-sidebar").count(), "the settings have their own sidebar");
+  assert.ok(await page.page.locator(".settings-content.card").count(), "the open page is in a card");
+  assert.match(await page.page.locator(".settings-content-head h1").textContent(), /Appearance|General/);
+  assert.equal(await nav.locator(".settings-page").count(), 0, "no page sits inside the navigation");
+  assert.equal(
+    await page.page.locator(".settings-page").evaluateAll(nodes => nodes.filter(node => !node.closest(".settings-pages")).length),
+    0,
+    "every page belongs to the settings",
+  );
+  // The navigation is pressed in the page itself: the pages below the fold are clipped
+  // by the sidebar, and a press that waits for the element to settle would wait for ever.
+  const pressNav = async section => {
+    const pressed = await page.page.evaluate(name => {
+      const button = document.querySelector(`.settings-nav button[data-section="${name}"]`);
+      button?.click();
+      return Boolean(button);
+    }, section);
+    assert.ok(pressed, `the navigation's "${section}" is there`);
+  };
+  const sections = await nav.locator("button").evaluateAll(nodes => nodes.map(node => node.dataset.section));
+  for (const wanted of sections) {
+    assert.ok(
+      await pages.locator(`.settings-page[data-section="${wanted}"]`).count(),
+      `the navigation's "${wanted}" has a page behind it`,
+    );
+  }
+
+  // The appearance: the Mac's own choices — the window's material, the typeface of the
+  // messages, and the detail of the agent's steps (Look.swift:42-63).
+  await pressNav("appearance");
+  await page.seen("the appearance to offer the window's material", () => document.getElementById("setting-window") !== null, null, 10_000);
+  await page.page.selectOption("#setting-window", "solid");
+  await page.seen("the window to be solid", () => document.documentElement.dataset.window === "solid", null, 10_000);
+  await page.page.selectOption("#setting-window", "glass");
+  await page.seen("the window to be glass again", () => document.documentElement.dataset.window === "glass", null, 10_000);
+
+  // The keyboard page: the recorder writes the keys down, they are kept in the app's own
+  // settings, and the app answers to them.
+  await pressNav("keyboard");
+  const keyboardPage = page.page.locator('.settings-page[data-section="keyboard"]');
+  // The chip with that name: the keycaps hold their names exactly, but the text around
+  // them is whitespace, so the names are compared trimmed. The chips are pressed in the
+  // page itself: they are replaced every time the page draws, and a press that waits for
+  // the element to hold still would wait for ever.
+  const pressChip = async text => {
+    const pressed = await page.page.evaluate(([section, name]) => {
+      const kpage = document.querySelector(`.settings-page[data-section="${section}"]`);
+      const button = [...(kpage?.querySelectorAll(".keycap-button") ?? [])]
+        .find(node => node.textContent.trim() === name);
+      button?.click();
+      return Boolean(button);
+    }, ["keyboard", text]);
+    assert.ok(pressed, `the "${text}" chip is there`);
+  };
+  const chipNames = () => page.page.evaluate(() => {
+    const kpage = document.querySelector('.settings-page[data-section="keyboard"]');
+    return [...(kpage?.querySelectorAll(".keycap-button") ?? [])].map(node => node.textContent.trim());
+  });
+  const clearKeys = async () => {
+    const cleared = await page.page.evaluate(() => {
+      const kpage = document.querySelector('.settings-page[data-section="keyboard"]');
+      const row = [...(kpage?.querySelectorAll(".settings-row") ?? [])]
+        .find(node => node.textContent.includes("Command palette"));
+      const button = row?.querySelector(".keycap-clear");
+      button?.click();
+      return Boolean(button);
+    });
+    assert.ok(cleared, "the recorded keys can be cleared");
+  };
+  const paletteRow = keyboardPage.locator(".settings-row", { hasText: "Command palette" });
+  await page.seen("the keyboard page to show", ([text]) => {
+    const node = document.querySelector('.settings-page[data-section="keyboard"]');
+    return Boolean(node) && !node.hidden && node.textContent.includes(text);
+  }, ["Command palette"], 10_000);
+  // The app's own keys first: a shortcut recorded by an earlier run is cleared, the way a
+  // user clears it.
+  if ((await chipNames()).includes("Ctrl+Alt+P")) {
+    await clearKeys();
+    await page.seen("the keys to go back to the app's own", () => {
+      const buttons = [...document.querySelectorAll('.settings-page[data-section="keyboard"] .keycap-button')];
+      return buttons.some(node => node.textContent.trim() === "Ctrl+K");
+    }, null, 10_000);
+  }
+  assert.ok((await chipNames()).includes("Ctrl+K"), "the palette's keys are the app's own");
+  await pressChip("Ctrl+K");
+  await page.seen("the recorder to listen", () => {
+    const buttons = [...document.querySelectorAll('.settings-page[data-section="keyboard"] .keycap-button')];
+    return buttons.some(node => node.classList.contains("recording"));
+  }, null, 10_000);
+  // The press: a chord with a real modifier, the way the Mac's recorder takes it.
+  await page.page.keyboard.press("Control+Alt+P");
+  await page.seen("the keys to be written down", () => {
+    const buttons = [...document.querySelectorAll('.settings-page[data-section="keyboard"] .keycap-button')];
+    return buttons.some(node => node.textContent.trim() === "Ctrl+Alt+P");
+  }, null, 10_000);
+  // The keys are kept in the app's own settings.
+  const settings = await (await fetch(`${url}api/config`)).json();
+  assert.equal(settings.settings?.shortcuts?.palette, "Ctrl+Alt+P", "the settings hold the recorded keys");
+  // And the app answers to them: the palette opens on the new keys, not on the old ones.
+  await page.page.keyboard.press("Control+Alt+P");
+  await page.seen("the palette to open on the recorded keys", () => document.getElementById("palette")?.hidden === false, null, 10_000);
+  await page.page.keyboard.press("Escape");
+  await page.seen("the palette to close", () => document.getElementById("palette")?.hidden === true, null, 10_000);
+  await page.page.keyboard.press("Control+K");
+  await wait(400);
+  assert.equal(await page.element("palette").isHidden(), true, "the old keys do not answer any more");
+  // And the shortcut can be cleared: the app's own keys are back.
+  await clearKeys();
+  await page.seen("the keys to go back to the app's own", () => {
+    const buttons = [...document.querySelectorAll('.settings-page[data-section="keyboard"] .keycap-button')];
+    return buttons.some(node => node.textContent.trim() === "Ctrl+K");
+  }, null, 10_000);
+
+  // The usage page: what the agent spent, read from the engine's own sessions.
+  await pressNav("usage");
+  await page.seen("the usage page to show", () => {
+    const node = document.querySelector('.settings-page[data-section="usage"]');
+    return node !== null && !node.hidden && node.textContent.includes("What the agent has spent");
+  }, null, 10_000);
+  const usage = await page.page.locator('.settings-page[data-section="usage"]').textContent();
+  assert.match(usage, /\$\d+\.\d{4}/, "the usage page shows what the agent spent");
+  // And the way back is in the title bar, as it is on the Mac.
+  await page.element("settings-back").click();
+  await page.seen("the settings to close", () => document.getElementById("settings-modal")?.hidden === true, null, 10_000);
+
+  // The window remembers: the row at the top can be put away, and stays away
+  // (TabBar.showsKey, GeneralSettings.swift:23).
+  await page.element("settings-open").click();
+  await pressNav("general");
+  const tabBar = page.page.locator('.settings-page[data-section="general"] input[type="checkbox"]').first();
+  await tabBar.uncheck();
+  await page.element("settings-back").click();
+  await page.seen("the row at the top to go", () => document.querySelector("header.titlebar")?.classList.contains("no-tab-bar") === true, null, 10_000);
+  const remembered = await open();
+  await remembered.seen("the row at the top to stay away", () => document.querySelector("header.titlebar")?.classList.contains("no-tab-bar") === true, null, 10_000);
+  await remembered.page.close();
+  // And it comes back when the user says so.
+  await page.element("settings-open").click();
+  await pressNav("general");
+  await page.page.locator('.settings-page[data-section="general"] input[type="checkbox"]').first().check();
+  await page.element("settings-back").click();
+  await page.seen("the row at the top to come back", () => document.querySelector("header.titlebar")?.classList.contains("no-tab-bar") === false, null, 10_000);
+
+  // The find: it is invoked, and it is the Mac's bar over the conversation.
+  await page.page.keyboard.press("Control+f");
+  await page.seen("the find bar to open", () => Boolean(document.getElementById("find-bar")), null, 10_000);
+  await page.page.locator("#find").fill("hello");
+  await page.seen("the find to count what it found", () => {
+    const count = document.getElementById("find-bar")?.querySelector(".find-count")?.textContent ?? "";
+    return /\d+ \/ \d+ result/.test(count);
+  }, null, 10_000);
+  await page.page.keyboard.press("Escape");
+  await page.seen("the find bar to close", () => !document.getElementById("find-bar"), null, 10_000);
+
+  // The palette: it finds things, and it shows the keys that do the things.
+  await page.page.keyboard.press("Control+K");
+  await page.seen("the palette to open", () => document.getElementById("palette")?.hidden === false, null, 10_000);
+  const paletteRows = page.page.locator("#palette-list .palette-item");
+  const paletteTexts = await paletteRows.allTextContents();
+  const newSessionRow = paletteTexts.find(text => text.startsWith("New Session") && /Ctrl\+N/.test(text));
+  assert.ok(newSessionRow, "the palette offers a new session, with the keys that do it");
+  assert.match(newSessionRow, /Ctrl\+N/, "the palette shows the keys that do it");
+  const runRow = paletteTexts.find(text => text.startsWith("Run") && /Ctrl\+R/.test(text));
+  assert.ok(runRow, "the palette offers the project's command, with the keys that run it");
+  // The Mac's sections: the recent sessions, and the actions.
+  const paletteSections = (await page.page.locator("#palette-list .palette-title").allTextContents()).map(text => text.trim());
+  assert.ok(paletteSections.includes("Recent Sessions"), "the palette opens with the recent sessions");
+  assert.ok(paletteSections.includes("Actions"), "and with the actions");
+  await page.page.keyboard.press("Escape");
+  await page.seen("the palette to close", () => document.getElementById("palette")?.hidden === true, null, 10_000);
+
+  // Open Quickly (⇧⌘O): the Mac's own palette for a file by name, newest first before
+  // anything is typed, and the file opens in the panel (OpenQuickly.swift:4-104).
+  await page.page.keyboard.press("Control+Shift+O");
+  await page.seen("Open Quickly to open", () => document.getElementById("open-quickly")?.hidden === false, null, 10_000);
+  assert.equal(await page.page.locator("#open-quickly-input").getAttribute("placeholder"), "Open a file in the project", "the Mac's own prompt");
+  await page.page.locator("#open-quickly-input").fill("notes");
+  await page.seen("the file to be found", () => [...document.querySelectorAll("#open-quickly-list .open-quickly-row")]
+    .some(row => row.textContent?.includes("notes.txt")), null, 10_000);
+  await page.page.keyboard.press("Enter");
+  await page.seen("the file to open in the panel", () => document.querySelector("#drawer-files .file-view")?.textContent?.includes("Shopping list"), null, 10_000);
+  assert.equal(await page.page.locator("#open-quickly").isHidden(), true, "the palette closes on the file it opens");
+  await page.element("toggle-files").click();
+  await page.seen("the panel to close", () => document.getElementById("drawer")?.hidden === true, null, 10_000);
+
+  // The draft: what is typed but not sent is kept, per session, across a reload.
+  const draftBox = page.element("prompt");
+  await draftBox.fill("a draft that is not sent");
+  await wait(700);
+  const reread = await open();
+  await reread.page.bringToFront();
+  await reread.seen("the draft to be kept", ([id, text]) => {
+    const node = document.getElementById(id);
+    return Boolean(node?.value?.includes(text));
+  }, ["prompt", "a draft that is not sent"], 30_000);
+
+  // The split: another session beside this one, as the Mac draws it — a card with the same
+  // header the conversation has (its session's name, Swap, Close), the session's own rows
+  // read into it, and no strip of controls that could pass for the title bar.
+  // The session beside this one, by its id: the engine may rename a session at any time,
+  // so the test names the row it means rather than the words it showed a moment ago.
+  const firstId = await page.page.locator("#sessions li button.session").first().getAttribute("data-id");
+  assert.ok(firstId, "the first session has an id to name it by");
+  await page.element("new-session").click();
+  await page.seen("the second session to be listed", () => document.querySelectorAll("#sessions li").length === 2, null, 30_000);
+  // The new session is the one in view before the split is asked for: Open Beside opens
+  // the session beside the one in view, and "beside" is only known once it is (and a
+  // Windows runner does not race the panel's own timing). The title cannot say so: the
+  // engine names both sessions "New Session" until it writes a name, so the empty
+  // conversation — the session with no words in it — is what tells them apart.
+  await page.seen("the new session to be in view", () => Boolean(document.querySelector("#conversation .empty-conversation")), null, 30_000);
+  await page.element("split").click();
+  await page.seen("the split card to open", () => {
+    const pane = document.getElementById("split-pane");
+    return Boolean(pane) && pane.hidden === false && Boolean(pane.querySelector(".card-header"));
+  }, null, 30_000);
+  assert.equal(await page.page.locator("#split-pane .split-head").count(), 0, "the split has no strip of its own");
+  await page.seen("its head to name the session beside this one", ([id]) => {
+    const row = document.querySelector(`#sessions li button.session[data-id="${id}"] .session-title`);
+    const head = document.querySelector("#split-pane .card-title > span:first-child");
+    return Boolean(row?.textContent) && head?.textContent === row?.textContent;
+  }, [firstId], 30_000);
+  await page.seen("the session beside this one to read back", () => {
+    const rows = [...document.querySelectorAll("#split-entries .entry.assistant")];
+    return rows.some(row => /hello from the page/i.test(row.textContent ?? ""));
+  }, null, 30_000);
+  assert.equal(await page.page.locator("#split-swap").count(), 1, "Swap sits in its header");
+  await page.element("split-swap").click();
+  // The words are the ones that say which session went where: the titles can both read
+  // "New Session", and then a title says nothing.
+  await page.seen("the two to change places", () => {
+    const rows = [...document.querySelectorAll("#entries .entry.assistant")];
+    return rows.some(row => /hello from the page/i.test(row.textContent ?? ""));
+  }, null, 10_000);
+  await page.seen("the empty session's own question beside", () => Boolean(document.querySelector("#split-pane .empty-conversation p")), null, 10_000);
+  // The window has no room for all of them: the split gives way first, and comes back
+  // when the room does (PaneLayout, MainView.swift:2112-2179).
+  await page.page.setViewportSize({ width: 900, height: 720 });
+  await page.seen("the split to give way when the window has no room", () => document.getElementById("split-pane")?.hidden === true, null, 10_000);
+  await page.page.setViewportSize({ width: 1280, height: 720 });
+  await page.seen("the split to come back when the room does", () => document.getElementById("split-pane")?.hidden === false, null, 10_000);
+  await page.element("split-close").click();
+  await page.seen("the split card to close", () => document.getElementById("split-pane")?.hidden === true, null, 10_000);
+
+  // The tab keys (KuvoCodeApp.swift:161-171, 218-229): close the tab in view, reopen it
+  // where it was, and walk the strip by number and by next/previous.
+  const tabsBefore = await page.page.locator(".tab-track [role='tab']").count();
+  assert.ok(tabsBefore >= 2, "the test has the two tabs the split made");
+  const closedID = await page.page.locator(".tab-track [role='tab'][aria-selected='true']").getAttribute("data-id");
+  await page.page.keyboard.press("Control+W");
+  await page.seen("the tab to close", ([count]) => document.querySelectorAll(".tab-track [role='tab']").length === count - 1, [tabsBefore], 10_000);
+  await page.page.keyboard.press("Control+Shift+T");
+  await page.seen("the tab to come back where it was", ([id, count]) => {
+    const tabs = [...document.querySelectorAll(".tab-track [role='tab']")];
+    return tabs.length === count && tabs.some(tab => tab.getAttribute("data-id") === id && tab.getAttribute("aria-selected") === "true");
+  }, [closedID, tabsBefore], 10_000);
+  const currentID = await page.page.locator(".tab-track [role='tab'][aria-selected='true']").getAttribute("data-id");
+  await page.page.keyboard.press("Control+Tab");
+  await page.seen("the next tab to be in view", ([id]) => document.querySelector(".tab-track [role='tab'][aria-selected='true']")?.getAttribute("data-id") !== id, [currentID], 10_000);
+  await page.page.keyboard.press("Control+Shift+Tab");
+  await page.seen("the previous tab to come back", ([id]) => document.querySelector(".tab-track [role='tab'][aria-selected='true']")?.getAttribute("data-id") === id, [currentID], 10_000);
+  await page.page.keyboard.press("Control+9");
+  await page.seen("the last tab to be in view", () => {
+    const tabs = [...document.querySelectorAll(".tab-track [role='tab']")];
+    const last = tabs.at(-1);
+    return Boolean(last) && last.getAttribute("aria-selected") === "true";
+  }, null, 10_000);
+
+  // The session's own menu: the Mac's, in its order (SidebarView.swift:600-643), and the
+  // pin that keeps a session at the top of the sidebar.
+  const other = page.page.locator("#sessions li:not(.current) button.session").first();
+  await other.click({ button: "right" });
+  await page.seen("the session's menu to open", () => document.querySelector(".context-menu") !== null, null, 10_000);
+  assert.deepEqual(
+    (await page.page.locator(".context-menu [role='menuitem']").allTextContents()).map(text => text.trim()),
+    ["Pin", "Open Beside", "Rename…", "Show in Folder", "Copy as Markdown", "Export as Markdown…", "Archive", "Delete…"],
+    "the menu is the Mac's, in its order",
+  );
+  await page.page.locator(".context-menu [role='menuitem']", { hasText: "Pin" }).click();
+  await page.seen("the pinned session to sit at the top of the sidebar", () => {
+    const section = [...document.querySelectorAll(".section-title")].find(node => node.textContent?.trim() === "Pinned");
+    return Boolean(section) && Boolean(document.querySelector(".sessions.pinned li"));
+  }, null, 10_000);
+
+  // The tab's own menu: the Mac's, in its order (TitleBar.swift:214-231). The tab in view
+  // has no "Open Beside" — the Mac offers it for the tabs beside the one in view only.
+  await page.page.locator(".tab-track [role='tab']:not([aria-selected='true'])").first().click({ button: "right" });
+  await page.seen("the tab's menu to open", () => document.querySelector(".context-menu") !== null, null, 10_000);
+  assert.deepEqual(
+    (await page.page.locator(".context-menu [role='menuitem']").allTextContents()).map(text => text.trim()),
+    ["Open Beside", "Rename…", "Close Tab", "Close Other Tabs", "Close All Tabs"],
+    "the tab's menu is the Mac's, in its order",
+  );
+
+  // The project's own name: the Mac's editor over the window (ProjectEditor.swift:8-13),
+  // and the sidebar shows the name instead of the folder's (Workspace.swift:186).
+  // The machine's own list of projects holds the other tests' too: the row of this test's
+  // project is the one named after it.
+  await page.page.locator(".project-row", { hasText: path.basename(project) }).first().click({ button: "right" });
+  await page.seen("the project's menu to open", () => document.querySelector(".context-menu") !== null, null, 10_000);
+  const projectMenu = (await page.page.locator(".context-menu [role='menuitem']").allTextContents()).map(text => text.trim());
+  assert.ok(projectMenu.includes("Edit Project…"), "the project's menu offers the editor");
+  await page.page.locator(".context-menu [role='menuitem']", { hasText: "Edit Project…" }).click();
+  await page.seen("the editor to open over the window", () => document.getElementById("project-editor") !== null, null, 10_000);
+  await page.page.locator("#project-name").fill("The Page Project");
+  await page.page.locator("#project-save").click();
+  await page.seen("the project to be named in the sidebar", () => [...document.querySelectorAll(".project-name")].some(node => node.textContent === "The Page Project"), null, 10_000);
+
+  // The mode menu: the Mac's, with the tool permissions in it (ComposerMenus.swift:120-135).
+  await page.element("agent").click();
+  await page.seen("the mode menu to open", () => document.querySelectorAll(".choice-panel .choice-item").length > 0, null, 10_000);
+  const modeItems = (await page.page.locator(".choice-panel .choice-item").allTextContents()).map(text => text.trim());
+  assert.ok(modeItems.some(text => text.includes("Approve All")), "the menu offers Approve All");
+  assert.ok(modeItems.some(text => text.includes("Ask First")), "the menu offers Ask First");
+  assert.ok(modeItems.some(text => text.includes("Runs tools without asking")), "with the Mac's own words");
+  assert.ok(modeItems.some(text => text.includes("Asks before editing files or running commands")), "and the other one's too");
+  await page.page.keyboard.press("Escape");
+
+  // The image viewer: the picture opens over the window, and the window under it dims with
+  // it (ImageViewer.swift:33-41). A page of its own: a model that will not look at a
+  // picture is the engine's mood, not this client's business.
+  const viewer = await open();
+  const picture = path.join(project, "a-picture.png");
+  fs.writeFileSync(picture, Buffer.from(
+    // A picture of eight by eight pixels: the engine decodes what comes with a message,
+    // and a broken one is refused whole.
+    "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR4nGO4Y2ODFTEMLQkAXrdVAdmuFfUAAAAASUVORK5CYII=",
+    "base64",
+  ));
+  // The page is open and the app is awake: a session is in view, and the composer is
+  // there to be given a file.
+  await viewer.seen("the sessions to be listed", () => document.querySelectorAll("#sessions li").length > 0, null, 30_000);
+  await viewer.seen("a session to be in view", () => document.querySelector("#sessions li.current") !== null, null, 30_000);
+  const second = path.join(project, "another-picture.png");
+  fs.writeFileSync(second, fs.readFileSync(picture));
+  await viewer.page.setInputFiles("#attach-input", [picture, second]);
+  await viewer.seen("the attachment to be picked", () => document.querySelectorAll("#attachments .attachment-chip").length > 0, null, 10_000);
+  await viewer.element("composer").evaluate(form => form.requestSubmit());
+  await viewer.seen("the picture to show in the conversation", () => document.querySelector("#entries .attachment-image") !== null, null, 30_000);
+  await viewer.page.locator("#entries .attachment-image").first().click();
+  await viewer.seen("the picture to open over the window", () => document.querySelector(".image-viewer") !== null, null, 10_000);
+  await viewer.seen("the window under it to dim", () => {
+    const header = document.querySelector("header.titlebar");
+    return document.body.classList.contains("viewing-image") && Number(getComputedStyle(header).opacity) < 0.5;
+  }, null, 10_000);
+  // The Mac's own header (ImageViewer.swift:164-221): how many pictures there are, and the
+  // arrows that step through them.
+  await viewer.seen("the viewer to say how many pictures there are", () => {
+    const head = document.querySelector(".image-viewer-head");
+    return Boolean(head) && /1 of 2/.test(head.textContent ?? "");
+  }, null, 10_000);
+  await viewer.page.locator(".image-viewer-step.right").click();
+  await viewer.seen("the next picture to be in view", () => {
+    const head = document.querySelector(".image-viewer-head");
+    return Boolean(head) && /2 of 2/.test(head.textContent ?? "");
+  }, null, 10_000);
+  await viewer.page.keyboard.press("ArrowLeft");
+  await viewer.seen("the arrow key to step back", () => {
+    const head = document.querySelector(".image-viewer-head");
+    return Boolean(head) && /1 of 2/.test(head.textContent ?? "");
+  }, null, 10_000);
+  await viewer.page.keyboard.press("Escape");
+  await viewer.seen("the picture to go away", () => document.querySelector(".image-viewer") === null, null, 10_000);
+
+  // The project's other folders, where the agent may work too: the session is given the
+  // rules that allow them, and the note that names them (ProjectFolders.swift:20-46,
+  // SessionModel.swift:1379-1405).
+  await fetch(`${url}api/projects/settings`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: project, folders: [path.join(project, "sub")] }),
+  });
+  await page.page.reload({ waitUntil: "domcontentloaded" });
+  const listed = await (await fetch(`${url}api/sessions?directory=${encodeURIComponent(project)}`)).json();
+  let given = false;
+  for (let attempt = 0; attempt < 30 && !given; attempt += 1) {
+    for (const session of listed.sessions ?? []) {
+      const detail = await (await fetch(`${url}api/sessions/${session.id}`)).json();
+      if ((detail.session?.permissions ?? []).some(rule => rule.action === "external_directory" && rule.effect === "allow")) { given = true; break; }
+    }
+    if (!given) await wait(1000);
+  }
+  assert.ok(given, "a session was given the project's folders");
+
+  // The project's own run command, and the button that runs it in the panel's terminal
+  // (MainView.swift:562-566, 1479-1491). The terminal itself is the shell's, so what the
+  // page shows here is the panel opening on it.
+  await fetch(`${url}api/projects/settings`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: project, run: "npm run dev" }),
+  });
+  await page.page.reload({ waitUntil: "domcontentloaded" });
+  await page.seen("the run button to be in the title bar", () => document.getElementById("run") !== null, null, 30_000);
+  await page.element("run").click();
+  await page.seen("the terminal to open for it", () => document.getElementById("drawer-terminal")?.hidden === false, null, 10_000);
+
+  // Nothing in the page complained.
+  assert.deepEqual([...page.errors, ...reloaded.errors, ...reread.errors], [], "the page had nothing to complain about");
+
+  // Leave the engine as we found it (the hook above closes the pages and the harness).
+});

@@ -110,6 +110,7 @@ private struct ToolCard: View {
             .contentShape(.rect(cornerRadius: 12))
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .onHover { isHovering = $0 }
     }
 
@@ -174,6 +175,7 @@ private struct SiteTile: View {
             .contentShape(.rect(cornerRadius: 12))
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .onHover { isHovering = $0 }
         .help(site.url.absoluteString)
     }

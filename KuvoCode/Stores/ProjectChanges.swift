@@ -13,6 +13,11 @@ nonisolated struct ChangedFile: Identifiable, Hashable, Sendable {
     var oldPath: String?
     var status: Status
     var isBinary = false
+    /// Too big to read line by line (a new file of a few megabytes); shown like a binary one.
+    var isTooBig = false
+    /// A folder with a repository of its own (a nested repository, a new submodule), listed
+    /// as one new file.
+    var isFolder = false
     var lines: [DiffLine] = []
     /// Where the file is on disk.
     var url: URL
@@ -84,8 +89,10 @@ final class ProjectChanges {
     var additions: Int { files.reduce(0) { $0 + $1.additions } }
     var deletions: Int { files.reduce(0) { $0 + $1.deletions } }
 
-    /// Reads the changes again. `fallback` is the engine's diff, used outside a repository.
-    func refresh(fallback: [FileDiff] = []) async {
+    /// Reads the changes again. `fallback` is the engine's diff, used outside a repository, or
+    /// when it's empty there (the engine keeps no snapshots outside one), `edits`: the files the
+    /// session's edits changed.
+    func refresh(fallback: [FileDiff] = [], edits: [FileDiff] = []) async {
         let directory = directory, scope = scope, base = base
         if scope == .session {
             hasUncommitted = false
@@ -102,7 +109,7 @@ final class ProjectChanges {
             apply(result)
         } else {
             isRepository = false
-            apply(fallback.map { DiffParser.file(from: $0, directory: directory) })
+            apply((fallback.isEmpty ? edits : fallback).map { DiffParser.file(from: $0, directory: directory) })
         }
         isLoaded = true
     }
@@ -167,7 +174,9 @@ nonisolated enum Git {
             base = fork
         }
         let limit = relativePath(of: directory, in: root)
-        var arguments = ["-c", "core.quotepath=off", "diff", "--no-color", "--no-ext-diff", "--find-renames", "-U100000"]
+        // Its own prefixes, whatever the git settings (diff.noprefix, diff.mnemonicPrefix): the
+        // paths are read after them.
+        var arguments = ["-c", "core.quotepath=off", "diff", "--no-color", "--no-ext-diff", "--find-renames", "--src-prefix=a/", "--dst-prefix=b/", "-U100000"]
         switch scope {
         // The session's edits come from the engine, not git; read like Uncommitted here.
         case .uncommitted, .branch, .session: arguments.append(base)
@@ -184,6 +193,22 @@ nonisolated enum Git {
             if scope == .staged, file.status != .deleted { file.newObject = ":" + file.path }
             return file
         }
+        // A file that changed kind (a file now a link, or back) comes as two, gone and new: one
+        // here, changed, so Discard puts it back rather than throwing the new one away.
+        var seen: [String: Int] = [:]
+        var merged: [ChangedFile] = []
+        for file in files {
+            guard let i = seen[file.path] else { seen[file.path] = merged.count; merged.append(file); continue }
+            merged[i].status = .modified
+            merged[i].lines += file.lines
+            merged[i].isBinary = merged[i].isBinary || file.isBinary
+            merged[i].isFolder = merged[i].isFolder || file.isFolder
+            merged[i].isTooBig = merged[i].isTooBig || file.isTooBig
+            if merged[i].isTooBig { merged[i].lines = [] }
+            merged[i].oldObject = merged[i].oldObject ?? file.oldObject
+            merged[i].newObject = merged[i].newObject ?? file.newObject
+        }
+        files = merged
         if scope != .staged {
             let untracked = run(["-c", "core.quotepath=off", "ls-files", "--others", "--exclude-standard", "-z", "--", limit.isEmpty ? "." : limit], in: root) ?? ""
             for path in untracked.split(separator: "\0").map(String.init) where !files.contains(where: { $0.path == path }) {
@@ -195,35 +220,118 @@ nonisolated enum Git {
 
     static func perform(_ action: ProjectChanges.Action, on file: ChangedFile, root: String, scope: ProjectChanges.Scope) -> String? {
         let paths = [file.path] + (file.oldPath.map { [$0] } ?? [])
-        let tracked = run(["ls-files", "--error-unmatch", "--", file.path], in: root) != nil
+        // The file's own path, never a pattern: "app/[slug]/page.tsx" would match others, and
+        // ":!x" every file but x.
+        func on(_ arguments: [String]) -> String? { run(["--literal-pathspecs"] + arguments, in: root) }
         func git(_ arguments: [String]) -> String? {
-            run(arguments, in: root) == nil ? "git couldn't \(arguments.first ?? "do that") \(file.path)." : nil
+            on(arguments) == nil ? "git couldn't \(arguments.first ?? "do that") \(file.path)." : nil
         }
         switch action {
         case .stage:
-            return git(["add", "-A", "--"] + paths)
+            // A rename's old path only while git still has it: once staged as moved, naming it fails.
+            let old = file.oldPath.flatMap { on(["ls-files", "--error-unmatch", "--", $0]) != nil ? $0 : nil }
+            return git(["add", "-A", "--", file.path] + (old.map { [$0] } ?? []))
         case .unstage:
-            return git(["restore", "--staged", "--"] + paths)
+            if on(["restore", "--staged", "--"] + paths) != nil { return nil }
+            // A repository with no commits yet has nothing to go back to (`restore --staged`
+            // fails there): out of what's staged, the file left as it is. Only when git says it
+            // has none, not when it couldn't be asked (a machine's connection dropping).
+            guard on(["rev-parse", "--git-dir"]) != nil, on(["rev-parse", "--verify", "-q", "HEAD"]) == nil else {
+                return "git couldn't restore \(file.path)."
+            }
+            return git(["rm", "--cached", "-f", "-q", "--"] + paths)
         case .discard:
-            // New to git (or only staged): it has no committed version to go back to.
-            if file.status == .added, scope != .unstaged || !tracked {
-                if tracked { _ = run(["rm", "--cached", "-q", "--", file.path], in: root) }
+            // Out of git first, and only once that worked: a file still staged would go with the
+            // next commit. `-f` for one staged and then changed again.
+            func untrack(_ path: String) -> String? {
+                on(["ls-files", "--error-unmatch", "--", path]) == nil ? nil : git(["rm", "--cached", "-f", "-q", "--", path])
+            }
+            // A folder where a file goes back (put in its place, a repository cloned there): git
+            // would delete it, and all in it, for good. It goes to the Trash first. Not a
+            // submodule that's one already, which git puts back by its commit and leaves be.
+            func clear(_ paths: [String]) -> String? {
+                for path in paths {
+                    let url = RemoteFolder.url(root).appending(path: path)
+                    // A file (or a link) where one of its folders goes back: the same.
+                    if let blocking = fileInPlace(ofFoldersOf: path, in: root) {
+                        do { try trash(blocking) } catch { return error.localizedDescription }
+                        continue
+                    }
+                    guard isFolder(url) else { continue }
+                    let kept = scope == .unstaged ? on(["ls-files", "-s", "--", path]) : on(["ls-tree", "HEAD", "--", path])
+                    if kept?.hasPrefix("160000") == true { continue }
+                    do { try trash(url) } catch { return error.localizedDescription }
+                }
+                return nil
+            }
+            // New to git (untracked, only staged, or only noted with `git add -N`): it has no
+            // committed version to go back to, so the file goes to the Trash. (Restoring one only
+            // noted would empty it.)
+            if file.status == .added {
+                if let failure = untrack(file.path) { return failure }
                 do { try trash(file.url) } catch { return error.localizedDescription }
                 return nil
             }
-            if scope == .unstaged { return git(["restore", "--worktree", "--"] + paths) }
+            // Moved: the new path goes as a new file does, and the old one comes back (from the
+            // staged version for unstaged changes, where a move shows only through `add -N`).
             if file.status == .renamed, let old = file.oldPath {
-                _ = run(["rm", "--cached", "-q", "--", file.path], in: root)
-                try? trash(file.url)
-                return git(["restore", "--source=HEAD", "--staged", "--worktree", "--", old])
+                if let failure = untrack(file.path) ?? clear([old]) { return failure }
+                if let failure = git(scope == .unstaged ? ["restore", "--worktree", "--", old] : ["restore", "--source=HEAD", "--staged", "--worktree", "--", old]) {
+                    return failure
+                }
+                do { try trash(file.url) } catch { return error.localizedDescription }
+                return nil
             }
+            if let failure = clear(scope == .unstaged ? paths : [file.path]) { return failure }
+            if scope == .unstaged { return git(["restore", "--worktree", "--"] + paths) }
             return git(["restore", "--source=HEAD", "--staged", "--worktree", "--", file.path])
         }
     }
 
+    /// A folder (not a link to one) is at `url`; on a machine that can't be asked, as if one were,
+    /// so nothing is deleted on a guess.
+    private static func isFolder(_ url: URL) -> Bool {
+        if url.isFileURL { return (try? FileManager.default.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType == .typeDirectory }
+        return RemoteShell.isFolder(url) ?? true
+    }
+
+    /// The first of the folders `path` is in (in the repository at `root`) that is something else
+    /// now, a file or a link: git would delete it to put the folder back.
+    private static func fileInPlace(ofFoldersOf path: String, in root: String) -> URL? {
+        let folders = path.split(separator: "/").dropLast().map(String.init)
+        guard !folders.isEmpty else { return nil }
+        var url = RemoteFolder.url(root)
+        // On a machine, every level in one go: something else there, or nothing (then nothing
+        // below it either).
+        if !url.isFileURL, let (machine, base) = RemoteFolder.parse(url) {
+            var levels: [String] = []
+            for folder in folders { levels.append((levels.last.map { $0 + "/" } ?? "") + folder) }
+            guard let data = RemoteShell.run(fileInPlaceScript(base: base, levels: levels), on: machine), !data.isEmpty else { return nil }
+            return url.appending(path: String(decoding: data, as: UTF8.self))
+        }
+        for folder in folders {
+            url = url.appending(path: folder)
+            guard let type = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType else { return nil }
+            if type != .typeDirectory { return url }
+        }
+        return nil
+    }
+
+    /// Of `levels` (folders in `base`, each inside the one before), the first that's a file or a
+    /// link now, as it says it; nothing when they're all folders, or one isn't there.
+    static func fileInPlaceScript(base: String, levels: [String]) -> String {
+        """
+        cd \(SSHConnection.quoted(base)) || exit 0
+        for d in \(levels.map(SSHConnection.quoted).joined(separator: " ")); do
+          if [ -L "$d" ] || { [ -e "$d" ] && [ ! -d "$d" ]; }; then printf '%s' "$d"; exit 0; fi
+          [ -d "$d" ] || exit 0
+        done
+        """
+    }
+
     /// To the Trash on this Mac; on a machine, which has none, to `~/.kuvo-code/trash` there.
     private static func trash(_ url: URL) throws {
-        if url.isFileURL { return try FileManager.default.trashItem(at: url, resultingItemURL: nil) }
+        if url.isFileURL { return try FileManager.default.moveToTrash(url) }
         if let failure = RemoteShell.trash(url) { throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: failure]) }
     }
 
@@ -232,7 +340,8 @@ nonisolated enum Git {
         if hasStaged(in: directory) {
             text = run(["diff", "--cached", "--no-color", "--no-ext-diff"], in: directory) ?? ""
         } else {
-            text = run(["diff", "HEAD", "--no-color", "--no-ext-diff"], in: directory) ?? ""
+            // What committing would take: this folder's, as `commit` adds only it.
+            text = run(["diff", "HEAD", "--no-color", "--no-ext-diff", "--", "."], in: directory) ?? ""
             let untracked = run(["ls-files", "--others", "--exclude-standard"], in: directory) ?? ""
             if !untracked.isEmpty { text += "\nNew files:\n" + untracked }
         }
@@ -282,20 +391,30 @@ nonisolated enum Git {
         let url = RemoteFolder.url(root).appending(path: path)
         var file = ChangedFile(path: path, status: .added, url: url)
         file.root = root
+        // git names a repository inside this one by its folder: "web/".
+        file.isFolder = path.hasSuffix("/")
         let data: Data?
         if url.isFileURL {
             let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-            data = size <= 2_000_000 ? try? Data(contentsOf: url) : nil
+            file.isTooBig = size > 2_000_000
+            data = file.isTooBig ? nil : try? Data(contentsOf: url)
         } else {
-            data = RemoteShell.read(url, limit: 2_000_001).flatMap { $0.count <= 2_000_000 ? $0 : nil }
+            let read = RemoteShell.read(url, limit: 2_000_001)
+            file.isTooBig = (read?.count ?? 0) > 2_000_000
+            data = file.isTooBig ? nil : read
         }
         guard let data, !data.contains(0),
               let text = String(data: data, encoding: .utf8) else {
             file.isBinary = true
             return file
         }
-        var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var lines = DiffParser.lines(of: text).map(String.init)
         if lines.last == "" { lines.removeLast() }
+        // Too big to read through, as a changed one is.
+        if lines.count > DiffParser.maxLines || lines.contains(where: { $0.utf8.count > DiffParser.maxLineLength }) {
+            file.isTooBig = true
+            return file
+        }
         file.lines = lines.enumerated().map { DiffLine(kind: .added, newNumber: $0 + 1, text: $1) }
         return file
     }
@@ -324,7 +443,10 @@ nonisolated enum Git {
     private static func process(_ arguments: [String], in directory: String, environment: [String: String]) -> Process {
         let process = Process()
         if let remote = RemoteFolder.parse(directory) {
-            let settings = environment.filter { $0.key.hasPrefix("GIT_") }.map { "\($0.key)=\(SSHConnection.quoted($0.value))" }.sorted()
+            // Only git's settings that mean the same there: a command, key or config file named
+            // here (GIT_SSH_COMMAND, GIT_CONFIG_GLOBAL…) is a path on this Mac.
+            let portable = ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "GIT_TERMINAL_PROMPT", "GIT_OPTIONAL_LOCKS"]
+            let settings = environment.filter { portable.contains($0.key) }.map { "\($0.key)=\(SSHConnection.quoted($0.value))" }.sorted()
             let command = (["exec", "env"] + settings + ["git"] + arguments.map(SSHConnection.quoted)).joined(separator: " ")
             process.executableURL = URL(filePath: "/usr/bin/ssh")
             process.arguments = SSHConnection(destination: remote.machine).arguments(running: "cd \(SSHConnection.quoted(remote.path)) && \(command)")
@@ -372,19 +494,23 @@ nonisolated enum DiffParser {
 
         func finish() { if let current { files.append(current) } }
 
-        for raw in patch.split(separator: "\n", omittingEmptySubsequences: false) {
+        // How many sides a line's marks are for: two in a conflicted file's combined diff.
+        var sides = 1
+        for raw in lines(of: patch) {
             let line = String(raw)
-            if line.hasPrefix("diff --git ") {
+            if line.hasPrefix("diff --git ") || line.hasPrefix("diff --cc ") {
                 finish()
-                let path = pathFromHeader(line)
+                let combined = line.hasPrefix("diff --cc ")
+                let path = combined ? self.path(line.dropFirst("diff --cc ".count)) : pathFromHeader(line)
                 current = ChangedFile(path: path, status: .modified, url: RemoteFolder.url(root).appending(path: path))
+                sides = combined ? 2 : 1
                 sawHunk = false
                 continue
             }
             guard var file = current else { continue }
             defer { current = file }
             if line.hasPrefix("@@") {
-                let numbers = hunkStarts(line)
+                let numbers = sides > 1 ? combinedHunkStarts(line) : hunkStarts(line)
                 oldLine = numbers.old
                 newLine = numbers.new
                 pendingGap = sawHunk || (numbers.old > 1 && numbers.new > 1)
@@ -392,11 +518,11 @@ nonisolated enum DiffParser {
                 continue
             }
             if !sawHunk {
-                if line.hasPrefix("new file mode") { file.status = .added }
+                if line.hasPrefix("new file mode") { file.status = .added; file.isFolder = line.hasSuffix(" 160000") }
                 else if line.hasPrefix("deleted file mode") { file.status = .deleted }
-                else if line.hasPrefix("rename from ") { file.oldPath = String(line.dropFirst("rename from ".count)); file.status = .renamed }
+                else if line.hasPrefix("rename from ") { file.oldPath = path(line.dropFirst("rename from ".count)); file.status = .renamed }
                 else if line.hasPrefix("rename to ") {
-                    file.path = String(line.dropFirst("rename to ".count))
+                    file.path = path(line.dropFirst("rename to ".count))
                     file.url = RemoteFolder.url(root).appending(path: file.path)
                 }
                 else if line.hasPrefix("Binary files ") { file.isBinary = true }
@@ -404,17 +530,41 @@ nonisolated enum DiffParser {
             }
             guard let first = line.first else { continue }
             var parsed: DiffLine
-            switch first {
-            case "+": parsed = DiffLine(kind: .added, newNumber: newLine, text: String(line.dropFirst())); newLine += 1
-            case "-": parsed = DiffLine(kind: .removed, oldNumber: oldLine, text: String(line.dropFirst())); oldLine += 1
-            case " ": parsed = DiffLine(kind: .context, oldNumber: oldLine, newNumber: newLine, text: String(line.dropFirst())); oldLine += 1; newLine += 1
-            default: continue  // "\ No newline at end of file"
+            if sides > 1 {
+                // "++", " +", "- " …: a mark for each side, the file as it is after them.
+                let marks = line.prefix(sides)
+                guard marks.count == sides, marks.allSatisfy({ "+- ".contains($0) }) else { continue }
+                let text = String(line.dropFirst(sides))
+                if marks.contains("-") { parsed = DiffLine(kind: .removed, oldNumber: oldLine, text: text); oldLine += 1 }
+                else if marks.contains("+") { parsed = DiffLine(kind: .added, newNumber: newLine, text: text); newLine += 1 }
+                else { parsed = DiffLine(kind: .context, oldNumber: oldLine, newNumber: newLine, text: text); oldLine += 1; newLine += 1 }
+            } else {
+                switch first {
+                case "+": parsed = DiffLine(kind: .added, newNumber: newLine, text: String(line.dropFirst())); newLine += 1
+                case "-": parsed = DiffLine(kind: .removed, oldNumber: oldLine, text: String(line.dropFirst())); oldLine += 1
+                case " ": parsed = DiffLine(kind: .context, oldNumber: oldLine, newNumber: newLine, text: String(line.dropFirst())); oldLine += 1; newLine += 1
+                default: continue  // "\ No newline at end of file"
+                }
             }
             if pendingGap { parsed.gapBefore = true; pendingGap = false }
             file.lines.append(parsed)
         }
         finish()
+        // A file too big to read through (a huge or minified one): named, not shown.
+        for index in files.indices where files[index].lines.count > maxLines || files[index].lines.contains(where: { $0.text.utf8.count > maxLineLength }) {
+            files[index].lines = []
+            files[index].isTooBig = true
+        }
         return files
+    }
+
+    static let maxLines = 20_000
+    static let maxLineLength = 20_000
+
+    /// Text's lines, ending at "\n" or "\r\n" (which Swift counts as one character, so a split
+    /// at "\n" alone left a file with Windows line endings in one piece).
+    static func lines(of text: String) -> [Substring] {
+        text.split(omittingEmptySubsequences: false) { $0 == "\n" || $0 == "\r\n" }
     }
 
     /// The engine's diff of one file (patch text, a few lines of context).
@@ -439,13 +589,79 @@ nonisolated enum DiffParser {
         return file
     }
 
-    /// "diff --git a/x b/x" → "x". Paths with spaces are fine; renames use the b side.
-    private static func pathFromHeader(_ line: String) -> String {
+    /// "diff --git a/x b/x" → "x": the b side. A name git quotes ("a/say \"hi\".txt", one with a
+    /// tab or a backslash) is read as git wrote it; one with " b/" in it ("Plan b/notes.md") by
+    /// both sides being the same. (A rename's own lines name its paths.)
+    static func pathFromHeader(_ line: String) -> String {
         let rest = line.dropFirst("diff --git ".count)
+        if rest.hasPrefix("\""), let (first, end) = unquoted(rest) {
+            let second = rest[end...].drop { $0 == " " }
+            let path = second.hasPrefix("\"") ? unquoted(second)?.text ?? String(second) : String(second)
+            return path.hasPrefix("b/") ? String(path.dropFirst(2)) : first.hasPrefix("a/") ? String(first.dropFirst(2)) : path
+        }
+        if rest.hasSuffix("\""), let range = rest.range(of: " \"b/", options: .backwards), let (path, _) = unquoted(rest[rest.index(after: range.lowerBound)...]) {
+            return String(path.dropFirst(2))
+        }
+        // "a/X b/X": X is half of what's left.
+        let half = (rest.count - 5) / 2
+        if rest.count % 2 == 1, half > 0, rest.hasPrefix("a/"), rest.dropFirst(2).prefix(half) == rest.suffix(half), rest.dropFirst(2 + half).hasPrefix(" b/") {
+            return String(rest.suffix(half))
+        }
         if let range = rest.range(of: " b/", options: .backwards) {
             return String(rest[range.upperBound...])
         }
         return String(rest)
+    }
+
+    /// A path from a line git may have quoted ("rename to", "diff --cc"): as it is, or unquoted.
+    static func path(_ text: some StringProtocol) -> String {
+        text.hasPrefix("\"") ? unquoted(text)?.text ?? String(text) : String(text)
+    }
+
+    /// The name in a C-style quoted string at the start of `text`, as git writes one ("\"", "\\",
+    /// "\t", "\303\251"), and where the string ends; nil when it isn't one.
+    private static func unquoted<S: StringProtocol>(_ text: S) -> (text: String, end: S.Index)? {
+        guard text.first == "\"" else { return nil }
+        var bytes: [UInt8] = []
+        var index = text.index(after: text.startIndex)
+        while index < text.endIndex {
+            let character = text[index]
+            if character == "\"" { return (String(decoding: bytes, as: UTF8.self), text.index(after: index)) }
+            guard character == "\\" else {
+                bytes += Array(String(character).utf8)
+                index = text.index(after: index)
+                continue
+            }
+            index = text.index(after: index)
+            guard index < text.endIndex else { return nil }
+            let escaped = text[index]
+            if let digit = escaped.wholeNumberValue, digit < 8 {
+                // Three octal digits: one byte of the name's UTF-8.
+                var value = 0
+                var digits = 0
+                while digits < 3, index < text.endIndex, let next = text[index].wholeNumberValue, next < 8 {
+                    value = value * 8 + next
+                    digits += 1
+                    index = text.index(after: index)
+                }
+                bytes.append(UInt8(truncatingIfNeeded: value))
+                continue
+            }
+            let known: [Character: UInt8] = ["a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, "\"": 34, "\\": 92]
+            bytes.append(known[escaped] ?? Array(String(escaped).utf8).first ?? 0)
+            index = text.index(after: index)
+        }
+        return nil
+    }
+
+    /// "@@@ -12,7 -12,8 +12,9 @@@" → (12, 12): the first side, and the file as it is.
+    private static func combinedHunkStarts(_ line: String) -> (old: Int, new: Int) {
+        let parts = line.split(separator: " ")
+        func start(_ part: Substring?) -> Int {
+            guard let part else { return 1 }
+            return max(part.dropFirst().split(separator: ",").first.flatMap { Int($0) } ?? 1, 1)
+        }
+        return (start(parts.first { $0.hasPrefix("-") }), start(parts.first { $0.hasPrefix("+") }))
     }
 
     /// "@@ -12,7 +12,9 @@" → (12, 12).

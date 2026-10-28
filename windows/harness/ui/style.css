@@ -1,0 +1,4289 @@
+/* Kuvo Code harness UI — the design this app is bound to.
+   Phase 1 retired OpenDesign's `modern-minimal`. The binding is now the Mac app's own design
+   layer (KuvoCode/Design), written down in DESIGN.md beside this file. The Mac binding block
+   at the end of this file wins the cascade; the direction below is kept only until Phase 2
+   moves its rules into the components and deletes it.
+   The Mac app's structure and wording are unchanged — only the look moves to its system. */
+
+:root {
+  /* Canvas — the direction's own neutrals, in oklch. */
+  --bg: oklch(99% 0.002 240);
+    --bg-ambient:
+    radial-gradient(120% 80% at 12% -10%, rgba(94, 106, 210, 0.07) 0%, rgba(94, 106, 210, 0) 55%),
+    radial-gradient(100% 70% at 88% 0%, rgba(47, 191, 175, 0.05) 0%, rgba(47, 191, 175, 0) 50%);
+  --surface: oklch(100% 0 0);
+  --fg: oklch(18% 0.012 250);
+  --muted: oklch(50% 0.012 250);
+  --border: oklch(92% 0.005 250);
+  --accent-signal: oklch(56% 0.18 255);
+  /* Surfaces — the app's own names, bound to the direction's. */
+  --panel: var(--surface);
+  --panel-2: oklch(97.5% 0.004 250);
+  --panel-glass: rgba(255, 255, 255, 0.78);
+  --code-bg: oklch(97.5% 0.004 250);
+  /* Hover — one step of the surface, the system's way of saying "here". */
+  --hover: oklch(96% 0.005 250);
+  /* Text */
+  --ink: var(--fg);
+  --ink-soft: var(--muted);
+  --ink-faint: oklch(55% 0.01 250);
+  /* Border — a hairline that shows the shape without drawing a stroke around everything. */
+  --line: var(--border);
+  --line-soft: oklch(94% 0.004 250);
+  --lit: rgba(255, 255, 255, 0.9);
+  /* Accent — the user's pick (cobalt by default, the direction's own blue), interactive only. */
+  --accent: oklch(55% 0.18 255);
+  --accent-ink: #ffffff;
+  --accent-hover: oklch(52% 0.18 255);
+  --accent-soft: color-mix(in oklab, var(--accent), transparent 88%);
+  /* Semantic — colour with a meaning, never colour alone. */
+  --danger: oklch(55% 0.22 25);
+  --danger-soft: color-mix(in oklab, var(--danger), transparent 90%);
+  --ok: oklch(53% 0.18 140);
+  --ok-soft: color-mix(in oklab, var(--ok), transparent 90%);
+  --warn: oklch(55% 0.18 85);
+  --warn-soft: color-mix(in oklab, var(--warn), transparent 90%);
+  /* Radius — quiet, small, consistent. */
+  --radius: 8px;
+  --radius-sm: 6px;
+  --radius-xs: 4px;
+  --radius-lg: 12px;
+  --radius-pill: 9999px;
+  /* Shadow — none on the ground: only what floats (dropdowns, the palette, the sheet). */
+  --shadow-card: none;
+  --shadow-lifted: 0 16px 48px rgba(13, 17, 28, 0.16), 0 0 0 1px rgba(13, 17, 28, 0.06);
+  /* Motion — quick and unfussy. */
+  --motion-quick: 120ms;
+  --motion-fast: 200ms;
+  --motion-base: 320ms;
+  --motion-slow: 500ms;
+  --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0, 0, 0.2, 1);
+  /* Typography — the direction asks for system fonts: SF on macOS, Segoe UI Variable on
+     Windows. No webfont, nothing to download, the same shapes as the system around it. */
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+  --weight-ui: 500;
+  --weight-strong: 600;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 13px;
+  --text-md: 14px;
+  /* The Mac's own names, where the ramp has no number of theirs: macOS `.title3` is 15 pt. */
+  --text-title3: 15px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --leading-body: 1.5;
+  --leading-tight: 1.2;
+  --tracking-display: -0.02em;
+  /* Spacing — 8px base. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --gutter: 20px;
+  --pane-gap: 8px;
+  --readable-width: 760px;
+  /* The header's height: the drawer slides in under it, the Mac app's way. */
+  --header-height: 40px;
+}
+
+/* The dark ground: the same direction, inverted — a near-black canvas, panels one step up,
+   raised surfaces one more, and hairline white borders for the structure. */
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) {
+    --bg: #08090a;
+        --bg-ambient:
+      radial-gradient(120% 80% at 12% -10%, rgba(94, 106, 210, 0.10) 0%, rgba(94, 106, 210, 0) 55%),
+      radial-gradient(100% 70% at 88% 0%, rgba(47, 191, 175, 0.07) 0%, rgba(47, 191, 175, 0) 50%);
+    --surface: #191a1b;
+    --fg: #f7f8f8;
+    --muted: #d0d6e0;
+    --border: rgba(255, 255, 255, 0.08);
+    --accent-signal: #7170ff;
+    --panel: #191a1b;
+    --panel-2: #0f1011;
+    --panel-glass: rgba(15, 16, 17, 0.78);
+    --code-bg: #121316;
+    --hover: rgba(255, 255, 255, 0.05);
+    --ink: #f7f8f8;
+    --ink-soft: #d0d6e0;
+    --ink-faint: #8a8f98;
+    --line: rgba(255, 255, 255, 0.08);
+    --line-soft: rgba(255, 255, 255, 0.05);
+    --lit: rgba(255, 255, 255, 0.05);
+    --accent: #6f9dff;
+    --accent-ink: #0a0a0a;
+    --accent-hover: #8fb4ff;
+    --accent-soft: color-mix(in oklab, var(--accent), transparent 88%);
+    --danger: #f2555a;
+    --danger-soft: color-mix(in oklab, var(--danger), transparent 90%);
+    --ok: #10b981;
+    --ok-soft: color-mix(in oklab, var(--ok), transparent 90%);
+    --warn: #f0b429;
+    --warn-soft: color-mix(in oklab, var(--warn), transparent 90%);
+    --shadow-card: none;
+    --shadow-lifted: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.06);
+  }
+}
+html[data-theme="dark"] {
+    --bg: #08090a;
+        --bg-ambient:
+      radial-gradient(120% 80% at 12% -10%, rgba(94, 106, 210, 0.10) 0%, rgba(94, 106, 210, 0) 55%),
+      radial-gradient(100% 70% at 88% 0%, rgba(47, 191, 175, 0.07) 0%, rgba(47, 191, 175, 0) 50%);
+    --surface: #191a1b;
+    --fg: #f7f8f8;
+    --muted: #d0d6e0;
+    --border: rgba(255, 255, 255, 0.08);
+    --accent-signal: #7170ff;
+    --panel: #191a1b;
+    --panel-2: #0f1011;
+    --panel-glass: rgba(15, 16, 17, 0.78);
+    --code-bg: #121316;
+    --hover: rgba(255, 255, 255, 0.05);
+    --ink: #f7f8f8;
+    --ink-soft: #d0d6e0;
+    --ink-faint: #8a8f98;
+    --line: rgba(255, 255, 255, 0.08);
+    --line-soft: rgba(255, 255, 255, 0.05);
+    --lit: rgba(255, 255, 255, 0.05);
+    --accent: #6f9dff;
+    --accent-ink: #0a0a0a;
+    --accent-hover: #8fb4ff;
+    --accent-soft: color-mix(in oklab, var(--accent), transparent 88%);
+    --danger: #f2555a;
+    --danger-soft: color-mix(in oklab, var(--danger), transparent 90%);
+    --ok: #10b981;
+    --ok-soft: color-mix(in oklab, var(--ok), transparent 90%);
+    --warn: #f0b429;
+    --warn-soft: color-mix(in oklab, var(--warn), transparent 90%);
+    --shadow-card: none;
+    --shadow-lifted: 0 16px 48px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+* { box-sizing: border-box; }
+
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  height: 100vh;
+  /* The app is a column: the header, then the conversation, which takes the rest —
+     without this the grid's row is as tall as its content and the composer floats up. */
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  font-weight: 400;
+  line-height: var(--leading-body);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* The app's column: the header, then the conversation, which takes the rest. Without this
+   the grid's row is as tall as its content — the composer floats up and the sidebar's glass
+   stops halfway down. */
+#root { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+
+/* The canvas carries a faint ambient light, warm top-left to cool bottom-right. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: var(--bg-ambient);
+  pointer-events: none;
+  z-index: -1;
+}
+
+/* The parts the browser still owns: the selection, the caret, the text cursor. They carry
+   the design too — the cheapest signal that a page was drawn and not assembled. */
+::selection { background: var(--accent-soft); color: var(--ink); }
+input, textarea, [contenteditable] { caret-color: var(--accent); }
+a { text-underline-offset: 2px; }
+
+/* ---- Glass panels (header, sidebar, composer, drawer) ---- */
+/* The glass: the Mac app's translucent panels, over the app's own background. The header
+   and the sidebar are strips of it, the composer and the sheets are cards of it. */
+.glass,
+header,
+aside {
+  background: var(--panel-glass);
+  backdrop-filter: blur(18px) saturate(1.5);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+}
+.composer,
+.drawer,
+.settings-card {
+  background: var(--panel-glass);
+  backdrop-filter: blur(28px) saturate(1.8);
+  -webkit-backdrop-filter: blur(28px) saturate(1.8);
+}
+
+/* The window's own material (Look.swift:42-46): the glass, or a solid ground with
+   nothing showing through. */
+:root[data-window="solid"] { --panel-glass: var(--panel); }
+:root[data-window="solid"] .glass,
+:root[data-window="solid"] header,
+:root[data-window="solid"] aside,
+:root[data-window="solid"] .composer,
+:root[data-window="solid"] .drawer,
+:root[data-window="solid"] .settings-card {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* The header floats over the conversation, held by a hairline. */
+header {
+  position: sticky; top: 0; z-index: 20;
+  border-bottom: 1px solid var(--line-soft);
+}
+aside { border-right: 1px solid var(--line-soft); }
+
+/* ---- Cards: a raised surface, a hairline, and no shadow theatre ---- */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card); /* none: the direction's hairline does the work */
+  position: relative;
+  transition: box-shadow var(--motion-fast) var(--ease-standard),
+              border-color var(--motion-fast) var(--ease-standard),
+              transform var(--motion-base) var(--ease-spring);
+}
+/* The system has no lit edge: the hairline and the step of luminance say it all. */
+
+button {
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-ui);
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: border-color var(--motion-fast) var(--ease-standard),
+              background var(--motion-fast) var(--ease-standard),
+              color var(--motion-fast) var(--ease-standard),
+              transform var(--motion-fast) var(--ease-standard);
+}
+button:hover { border-color: var(--ink-faint); background: var(--hover); }
+/* The press is a fill, not a squeeze — see the Mac binding at the end of this file. */
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+button.danger { color: var(--danger); }
+button.danger:hover { border-color: var(--danger); background: var(--danger-soft); }
+button.small {
+  padding: 3px 8px; font-size: var(--text-xs); font-weight: var(--weight-ui);
+  color: var(--ink-soft); border-color: transparent; background: transparent;
+}
+button.small:hover { color: var(--ink); background: var(--hover); border-color: transparent; }
+/* A drawn mark, in the button's own ink — never an emoji. */
+button.icon { display: inline-flex; align-items: center; justify-content: center; padding: 4px 6px; }
+button.icon svg { display: block; }
+/* A control that cannot be used (Pressable.swift:61): dimmed, and with no fill of its
+   own under the pointer. */
+button:disabled { opacity: .45; cursor: default; }
+button:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+input, textarea, select {
+  font: inherit;
+  font-size: var(--text-base);
+  color: var(--ink);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+  transition: border-color var(--motion-fast) var(--ease-standard),
+              box-shadow var(--motion-fast) var(--ease-standard);
+}
+input:focus, textarea:focus, select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+input::placeholder, textarea::placeholder { color: var(--ink-faint); }
+textarea { resize: none; width: 100%; }
+
+.spacer { flex: 1; }
+
+/* ---- Header (glass) ---- */
+header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--header-height);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+.brand {
+  font-weight: 600;
+  font-size: var(--text-md);
+  letter-spacing: var(--tracking-display);
+}
+.path {
+  max-width: 46vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  /* The project is a label, not a field: no box around it. */
+  background: transparent;
+  border: 0;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+}
+.path:hover { color: var(--ink); background: var(--hover); }
+.engine { font-size: var(--text-sm); color: var(--ink-soft); }
+.engine::before { content: "●"; margin-right: 5px; color: var(--ink-faint); }
+.engine.up::before { color: var(--ok); }
+.engine.starting::before { color: var(--warn); }
+.engine.down::before { color: var(--danger); }
+
+/* ---- Layout ---- */
+main { flex: 1; display: grid; grid-template-columns: 270px 1fr; grid-template-rows: minmax(0, 1fr); min-height: 0; }
+/* The sidebar folds away, and the conversation moves along with it, as the Mac app's does. */
+main { transition: grid-template-columns var(--motion-base) var(--ease-standard); }
+main.sidebar-hidden { grid-template-columns: 0 1fr; }
+main.sidebar-hidden aside { overflow: hidden; opacity: 0; }
+aside { transition: opacity var(--motion-fast) var(--ease-standard); }
+
+aside {
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.aside-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  font-weight: 500;
+}
+.aside-empty { padding: var(--space-3); color: var(--ink-soft); font-size: var(--text-sm); }
+#sessions { list-style: none; margin: 0; padding: var(--space-1) var(--space-2); overflow-y: auto; }
+#sessions li { display: flex; align-items: center; border-radius: var(--radius-sm); }
+#sessions li:hover { background: var(--hover); }
+#sessions li.current { background: var(--accent-soft); }
+.session {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  border: 0;
+  padding: var(--space-2) var(--space-2);
+  text-align: left;
+  min-width: 0;
+  background: transparent;
+}
+.session:hover { background: transparent; }
+.session-title { font-weight: 500; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); }
+.session-sub { font-size: var(--text-xs); color: var(--ink-soft); }
+.session-delete { border: 0; color: var(--ink-faint); padding: 4px 6px; font-size: var(--text-xs); }
+.session-delete:hover { color: var(--danger); }
+/* Deleting asks in the row itself, where the session is, rather than in a system dialog
+   that covers the list. Keep is first and takes the focus, so Return does not delete. */
+.session-confirm,
+.confirm-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  white-space: nowrap;
+  animation: kuvo-fade var(--motion-quick) var(--ease-out) both;
+}
+.session-confirm button,
+.confirm-action button {
+  height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-size: var(--text-xs);
+}
+.session-confirm-no,
+.confirm-keep { color: var(--ink-soft); }
+.session-confirm-no:hover,
+.confirm-keep:hover { background: var(--hover); color: var(--ink); }
+.session-confirm-yes,
+.confirm-yes { color: var(--danger); }
+.session-confirm-yes:hover,
+.confirm-yes:hover { background: var(--danger-soft); }
+
+#conversation { display: flex; flex-direction: column; min-height: 0; }
+
+/* ---- Session tabs (the Mac app's tab strip: active tab is a raised pill) ---- */
+.session-tabs { display: flex; gap: var(--space-1); padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--line); overflow-x: auto; }
+.session-tabs.hidden { display: none; }
+.session-tab {
+  display: flex; align-items: center; gap: var(--space-1);
+  border: 1px solid transparent; background: transparent; color: var(--ink-soft);
+  border-radius: var(--radius-pill); padding: 4px 12px; cursor: pointer; font-size: var(--text-sm); white-space: nowrap;
+  transition: background var(--motion-fast) var(--ease-standard),
+              border-color var(--motion-fast) var(--ease-standard),
+              color var(--motion-fast) var(--ease-standard);
+}
+.session-tab:hover { background: var(--hover); border-color: var(--line); }
+.session-tab.active {
+  background: var(--panel);
+  color: var(--ink);
+  border-color: var(--line);
+  box-shadow: var(--shadow-card);
+  transform: translateY(-1px);
+}
+.session-tab .close { opacity: .5; margin-left: 4px; font-size: 10px; }
+.session-tab .close:hover { opacity: 1; }
+
+/* ---- Empty state ---- */
+.empty {
+  margin: auto;
+  max-width: 460px;
+  text-align: center;
+  padding: var(--space-6);
+  color: var(--ink-soft);
+}
+.empty h1 { color: var(--ink); font-size: var(--text-2xl); font-weight: 600; letter-spacing: var(--tracking-display); margin-bottom: var(--space-2); }
+.empty p { margin-top: 0; font-size: var(--text-md); line-height: var(--leading-body); }
+
+/* ---- Entries ---- */
+.entries { position: relative; flex: 1; overflow-y: auto; padding: var(--space-5) var(--gutter) var(--space-2); display: flex; flex-direction: column; gap: var(--space-3); }
+/* The conversation at rest: the Mac's own question over an empty one, drawn in the
+   transcript itself (TranscriptView.swift:69-75 overlays it while there are no rows;
+   EmptyConversationView's `plain` form at 1757-1767: the mark at 34 pt light in the
+   tertiary ink over the question at title3 medium in the secondary ink, a spacing of 10,
+   lifted from the bottom by 120). */
+.empty-conversation {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding-bottom: 120px;
+  pointer-events: none;
+  text-align: center;
+  animation: kuvo-rise var(--motion-base) var(--ease-spring) both;
+}
+.empty-conversation > svg { color: var(--ink-faint); }
+.empty-conversation p { margin: 0; font-size: var(--text-title3); font-weight: 500; color: var(--ink-soft); }
+.entry { max-width: var(--readable-width); width: 100%; margin: 0 auto; display: flex; flex-direction: column; gap: var(--space-2); }
+.entry .text { white-space: pre-wrap; word-break: break-word; line-height: var(--leading-body); }
+/* Your words in accent glass, apart from the agent's on the card — the Mac app's way
+   (KuvoCode/Views/Session/TranscriptView.swift, "BubbleSurface"). Not a chat bubble: a
+   tinted, translucent pane with the light along its top edge. */
+.entry.user .text {
+  align-self: flex-end;
+  background: color-mix(in oklab, var(--accent), transparent 91%);
+  border: 1px solid color-mix(in oklab, var(--accent), transparent 80%);
+  backdrop-filter: blur(14px) saturate(1.6);
+  -webkit-backdrop-filter: blur(14px) saturate(1.6);
+  color: var(--ink);
+  border-radius: var(--radius-lg);
+  padding: var(--space-2) var(--space-3);
+  max-width: 80%;
+  font-size: var(--text-md);
+  box-shadow: inset 0 1px 0 var(--lit);
+}
+/* A comment as the conversation shows it: the place it points to, the line it was
+   written on, and what it says — in accent glass, like the message it went with
+   (ChangesPanel.swift:1123-1155). */
+.comment-reference {
+  align-self: flex-end;
+  max-width: 80%;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklab, var(--accent), transparent 91%);
+  border: 1px solid color-mix(in oklab, var(--accent), transparent 80%);
+  backdrop-filter: blur(14px) saturate(1.6);
+  -webkit-backdrop-filter: blur(14px) saturate(1.6);
+  color: var(--ink);
+  box-shadow: inset 0 1px 0 var(--lit);
+}
+.comment-reference-place {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 500; color: var(--ink-soft);
+}
+.comment-reference-snippet {
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-soft);
+  padding-left: 8px; border-left: 2px solid var(--ok);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.comment-reference-snippet.removed { border-left-color: var(--danger); }
+.comment-reference-text { font-size: var(--text-md); white-space: pre-wrap; word-break: break-word; }
+.entry.user.pending .text { opacity: .5; }
+.entry-error { color: var(--danger); white-space: pre-wrap; font-size: var(--text-md); }
+.entry-meta { color: var(--ink-soft); font-size: var(--text-xs); }
+.entry-meta.retry { color: var(--accent); }
+.notice { max-width: var(--readable-width); width: 100%; margin: 0 auto; color: var(--ink-soft); font-size: var(--text-md); }
+
+.reasoning { color: var(--ink-soft); font-size: var(--text-md); border-left: 1px solid var(--line); padding-left: var(--space-3); }
+.reasoning summary { cursor: pointer; font-size: var(--text-sm); color: var(--ink-soft); }
+
+/* The thinking shimmer: AI Elements' Shimmer (Vercel), painted in the Mac's ink — the
+   words in the secondary colour, a light sweeping across them (Theme.swift:42-60).
+   The light is --color-background, the words --color-muted-foreground. */
+.thinking-shimmer {
+  --color-background: var(--ink);
+  --color-muted-foreground: var(--ink-soft);
+  margin: 0;
+  font-size: inherit;
+}
+
+/* ---- Tool cards ---- */
+.tool {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow: hidden;
+  transition: box-shadow var(--motion-fast) var(--ease-standard),
+              border-color var(--motion-fast) var(--ease-standard);
+}
+.tool:hover { border-color: var(--ink-faint); background: var(--hover); }
+/* The Mac's row (ToolCallView.swift:15-16, 99-128): the mark of the tool in a 16 pt
+   column, the words of what it did, and the chevron that opens what it did. */
+.tool-head { display: flex; gap: var(--space-2); align-items: center; padding: var(--space-2) var(--space-3); }
+.tool-icon { width: 16px; flex: 0 0 16px; display: inline-flex; align-items: center; justify-content: center; color: var(--ink-soft); }
+.tool-name { font-size: var(--text-sm); font-weight: 400; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-status { font-size: var(--text-xs); color: var(--ink-soft); }
+.tool.completed .tool-status { color: var(--ok); }
+.tool.error .tool-status { color: var(--danger); }
+.tool pre {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  background: var(--code-bg);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.45;
+}
+.tool-output { border-top: 1px solid var(--line); color: var(--ink-soft); }
+.tool-error { padding: var(--space-2) var(--space-3); color: var(--danger); font-size: var(--text-md); white-space: pre-wrap; }
+.tool button.small { margin: var(--space-2) var(--space-3); }
+
+/* ---- Shell ---- */
+.shell pre { margin: 0; font-family: var(--font-mono); font-size: var(--text-sm); }
+.shell > pre:first-child { color: var(--ink-soft); }
+
+/* ---- Permission asks ---- */
+.asks { padding: 0 var(--gutter); display: flex; flex-direction: column; gap: var(--space-2); max-width: var(--readable-width); margin: 0 auto; width: 100%; }
+.ask {
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  animation: scaleIn var(--motion-base) var(--ease-spring);
+}
+.ask-head { display: flex; gap: var(--space-2); align-items: baseline; flex-wrap: wrap; }
+.ask-head span { color: var(--ink-soft); font-size: var(--text-sm); font-family: var(--font-mono); word-break: break-all; }
+.ask-message { color: var(--ink); font-size: var(--text-md); white-space: pre-wrap; }
+.ask-buttons { display: flex; gap: var(--space-2); }
+
+/* ---- Composer (glass, 14px radius) ---- */
+.composer {
+  padding: var(--space-3) var(--gutter) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  /* A card of glass, the Mac app's composer. */
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  /* The card holds the conversation's measure, and sits centred in it. */
+  max-width: calc(var(--readable-width) + 2 * var(--gutter));
+  width: 100%;
+  margin: var(--space-2) auto var(--space-4);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  transition: border-color var(--motion-fast) var(--ease-standard), box-shadow var(--motion-fast) var(--ease-standard);
+}
+.composer:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.16), 0 0 0 3px var(--accent-soft);
+}
+.composer-foot { border-top: 1px solid var(--line-soft); padding-top: var(--space-2); }
+.composer textarea {
+  max-width: var(--readable-width);
+  margin: 0 auto;
+  min-height: 60px;
+  border-radius: var(--radius);
+  font-size: var(--text-md);
+}
+.composer-foot { display: flex; align-items: center; gap: var(--space-2); max-width: var(--readable-width); margin: 0 auto; width: 100%; }
+#model { max-width: 320px; }
+
+/* ---- Folder picker (glass card) ---- */
+.picker {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .4);
+  backdrop-filter: blur(8px) saturate(1.2);
+  -webkit-backdrop-filter: blur(8px) saturate(1.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+  animation: fadeIn var(--motion-fast) var(--ease-out);
+}
+.picker-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  width: min(560px, 92vw);
+  max-height: 78vh;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-4);
+  gap: var(--space-2);
+  box-shadow: var(--shadow-lifted);
+  animation: scaleIn var(--motion-base) var(--ease-spring);
+}
+.picker-head { display: flex; justify-content: space-between; align-items: center; }
+.picker-row { display: flex; gap: var(--space-2); }
+.picker-row input { flex: 1; font-family: var(--font-mono); font-size: var(--text-sm); }
+#picker-folders { list-style: none; margin: 0; padding: 0; overflow-y: auto; min-height: 120px; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+#picker-folders button { border: 0; width: 100%; text-align: left; padding: var(--space-2) var(--space-3); border-radius: 0; font-size: var(--text-sm); touch-action: pan-y; }
+#picker-folders button:hover { background: var(--hover); }
+.picker-foot { display: flex; align-items: center; gap: var(--space-2); }
+.note { color: var(--ink-soft); font-size: var(--text-sm); flex: 1; }
+
+.fatal { padding: var(--space-6); color: var(--danger); }
+
+/* ---- Files / terminal drawer (glass) ---- */
+.drawer {
+  position: fixed;
+  /* Under the header, which stays above it. */
+  top: var(--header-height); right: 0;
+  width: 440px; max-width: 90vw;
+  height: calc(100vh - var(--header-height));
+  border-left: 1px solid var(--line);
+  box-shadow: -12px 0 40px rgba(0,0,0,.12);
+  display: flex;
+  flex-direction: column;
+  z-index: 40;
+  animation: slideIn var(--motion-base) var(--ease-spring);
+}
+@keyframes slideIn {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+.drawer.hidden { display: none; }
+.drawer-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--line);
+}
+.drawer-tabs { display: flex; gap: var(--space-1); }
+.drawer-tab {
+  border: 1px solid var(--line); background: transparent; color: var(--ink-soft);
+  border-radius: var(--radius-sm); padding: 4px 10px; cursor: pointer; font-size: var(--text-xs);
+  transition: all var(--motion-fast) var(--ease-standard);
+  touch-action: none;
+}
+.drawer-tab:hover { background: var(--hover); }
+.drawer-tab.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.drawer-body { flex: 1; overflow: auto; padding: var(--space-3) var(--space-4); display: flex; flex-direction: column; gap: var(--space-2); min-height: 0; }
+.file-tree-head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.file-tree { list-style: none; padding: 0; margin: 0; font-family: var(--font-mono); font-size: var(--text-sm); }
+.file-tree li { padding: 3px 6px; cursor: pointer; border-radius: var(--radius-sm); transition: background var(--motion-fast) var(--ease-standard); touch-action: pan-y; }
+.file-tree li:hover { background: var(--hover); }
+.file-tree li.dir { color: var(--ink-soft); }
+.file-editor { display: flex; flex-direction: column; gap: var(--space-2); flex: 1; min-height: 0; }
+.file-editor.hidden { display: none; }
+.file-editor-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+#file-content { flex: 1; min-height: 200px; font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.5; }
+.terminal { flex: 1; min-height: 200px; background: var(--panel); border-radius: var(--radius-sm); padding: var(--space-2); overflow: hidden; }
+.terminal .xterm { height: 100%; }
+.modal {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, .5);
+  backdrop-filter: blur(8px) saturate(1.2);
+  -webkit-backdrop-filter: blur(8px) saturate(1.2);
+  display: flex; align-items: center; justify-content: center; z-index: 50;
+  animation: fadeIn var(--motion-fast) var(--ease-out);
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.modal.hidden { display: none; }
+.modal-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  width: min(900px, 90vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-lifted);
+  animation: scaleIn var(--motion-base) var(--ease-spring);
+}
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+.modal-head { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--line); }
+.diff-body {
+  margin: 0; padding: var(--space-3) var(--space-4); overflow: auto; flex: 1;
+  font-family: var(--font-mono); font-size: var(--text-sm); white-space: pre;
+  background: var(--code-bg);
+  line-height: 1.5;
+}
+.diff-body .add { color: var(--ok); }
+.diff-body .del { color: var(--danger); }
+.diff-body .ctx { color: var(--ink-soft); }
+
+/* ---- Files panel extras ---- */
+.file-search { width: 100%; font-size: var(--text-sm); }
+.search-results { font-size: var(--text-sm); max-height: 160px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); }
+.search-results .hit { padding: 2px 0; cursor: pointer; }
+.search-results .hit:hover { color: var(--accent); }
+.search-results .hit .where { color: var(--ink-soft); font-size: var(--text-xs); }
+.git-status { font-size: var(--text-xs); font-family: var(--font-mono); max-height: 120px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: var(--space-1) var(--space-2); }
+.git-status .entry { padding: 1px 0; display: flex; align-items: center; gap: var(--space-2); }
+.git-status .code { font-weight: 600; margin-right: var(--space-1); min-width: 20px; }
+.git-status .entry button { padding: 1px 6px; font-size: var(--text-xs); }
+.git-branch-row { display: flex; gap: var(--space-2); align-items: center; }
+.git-branch-select { flex: 1; }
+
+/* ---- Scrollbars ----
+   The thin, quiet ones are defined once, at the end of this file. */
+
+/* ---- Focus ---- */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+/* ---- Context gauge (the Mac app's ContextGauge ring) ---- */
+/* The Mac's gauge (ContextGauge.swift:13-40): a ring with its number, in a 24 pt pill, the
+   fill in the secondary ink — and orange once the window is more than eight parts full. */
+.context-gauge {
+  display: flex; align-items: center; gap: 5px;
+  font-size: var(--text-xs); font-weight: 500; font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+  padding: 0 6px; height: 24px;
+  border: 0; border-radius: 7px;
+  cursor: default;
+  transition: background var(--motion-hover) var(--ease-hover), color var(--motion-hover) var(--ease-hover);
+}
+.context-gauge:hover { background: color-mix(in oklab, var(--ink) 8%, transparent); }
+.context-gauge::before {
+  content: "";
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 2.5px solid var(--line);
+  border-top-color: var(--ink-soft);
+  transform: rotate(-90deg);
+}
+.context-gauge.warn { color: var(--warn); }
+.context-gauge.warn::before { border-top-color: var(--warn); }
+.context-gauge[hidden] { display: none; }
+
+/* ---- Header find ---- */
+.header-find { max-width: 220px; }
+
+/* ---- Steps row (the Mac app's StepsRow) ---- */
+.steps-row {
+  max-width: var(--readable-width); width: 100%; margin: 0 auto;
+  padding: var(--space-1) var(--gutter);
+  font-size: var(--text-sm); color: var(--ink-soft);
+  display: flex; align-items: center; gap: var(--space-2);
+}
+/* The Mac's row: the mark, the summary, and the chevron that turns (StepsRow.swift:37-48). */
+.steps-summary { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-soft); }
+.steps-summary:hover { color: var(--ink); }
+.steps-row[hidden] { display: none; }
+
+/* ---- Markdown (the Mac app renders markdown; so does this) ---- */
+.markdown { line-height: var(--leading-body); }
+.markdown > :first-child { margin-top: 0; }
+.markdown > :last-child { margin-bottom: 0; }
+.markdown h1, .markdown h2, .markdown h3, .markdown h4 { font-weight: 600; letter-spacing: var(--tracking-display); margin: var(--space-4) 0 var(--space-2); line-height: var(--leading-tight); }
+.markdown h1 { font-size: var(--text-2xl); }
+.markdown h2 { font-size: var(--text-xl); }
+.markdown h3 { font-size: var(--text-lg); }
+.markdown h4 { font-size: var(--text-md); }
+.markdown p { margin: var(--space-2) 0; }
+.markdown a { color: var(--accent); text-decoration: none; }
+.markdown a:hover { text-decoration: underline; }
+.markdown ul, .markdown ol { margin: var(--space-2) 0; padding-left: var(--space-5); }
+.markdown li { margin: var(--space-1) 0; }
+.markdown code { font-family: var(--font-mono); font-size: 0.9em; background: var(--code-bg); padding: 1px 5px; border-radius: var(--radius-sm); }
+/* The file links: a code span that names a file of the project opens it, in the side panel. */
+.markdown .file-link {
+  color: var(--accent); cursor: pointer; font-family: var(--font-mono); font-size: 0.9em;
+  border-bottom: 1px solid var(--accent-soft); transition: border-color var(--motion-quick) var(--ease-standard);
+}
+.markdown .file-link:hover { border-bottom-color: var(--accent); }
+.markdown pre {
+  margin: var(--space-3) 0; padding: var(--space-3);
+  background: var(--code-bg); border-radius: var(--radius);
+  border: 1px solid var(--line);
+  overflow-x: auto;
+  position: relative;
+}
+.markdown pre code { background: transparent; padding: 0; border-radius: 0; }
+.markdown pre .code-lang { position: absolute; top: 4px; right: 8px; font-size: var(--text-xs); color: var(--ink-faint); text-transform: uppercase; }
+.markdown blockquote { margin: var(--space-3) 0; padding-left: var(--space-3); border-left: 1px solid var(--line); color: var(--ink-soft); }
+.markdown table { border-collapse: collapse; margin: var(--space-3) 0; width: 100%; font-size: var(--text-sm); }
+.markdown th, .markdown td { border: 1px solid var(--line); padding: var(--space-1) var(--space-2); text-align: left; }
+.markdown th { background: var(--panel-2); font-weight: 500; }
+.markdown hr { border: 0; border-top: 1px solid var(--line); margin: var(--space-4) 0; }
+.markdown img { max-width: 100%; border-radius: var(--radius-sm); }
+/* Highlight.js github theme adjustments for dark mode */
+@media (prefers-color-scheme: dark) {
+  .markdown pre { background: var(--code-bg); border-color: var(--line); }
+  .markdown pre code { color: var(--ink-soft); }
+}
+html[data-theme="dark"] .markdown pre { background: var(--code-bg); border-color: var(--line); }
+html[data-theme="dark"] .markdown pre code { color: var(--ink-soft); }
+
+/* ---- Code copy button ---- */
+.markdown pre .code-copy {
+  position: absolute; top: 6px; right: 6px;
+  opacity: 0; transition: opacity var(--motion-fast) var(--ease-standard);
+  font-size: var(--text-xs); padding: 2px 8px;
+}
+.markdown pre:hover .code-copy { opacity: 1; }
+
+/* ---- Split view (two sessions beside each other) ---- */
+main { display: flex; }
+#conversation { flex: 1; min-width: 0; }
+.split-pane {
+  flex: 0 0 var(--split-width);
+  min-width: 0;
+  display: flex; flex-direction: column;
+  border-left: 1px solid var(--line);
+  background: var(--panel);
+}
+.split-pane[hidden] { display: none; }
+#split-entries { flex: 1; overflow: auto; }
+#split.active {
+  background: var(--accent-soft);
+  border-color: color-mix(in oklab, var(--accent), transparent 60%);
+}
+
+/* ---- Command palette (the Mac app's ⌘K palette) ---- */
+.palette {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(15, 23, 42, 0.25);
+  backdrop-filter: blur(2px);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 10vh;
+}
+.palette[hidden] { display: none; }
+/* The palette is a card of thick glass: the search above the list, in one pane. */
+.palette-card {
+  width: min(620px, 92vw);
+  max-height: 76vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-glass);
+  backdrop-filter: blur(32px) saturate(2);
+  -webkit-backdrop-filter: blur(32px) saturate(2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lifted);
+  overflow: hidden;
+  animation: kuvo-rise var(--motion-base) var(--ease-spring) both;
+}
+.palette-input {
+  width: 100%;
+  border: 0; border-bottom: 1px solid var(--line);
+  background: transparent; color: var(--ink);
+  font-size: 17px;
+  padding: var(--space-3) var(--space-4) var(--space-3);
+  outline: none;
+}
+.palette-list { max-height: 50vh; overflow: auto; padding: var(--space-2); }
+.palette-title {
+  font-size: var(--text-xs); font-weight: 600; color: var(--ink-faint);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  padding: var(--space-2) var(--space-2) var(--space-1);
+}
+.palette-item {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.palette-item:hover { background: var(--hover); }
+.palette-item.selected { background: var(--accent-soft); }
+.palette-name { font-size: var(--text-md); color: var(--ink); }
+.palette-detail { font-size: var(--text-xs); color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+/* The keys that do the thing, at the end of the row: the Mac app's palette teaches them. */
+.palette-keys {
+  margin-left: auto; color: var(--ink-faint); font-size: var(--text-xs);
+  font-family: "JetBrains Mono", monospace; white-space: nowrap;
+}
+.palette-empty { padding: var(--space-3); text-align: center; color: var(--ink-faint); }
+
+/* ---- Appearance settings (the Mac app's AppearanceSettings) ---- */
+.settings {
+  position: fixed; inset: 0; z-index: 70;
+  background: rgba(15, 23, 42, 0.3);
+  backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center;
+}
+.settings[hidden] { display: none; }
+.settings-card {
+  width: min(440px, 92vw);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lifted);
+  padding: var(--space-5);
+  display: flex; flex-direction: column; gap: var(--space-3);
+}
+.settings-title { font-size: var(--text-xl); font-weight: 600; letter-spacing: var(--tracking-display); }
+.settings-row {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  font-size: var(--text-md);
+}
+.settings-row select {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2); color: var(--ink);
+  font-size: var(--text-sm);
+}
+.settings-note { font-size: var(--text-sm); color: var(--ink-soft); }
+
+/* A list on its way: the rows it will have, shimmering. */
+.skeleton-rows { display: flex; flex-direction: column; gap: 6px; padding: 4px 0; }
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-row);
+  background: var(--panel);
+}
+.skeleton-dot,
+.skeleton-line {
+  display: block;
+  border-radius: var(--radius-pill);
+  background: linear-gradient(90deg, var(--press-hover) 0%, var(--press-active) 50%, var(--press-hover) 100%);
+  background-size: 200% 100%;
+  animation: kuvo-shimmer 1.4s linear infinite;
+}
+.skeleton-dot { width: 18px; height: 18px; flex: none; }
+.skeleton-line { height: 10px; }
+@keyframes kuvo-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-dot, .skeleton-line { animation: none; }
+}
+html[data-motion="reduced"] .skeleton-dot,
+html[data-motion="reduced"] .skeleton-line { animation: none; }
+.settings-card .primary { align-self: flex-end; }
+.swatches { display: flex; gap: var(--space-2); }
+.swatch {
+  width: 20px; height: 20px; border-radius: 50%;
+  border: 2px solid var(--line);
+  cursor: pointer;
+  transition: transform var(--motion-fast) var(--ease-spring);
+}
+.swatch:hover { transform: scale(1.12); filter: brightness(0.93); }
+.swatch.selected { border-color: var(--ink); box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--accent); }
+
+/* ---- The keyboard page: the keys, and the recorder that changes them ---- */
+.keycap-row { display: inline-flex; align-items: center; gap: var(--space-1); }
+.keycap-row kbd, .keycap-button {
+  font-family: "JetBrains Mono", monospace; font-size: var(--text-sm);
+  padding: 3px 8px; min-width: 26px; text-align: center;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2); color: var(--ink);
+}
+.keycap-button {
+  cursor: pointer;
+  transition: border-color var(--motion-quick) var(--ease-standard),
+              color var(--motion-quick) var(--ease-standard),
+              background var(--motion-quick) var(--ease-standard);
+}
+.keycap-button:hover { border-color: var(--accent); }
+.keycap-button.recording { border-color: var(--accent); color: var(--ink-soft); }
+.keycap-clear {
+  border: 0; background: none; color: var(--ink-soft); cursor: pointer;
+  font-size: var(--text-sm); line-height: 1; padding: 2px 4px; border-radius: var(--radius-sm);
+  transition: color var(--motion-quick) var(--ease-standard);
+}
+.keycap-clear:hover { color: var(--ink); }
+
+/* ---- Reduced motion (Appearance > Motion: Reduced) ---- */
+.reduced-motion *, .reduced-motion *::before, .reduced-motion *::after {
+  animation: none !important;
+  transition-duration: 1ms !important;
+}
+
+/* ---- Attachments ---- */
+.attachments { display: flex; flex-wrap: wrap; gap: var(--space-2); padding: 0 var(--gutter); margin-bottom: var(--space-2); }
+.attachments[hidden] { display: none; }
+.attachment-pill {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: 2px 10px; border-radius: var(--radius-pill);
+  background: var(--panel-2); border: 1px solid var(--line);
+  font-size: var(--text-xs);
+}
+.attachment-pill .close { cursor: pointer; color: var(--ink-faint); }
+.attachment-pill .close:hover { color: var(--ink); }
+.entry.user .attachment-image {
+  max-width: min(320px, 60%); max-height: 240px;
+  border-radius: var(--radius);
+  margin-top: var(--space-2); cursor: zoom-in;
+  object-fit: cover;
+}
+.attachment-chip {
+  display: inline-block; margin-top: var(--space-2);
+  padding: 2px 10px; border-radius: var(--radius-sm);
+  background: var(--panel-2); border: 1px solid var(--line);
+  font-size: var(--text-xs); color: var(--ink); text-decoration: none;
+  animation: kuvo-pop var(--motion-fast) var(--ease-spring) both;
+}
+.attachment-pill { animation: kuvo-pop var(--motion-fast) var(--ease-spring) both; }
+
+/* ---- @-mentions and slash commands (the Mac app's GroupMentions popup) ---- */
+.autocomplete {
+  position: absolute; z-index: 40;
+  bottom: calc(100% - var(--space-1)); left: var(--gutter);
+  min-width: 340px; max-width: 480px;
+  background: var(--panel-glass);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow-lifted);
+  backdrop-filter: blur(14px);
+  padding: var(--space-1);
+  max-height: 300px; overflow: auto;
+}
+.autocomplete[hidden] { display: none; }
+.mention-item {
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3);
+  padding: var(--space-2); border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.mention-item:hover, .mention-item.selected { background: var(--accent-soft); }
+.mention-name { font-size: var(--text-md); color: var(--ink); }
+.composer { position: relative; }
+
+/* ---- Queue dock ---- */
+.queue-dock {
+  margin: 0 var(--gutter) var(--space-2);
+  border: 1px dashed var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  padding: var(--space-2);
+  display: flex; flex-direction: column; gap: var(--space-1);
+  font-size: var(--text-sm);
+}
+.queue-dock[hidden] { display: none; }
+.queue-dock:not(.open) .queue-item + .queue-item { display: none; }
+.queue-item { display: flex; justify-content: space-between; gap: var(--space-2); }
+.queue-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-soft); }
+.queue-meta { color: var(--ink-faint); font-size: var(--text-xs); flex-shrink: 0; }
+.queue-dock .small { align-self: flex-end; }
+.queue-dock.open { animation: kuvo-fade var(--motion-quick) var(--ease-out) both; }
+.queue-dock.open .queue-item:nth-child(2) { animation-delay: 24ms; }
+.queue-dock.open .queue-item:nth-child(3) { animation-delay: 48ms; }
+
+/* ---- Fork affordance ---- */
+.entry-action { opacity: 0; transition: opacity var(--motion-fast) var(--ease-standard); }
+.entry.assistant:hover .entry-action { opacity: 1; }
+
+/* ---- Title bar (the shell loads this page without one) ---- */
+body.in-shell { padding-top: 38px; }
+body.in-shell header { -webkit-app-region: drag; padding-right: 150px; }
+body.in-shell header button, body.in-shell header input { -webkit-app-region: no-drag; }
+.titlebar-drag { position: fixed; top: 0; left: 0; right: 0; height: 38px; z-index: 100; -webkit-app-region: drag; }
+body:not(.in-shell) .titlebar-drag { display: none; }
+body.dropping::after {
+  content: "Drop the files here to attach them";
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  font-size: var(--text-xl); color: var(--ink);
+  background: var(--accent-soft);
+  border: 3px dashed var(--accent);
+  pointer-events: none;
+}
+
+/* ---- Context gauge details (the Mac app's gauge popover) ---- */
+.gauge-pop {
+  position: fixed; z-index: 50;
+  width: 320px;
+  background: var(--panel-glass);
+  border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow-lifted);
+  backdrop-filter: blur(14px);
+  padding: 16px;
+  display: flex; flex-direction: column; gap: var(--space-1);
+}
+.gauge-pop[hidden] { display: none; }
+.gauge-line { font-size: var(--text-sm); color: var(--ink); }
+.gauge-line.big { font-size: var(--text-md); font-weight: 600; }
+.gauge-line.faint { color: var(--ink-faint); font-size: var(--text-xs); }
+
+/* ---- Recent projects (the Mac app keeps a list) ---- */
+.picker-recent { display: flex; flex-direction: column; gap: var(--space-1); margin-bottom: var(--space-3); }
+.picker-recent[hidden] { display: none; }
+.project-row { display: flex; align-items: center; gap: var(--space-2); }
+.project-open {
+  flex: 1; text-align: left;
+  display: flex; flex-direction: column; gap: 2px;
+  padding: var(--space-2);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2); color: var(--ink);
+  cursor: pointer;
+}
+.project-open:hover { border-color: var(--accent); }
+.project-name { font-size: var(--text-md); font-weight: 500; }
+.close-project { flex-shrink: 0; }
+.project-settings { display: flex; flex-direction: column; gap: var(--space-1); }
+
+/* ---- Settings, wide: nav + pages ---- */
+.settings-card.wide { width: min(620px, 94vw); }
+.settings-shell { display: flex; gap: var(--space-4); min-height: 260px; }
+.settings-nav { display: flex; flex-direction: column; gap: var(--space-1); min-width: 150px; }
+.settings-nav button {
+  text-align: left; padding: var(--space-2) var(--space-3);
+  border: 0; border-radius: var(--radius-sm);
+  background: transparent; color: var(--ink-soft);
+  font-size: var(--text-md); cursor: pointer;
+}
+.settings-nav button:hover { background: var(--hover); }
+.settings-nav button.active { background: var(--accent-soft); color: var(--ink); font-weight: 500; }
+.settings-pages { flex: 1; display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; }
+.settings-page[hidden] { display: none; }
+.shortcut-list { display: flex; flex-direction: column; gap: var(--space-1); }
+.shortcut-row {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  font-size: var(--text-md); font-variant-numeric: tabular-nums;
+}
+
+/* ---- Analytics notice (the Mac app's AnalyticsNotice) ---- */
+.AnalyticsNotice {
+  position: fixed; inset: 0; z-index: 90;
+  background: rgba(15, 23, 42, 0.35);
+  backdrop-filter: blur(3px);
+  display: flex; align-items: center; justify-content: center;
+}
+.AnalyticsNotice[hidden] { display: none; }
+.analytics-card {
+  width: min(420px, 92vw);
+  background: var(--panel);
+  border: 1px solid var(--line); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lifted);
+  padding: var(--space-5);
+  display: flex; flex-direction: column; gap: var(--space-3);
+}
+.analytics-card .primary { align-self: flex-end; }
+
+
+/* ---- Manual theme mode (Appearance > Mode) ---- */
+html[data-theme="dark"] { color-scheme: dark; }
+html[data-theme="light"] { color-scheme: light; }
+
+/* ---- VCS chip in the header ---- */
+.vcs-chip {
+  font-size: var(--text-xs); color: var(--ink-soft);
+  padding: 0 var(--space-2); height: 24px;
+  display: inline-flex; align-items: center;
+  border: 1px solid var(--line); border-radius: var(--radius-pill);
+  max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vcs-chip[hidden] { display: none; }
+
+/* ---- Unread sessions (the Mac app's read/unread) ---- */
+li.unread .session-title { font-weight: 600; }
+li.unread .session::before {
+  content: "";
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent);
+  position: absolute; left: 4px; top: 50%;
+  translate: 0 -50%;
+}
+li.unread .session { position: relative; padding-left: 16px; }
+
+/* ---- Session changes ---- */
+.diff-file {
+  display: flex; align-items: baseline; gap: var(--space-2);
+  margin-top: var(--space-3); padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+  font-size: var(--text-sm);
+}
+#diff-body > .diff-file:first-child { border-top: 0; margin-top: 0; }
+
+/* ---- Saved permissions ---- */
+.saved-permissions { display: flex; flex-direction: column; gap: var(--space-1); }
+
+/* ---- Config pages: MCP, agents, skills, commands (the engine's settings file) ---- */
+.cfg-problem {
+  font-size: var(--text-sm); color: var(--danger);
+  border: 1px solid var(--danger); border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+}
+.cfg-row {
+  display: flex; align-items: baseline; gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: var(--text-md);
+}
+.cfg-row:last-child { border-bottom: 0; }
+.cfg-row-main { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.cfg-row-title { display: inline-flex; gap: var(--space-2); align-items: baseline; white-space: nowrap; }
+.cfg-row-title .where { font-size: var(--text-xs); }
+.where.ok { color: var(--ok); }
+.where.warn { color: var(--warn); }
+.where.danger { color: var(--danger); }
+.where.faint { color: var(--ink-faint); }
+.settings-row input[type="text"], .settings-row input[type="number"] {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2); color: var(--ink);
+  font-size: var(--text-sm); min-width: 0; width: 240px;
+}
+.settings-row input.mono, .settings-row textarea.mono { font-family: "JetBrains Mono", monospace; font-size: var(--text-sm); }
+.settings-row input[type="checkbox"] { width: auto; }
+.settings-row.column { flex-direction: column; align-items: stretch; gap: var(--space-1); }
+.settings-row.column textarea {
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2); color: var(--ink);
+  font-family: inherit; font-size: var(--text-sm);
+  padding: var(--space-2) var(--space-3);
+  resize: vertical; min-height: 44px;
+}
+.kvs { display: flex; flex-direction: column; gap: var(--space-1); }
+.kvs-row { display: flex; gap: var(--space-2); }
+.kvs-row input {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2); color: var(--ink);
+  font-size: var(--text-sm); min-width: 0;
+}
+.kvs-row input:first-child { flex: 0 0 160px; }
+.kvs-row input:nth-child(2) { flex: 1; }
+.rules { display: flex; flex-direction: column; gap: var(--space-1); }
+.rules .kvs-row select {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2); color: var(--ink);
+  font-size: var(--text-sm);
+}
+.rules .kvs-row select:first-child { flex: 0 0 170px; }
+.rules .kvs-row input { flex: 1; }
+.settings-detail-title { font-size: var(--text-lg); font-weight: 600; letter-spacing: var(--tracking-display); }
+.settings-editor-buttons { display: flex; gap: var(--space-2); justify-content: flex-end; margin-top: var(--space-3); }
+.settings-page h3 {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: var(--text-sm); font-weight: 600;
+  color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.06em;
+}
+
+/* ---- Forms: the agent's questions and MCP servers' asks ---- */
+.forms { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-2); }
+.form .form-field { display: grid; gap: var(--space-1); margin: var(--space-2) 0; }
+.form .form-field label { display: flex; gap: var(--space-2); align-items: baseline; font-size: var(--text-sm); }
+.form .form-field input[type="text"], .form .form-field input[type="number"], .form .form-field select {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel-2); color: var(--ink);
+  font-size: var(--text-sm); width: 100%;
+}
+.form-choices { display: flex; flex-wrap: wrap; gap: var(--space-3); }
+.form-choice { display: inline-flex; gap: var(--space-1); align-items: center; font-size: var(--text-sm); }
+#redo { align-self: flex-start; }
+
+/* What floats over the conversation is thicker glass: it has to stay readable over
+   whatever is under it — the palette, the gauge's popover, the menus, the note. */
+.palette,
+.gauge-pop,
+.choice-panel,
+.toast,
+.picker-card {
+  background: color-mix(in oklab, var(--panel) 82%, transparent);
+  backdrop-filter: blur(32px) saturate(2);
+  -webkit-backdrop-filter: blur(32px) saturate(2);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-lifted);
+  position: relative;
+}
+.palette::before,
+.gauge-pop::before,
+.choice-panel::before,
+.toast::before,
+.picker-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: var(--lit);
+  border-radius: var(--radius) var(--radius) 0 0;
+  pointer-events: none;
+}
+
+/* The lit edge: a hairline of light along the top of a card, the Mac app's tell. */
+.card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: var(--lit);
+  border-radius: var(--radius) var(--radius) 0 0;
+  pointer-events: none;
+}
+
+/* ---- Motion: the direction's own, and the Mac app's spring where it is the signature ----
+   Every duration comes from the tokens, so the setting "Motion: Reduced" (which makes them
+   1ms) stops all of it at once — and so does the system's own preference. */
+
+@keyframes kuvo-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes kuvo-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes kuvo-pop {
+  from { opacity: 0; transform: translateY(-8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes kuvo-slide-in {
+  from { transform: translateX(16px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes kuvo-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* What floats comes in; what leaves goes out, a little quicker. The overlays that stay in
+   the document (hidden, not unmounted) get the motion when they are shown, so opening one
+   twice moves it twice. */
+.palette.shown { animation: kuvo-pop var(--motion-spring) var(--ease-spring) both; }
+.settings.shown { animation: kuvo-fade var(--motion-fast) var(--ease-standard) both; }
+.settings.shown .settings-content { animation: kuvo-rise var(--motion-spring) var(--ease-spring) both; }
+.drawer.shown { animation: kuvo-slide-in var(--motion-base) var(--ease-standard) both; }
+.diff-modal.shown { animation: kuvo-fade var(--motion-fast) var(--ease-standard) both; }
+.picker-modal.shown { animation: kuvo-fade var(--motion-fast) var(--ease-standard) both; }
+.picker-modal.shown .picker-card { animation: kuvo-rise var(--motion-base) var(--ease-spring) both; }
+.toast { animation: kuvo-rise var(--motion-base) var(--ease-spring) both; }
+
+/* The notes: newest in front, the two behind peeking out above it. Point at the stack
+   and it opens into a list. The cards' heights are their own, so the overlap is a margin
+   rather than a fixed box. */
+.toast-stack {
+  position: fixed;
+  top: calc(var(--header-height) + 12px);
+  right: 16px;
+  z-index: 70;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  width: min(380px, calc(100vw - 32px));
+  pointer-events: none;
+}
+.toast-stack .toast {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: 10px 10px 10px 12px;
+  border-radius: var(--radius-panel);
+  color: var(--ink);
+  pointer-events: auto;
+  position: relative;
+  overflow: hidden;
+  animation: none;
+  transition: margin-top var(--motion-base) var(--ease-spring);
+}
+.toast-stack .toast + .toast { margin-top: -46px; }
+.toast-stack.expanded .toast + .toast { margin-top: 8px; }
+.toast-stack:not(.expanded) .toast:not(:last-child) { opacity: 0.88; }
+.toast-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+  cursor: pointer;
+}
+.toast-copy strong { font-size: var(--text-sm); font-weight: 600; }
+.toast-copy span {
+  color: var(--ink-soft);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.toast.error { border-color: color-mix(in oklab, var(--danger) 45%, var(--line)); }
+.toast.error strong { color: var(--danger); }
+.toast-close {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-faint);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+.toast-close:hover { background: var(--hover); color: var(--ink); }
+/* The note's time left, drawn under it: it runs out over 5.2 s and stops while the
+   stack is held open, as the timer does. */
+.toast-timer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--accent);
+  transform-origin: left center;
+  animation: kuvo-toast-timer 5200ms linear both;
+}
+.toast.error .toast-timer { background: var(--danger); }
+.toast-stack.expanded .toast-timer { animation-play-state: paused; }
+@keyframes kuvo-toast-timer {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast-stack .toast { transition: none; }
+  .toast-timer { display: none; }
+}
+
+/* What arrives in the conversation arrives gently. */
+.entry { animation: kuvo-rise var(--motion-base) var(--ease-standard) both; }
+.ask { animation: kuvo-rise var(--motion-base) var(--ease-spring) both; }
+.queue-item { animation: kuvo-rise var(--motion-fast) var(--ease-standard) both; }
+.notice { animation: kuvo-fade var(--motion-fast) var(--ease-standard) both; }
+
+/* The engine is doing something: its dot breathes. */
+.engine.starting::before { animation: kuvo-pulse 1.2s var(--ease-standard) infinite; }
+.engine.up::before { animation: none; }
+
+/* The scrollbars, thin and quiet, the way a native app's are. */
+* { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--ink-faint); background-clip: content-box; }
+
+/* The rows of the settings and the lists: the hand is felt, the eye is not distracted. */
+.cfg-row, .settings-row, .palette-item, .session { transition: background var(--motion-quick) var(--ease-standard), color var(--motion-quick) var(--ease-standard); }
+
+/* The accent swatches grow a touch when they are looked at. */
+.swatch { transition: transform var(--motion-fast) var(--ease-spring), filter var(--motion-fast) var(--ease-standard); }
+.swatch:hover { transform: scale(1.12); filter: brightness(0.93); }
+
+/* The system asks for less movement: it gets none. */
+@media (prefers-reduced-motion: reduce) {
+  /* Only disable non-essential decorative animations. Keep state-change transitions
+     (focus, hover, drawer slide, modal fade, loading) and focus indicators. */
+  /* Keyframes can't be switched off from a selector list: the rule would be dropped whole,
+     and the shimmer would keep moving. The class that wears them stops instead. */
+  .thinking-shimmer { animation: none !important; }
+  * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
+  /* Exemptions: keep these at their full duration for usability */
+  .drawer:not([hidden]),
+  .modal:not([hidden]),
+  .palette:not([hidden]),
+  .picker:not([hidden]),
+  .settings:not([hidden]),
+  .toast:not([hidden]),
+  button:focus-visible,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible,
+  .tab:focus-visible,
+  .session-delete:focus-visible,
+  .card:focus-within { transition-duration: var(--motion-standard) !important; }
+}
+
+/* Files dropped on the composer: the composer says so. */
+.composer.dropping { outline: 2px dashed var(--accent); outline-offset: -4px; background: var(--accent-soft); }
+
+/* ---- The Changes panel: the project's work, folded, the way the Mac app shows it ---- */
+.changes-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.changes-head {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line-soft);
+}
+.changes-head select {
+  padding: 2px var(--space-2);
+  border: 1px solid var(--line); border-radius: var(--radius-xs);
+  background: var(--panel); color: var(--ink); font-size: var(--text-sm);
+}
+.changes-files { flex: 1; overflow-y: auto; padding: var(--space-1) 0; min-height: 0; }
+.changes-file { border-bottom: 1px solid var(--line-soft); }
+.changes-file-head {
+  display: flex; align-items: center; gap: var(--space-2); width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: transparent; border: 0; border-radius: 0;
+  font-size: var(--text-sm); text-align: left; color: var(--ink);
+}
+.changes-file-head:hover { background: var(--hover); }
+.changes-file-name {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--font-mono); font-size: var(--text-xs);
+}
+.changes-file-head .where { font-variant-numeric: tabular-nums; }
+.changes-diff {
+  font-family: var(--font-mono); font-size: var(--text-sm); line-height: 1.55;
+  border-top: 1px solid var(--line-soft);
+  background: var(--code-bg);
+  animation: kuvo-fade var(--motion-quick) var(--ease-out) both;
+}
+/* A row is the Mac's own: the number in a gutter, the text without the patch's signs,
+   and a coloured edge on a line that changed (ChangesPanel.swift:959-1042). */
+.diff-line { display: flex; align-items: baseline; gap: 0; padding: 1.5px var(--space-3) 1.5px 0; position: relative; }
+.diff-line .diff-number {
+  flex: 0 0 auto; width: calc(var(--gutter, 30px) - 10px); padding-right: 10px;
+  text-align: right; font-size: 11.5px; color: color-mix(in oklab, var(--ink-soft), transparent 30%);
+}
+.diff-line .diff-text { flex: 1; padding-left: 8px; white-space: pre-wrap; word-break: break-word; }
+.diff-line.add { background: color-mix(in oklab, var(--ok), transparent 88%); box-shadow: inset 3px 0 0 var(--ok); }
+.diff-line.del { background: color-mix(in oklab, var(--danger), transparent 90%); box-shadow: inset 3px 0 0 var(--danger); }
+.diff-line.ctx { color: var(--ink-soft); }
+.diff-line.add .diff-number { color: color-mix(in oklab, var(--ok), transparent 10%); }
+.diff-line.del .diff-number { color: color-mix(in oklab, var(--danger), transparent 10%); }
+/* The mark that writes a comment on the line: the Mac's, in the gutter, under the
+   pointer (ChangesPanel.swift:980-992). */
+.diff-comment {
+  position: absolute; left: 2px; top: 50%; transform: translateY(-50%) scale(0.85);
+  width: 16px; height: 16px; padding: 0; border: 0; border-radius: 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--accent); color: var(--accent-ink);
+  opacity: 0; pointer-events: none;
+  transition: opacity var(--motion-quick) var(--ease-standard),
+              transform var(--motion-quick) var(--ease-spring),
+              filter var(--motion-quick) var(--ease-standard);
+}
+.diff-line:hover .diff-comment { opacity: 1; pointer-events: auto; transform: translateY(-50%) scale(1); }
+.diff-comment:hover { filter: brightness(1.08); }
+.diff-comment:active { transform: translateY(-50%) scale(0.94); filter: brightness(0.96); }
+.diff-draft { display: inline-flex; gap: var(--space-1); align-items: center; }
+.diff-draft input {
+  width: 220px; padding: 2px var(--space-2);
+  border: 1px solid var(--accent); border-radius: var(--radius-xs);
+  background: var(--panel); color: var(--ink); font-size: var(--text-xs);
+}
+/* A fold: the long unchanged stretches, folded until they are opened
+   (ChangesPanel.swift:929-952). */
+.diff-fold {
+  display: flex; align-items: center; gap: 10px; width: 100%; height: 26px;
+  padding: 0 var(--space-3); border: 0; border-radius: 0; background: transparent;
+  font-size: var(--text-sm); color: var(--ink-soft); text-align: left;
+}
+.diff-fold:hover { background: var(--hover); }
+.diff-fold.gap { cursor: default; }
+.diff-fold-mark { width: 30px; display: inline-flex; align-items: center; justify-content: center; }
+/* A comment on a line, and the editor it is written in: the Mac's own, in the accent
+   glass, under the line it belongs to (ChangesPanel.swift:1088-1212). */
+.comment-card, .comment-editor {
+  margin: var(--space-1) var(--space-3) var(--space-2);
+  padding: 12px;
+  display: flex; flex-direction: column; gap: 8px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in oklab, var(--accent), transparent 72%);
+}
+.comment-head { display: flex; align-items: center; gap: 8px; }
+.comment-avatar {
+  width: 22px; height: 22px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: color-mix(in oklab, var(--ink), transparent 92%);
+  color: var(--ink-soft);
+  font-size: 10px; font-weight: 600;
+}
+.comment-you { font-size: var(--text-xs); font-weight: 600; }
+.comment-where { margin-left: auto; font-size: 11px; color: var(--ink-soft); }
+.comment-text { font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+.comment-foot { display: flex; justify-content: flex-end; gap: var(--space-2); }
+.comment-editor textarea {
+  width: 100%; resize: vertical; min-height: 44px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--line); border-radius: var(--radius-xs);
+  background: var(--panel); color: var(--ink); font-size: 13px;
+  font-family: inherit;
+}
+.changes-foot {
+  border-top: 1px solid var(--line-soft);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  display: flex; flex-direction: column; gap: var(--space-2);
+}
+.changes-foot input[type="text"] {
+  width: 100%; padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel); color: var(--ink); font-size: var(--text-sm);
+}
+.changes-buttons { display: flex; align-items: center; gap: var(--space-2); }
+.changes-buttons .where { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--text-xs); }
+
+/* The long message folds; the "show more" says so. */
+.long-more { margin-top: var(--space-1); color: var(--ink-soft); }
+.long-more:hover { color: var(--accent); border-color: var(--line); }
+
+/* A file, as the Mac shows it: the code, numbered in a ruler beside it
+   (CodeTextView.swift:4-6, 119-168). */
+.file-view {
+  display: flex; align-items: flex-start;
+  font-family: var(--font-mono); font-size: var(--text-sm); line-height: 14.4px;
+}
+.file-numbers {
+  flex: 0 0 auto; width: var(--ruler, 30px); padding-right: 8px;
+  text-align: right; font-size: 11px; color: var(--ink-faint);
+  user-select: none; -webkit-user-select: none;
+}
+.file-numbers span { display: block; }
+.file-code {
+  flex: 1; min-width: 0; margin: 0;
+  white-space: pre-wrap; word-break: break-word; color: var(--ink);
+}
+
+/* The file's own line in the Changes panel: its name folds, its action sits beside it. */
+.changes-file-head { display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-3); }
+.changes-file-toggle {
+  display: flex; align-items: center; gap: var(--space-2); flex: 1; min-width: 0;
+  padding: var(--space-2) 0; background: transparent; border: 0;
+  font-size: var(--text-sm); text-align: left; color: var(--ink);
+}
+.changes-file-toggle:hover { background: transparent; }
+
+/* The conversation follows the newest words; when you scroll away, it offers to come back. */
+#jump-latest {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  bottom: var(--space-4); z-index: 5;
+  background: var(--panel); border: 1px solid var(--line);
+  box-shadow: var(--shadow-lifted); color: var(--ink-soft);
+}
+#jump-latest:hover { color: var(--ink); background: var(--hover); }
+
+/* The selection menu: quote a passage of the answer. */
+.quote-button {
+  position: absolute; z-index: 4;
+  background: var(--panel); border: 1px solid var(--line);
+  box-shadow: var(--shadow-lifted); color: var(--ink);
+}
+.quote-button:hover { color: var(--accent); border-color: var(--accent); }
+.entry.assistant { position: relative; }
+
+/* The steps row: what the agent did between two replies, in one line. */
+.steps-row { margin-bottom: var(--space-1); }
+.steps-summary {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: 2px var(--space-2); border: 0; border-radius: var(--radius-xs);
+  background: transparent; color: var(--ink-soft); font-size: var(--text-xs);
+}
+.steps-summary:hover { background: var(--hover); color: var(--ink); }
+.steps-list {
+  margin: var(--space-1) 0 0; padding: 0 0 0 var(--space-4);
+  list-style: none; font-size: var(--text-xs); color: var(--ink-soft);
+}
+/* Each step is a row of its own, the Mac's way (StepsRow.swift:69-77): the mark of the
+   tool and what it did. */
+.steps-list li { padding: 1px 0; display: flex; align-items: center; gap: var(--space-2); font-family: inherit; }
+/* The lines a call added and removed (ToolCallView.swift:147-158): the Mac's system green
+   and red, monospaced digits. */
+.diff-stat { display: inline-flex; gap: 4px; font-size: var(--text-xs); font-variant-numeric: tabular-nums; font-weight: 500; }
+.diff-stat .added { color: var(--ok); }
+.diff-stat .removed { color: var(--danger); }
+.steps-list .tool-icon { width: 16px; flex: 0 0 16px; }
+
+/* The image, looked at: over the page, the way the Mac app shows it. */
+/* The picture, over the window: the Mac's own scrim (ImageViewer.swift:76-79, a black at
+   62 %), and the window under it dimmed to 30 % with the system's ease-out over 150 ms
+   (ImageViewer.swift:33-41), out of reach of a click while it is open. */
+.image-viewer {
+  position: fixed; inset: 0; z-index: 40;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-3);
+  background: rgba(0, 0, 0, 0.62); padding: var(--space-6);
+}
+body.viewing-image header,
+body.viewing-image main {
+  opacity: .3;
+  pointer-events: none;
+  transition: opacity 150ms cubic-bezier(0, 0, 0.58, 1);
+}
+.image-viewer img { max-width: 100%; max-height: 80vh; border-radius: var(--radius); box-shadow: var(--shadow-lifted); }
+.image-viewer-foot { color: var(--ink-soft); font-size: var(--text-sm); }
+/* The viewer's own header (ImageViewer.swift:164-197): the picture's name, how many there
+   are, and what else can be done with it. */
+.image-viewer-head {
+  position: absolute;
+  top: var(--space-3);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 560px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-glass);
+  backdrop-filter: blur(18px) saturate(1.5);
+  color: var(--ink);
+  font-size: var(--text-sm);
+}
+.image-viewer-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The arrows between the pictures of the same message (ImageViewer.swift:209-221). */
+.image-viewer-step {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-glass);
+  color: var(--ink);
+}
+.image-viewer-step:disabled { opacity: .35; cursor: default; }
+.image-viewer-step.left { left: var(--space-4); }
+.image-viewer-step.right { right: var(--space-4); }
+
+/* A choice, opened: a searchable list over the page, the Mac app's way. */
+.choice { position: relative; display: inline-flex; }
+.choice-button {
+  padding: 3px var(--space-2); border: 1px solid transparent; border-radius: var(--radius-xs);
+  background: transparent; color: var(--ink-soft); font-size: var(--text-xs);
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.choice-button:hover { background: var(--hover); color: var(--ink); }
+.choice-panel {
+  position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 30;
+  display: flex; flex-direction: column; gap: var(--space-1);
+  width: 300px; max-height: 320px; padding: var(--space-2);
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow-lifted);
+  animation: kuvo-pop var(--motion-fast) var(--ease-spring) both;
+}
+/* The effort the model is asked for, after its name (ModelPicker.swift:338, 573). */
+.choice-suffix { color: var(--ink-soft); margin-left: 4px; }
+.choice-group + .choice-group { margin-top: 4px; }
+
+/* The mark of a model the user keeps (ModelPicker.swift:436-440). */
+.choice-star {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 1px;
+  border-radius: 4px;
+  color: var(--ink-faint);
+}
+.choice-star:hover { background: var(--hover); color: var(--ink); }
+.choice-star.on { color: var(--accent); }
+.choice-search {
+  padding: var(--space-1) var(--space-2); font-size: var(--text-sm);
+  border: 1px solid var(--line); border-radius: var(--radius-xs);
+  background: var(--panel-2); color: var(--ink);
+}
+.choice-list { display: flex; flex-direction: column; overflow-y: auto; min-height: 0; }
+.choice-group {
+  padding: var(--space-2) var(--space-2) var(--space-1);
+  font-size: var(--text-xs); text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-faint);
+}
+.choice-item {
+  display: flex; align-items: baseline; gap: var(--space-2); width: 100%;
+  padding: var(--space-1) var(--space-2); text-align: left;
+  border: 0; border-radius: var(--radius-xs); background: transparent;
+  color: var(--ink); font-size: var(--text-sm);
+}
+.choice-item:hover { background: var(--hover); }
+.choice-item.selected { color: var(--accent); }
+
+/* A checklist in a reply shows real checkboxes, ticked or not, as the Mac app's does. */
+.markdown input[type="checkbox"] {
+  width: auto; margin-right: var(--space-2);
+  accent-color: var(--accent);
+  vertical-align: middle;
+}
+.markdown li:has(> input[type="checkbox"]) { list-style: none; margin-left: calc(var(--space-4) * -1); }
+
+/* A step with details opens like a button, and lights up like one; the rest are lines. */
+.tool-head {
+  display: flex; align-items: baseline; gap: var(--space-2); width: 100%;
+  padding: 0; border: 0; background: transparent; text-align: left;
+  font-size: var(--text-sm); color: var(--ink);
+}
+.tool-head:disabled { opacity: 1; cursor: default; }
+.tool-head:not(:disabled):hover { color: var(--accent); background: transparent; }
+.tool-chevron { width: 1em; color: var(--ink-faint); font-size: var(--text-xs); }
+/* The line down from the icon, beside what it opened. */
+.tool-details {
+  margin-left: calc(var(--space-3) + 1em);
+  padding: var(--space-2) 0 0 var(--space-3);
+  border-left: 1px solid var(--line);
+  animation: kuvo-rise var(--motion-fast) var(--ease-standard) both;
+}
+.tool-details pre { margin-top: 0; }
+
+/* A detail page pushes in, the way the Mac app's settings do. */
+.settings-page[data-section="editor"] { animation: kuvo-rise var(--motion-base) var(--ease-spring) both; }
+
+/* The image, looked at: a click zooms it in, a click again brings it back. */
+.image-viewer img { cursor: zoom-in; transition: transform var(--motion-base) var(--ease-spring); }
+.image-viewer img.zoomed { cursor: zoom-out; transform: scale(2.2); }
+
+/* A run that failed: what it said, and the way to have another go. */
+.entry-failed { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); }
+.entry-failed .small { color: var(--ink-soft); }
+.entry-failed .small:hover { color: var(--accent); border-color: var(--line); }
+
+/* ==========================================================================
+   The Mac binding (Phase 1)
+
+   The values below are the Mac app's own, read from KuvoCode/Design/:
+   Surfaces.swift (canvas, ambient, card fills, accent wash, wells, rim),
+   Theme.swift (metrics, spring), Look.swift (type sizes, typefaces) and
+   Card.swift / Composer.swift / TranscriptView.swift (the surfaces).
+
+   They come after the direction's block on purpose: same specificity, later
+   wins, so the page changes without a second stylesheet. Phase 2 moves these
+   rules into the components above and deletes the old direction.
+   ========================================================================== */
+
+:root {
+  /* The canvas: the Mac's glass tint, flattened; its ambient is a warm-to-cool
+     linear gradient, 7 % at the corners and 1.75 % through the middle. */
+  --bg: #F6F4EE;
+  --bg-ambient: linear-gradient(135deg,
+    rgba(255, 158, 107, 0.07) 0%,
+    rgba(255, 158, 107, 0.0175) 40%,
+    rgba(107, 140, 255, 0.0175) 60%,
+    rgba(107, 140, 255, 0.07) 100%);
+
+  /* Cards: white focused, warm ivory unfocused (Surfaces.swift:59-71). */
+  --surface: #FFFFFF;
+  --panel: #FFFFFF;
+  --panel-2: #F9F7F1;
+  --panel-glass: rgba(246, 244, 238, 0.72);
+
+  /* System ink, not slate: slate is the hairline (Surfaces.swift:12-22). */
+  --fg: #1D1D1F;
+  --ink: #1D1D1F;
+  --muted: rgba(29, 29, 31, 0.70);
+  --ink-soft: rgba(29, 29, 31, 0.70);
+  --ink-faint: rgba(29, 29, 31, 0.62);
+  --border: rgba(15, 23, 42, 0.07);
+  --line: rgba(15, 23, 42, 0.07);
+  --line-soft: rgba(15, 23, 42, 0.05);
+  --lit: rgba(255, 255, 255, 0.8);
+  --hover: rgba(15, 23, 42, 0.06);
+
+  /* Recessed wells: code, search, fields (Surfaces.swift:79-87). */
+  --code-bg: rgba(15, 23, 42, 0.035);
+  --well: rgba(15, 23, 42, 0.035);
+  --well-border: rgba(15, 23, 42, 0.07);
+
+  /* Accent: the user's pick; the wash is 10 % in light, 22 % in dark. */
+  --accent: #0062CC;
+  --accent-hover: #0051A8;
+  --accent-soft: color-mix(in oklab, var(--accent), transparent 90%);
+  --bubble-fill: color-mix(in oklab, var(--accent), transparent 90%);
+  --bubble-edge: color-mix(in srgb, var(--accent) 28%, white 72%);
+
+  /* macOS system colours, the Mac's semantic set. */
+  --danger: #C4271E;
+  --danger-soft: color-mix(in oklab, var(--danger), transparent 90%);
+  --ok: #1E7B34;
+  --ok-soft: color-mix(in oklab, var(--ok), transparent 90%);
+  --warn: #9A5B00;
+  --warn-soft: color-mix(in oklab, var(--warn), transparent 90%);
+
+  /* Radii: 14 card/composer, 18 bubble/palette, 10 well, 8 row, 7 list,
+     6 button, 5 text. Theme.swift:5-19, Surfaces.swift:179-191. */
+  --radius: 10px;
+  --radius-card: 14px;
+  --radius-panel: 14px;
+  --radius-bubble: 18px;
+  --radius-palette: 18px;
+  --radius-well: 10px;
+  --radius-row: 8px;
+  --radius-list: 7px;
+  --radius-button: 6px;
+  --radius-text: 5px;
+  --radius-sm: 6px;
+  --radius-lg: 14px;
+  --radius-xs: 5px;
+  --radius-pill: 9999px;
+
+  /* Shadows: soft, from the fill; the rim is a 1 px inset highlight. */
+  --shadow-card: 0 2px 6px rgba(15, 23, 42, 0.07);
+  --shadow-card-focused: 0 6px 16px rgba(15, 23, 42, 0.10);
+  --shadow-composer: inset 0 1px 0 rgba(255, 255, 255, 0.80), 0 2px 8px rgba(0, 0, 0, 0.07);
+  --shadow-lifted: 0 16px 48px rgba(15, 23, 42, 0.14), 0 1px 2px rgba(15, 23, 42, 0.08);
+
+  /* Motion: the hover beat is 120 ms, and the app's own motion is one spring —
+     .spring(response: 0.32, dampingFraction: 0.86) (Theme.swift:21-31), written as the
+     analytic curve: 0 at the start, a little past 1, and home. */
+  --motion-quick: 120ms;
+  --motion-fast: 120ms;
+  --motion-base: 320ms;
+  --motion-slow: 500ms;
+  --motion-hover: 120ms;
+  /* The standard beat, named separately for the reduced-motion exemptions that need a
+     duration even when every other animation is held. */
+  --motion-standard: 320ms;
+  /* The spring's own length: the time it takes to settle (98 % by 0.23 s). */
+  --motion-spring: 450ms;
+  --ease-hover: cubic-bezier(0, 0, 0.2, 1);
+  --ease-spring: linear(0, 0.0225, 0.0792, 0.1565, 0.2446, 0.3362, 0.4264, 0.5117, 0.5902, 0.6607, 0.7228, 0.7766, 0.8225, 0.8611, 0.8931, 0.9193, 0.9405, 0.9573, 0.9705, 0.9807, 0.9885, 0.9942, 0.9983, 1.0012, 1.0031, 1.0042, 1.0048, 1.005, 1.0049, 1.0047, 1.0043, 1.0039, 1.0034, 1.003, 1.0025, 1.0021, 1.0018, 1.0014, 1.0012, 1);
+  /* A pressable control: 8 % under the pointer, 13 % while it is down (Pressable.swift:8-9). */
+  --press-hover: color-mix(in oklab, var(--ink) 8%, transparent);
+  --press-active: color-mix(in oklab, var(--ink) 13%, transparent);
+
+  /* Type: the Mac's message sizes and code size (Look.swift:48-83). */
+  --message-size: 14px;
+  --text-code: 12.5px;
+  --tracking-display: 0;
+
+  /* The window's metrics: 8 pt pane gap, 280 pt sessions, 38 pt card header (Theme.swift:11-18). */
+  --pane-gap: 8px;
+  --sessions-width: 280px;
+  --changes-width: 420px;
+  --split-width: 560px;
+  --card-header: 38px;
+}
+
+/* The Mac's dark card fills and wells (Surfaces.swift:59-87). */
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) {
+    --bg: #131417;
+    --bg-ambient: linear-gradient(135deg,
+      rgba(255, 158, 107, 0.06) 0%,
+      rgba(255, 158, 107, 0.015) 40%,
+      rgba(107, 140, 255, 0.015) 60%,
+      rgba(107, 140, 255, 0.06) 100%);
+    --surface: #181A1F;
+    --panel: #181A1F;
+    --panel-2: #202228;
+    --panel-glass: rgba(24, 26, 31, 0.72);
+    --fg: #F5F5F7;
+    --ink: #F5F5F7;
+    --muted: rgba(245, 245, 247, 0.62);
+    --ink-soft: rgba(245, 245, 247, 0.62);
+    --ink-faint: rgba(245, 245, 247, 0.50);
+    --border: rgba(255, 255, 255, 0.08);
+    --line: rgba(255, 255, 255, 0.08);
+    --line-soft: rgba(255, 255, 255, 0.06);
+    --lit: rgba(255, 255, 255, 0.13);
+    --hover: rgba(255, 255, 255, 0.06);
+    --code-bg: rgba(0, 0, 0, 0.30);
+    --well: rgba(0, 0, 0, 0.30);
+    --well-border: rgba(255, 255, 255, 0.07);
+    --accent: #2F97FF;
+    --accent-hover: #4AA3FF;
+    --accent-soft: color-mix(in oklab, var(--accent), transparent 78%);
+    --bubble-fill: color-mix(in oklab, var(--accent), transparent 78%);
+    --bubble-edge: color-mix(in srgb, var(--accent) 45%, rgba(255, 255, 255, 0.35));
+    --danger: #FF453A;
+    --danger-soft: color-mix(in oklab, var(--danger), transparent 90%);
+    --ok: #30D158;
+    --ok-soft: color-mix(in oklab, var(--ok), transparent 90%);
+    --warn: #FF9F0A;
+    --warn-soft: color-mix(in oklab, var(--warn), transparent 90%);
+    --shadow-card: 0 2px 6px rgba(0, 0, 0, 0.22);
+    --shadow-card-focused: 0 6px 16px rgba(0, 0, 0, 0.36);
+    --shadow-composer: inset 0 1px 0 rgba(255, 255, 255, 0.13), 0 1px 3px rgba(0, 0, 0, 0.25);
+    --shadow-lifted: 0 16px 48px rgba(0, 0, 0, 0.55), 0 1px 2px rgba(0, 0, 0, 0.35);
+  }
+}
+
+html[data-theme="dark"] {
+  --bg: #131417;
+  --bg-ambient: linear-gradient(135deg,
+    rgba(255, 158, 107, 0.06) 0%,
+    rgba(255, 158, 107, 0.015) 40%,
+    rgba(107, 140, 255, 0.015) 60%,
+    rgba(107, 140, 255, 0.06) 100%);
+  --surface: #181A1F;
+  --panel: #181A1F;
+  --panel-2: #202228;
+  --panel-glass: rgba(24, 26, 31, 0.72);
+  --fg: #F5F5F7;
+  --ink: #F5F5F7;
+  --muted: rgba(245, 245, 247, 0.62);
+  --ink-soft: rgba(245, 245, 247, 0.62);
+  --ink-faint: rgba(245, 245, 247, 0.50);
+  --border: rgba(255, 255, 255, 0.08);
+  --line: rgba(255, 255, 255, 0.08);
+  --line-soft: rgba(255, 255, 255, 0.06);
+  --lit: rgba(255, 255, 255, 0.13);
+  --hover: rgba(255, 255, 255, 0.06);
+  --code-bg: rgba(0, 0, 0, 0.30);
+  --well: rgba(0, 0, 0, 0.30);
+  --well-border: rgba(255, 255, 255, 0.07);
+  --accent: #2F97FF;
+  --accent-hover: #4AA3FF;
+  --accent-soft: color-mix(in oklab, var(--accent), transparent 78%);
+  --bubble-fill: color-mix(in oklab, var(--accent), transparent 78%);
+  --bubble-edge: color-mix(in srgb, var(--accent) 45%, rgba(255, 255, 255, 0.35));
+  --danger: #FF453A;
+  --danger-soft: color-mix(in oklab, var(--danger), transparent 90%);
+  --ok: #30D158;
+  --ok-soft: color-mix(in oklab, var(--ok), transparent 90%);
+  --warn: #FF9F0A;
+  --warn-soft: color-mix(in oklab, var(--warn), transparent 90%);
+  --shadow-card: 0 2px 6px rgba(0, 0, 0, 0.22);
+  --shadow-card-focused: 0 6px 16px rgba(0, 0, 0, 0.36);
+  --shadow-composer: inset 0 1px 0 rgba(255, 255, 255, 0.13), 0 1px 3px rgba(0, 0, 0, 0.25);
+  --shadow-lifted: 0 16px 48px rgba(0, 0, 0, 0.55), 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+/* ---- The surfaces, in the Mac's materials ---- */
+
+.card {
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+.card:focus-within { box-shadow: var(--shadow-card-focused); }
+
+/* The composer is opaque: card fill, a rim, a soft shadow (Composer.swift:489-511). */
+.composer {
+  background: var(--panel);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-composer);
+  padding: 10px 16px 7px;
+  max-width: var(--readable-width);
+  width: calc(100% - 2 * var(--gutter));
+  margin: 0 auto 16px;
+}
+/* The Mac's composer keeps its rim when it is focused; the caret says where you are. */
+.composer:focus-within {
+  border-color: var(--line);
+  box-shadow: var(--shadow-composer);
+}
+/* The editor is the card, not a well inside it. */
+.composer textarea {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
+  font-size: var(--message-size, 14px);
+}
+.composer textarea:focus {
+  border: 0;
+  box-shadow: none;
+}
+
+/* Your words: accent glass, radius 18, no blur, 14 × 10, 80 pt leading. */
+.entry .text { font-size: var(--message-size, 14px); font-family: var(--message-font, var(--font-body)); }
+.entry.user .text {
+  background: var(--bubble-fill);
+  border-color: var(--bubble-edge);
+  border-radius: var(--radius-bubble);
+  padding: 10px 14px;
+  max-width: min(680px, calc(100% - 80px));
+  box-shadow: inset 0 1px 0 var(--lit);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* The palette is the Mac's 600 pt card, 18 pt corner. */
+.palette-card { width: min(600px, 92vw); border-radius: var(--radius-palette); }
+.palette-item { border-radius: var(--radius-row); }
+
+/* Sheets and the settings card are cards, not glass. */
+.settings-card {
+  border-radius: var(--radius-panel);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.modal-card, .picker-card, .analytics-card { border-radius: var(--radius-panel); }
+
+/* Fields sit in a well (Surfaces.swift:179-191). */
+input, textarea, select {
+  background: var(--well);
+  border-color: var(--well-border);
+  border-radius: var(--radius-well);
+}
+input:focus, textarea:focus, select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.markdown pre { border-radius: var(--radius-well); }
+.markdown code { border-radius: var(--radius-text); background: var(--well); }
+/* Code is the message size less 1.5 pt, the Mac's MessageFont.code (Look.swift:82). */
+.markdown code, .markdown pre { font-size: calc(var(--message-size, 14px) - 1.5px); }
+#sessions li, .file-tree li, .drawer-tab { border-radius: var(--radius-row); }
+button { border-radius: var(--radius-button); }
+
+/* ==========================================================================
+   The Mac's cards and chrome (Phase 2)
+
+   The window is a warm glass with cards floating on it: the conversation
+   is the card (Card.swift), the sessions sit on the glass (MainView.swift:576)
+   and the window's gap is 8 pt (Theme.swift:16). The card's header is 38 pt
+   with a 62 pt fade under it (Card.swift:72-89), so the conversation scrolls
+   beneath the title instead of being cut off below it.
+   ========================================================================== */
+
+/* The window body: cards on the glass, 8 pt at the sides and bottom. */
+main {
+  display: flex;
+  gap: var(--pane-gap);
+  padding: 0 var(--pane-gap) var(--pane-gap);
+  min-height: 0;
+  position: relative;
+}
+/* The sessions hidden, the gaps stay: the aside keeps its zero width and gives back the
+   gap it would have taken, so the cards that remain are still 8 pt apart. */
+main.sidebar-hidden aside { margin-right: calc(-1 * var(--pane-gap)); }
+
+/* The sessions have no card of their own: the sidebar's rows sit on the glass. */
+aside {
+  width: var(--sessions-width);
+  flex: 0 0 auto;
+  padding: 4px 8px 0;
+  border: 0;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  transition: width var(--motion-base) var(--ease-standard),
+              opacity var(--motion-fast) var(--ease-standard),
+              padding var(--motion-base) var(--ease-standard);
+  overflow: hidden;
+}
+main.sidebar-hidden aside {
+  width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  opacity: 0;
+}
+.sidebar-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+#sessions { flex: none; overflow: visible; padding: 2px 0; }
+#sessions li { height: 44px; }
+#sessions li.current { background: var(--accent-soft); }
+.session {
+  height: 44px;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+}
+.session-title { flex: 1; min-width: 0; font-size: 13px; font-weight: 400; }
+.session-sub { display: none; }
+#sessions li.unread .session-title { font-weight: 600; }
+.session-state {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.session-state.unread { background: var(--accent); }
+.session-delete {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-faint);
+  font-size: 11px;
+  opacity: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#sessions li:hover .session-delete,
+#sessions li:focus-within .session-delete { opacity: 1; }
+.sidebar-new {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 13px;
+  text-align: left;
+}
+.sidebar-new:hover { background: var(--hover); }
+.sidebar-new svg { color: var(--ink-soft); }
+.sidebar-search {
+  width: calc(100% - 12px);
+  height: 28px;
+  margin: 2px 6px 6px;
+  font-size: 13px;
+}
+.search-results {
+  max-height: none;
+  margin: 2px 6px 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+}
+.search-heading {
+  padding: 6px 4px 3px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 600;
+}
+.search-empty { padding: 2px 4px 4px; color: var(--ink-soft); font-size: 12px; }
+.search-results .hit { padding: 4px; border-radius: var(--radius-row); }
+.search-results .hit:hover { background: var(--hover); color: var(--ink); }
+.search-results .hit { animation: kuvo-fade var(--motion-quick) var(--ease-out) both; }
+.search-results .hit:nth-child(3) { animation-delay: 20ms; }
+.search-results .hit:nth-child(4) { animation-delay: 40ms; }
+.search-results .hit:nth-child(5) { animation-delay: 60ms; }
+.search-results .hit:nth-child(n+6) { animation-delay: 80ms; }
+
+/* The Mac's projects in the sidebar (SidebarView.swift:178-196, 723-845): a heading per
+   section with a chevron that folds it away, every project with its own sessions, and
+   the Recents: the most recent sessions across the projects. */
+aside .section-header {
+  display: flex; align-items: center;
+  height: 22px;
+  margin: 16px 0 4px;
+  padding: 0 4px 0 10px;
+}
+aside .section-title {
+  display: flex; align-items: center; gap: 5px;
+  padding: 0; border: 0; background: transparent;
+  color: var(--ink-soft);
+  font-size: 13px; font-weight: 500;
+}
+aside .section-chevron {
+  color: var(--ink-faint);
+  opacity: 0;
+  transform: rotate(0deg);
+  transition: opacity var(--motion-quick) var(--ease-standard), transform var(--motion-quick) var(--ease-standard);
+}
+aside .section-chevron.folded { opacity: 1; transform: rotate(-90deg); }
+aside .section-chevron.hover { opacity: 1; }
+aside .section-action { margin-left: auto; display: flex; align-items: center; }
+aside .section-action-button {
+  width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0; border: 0; border-radius: var(--radius-sm);
+  background: transparent; color: var(--ink-soft);
+}
+aside .section-action-button:hover { background: var(--hover); color: var(--ink); }
+aside .project-empty { padding: 6px 10px; color: var(--ink-soft); font-size: 13px; }
+aside .project-row {
+  width: 100%;
+  height: 44px;
+  padding: 0 12px;
+  gap: 10px;
+  border: 0; border-radius: var(--radius-row);
+  background: transparent; color: var(--ink);
+  text-align: left;
+}
+aside .project-row:hover { background: var(--hover); }
+aside .project-icon { flex: 0 0 18px; color: var(--ink-soft); }
+aside .project-name {
+  flex: 1; min-width: 0;
+  font-size: 14px; font-weight: 400;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+aside .project-compose {
+  flex: 0 0 22px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-sm);
+  color: var(--ink-soft);
+  opacity: 0;
+  transition: opacity var(--motion-quick) var(--ease-standard);
+}
+aside .project-row:hover .project-compose,
+aside .project-compose:focus-visible { opacity: 1; }
+aside .project-compose:hover { background: var(--hover); color: var(--ink); }
+aside .sessions { list-style: none; margin: 0; padding: 2px 0; overflow: visible; }
+aside .sessions li { display: flex; align-items: center; height: 32px; border-radius: var(--radius-row); }
+aside .sessions li:hover { background: var(--hover); }
+aside .sessions li.current { background: var(--accent-soft); }
+/* The sessions of a project line their titles up with the project names above them
+   (SidebarView.swift:748-780); the Recents' do not. */
+aside .sessions .session { padding-left: 38px; }
+aside .recents .session { padding-left: 10px; }
+aside .show-more {
+  display: block;
+  width: 100%;
+  height: 28px;
+  padding: 0 0 0 38px;
+  border: 0; background: transparent;
+  color: var(--ink-soft);
+  font-size: 13px; text-align: left;
+}
+aside .show-more:hover { color: var(--ink); }
+
+/* The conversation is the card: white in light, warm black in dark. */
+#conversation.conversation-card {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card-focused);
+}
+
+/* The header runs over the scroll, and its fill fades out below the title. */
+.card-fade {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  height: 62px;
+  background: var(--panel);
+  -webkit-mask-image: linear-gradient(to bottom,
+    #000 0%, #000 60%, rgba(0, 0, 0, 0.75) 74%, rgba(0, 0, 0, 0.3) 88%, transparent 100%);
+  mask-image: linear-gradient(to bottom,
+    #000 0%, #000 60%, rgba(0, 0, 0, 0.75) 74%, rgba(0, 0, 0, 0.3) 88%, transparent 100%);
+  pointer-events: none;
+}
+.card-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--card-header);
+  min-width: 0;
+  padding: 0 8px 0 14px;
+}
+.card-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink);
+}
+.card-title {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+.card-title > span { overflow: hidden; text-overflow: ellipsis; }
+.card-detail { color: var(--ink-soft); font-weight: 600; }
+.card-actions { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.card-action {
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-button);
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 11px;
+}
+.card-action:hover { background: var(--hover); color: var(--ink); }
+
+/* Find is a bar that comes when asked (the palette, or Ctrl+F), not a field always in the
+   title bar; it keeps the Mac's find action reachable until the find bar itself lands. */
+.header-find {
+  width: 0;
+  min-width: 0;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  transition: width var(--motion-base) var(--ease-standard),
+              opacity var(--motion-fast) var(--ease-standard);
+}
+header:has(#find:focus) .header-find {
+  width: 220px;
+  padding: 6px 9px;
+  border: 1px solid var(--well-border);
+  opacity: 1;
+}
+
+/* The conversation runs under the header: 38 + 16 pt above, 32 pt under — the split's
+   rows run under theirs the same way (one Card geometry, two cards). */
+#conversation #entries, #split-entries { padding: calc(var(--card-header) + 16px) var(--gutter) 32px; }
+#conversation .empty { padding-top: var(--card-header); }
+
+/* The composer is inside the card, on the readable column (SessionView.swift:179-181). */
+.composer textarea, .composer-foot { max-width: none; margin-left: 0; margin-right: 0; }
+
+/* The tab strip is still the page's; Phase 2b moves it into the title bar. */
+#session-tabs {
+  position: relative;
+  z-index: 4;
+  margin-top: var(--card-header);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+/* The split view is the same card as the conversation (MainView.swift:733-754): it takes
+   the card's own class in the markup — radius, hairline, shadow — and never a strip of
+   its own that could be read as a second title bar. */
+
+/* The title bar is glass over the canvas, with no line drawn across the window. */
+header { border-bottom: 0; }
+
+/* The palette is an overlay with a card inside it. The retired shared "floating glass"
+   rule put `position: relative` on the overlay itself, which dropped it into the page's
+   flow; the card is the thing that floats, not the dimmed page. */
+.palette {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 10vh;
+  background: rgba(15, 23, 42, 0.25);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  border: 0;
+  box-shadow: none;
+}
+.palette::before { display: none; }
+.palette-card {
+  position: relative;
+  width: min(600px, 92vw);
+  background: color-mix(in oklab, var(--panel) 82%, transparent);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-palette);
+  box-shadow: var(--shadow-lifted);
+  -webkit-backdrop-filter: blur(32px) saturate(2);
+  backdrop-filter: blur(32px) saturate(2);
+}
+.palette-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: var(--lit);
+  border-radius: var(--radius-palette) var(--radius-palette) 0 0;
+  pointer-events: none;
+}
+.gauge-pop { position: fixed; }
+/* The gauge is in the card's header now, so its popover starts under that header, not under
+   the window's title bar. */
+.gauge-pop { top: calc(40px + var(--card-header) + 4px); }
+.choice-panel { position: absolute; }
+
+@media (max-width: 760px) {
+  :root {
+    --sessions-width: 0;
+    --pane-gap: 0;
+    --bg: #F6F4EE;
+    --panel: #FFFFFF;
+    --ink: #111111;
+    --ink-soft: #6B6B6B;
+    --ink-faint: #67676C;
+    --line: #E5E5E5;
+    --line-soft: #EFEFEC;
+    --accent: #1F5FD6;
+    --accent-soft: rgba(31, 95, 214, 0.12);
+    --code-bg: #F1F1EE;
+    --panel-2: #F5F5F3;
+    --radius-sm: 6px;
+    --radius-row: 6px;
+    --radius-panel: 12px;
+    --radius-pill: 999px;
+    --shadow-card-focused: 0 0 0 3px var(--accent-soft);
+    --shadow-lifted: 0 8px 32px rgba(0,0,0,0.08);
+    --motion-fast: 120ms;
+    --motion-hover: 120ms;
+    --motion-base: 200ms;
+    --motion-standard: 200ms;
+    --motion-spring: 350ms;
+    --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+    --ease-spring: cubic-bezier(0.32, 0.86, 0.4, 0.98);
+    --ease-hover: cubic-bezier(0.4, 0, 0.2, 1);
+    --header-height: 40px;
+    --text-xs: 11px;
+    --text-sm: 12px;
+    --text-base: 13px;
+    --text-lg: 14px;
+    --press-hover: color-mix(in oklab, var(--ink) 8%, transparent);
+    --press-active: color-mix(in oklab, var(--ink) 13%, transparent);
+    --motion-hover: 120ms;
+    --ease-hover: cubic-bezier(0, 0, 0.2, 1);
+    --sessions-width: 0;
+    --pane-gap: 0;
+  }
+  main { grid-template-columns: 0 1fr; }
+  main.sidebar-open { grid-template-columns: 0 1fr; }
+  aside,
+  .settings-sidebar {
+    position: fixed;
+    top: var(--header-height);
+    left: 0;
+    bottom: 0;
+    width: min(280px, 85vw);
+    max-width: none;
+    z-index: 30;
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    box-shadow: var(--shadow-lifted);
+    transform: translateX(-100%);
+    transition: transform var(--motion-base) var(--ease-standard);
+    overflow-y: auto;
+    padding: 8px 8px 0;
+  }
+  aside.sidebar-open,
+  .settings-sidebar.sidebar-open {
+    transform: translateX(0);
+  }
+  .sidebar-scroll { overflow-y: auto; }
+  .settings-nav-scroll { overflow-y: auto; }
+  main.sidebar-open::before,
+  .settings.sidebar-open::before {
+    content: "";
+    position: fixed;
+    inset: var(--header-height) 0 0 0;
+    background: rgba(0,0,0,0.3);
+    z-index: 25;
+  }
+  #toggle-sidebar[aria-pressed="true"],
+  .settings-sidebar.sidebar-open .settings-back {
+    background: var(--accent-soft);
+  }
+  .settings-header .titlebar {
+    position: relative;
+  }
+  .settings-back {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border: 0;
+    background: transparent;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    color: var(--ink);
+  }
+  .settings-back:hover { background: var(--hover); }
+}
+
+/* ==========================================================================
+   Phase 2b — the title bar, the panel, the palette and Settings
+
+   The Mac's title bar keeps the project identity over the sessions' width, then
+   the session tabs in one glass track, with the active tab a raised pill
+   (TitleBar.swift:78-330). The panel is a card beside the conversation with a
+   44 pt tab strip (UtilitiesPane.swift:21-115). The palette is a 600 × 18 card
+   with a 48 pt search and 30 pt rows (CommandPalette.swift:81-168). Settings
+   takes the sessions' place, with its sidebar on the glass and the page in a
+   card (SettingsView.swift:24-73).
+   ========================================================================== */
+
+/* ---- The title bar ---- */
+header.titlebar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--pane-gap);
+  height: var(--header-height);
+  min-height: var(--header-height);
+  flex: 0 0 var(--header-height);
+  padding: 2px var(--pane-gap);
+  border: 0;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.titlebar-identity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 var(--sessions-width);
+  width: var(--sessions-width);
+  min-width: 0;
+  height: 100%;
+}
+header.titlebar.sidebar-hidden .titlebar-identity { flex-basis: auto; width: auto; }
+/* The row at the top, put away (TabBar.showsKey, MainView.swift:22, 342): the project, its
+   branch and the sessions as tabs go, and the window's own buttons stay. */
+header.titlebar.no-tab-bar .titlebar-tabs { display: none; }
+header.titlebar.no-tab-bar .titlebar-identity .identity { display: none; }
+.titlebar-icon {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-soft);
+  transition: background var(--motion-fast) var(--ease-standard),
+              color var(--motion-fast) var(--ease-standard);
+}
+.titlebar-icon:hover { background: color-mix(in oklab, var(--ink) 7%, transparent); color: var(--ink); }
+.titlebar-icon:active { transform: none; }
+.titlebar-icon svg { display: block; }
+.titlebar-icon:focus-visible,
+.identity:has(.identity-hit:focus-visible) {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.identity {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
+  max-width: 220px;
+  height: 32px;
+  padding: 2px 8px;
+  border-radius: 7px;
+}
+.identity:hover { background: color-mix(in oklab, var(--ink) 5%, transparent); }
+.identity-hit {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  opacity: 0;
+  cursor: pointer;
+}
+.identity-name {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.15;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.identity-branch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--ink-soft);
+  font-size: 11px;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+.identity-branch span { overflow: hidden; text-overflow: ellipsis; }
+.identity-branch svg { flex: 0 0 auto; }
+.titlebar-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--pane-gap);
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+}
+.tab-track {
+  display: flex;
+  align-items: center;
+  max-width: 100%;
+  height: 36px;
+  padding: 3px;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--panel) 42%, transparent);
+  box-shadow: inset 0 1px 0 var(--lit),
+              0 0 0 1px color-mix(in oklab, var(--line) 70%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  backdrop-filter: blur(18px) saturate(1.5);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.tab-track::-webkit-scrollbar { display: none; }
+.tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-width: 0;
+  position: relative;
+  height: 44px;
+  padding: 0 12px 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.tab:hover:not(.active) { background: color-mix(in oklab, var(--ink) 5%, transparent); color: var(--ink); }
+.tab:active { transform: none; }
+.tab.active {
+  background: #fff;
+  color: var(--ink);
+  font-weight: 500;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.07),
+              0 0.5px 1px rgba(15, 23, 42, 0.10),
+              0 2px 6px rgba(15, 23, 42, 0.08),
+              inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+.tab + .tab::before {
+  content: "";
+  position: absolute;
+  left: -0.5px;
+  top: 7px;
+  width: 1px;
+  height: 16px;
+  background: linear-gradient(to bottom, transparent, var(--line) 30%, var(--line) 70%, transparent);
+  pointer-events: none;
+}
+.tab.active::before,
+.tab.active + .tab::before { display: none; }
+.tab-icon {
+  position: relative;
+  width: 25px;
+  height: 20px;
+  flex: 0 0 25px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5.5px;
+  background: var(--panel-2);
+  box-shadow: inset 0 0 0 1.5px var(--lit), 0 0.5px 1px rgba(15, 23, 42, 0.14);
+  color: var(--ink-soft);
+}
+.tab.active .tab-icon { background: var(--panel); }
+.tab-status {
+  position: absolute;
+  right: -3px;
+  bottom: -2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 1.5px var(--panel);
+}
+.tab-status.running { animation: kuvo-pulse 1.2s var(--ease-standard) infinite; }
+.tab-title {
+  min-width: 28px;
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The name written in the tab itself, where the title was (TitleBar.swift:170-200). */
+.tab-rename {
+  width: 130px;
+  height: 20px;
+  padding: 0 4px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 12px;
+}
+.tab-close {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  justify-content: center;
+  margin-left: -2px;
+  border-radius: 8px;
+  color: var(--ink-soft);
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease-standard),
+              background var(--motion-fast) var(--ease-standard);
+}
+.tab:hover .tab-close,
+.tab:focus-within .tab-close { opacity: 1; }
+.tab-close:hover { background: var(--hover); color: var(--ink); }
+.settings-tab { cursor: default; }
+.titlebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+.sr-only {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+#engine.sr-only { display: block; }
+
+/* The shell's native controls (main.js:113-114): the page stays draggable, its controls
+   do not, and the last 138 pt belong to Windows' own minimise / maximise / close. */
+body.in-shell header.titlebar {
+  -webkit-app-region: drag;
+  padding-right: calc(138px + var(--pane-gap));
+}
+body.in-shell header.titlebar button,
+body.in-shell header.titlebar input,
+body.in-shell header.titlebar .identity {
+  -webkit-app-region: no-drag;
+}
+.titlebar-drag { display: none; }
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .tab.active {
+    background: rgba(255, 255, 255, 0.17);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.13),
+                0 0.5px 1px rgba(0, 0, 0, 0.35),
+                0 2px 6px rgba(0, 0, 0, 0.30);
+  }
+  html:not([data-theme="light"]) .tab.active .tab-icon { background: rgba(255, 255, 255, 0.09); }
+  html:not([data-theme="light"]) .tab-status { box-shadow: 0 0 0 1.5px var(--panel); }
+}
+html[data-theme="dark"] .tab.active {
+  background: rgba(255, 255, 255, 0.17);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.13),
+              0 0.5px 1px rgba(0, 0, 0, 0.35),
+              0 2px 6px rgba(0, 0, 0, 0.30);
+}
+html[data-theme="dark"] .tab.active .tab-icon { background: rgba(255, 255, 255, 0.09); }
+
+/* ---- Search wells (Surfaces.swift:179-191) ---- */
+.search-well {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 28px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--radius-well);
+  background: var(--well);
+  color: var(--ink-faint);
+}
+.search-well > svg { flex: 0 0 auto; }
+.search-well > input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink);
+  font-size: 13px;
+}
+.search-well > input:focus { border: 0; box-shadow: none; }
+.search-well:focus-within { box-shadow: none; }
+.sidebar-search.search-well {
+  width: calc(100% - 12px);
+  margin: 2px 6px 6px;
+}
+.settings-search.search-well {
+  width: calc(100% - 12px);
+  margin: 2px 6px 6px;
+  flex: 0 0 auto;
+}
+
+/* A well field has no focus ring (Surfaces.swift:179-191): the caret says where you are. */
+input:focus, textarea:focus, select:focus {
+  border-color: var(--well-border);
+  box-shadow: none;
+}
+
+/* ---- The panel: a card beside the conversation ---- */
+.drawer.utility-pane {
+  position: relative;
+  inset: auto;
+  width: var(--changes-width, 420px);
+  max-width: none;
+  height: auto;
+  flex: 0 0 var(--changes-width, 420px);
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--panel);
+  box-shadow: var(--shadow-card-focused);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  animation: none;
+}
+.drawer.utility-pane.shown { animation: none; }
+.drawer.utility-pane[hidden] { display: none; }
+main.changes-hidden .drawer.utility-pane { display: none; }
+.drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0 8px;
+  border-bottom: 0;
+}
+.drawer-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 1px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.drawer-tabs::-webkit-scrollbar { display: none; }
+.drawer-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  min-width: 120px;
+  max-width: 190px;
+  height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.drawer-tab svg { flex: 0 0 auto; }
+.drawer-tab:hover { background: color-mix(in oklab, var(--ink) 4%, transparent); color: var(--ink); }
+.drawer-tab.active {
+  background: color-mix(in oklab, var(--ink) 7%, transparent);
+  box-shadow: inset 0 1px 0 var(--lit);
+  color: var(--ink);
+  font-weight: 500;
+}
+.drawer-tab:active { transform: none; }
+.panel-action { margin-left: auto; }
+.drawer-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  overflow: auto;
+}
+.drawer .terminal { border-radius: 10px; }
+/* A tab that comes into view fades in, so the switch between Files, Changes and
+   Terminal reads as a change of place rather than a snap. Reduced motion stops it. */
+.drawer-body:not([hidden]) { animation: kuvo-fade var(--motion-fast) var(--ease-standard) both; }
+.terminal-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+  color: var(--ink-soft);
+  font-size: var(--text-xs);
+}
+.terminal-note[hidden] { display: none; }
+.terminal-note button.small { margin-left: auto; }
+
+/* ---- The palette: 600 pt card, 18 pt corner, 48 pt search, 30 pt rows ---- */
+.palette {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 80px;
+  background: rgba(0, 0, 0, 0.001);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border: 0;
+  box-shadow: none;
+}
+.palette::before { display: none; }
+.palette-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(600px, 92vw);
+  max-height: min(76vh, 620px);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-palette);
+  background: color-mix(in oklab, var(--panel) 90%, transparent);
+  box-shadow: var(--shadow-lifted);
+  -webkit-backdrop-filter: blur(32px) saturate(1.8);
+  backdrop-filter: blur(32px) saturate(1.8);
+}
+.palette-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: var(--lit);
+  border-radius: var(--radius-palette) var(--radius-palette) 0 0;
+  pointer-events: none;
+}
+.palette-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 48px;
+  height: 48px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink-soft);
+}
+.palette-search svg { flex: 0 0 auto; }
+.palette-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink);
+  font-size: 17px;
+}
+.palette-search input:focus { border: 0; box-shadow: none; }
+.palette-list {
+  padding: 6px;
+  overflow: auto;
+  max-height: none;
+}
+.palette-section { display: flex; flex-direction: column; gap: 1px; }
+.palette-title {
+  padding: 4px 10px 3px;
+  color: var(--ink-soft);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.palette-section + .palette-section .palette-title { padding-top: 10px; }
+.palette-item {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: var(--radius-row);
+  color: var(--ink);
+  cursor: pointer;
+}
+.palette-item:hover { background: var(--hover); }
+.palette-item.selected { background: color-mix(in oklab, var(--accent) 16%, transparent); }
+.palette-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-soft);
+}
+.palette-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.palette-detail {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.palette-keys {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--ink-faint);
+  font-family: var(--font-body);
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.palette-empty {
+  padding: 14px;
+  color: var(--ink-soft);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ---- Settings: the sessions' sidebar on the glass, the page in a card ---- */
+.settings {
+  position: fixed;
+  inset: var(--header-height) 0 0 0;
+  z-index: 25;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: var(--pane-gap);
+  padding: 0 var(--pane-gap) var(--pane-gap);
+  background-color: var(--bg);
+  background-image: var(--bg-ambient);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.settings[hidden] { display: none; }
+.settings-sidebar {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 var(--sessions-width);
+  width: var(--sessions-width);
+  min-height: 0;
+  padding: 10px 8px 0;
+  border: 0;
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.settings-heading {
+  display: flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 10px;
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.settings-nav-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 12px;
+}
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.settings-group { display: flex; flex-direction: column; gap: 1px; }
+.settings-group-title {
+  display: flex;
+  align-items: center;
+  height: 22px;
+  margin: 16px 0 4px;
+  padding-left: 10px;
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 500;
+}
+.settings-group:first-child .settings-group-title { margin-top: 8px; }
+.settings-nav button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-row);
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 400;
+  text-align: left;
+}
+.settings-nav button:hover { background: var(--hover); }
+.settings-nav button.active { background: var(--accent-soft); }
+.settings-nav button svg { flex: 0 0 18px; color: var(--ink-soft); }
+.settings-nav button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings-no-results { padding: 6px 10px; color: var(--ink-soft); font-size: 13px; }
+.settings-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--panel);
+  box-shadow: var(--shadow-card-focused);
+}
+.settings-content-head {
+  width: 100%;
+  max-width: 798px;
+  margin: 0 auto;
+  padding: 26px 49px 4px;
+}
+.settings-content-head h1 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+.settings-content-head p {
+  margin: 6px 0 0;
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.45;
+}
+.settings-pages {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 32px;
+}
+.settings-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 798px;
+  margin: 0 auto;
+  padding: 0 49px;
+}
+.settings-page[hidden] { display: none; }
+.settings-page h3 {
+  margin: 14px 0 2px;
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+@media (max-width: 900px) {
+  .settings-sidebar { flex-basis: 220px; width: 220px; }
+  .settings-content-head, .settings-page { padding-left: 24px; padding-right: 24px; }
+  .drawer.utility-pane { flex-basis: 360px; width: 360px; }
+  .drawer-tab { min-width: 92px; }
+}
+
+/* ==========================================================================
+   Phase 3 — the Mac's motion
+
+   The app's own motion is one spring: .spring(response: 0.32, dampingFraction:
+   0.86) (Theme.swift:21-31). It is written here as the analytic curve, so a
+   transition settles the way the Mac's do — a little past its mark, then back.
+   Under the pointer everything moves in 0.12 s, and a control that is pressed is
+   filled, not squeezed: the Mac has no press scale (Pressable.swift:8-9, 56-70).
+   ========================================================================== */
+
+/* The press is a fill, not a squeeze. */
+button:active { transform: none; }
+
+/* The controls that carry no border of their own: the pointer fills them, and
+   they move in the Mac's 0.12 s. */
+button.small,
+.titlebar-icon,
+.card-action,
+.tab,
+.drawer-tab,
+.panel-action {
+  transition: background var(--motion-hover) var(--ease-hover),
+              color var(--motion-hover) var(--ease-hover),
+              box-shadow var(--motion-hover) var(--ease-hover);
+}
+button.small:hover { background: var(--press-hover); }
+button.small:active { background: var(--press-active); }
+.titlebar-icon:hover { background: var(--press-hover); }
+.titlebar-icon:active { background: var(--press-active); }
+.card-action:hover { background: var(--press-hover); }
+.card-action:active { background: var(--press-active); }
+
+/* The rows of the lists: a 6 % fill under the pointer (SidebarView.swift:738),
+   the accent glass for the chosen one, and the 0.12 s of the Mac. */
+#sessions li,
+.settings-nav button,
+.palette-item,
+.choice-item {
+  transition: background var(--motion-hover) var(--ease-hover),
+              color var(--motion-hover) var(--ease-hover);
+}
+#sessions li:hover { background: var(--hover); }
+.palette-item:hover { background: var(--hover); }
+
+/* The cards: the shadow and the edge move with the spring, as the Mac's do. */
+.card,
+.composer,
+.settings-content,
+.drawer.utility-pane {
+  transition: box-shadow var(--motion-spring) var(--ease-spring),
+              border-color var(--motion-spring) var(--ease-spring),
+              background-color var(--motion-spring) var(--ease-spring);
+}
+
+/* The working mark: the Mac's loader (Spinner.swift:1-177) — the app's own prompt
+   mark, the `>_`, drawing itself in short dashes over a faint copy of itself, then
+   fading to start again. A round is 1.6 s: the chevron draws over the first 40 % of
+   it, the cursor from 32 % to 60 %, and the mark fades from 78 % to the end. */
+.tab-status.running {
+  width: 7px;
+  height: 7px;
+  background: transparent;
+  border: 1.5px solid color-mix(in oklab, var(--accent) 30%, transparent);
+  border-top-color: var(--accent);
+  animation: kuvo-spin 1.6s linear infinite;
+}
+@keyframes kuvo-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* The system asks for less movement: it gets less. The shimmer stops (the app
+   reads the setting and the system, App.tsx), and the spinner stands still —
+   the Mac's own mark, held (Spinner.swift:19-24). */
+@media (prefers-reduced-motion: reduce) {
+  .tab-status.running { animation: none; }
+  .thinking-shimmer { animation: none; }
+}
+
+/* The active tab's pill: the Mac's, sliding to the tab you pick (TitleBar.swift:186-193).
+   It is drawn by Motion (layoutId), so the move is the app's spring, not a cut. */
+.tab-pill {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.07),
+              0 0.5px 1px rgba(15, 23, 42, 0.10),
+              0 2px 6px rgba(15, 23, 42, 0.08),
+              inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  pointer-events: none;
+}
+.tab.active { background: transparent; box-shadow: none; }
+/* The pill is under the tab's own words and mark, as the Mac's is. */
+.tab > *:not(.tab-pill) { position: relative; z-index: 1; }
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .tab-pill {
+    background: rgba(255, 255, 255, 0.17);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.13),
+                0 0.5px 1px rgba(0, 0, 0, 0.35),
+                0 2px 6px rgba(0, 0, 0, 0.30);
+  }
+}
+html[data-theme="dark"] .tab-pill {
+  background: rgba(255, 255, 255, 0.17);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.13),
+              0 0.5px 1px rgba(0, 0, 0, 0.35),
+              0 2px 6px rgba(0, 0, 0, 0.30);
+}
+
+/* ==========================================================================
+   Phase 4 — the Mac's marks, drawn
+
+   The symbols are drawings, not text: the same silhouettes on the 16 pt grid,
+   a 1.5 pt stroke at 16 pt, round caps and joins, in `currentColor`. The two
+   the Mac draws itself are drawn here too: the folder (`FolderIcon.swift`) and
+   the app's own prompt mark, the `>_` the spinner writes
+   (`Spinner.swift:153-177`).
+   ========================================================================== */
+
+/* The chevron turns when it is open, as the Mac's does. */
+.turned { transform: rotate(90deg); }
+
+/* The marks sit in their buttons, not beside them. */
+button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display: block; }
+.session-delete, .keycap-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.tool-chevron, .steps-summary .where {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The working mark: the app's own prompt mark, written and erased as the Mac's
+   spinner writes it (Spinner.swift:40-54) — the chevron first, the cursor next,
+   a hold, and a fade, over the Mac's 1.6 s round. The mark itself is the
+   `Spinner` component (windows/app/src/components/spinner.tsx), which draws the
+   faint copy and the drawn one; the rules that move them are here. */
+.tab-status.running {
+  width: 13px;
+  height: 13px;
+  right: -4px;
+  bottom: -3px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--ink-soft);
+  animation: none;
+}
+/* The mark fades as a whole, the Mac's way: the layer that holds both copies fades
+   (Spinner.swift:141-143), so the faint one fades with the drawn one. */
+.spinner {
+  display: inline-block;
+  flex: 0 0 auto;
+  color: var(--ink-soft);
+  animation: kuvo-spinner-fade 1.6s linear infinite;
+}
+.spinner-faint { opacity: 0.18; }
+.spinner-drawn { opacity: 1; }
+.spinner-reveal { stroke-dasharray: 1 1; }
+.spinner-reveal-chevron { animation: kuvo-spinner-chevron 1.6s linear infinite; }
+.spinner-reveal-cursor { animation: kuvo-spinner-cursor 1.6s linear infinite; }
+@keyframes kuvo-spinner-chevron {
+  0% { stroke-dashoffset: 1; }
+  40% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: 0; }
+}
+@keyframes kuvo-spinner-cursor {
+  0% { stroke-dashoffset: 1; }
+  32% { stroke-dashoffset: 1; }
+  60% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: 0; }
+}
+@keyframes kuvo-spinner-fade {
+  0%, 78% { opacity: 1; }
+  100% { opacity: 0.35; }
+}
+/* The system asks for less movement: it gets less. The Mac's still mark — the whole
+   prompt mark, held (Spinner.swift:19-24). */
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; opacity: 0.8; }
+  .spinner-faint { opacity: 0.8; }
+  .spinner-drawn { display: none; }
+}
+
+/* The line while the agent is working (TranscriptView.swift:598-610): the Mac's words,
+   shimmering, with the time it has been at it. */
+.working-line {
+  max-width: var(--readable-width);
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+  color: var(--ink-soft);
+  font-size: var(--text-md);
+}
+
+/* The grouped form, the Mac's own (SettingsControls.swift:350-367): the group's name, and
+   its rows in a card under it, the name above and what it does under it. */
+.setting-group { display: flex; flex-direction: column; gap: 6px; margin: 0 0 18px; }
+.setting-group-title {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+.setting-group-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.setting-group-card .settings-row {
+  align-items: flex-start;
+  gap: 16px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.setting-group-card .settings-row:last-child { border-bottom: 0; }
+.setting-row-label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.setting-row-note { color: var(--ink-soft); font-size: 12px; line-height: 1.4; }
+.setting-row-control { display: flex; align-items: center; flex: 0 0 auto; }
+/* The updater's two answers side by side: the version it found, and a check on demand. */
+.settings-update-actions { display: flex; align-items: center; gap: 6px; }
+
+/* The three modes, each with a little window of its own (AppearanceSettings.swift:16-28:
+   the Mac shows a thumbnail for each, and the chosen one is marked). */
+.mode-choices { display: flex; gap: 18px; padding: 6px 0; }
+.mode-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 12px;
+  transition: background var(--motion-quick) var(--ease-standard),
+              border-color var(--motion-quick) var(--ease-standard),
+              color var(--motion-quick) var(--ease-standard),
+              transform var(--motion-quick) var(--ease-spring);
+}
+.mode-choice:hover { background: var(--hover); color: var(--ink); transform: translateY(-1px); }
+.mode-choice:active { transform: translateY(0); }
+.mode-choice.active { border-color: var(--accent); color: var(--ink); }
+.mode-choice.active .mode-thumb { box-shadow: 0 2px 8px color-mix(in oklab, var(--accent) 22%, transparent); }
+.mode-thumb {
+  display: block;
+  width: 84px;
+  height: 56px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--panel-2);
+  position: relative;
+}
+.mode-thumb.system { background: linear-gradient(135deg, #F6F4EE 0%, #F6F4EE 50%, #1B1D21 50%, #1B1D21 100%); }
+.mode-thumb.light { background: #F6F4EE; }
+.mode-thumb.dark { background: #131417; }
+.mode-thumb-bar { position: absolute; inset: 0 0 auto 0; height: 7px; background: var(--line); }
+.mode-thumb-card {
+  position: absolute;
+  inset: 12px 10px 8px 10px;
+  border-radius: 3px;
+  background: var(--panel);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+.mode-choice-title { line-height: 1.2; }
+
+/* The files of the project, as a tree (FilesView.swift:250-275): the folders with a
+   chevron that turns, the files with their own mark, and the name in the project's ink. */
+.file-tree { display: flex; flex-direction: column; gap: 1px; }
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: var(--radius-row);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  text-align: left;
+  transition: background var(--motion-quick) var(--ease-standard),
+              color var(--motion-quick) var(--ease-standard);
+}
+.file-node { animation: kuvo-fade var(--motion-quick) var(--ease-out) both; }
+.file-row:hover { background: var(--hover); }
+.file-row.dir { color: var(--ink-soft); }
+.file-row svg {
+  flex: 0 0 auto;
+  color: var(--ink-soft);
+  transition: transform var(--motion-quick) var(--ease-spring),
+              color var(--motion-quick) var(--ease-standard);
+}
+.file-row:hover svg { color: var(--ink); }
+.file-row.dir:hover svg:not(.turned) { transform: translateX(1px); }
+.file-row:hover .turned { transform: rotate(90deg) scale(1.08); }
+.file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The row's own menu (SidebarView.swift:586-590), and the name being typed in the row
+   where Rename was chosen (InlineTitleField.swift:4-55). */
+.context-menu {
+  position: fixed;
+  z-index: 80;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow-lifted);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.context-menu button {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--text-sm);
+  text-align: left;
+  padding: 5px 8px;
+}
+.context-menu button:hover { background: var(--hover); }
+/* A menu carries what a menu carries: a line between groups, an item that cannot be
+   chosen, and the one that undoes (the Mac's own menus are the system's). */
+.context-menu button[disabled] { opacity: .45; cursor: default; }
+.context-menu button[disabled]:hover { background: transparent; }
+.context-menu button.danger { color: var(--danger); }
+.menu-separator {
+  height: 1px;
+  margin: 4px 6px;
+  border: 0;
+  background: var(--line);
+}
+.session-rename {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
+}
+
+/* The handle in the gap between the sessions and the conversation (WindowGlass.swift:43-81):
+   the gap is the handle, a 3 pt capsule shows at half strength while it is held, and the
+   cursor says what it does. */
+/* The window's row holds the handle (WindowGlass.swift:43-81). */
+/* The handle is the gap itself: a zero-width item between the cards, its hit area reaching
+   into the gap on either side, its capsule centred while it is held (WindowGlass.swift:43-81). */
+.pane-resizer {
+  position: relative;
+  width: 0;
+  flex: 0 0 0;
+  margin: 0 calc(var(--pane-gap) / -2);
+  z-index: 5;
+  cursor: col-resize;
+}
+.pane-resizer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -5px;
+  right: -5px;
+}
+.pane-resizer::after {
+  content: "";
+  position: absolute;
+  left: -1.5px;
+  top: 40px;
+  bottom: 40px;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity var(--motion-hover) var(--ease-hover);
+}
+.pane-resizer:hover::after,
+.pane-resizer.dragging::after { opacity: 0.5; }
+
+/* The find bar, the Mac's (FindBar.swift:251-291): a 38 pt row over the conversation, the
+   magnifier and the field, the count of what was found, the arrows, and Done. */
+.find-bar {
+  position: absolute;
+  top: var(--card-header);
+  left: 0;
+  right: 0;
+  z-index: 4;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
+  animation: kuvo-find-in var(--motion-base) var(--ease-spring) both;
+}
+@keyframes kuvo-find-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: none; }
+}
+.find-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 6px 0 12px;
+  color: var(--ink-soft);
+}
+.find-field {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--text-sm);
+}
+.find-field:focus { box-shadow: none; }
+.find-count {
+  flex: 0 0 auto;
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  animation: kuvo-count-in var(--motion-quick) var(--ease-spring) both;
+}
+@keyframes kuvo-count-in {
+  from { opacity: 0.4; transform: translateY(-2px); }
+  to { opacity: 1; transform: none; }
+}
+.find-action {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-soft);
+}
+.find-action svg { transition: transform var(--motion-quick) var(--ease-spring); }
+#find-previous:hover:not(:disabled) svg { transform: translateY(-1px); }
+#find-next:hover:not(:disabled) svg { transform: translateY(1px); }
+#find-done:hover svg { transform: rotate(90deg); }
+.find-action:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+.find-action:disabled { opacity: 0.4; }
+/* What the find found is marked in the words, and the one you are on is the accent. */
+.find-mark {
+  background: color-mix(in oklab, var(--warn) 35%, transparent);
+  color: inherit;
+  border-radius: 3px;
+}
+.find-mark.current {
+  background: var(--accent);
+  color: var(--accent-ink);
+  animation: kuvo-mark-in var(--motion-fast) var(--ease-spring) both;
+}
+@keyframes kuvo-mark-in {
+  from { box-shadow: 0 0 0 2px var(--accent-soft); }
+  to { box-shadow: 0 0 0 2px transparent; }
+}
+
+/* The clear in a search field (Pressable.swift:73-91): quiet at rest, brighter under the
+   pointer, and a little brighter still while it is pressed. */
+.search-clear {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-faint);
+}
+.search-clear:hover { background: var(--hover); color: var(--ink-soft); }
+.search-clear:active { color: var(--ink); }
+
+/* The actions under your words (YourMessage.swift:41-64): always laid out, so nothing
+   moves when they appear, and shown under the pointer. */
+.entry-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 2px;
+  min-height: 22px;
+  opacity: 0;
+  /* Laid out all along; the last two pixels are the only movement, so nothing around
+     them shifts when they appear. */
+  transform: translateY(2px);
+  transition: opacity var(--motion-hover) var(--ease-hover),
+              transform var(--motion-hover) var(--ease-hover);
+}
+.entry.user:hover .entry-actions,
+.entry.user:focus-within .entry-actions { opacity: 1; transform: none; }
+.entry-time {
+  color: var(--ink-faint);
+  font-size: var(--text-xs);
+  padding-right: 6px;
+}
+.entry-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-button);
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: var(--text-xs);
+}
+.entry-action:hover { background: var(--hover); color: var(--ink); }
+.entry-action-text { white-space: nowrap; }
+
+/* The remove (Pressable.swift:93-112): it turns red under the pointer, and is dimmer
+   while it is pressed. */
+.remove-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-faint);
+}
+.remove-button:hover { background: var(--danger-soft); color: var(--danger); }
+.remove-button:active { opacity: .7; }
+.remove-button svg { transition: transform var(--motion-quick) var(--ease-spring); }
+.remove-button:hover svg { transform: rotate(90deg); }
+
+/* The quote you are answering (QuoteViews.swift:5-33): a bar of the accent, what you are
+   replying to, and a way to drop it — in a well, over the composer. */
+.quote-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  background: var(--well);
+  border: 1px solid var(--well-border);
+  animation: kuvo-rise var(--motion-fast) var(--ease-spring) both;
+}
+.quote-bar {
+  flex: 0 0 3px;
+  align-self: stretch;
+  border-radius: 999px;
+  background: var(--accent);
+}
+.quote-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.quote-label { color: var(--ink-soft); font-size: var(--text-xs); font-weight: 500; }
+.quote-text {
+  color: var(--ink-soft);
+  font-size: var(--text-md);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* The project, its folder and its name (SidebarView.swift:795-845): the sessions fold
+   under it, and the compose button shows under the pointer, in place. */
+.sidebar-project { position: relative; }
+.project-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-row);
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+  text-align: left;
+}
+.project-row:hover { background: var(--hover); }
+.project-icon { flex: 0 0 18px; color: var(--ink-soft); }
+.project-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-compose {
+  flex: 0 0 26px;
+  width: 26px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--ink-soft);
+  opacity: 0;
+  transition: opacity var(--motion-hover) var(--ease-hover);
+}
+.project-row:hover .project-compose,
+.project-row:focus-within .project-compose { opacity: 1; }
+.project-compose:hover { background: var(--hover); color: var(--ink); }
+
+/* The Mac's menu chevron: 8 pt, bold, in the secondary ink, after the label
+   (Pressable.swift:192-198). */
+.choice-chevron {
+  flex: 0 0 8px;
+  color: var(--ink-faint);
+  stroke-width: 2;
+  transition: transform var(--motion-quick) var(--ease-spring);
+}
+.choice-button { display: inline-flex; align-items: center; gap: 5px; }
+
+/* The accent badge (Pressable.swift:201-220): it grows to 1.12 and darkens a little under
+   the pointer, and darkens more while it is pressed. */
+.swatch {
+  transition: transform var(--motion-fast) var(--ease-spring),
+              filter var(--motion-fast) var(--ease-standard);
+}
+.swatch:hover { transform: scale(1.12); filter: brightness(0.93); }
+.swatch:active { transform: scale(1.12); filter: brightness(0.85); }
+
+/* The accent badge (Pressable.swift:201-220): it grows to 1.12 and darkens a little under
+   the pointer, and darkens more while it is pressed. */
+.swatch { transition: transform var(--motion-fast) var(--ease-spring), filter var(--motion-fast) var(--ease-standard); }
+.swatch:hover { transform: scale(1.12); filter: brightness(0.93); }
+.swatch:active { transform: scale(1.12); filter: brightness(0.85); }
+
+/* A provider's mark (ProviderLogo.swift): the mark itself, drawn in the ink — or in the
+   maker's own colour — and the initial that stands in for it until it arrives. */
+.provider-logo {
+  display: inline-block;
+  flex: 0 0 auto;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-position: center;
+  mask-position: center;
+}
+.provider-logo.fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--ink-soft);
+  font-weight: 600;
+  font-family: ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+}
+
+/* ---- Open Quickly: 560 pt, 48 pt search, 30 pt rows (OpenQuickly.swift:20-104) ---- */
+.open-quickly {
+  position: fixed;
+  inset: 0;
+  z-index: 61;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 80px;
+  background: rgba(0, 0, 0, 0.001);
+}
+.open-quickly[hidden] { display: none; }
+.open-quickly-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 92vw);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-palette);
+  background: color-mix(in oklab, var(--panel) 75%, transparent);
+  box-shadow: var(--shadow-lifted);
+  -webkit-backdrop-filter: blur(32px) saturate(1.8);
+  backdrop-filter: blur(32px) saturate(1.8);
+  animation: kuvo-rise var(--motion-base) var(--ease-spring) both;
+}
+.open-quickly-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: var(--lit);
+  border-radius: var(--radius-palette) var(--radius-palette) 0 0;
+  pointer-events: none;
+}
+.open-quickly-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 48px;
+  height: 48px;
+  padding: 0 16px;
+  color: var(--ink-soft);
+}
+.open-quickly-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--ink);
+  font-size: 17px;
+}
+.open-quickly-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: min(50vh, 420px);
+  overflow: auto;
+  padding: 6px;
+  border-top: 1px solid var(--line);
+}
+.open-quickly-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.open-quickly-row.selected { background: var(--accent-soft); }
+.open-quickly-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+}
+.open-quickly-folder {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+/* ==========================================================================
+   Micro-interactions
+
+   The small answers a native app gives the hand: a chrome-less control fills
+   under the pointer and deepens while it is pressed, a mark leans toward what
+   it does, a copy says it copied, a list marks the row in use. The motion is
+   the Mac binding's own — the 120 ms hover beat and the spring — so "Motion:
+   Reduced" and the system's setting stop it with everything else.
+   ========================================================================== */
+
+/* A control without a border answers with a fill, never a squeeze: the Mac's
+   Pressable is a shade under the pointer and a darker one while it is down
+   (Pressable.swift:8-9). Bordered buttons already answer with their own edge. */
+button.small:active:not(:disabled),
+button.icon:active:not(:disabled),
+.entry-action:active,
+.titlebar-icon:active,
+.card-action:active,
+.toast-close:active,
+.session-delete:active,
+.project-compose:active,
+.settings-nav button:active,
+.project-row:active,
+.session:active,
+.open-quickly-row:active,
+.drawer-tab:active,
+.changes-file-toggle:active,
+.choice-item:active,
+.choice-button:active,
+.sidebar-new:active,
+.section-action-button:active,
+.tab-close:active,
+.find-action:active,
+.file-row:active,
+.confirm-keep:active,
+.confirm-yes:active,
+.mode-choice:active,
+.search-results .hit:active,
+.diff-fold:active {
+  background: var(--press-active);
+}
+.palette-item:active,
+.context-menu button:active:not(:disabled) {
+  background: var(--press-active);
+}
+.tab:active:not(.active) { background: var(--press-active); }
+
+/* The marks: a copy leans toward the words it copies, a close turns as it is
+   reached for, a compose pencil lifts off the page, a chevron follows the panel
+   it opens. The move is a pixel or two, so the row never shifts. */
+.entry-action svg,
+.toast-close svg,
+.tab-close svg,
+.session-delete svg,
+.project-compose svg,
+.section-action-button svg,
+.sidebar-new svg,
+.settings-nav button svg,
+.changes-file-toggle svg {
+  transition: transform var(--motion-quick) var(--ease-spring),
+              color var(--motion-quick) var(--ease-standard);
+}
+.steps-summary svg,
+.tool-chevron svg {
+  transition: transform var(--motion-quick) var(--ease-spring);
+}
+.entry-action:hover svg { transform: translateX(1px); }
+.toast-close:hover svg,
+.tab-close:hover svg,
+.session-delete[aria-label="Delete this session"]:hover svg { transform: rotate(90deg); }
+.project-compose:hover svg { transform: rotate(-8deg) scale(1.06); }
+.section-action-button:hover svg { transform: scale(1.12); }
+.sidebar-new:hover svg { transform: translate(1px, -1px); }
+.settings-nav button:hover svg { transform: translateX(1px); }
+.project-row:hover .project-icon { transform: translateY(-1px); }
+.project-icon { transition: transform var(--motion-quick) var(--ease-spring); }
+.changes-file-toggle:hover .turned { transform: rotate(90deg) scale(1.1); }
+.choice-button[aria-expanded="true"] .choice-chevron:is(svg) { transform: rotate(180deg); }
+
+/* Copied: the check the Mac's code blocks use (CodeBlockStyle.swift), where the
+   hand asked, for a moment. */
+.entry-action.copied { color: var(--ok); }
+.entry-action.copied svg { animation: kuvo-check-pop var(--motion-base) var(--ease-spring) both; }
+.code-copy.copied { color: var(--ok); }
+@keyframes kuvo-check-pop {
+  0% { transform: scale(0.5); opacity: 0.25; }
+  55% { transform: scale(1.18); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* The row in use: a short accent bar at its edge, growing in like a mark drawn
+   rather than painted. */
+.palette-item,
+.open-quickly-row,
+.settings-nav button,
+.sessions li { position: relative; }
+.palette-item.selected::before,
+.open-quickly-row.selected::before,
+.settings-nav button.active::before,
+.sessions li.current::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  width: 2px;
+  height: 14px;
+  margin-top: -7px;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: kuvo-accent-in var(--motion-fast) var(--ease-spring) both;
+}
+.settings-nav button.active svg { color: var(--accent); }
+.sessions li.current::before { height: 18px; margin-top: -9px; left: 0; }
+@keyframes kuvo-accent-in {
+  from { transform: scaleY(0.2); opacity: 0; }
+  to { transform: scaleY(1); opacity: 1; }
+}
+
+/* A session working: its dot breathes, as the tab's does. */
+.session-state.running { animation: kuvo-pulse 1.2s var(--ease-standard) infinite; }
+
+/* What appears without a panel around it: the clear in a search field, the offer
+   to come back to the newest words, the menu over selected text. */
+.search-clear,
+.quote-button { animation: kuvo-pop var(--motion-fast) var(--ease-spring) both; }
+#jump-latest:not([hidden]) { animation: kuvo-jump-in var(--motion-fast) var(--ease-spring) both; }
+@keyframes kuvo-jump-in {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* A menu arrives as one piece, and its items follow in a short run, so the eye
+   reads the list in order rather than all at once. */
+.context-menu { animation: kuvo-pop var(--motion-fast) var(--ease-spring) both; }
+.context-menu button { animation: kuvo-menu-item var(--motion-quick) var(--ease-standard) both; }
+@keyframes kuvo-menu-item {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* A settings page pushes in, the Mac's own way (SettingsView), a little shorter
+   than the detail page's rise so switching pages stays quick. */
+.settings-page:not([hidden]) { animation: kuvo-page-in var(--motion-base) var(--ease-standard) both; }
+@keyframes kuvo-page-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* A link's underline grows from the left, the way a hand would draw it. */
+.markdown a {
+  background-image: linear-gradient(currentColor, currentColor);
+  background-repeat: no-repeat;
+  background-position: 0 calc(100% - 1px);
+  background-size: 0 1px;
+  transition: background-size var(--motion-fast) var(--ease-standard);
+}
+.markdown a:hover { text-decoration: none; background-size: 100% 1px; }
+
+/* The search well deepens when the caret is in it, and its mark takes the accent. */
+.search-well {
+  transition: background var(--motion-fast) var(--ease-standard),
+              color var(--motion-fast) var(--ease-standard);
+}
+.search-well:focus-within { background: color-mix(in oklab, var(--ink) 6%, transparent); }
+.search-well:focus-within > svg { color: var(--accent); }
+
+/* The primary action lifts a hair under the pointer, and settles back under the
+   hand; the press is still a fill, not a squeeze. */
+button.primary {
+  transition: background var(--motion-fast) var(--ease-standard),
+              border-color var(--motion-fast) var(--ease-standard),
+              box-shadow var(--motion-fast) var(--ease-standard),
+              transform var(--motion-quick) var(--ease-spring);
+}
+button.primary:hover {
+  box-shadow: 0 3px 10px color-mix(in oklab, var(--accent) 24%, transparent);
+  transform: translateY(-1px);
+}
+button.primary:active:not(:disabled) {
+  box-shadow: none;
+  filter: brightness(0.94);
+  transform: translateY(0);
+}
+#attach svg { transition: transform var(--motion-quick) var(--ease-spring); }
+#attach:hover svg { transform: rotate(-10deg); }
+
+/* The accent badge answers a choice: its ring draws itself in when it becomes
+   the chosen one. */
+.swatch.selected { animation: kuvo-swatch-in var(--motion-base) var(--ease-spring) both; }
+@keyframes kuvo-swatch-in {
+  from { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px transparent; }
+  to { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--accent); }
+}
+
+/* The system and the app's own setting both ask for less: the new moves stop,
+   and the menu's stagger does not leave its items waiting. */
+@media (prefers-reduced-motion: reduce) {
+  .entry-actions { transform: none; }
+  .context-menu button { animation-delay: 0ms !important; }
+  .entry-action.copied svg,
+  .swatch.selected { animation: none; }
+}
+html[data-motion="reduced"] .entry-actions { transform: none; }
+html[data-motion="reduced"] .context-menu button { animation: none; }
+html[data-motion="reduced"] .session-state.running { animation: none; }
+html[data-motion="reduced"] .entry-action.copied svg,
+html[data-motion="reduced"] .swatch.selected { animation: none; }
+html[data-motion="reduced"] .toast-timer { display: none; }
+html[data-motion="reduced"] .mode-choice:hover { transform: none; }

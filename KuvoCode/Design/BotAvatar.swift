@@ -54,7 +54,7 @@ nonisolated struct BotLook: Codable, Hashable {
 }
 
 /// What a bot is up to, which is how its avatar moves.
-enum BotMood: Equatable {
+enum BotMood: Hashable {
     /// Nothing to do: it breathes, blinks, looks around and fidgets now and then.
     case idle
     /// Running: it hops, its eyes scan, sparks circle it.

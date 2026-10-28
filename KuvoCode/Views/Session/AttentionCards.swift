@@ -5,11 +5,20 @@ import SwiftUI
 /// The agent wants to do something that needs your OK.
 struct PermissionCard: View {
     let request: PermissionRequest
+    /// For a command: the whole command line, pipes and all, which the request names in parts.
+    var command: String?
     let directory: String
     let reply: (PermissionRequest.Decision) -> Void
     @Environment(\.takesCardKeys) private var takesKeys
+    /// Files whose changes you asked to see all of.
+    @State private var shownWhole: Set<String> = []
+    /// A file's lines shown before Show All: enough to read, not so many that a huge new file
+    /// holds the window up.
+    private static let linesShown = 400
 
     var body: some View {
+        // Read from its metadata once a drawing, not for each use.
+        let diffs = request.diffs
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                 Image(systemName: symbol)
@@ -27,17 +36,32 @@ struct PermissionCard: View {
                 }
             }
 
-            if let diff = request.diffs.first {
-                DiffView(diff: diff, title: relative(diff.file), maxLines: 14)
+            // All that Allow allows: every file's changes, the whole command, scrolling when long.
+            if !diffs.isEmpty {
+                // Each file's changes, made as they scroll into view; a long one's rest a click
+                // away, so nothing Allow allows is out of reach.
+                AllowedWell(maxHeight: 360) {
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(diffs) { diff in
+                            let whole = shownWhole.contains(diff.id)
+                            DiffView(diff: diff, title: relative(diff.file), maxLines: whole ? .max : Self.linesShown)
+                            if !whole, DiffParser.file(from: diff, directory: directory).lines.count > Self.linesShown {
+                                Button("Show All") { shownWhole.insert(diff.id) }
+                                    .buttonStyle(TextButtonStyle())
+                            }
+                        }
+                    }
+                }
             } else if !request.resources.isEmpty {
-                Text(request.resources.map(relative).joined(separator: "\n"))
-                    .transcriptCodeFont()
-                    .textSelection(.enabled)
-                    .lineLimit(6)
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    // Sunk in like a code block, as it's paths and commands.
-                    .recessedWell(RoundedRectangle(cornerRadius: 10))
+                AllowedWell(maxHeight: 180) {
+                    Text(command ?? request.resources.map(relative).joined(separator: "\n"))
+                        .transcriptCodeFont()
+                        .textSelection(.enabled)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                // Sunk in like a code block, as it's paths and commands.
+                .recessedWell(RoundedRectangle(cornerRadius: 10))
             }
 
             HStack(spacing: 8) {
@@ -57,7 +81,9 @@ struct PermissionCard: View {
     }
 
     private var subject: String {
-        request.resources.first.map(relative) ?? "this"
+        guard let first = request.resources.first.map(relative) else { return "this" }
+        let more = request.resources.count - 1
+        return more == 0 ? first : "\(first) and \(more) more"
     }
 
     private var title: String {
@@ -65,7 +91,7 @@ struct PermissionCard: View {
         case "edit", "patch": "Allow editing \(subject)?"
         case "write": "Allow writing \(subject)?"
         case "read": "Allow reading \(subject)?"
-        case "shell": request.resources.count > 1 ? "Allow running these commands?" : "Allow running this command?"
+        case "shell": request.resources.count > 1 && command == nil ? "Allow running these commands?" : "Allow running this command?"
         case "external_directory": "Allow working outside the project?"
         case "subagent": "Allow starting the \(subject) agent?"
         case "webfetch": "Allow fetching \(subject)?"
@@ -84,7 +110,17 @@ struct PermissionCard: View {
 
     private var alwaysHelp: String {
         let patterns = request.save ?? request.resources
-        return patterns.isEmpty ? "Don't ask again for this in this project" : "Don't ask again for: " + patterns.joined(separator: ", ")
+        guard !patterns.isEmpty, patterns != ["*"] else {
+            // Everything of its kind, which "*" doesn't say.
+            let kind = switch request.action {
+            case "edit", "patch", "write": "changes to any file"
+            case "shell": "any command"
+            case "webfetch": "any address"
+            default: "this"
+            }
+            return "Don't ask again for \(kind) in this project"
+        }
+        return "Don't ask again for: " + patterns.joined(separator: ", ")
     }
 
     private func relative(_ path: String) -> String {
@@ -434,7 +470,7 @@ private struct ChoiceRow: View {
                     Text(option.label)
                         .foregroundStyle(.primary)
                         .frame(minHeight: Self.badgeSize)
-                    if let description = option.description, !description.isEmpty {
+                    if let description = ChoiceText.detail(option.description, label: option.label) {
                         Text(description)
                             .font(.callout)
                             .foregroundStyle(.secondary)
@@ -454,6 +490,7 @@ private struct ChoiceRow: View {
             .background(isSelected ? accent.opacity(0.14) : isHovering ? Pressable.hoverFill : .clear, in: .rect(cornerRadius: 10))
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovering)
     }
@@ -520,7 +557,10 @@ private struct FormCard: View {
             .scrollBounceBehavior(.basedOnSize)
             HStack {
                 Spacer()
-                Button("Answer") { submit(answers) }
+                Button("Answer") {
+                    FormCard.kept[form.id] = nil
+                    submit(answers)
+                }
                     .buttonStyle(.glassProminent)
                     .controlSize(.large)
                     .keyboardShortcut(takesKeys ? .defaultAction : nil)
@@ -528,8 +568,13 @@ private struct FormCard: View {
             }
         }
         .padding(16)
-        .onAppear { answers = FormFieldsView.defaults(for: form.fields) }
+        // What you'd filled in, back after another conversation was in view (its card made again).
+        .onAppear { answers = Self.kept[form.id] ?? FormFieldsView.defaults(for: form.fields) }
+        .onChange(of: answers) { _, now in Self.kept[form.id] = now }
     }
+
+    /// Each form's answers so far, until it's answered: kept here for the app's run.
+    static var kept: [String: FormAnswer] = [:]
 
     /// An integration's forms go by its name ("Outlook and Microsoft 365 needs an answer"); your
     /// own MCP servers' by theirs.
@@ -578,5 +623,20 @@ struct WindowReader: NSViewRepresentable {
 
     func updateNSView(_ view: NSView, context: Context) {
         DispatchQueue.main.async { box.window = view.window }
+    }
+}
+
+/// What a permission allows, shown whole: as tall as it is, up to `maxHeight`, then it scrolls.
+private struct AllowedWell<Content: View>: View {
+    var maxHeight: CGFloat
+    @ViewBuilder var content: Content
+    @State private var height: CGFloat = 1
+
+    var body: some View {
+        ScrollView {
+            content.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height = $0 }
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(height: min(height, maxHeight))
     }
 }

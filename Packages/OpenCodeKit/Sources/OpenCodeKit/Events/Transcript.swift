@@ -13,6 +13,22 @@ public struct Transcript: Sendable, Equatable {
     public var permissions: [PermissionRequest] = []
     public var forms: [FormRequest] = []
     public var isRunning = false
+    /// When the model last sent anything in this session (a step starting, its words, its
+    /// thinking, a tool's input): for telling a reply that stalled partway from one being written.
+    /// By the engine's clock, as its messages' times are (see `clockOffset`).
+    public var lastHeard: Milliseconds?
+    /// How far this computer's clock is ahead of the engine's, from when its events arrived: a machine's
+    /// can be behind or ahead. Take it from this computer's time to compare it with the engine's
+    /// times (a message's, `lastHeard`). Not part of what two transcripts compare: it differs
+    /// between two reads of the same events.
+    public var clockOffset: Milliseconds {
+        get { offset.value }
+        set { offset.value = newValue }
+    }
+    private var offset = Unequated<Milliseconds>(value: 0)
+    /// The engine's own notices waiting to go in, like a background command's end: shown when
+    /// they do, as a read would have them.
+    var waitingNotices: [String: Message.Notice] = [:]
     /// Set when an event referred to something this copy doesn't have (it was
     /// loaded mid-step, say). The owner should reload from the server.
     public var isStale = false
@@ -39,6 +55,10 @@ public struct Transcript: Sendable, Equatable {
         }
     }
 
+    /// The sessions of subagents working for this one: what they ask (a permission, a question)
+    /// shows here, as this conversation's, and is answered in their session.
+    public var helpers: Set<String> = []
+
     public init(sessionID: String) {
         self.sessionID = sessionID
     }
@@ -51,12 +71,13 @@ public struct Transcript: Sendable, Equatable {
         // on this Mac (not one sent inline, to a machine), and none before any conversion.
         let picked = Dictionary(pending.map { ($0.id, $0.files) }, uniquingKeysWith: { first, _ in first })
         pending = inbox.filter { $0.type == "user" }.map { item in
+            let read = Pending(id: item.id, text: item.text ?? "", delivery: item.delivery, isLocal: false, files: item.files,
+                               inlineFiles: InboxItem.inlineFiles(in: item.payload))
             // Those picked here were what it carries inline, if any.
-            if let files = picked[item.id], !files.isEmpty {
+            if let files = picked[item.id], Self.keepsLocalFiles(files, over: read) {
                 return Pending(id: item.id, text: item.text ?? "", delivery: item.delivery, isLocal: false, files: files)
             }
-            return Pending(id: item.id, text: item.text ?? "", delivery: item.delivery, isLocal: false, files: item.files,
-                           inlineFiles: InboxItem.inlineFiles(in: item.payload))
+            return read
         } + local
         self.permissions = permissions
         self.forms = forms.filter(isOurs)
@@ -64,16 +85,35 @@ public struct Transcript: Sendable, Equatable {
         isStale = false
     }
 
+    /// Whether a local copy's files stand for the engine's: files picked on this Mac, or ones the
+    /// engine's copy doesn't name at all.
+    private static func keepsLocalFiles(_ local: [URL], over item: Pending) -> Bool {
+        local.contains(where: \.isFileURL) || (!local.isEmpty && item.files.isEmpty && item.inlineFiles.isEmpty)
+    }
+
     /// Shows a message right away, before the server echoes it back.
     public mutating func addLocal(id: String, text: String, delivery: InboxItem.Delivery, files: [URL] = []) {
         pending.append(Pending(id: id, text: text, delivery: delivery, isLocal: true, files: files))
     }
 
-    /// Makes an undo final: the conversation from `to` on goes. What's waiting to be sent stays,
+    /// Makes an undo final: the conversation from `to` on goes, from where it is, as the engine
+    /// takes it back (a message that waited in the queue is older than the steps before it, which
+    /// stay). One not here is either before every message read, which all go, or gone already:
+    /// the engine's word of an undo this Mac made final as you sent comes after it, as does a
+    /// read made since, and what's left is from before it. What's waiting to be sent stays,
     /// newer as it is: sending a message is what makes an undo final, and that message is among it.
     public mutating func commitRevert(to: String) {
-        messages.removeAll { $0.id >= to }
+        guard to != committedRevert else { return }
+        committedRevert = to
+        if let index = messages.firstIndex(where: { $0.id == to }) {
+            messages.removeSubrange(index...)
+        } else if let first = messages.lazy.map(\.id).min(), to < first {
+            messages.removeAll()
+        }
     }
+
+    /// The undo made final last, so the engine's word of one made final here finds it done.
+    public var committedRevert: String?
 
     public mutating func removeLocal(id: String) {
         pending.removeAll { $0.id == id && $0.isLocal }
@@ -96,6 +136,11 @@ public struct Transcript: Sendable, Equatable {
     }
 
     private static let streamed: Set<String> = ["session.text.delta", "session.reasoning.delta", "session.tool.input.delta", "session.tool.progress"]
+    /// What the model sends as it answers (a tool's progress is the tool's, not the model's).
+    private static let heard: Set<String> = [
+        "session.step.started", "session.text.started", "session.text.delta", "session.reasoning.started",
+        "session.reasoning.delta", "session.tool.input.started", "session.tool.input.delta",
+    ]
     private static let applied: Set<String> = [
         "permission.asked", "permission.replied", "form.created", "form.replied", "form.cancelled",
         "session.inbox.enqueued", "session.inbox.delivered", "session.inbox.cancelled", "session.inbox.delivery.changed",
@@ -148,7 +193,7 @@ public struct Transcript: Sendable, Equatable {
 
     /// This session's own forms, and what an MCP server asks while a tool of it runs here.
     private func isOurs(_ form: FormRequest) -> Bool {
-        if form.sessionID == sessionID { return true }
+        if form.sessionID == sessionID || helpers.contains(form.sessionID) { return true }
         guard form.sessionID == FormRequest.anySession, let server = form.server else { return false }
         return isWaiting(on: server)
     }
@@ -156,11 +201,14 @@ public struct Transcript: Sendable, Equatable {
     private mutating func reduce(_ event: ServerEvent) throws {
         let now = event.created ?? Date().timeIntervalSince1970 * 1000
         let messageID = "msg_" + event.id.dropFirst("evt_".count)
+        // When it came, not when it's applied: one applied again after a read would add the read's time.
+        if let created = event.created { clockOffset = event.received - created }
+        if event.sessionID == sessionID, Self.heard.contains(event.type) { lastHeard = now }
 
         switch event.type {
         case "permission.asked":
             let request = try event.payload(as: PermissionRequest.self)
-            guard request.sessionID == sessionID else { return }
+            guard request.sessionID == sessionID || helpers.contains(request.sessionID) else { return }
             permissions.removeAll { $0.id == request.id }
             permissions.append(request)
             return
@@ -188,15 +236,22 @@ public struct Transcript: Sendable, Equatable {
         // Inputs
         case "session.inbox.enqueued":
             let enqueued = try event.payload(as: EventPayload.InboxEnqueued.self)
+            if enqueued.item.type == "synthetic", !hasMessage(enqueued.inboxID) {
+                let payload = enqueued.item.payload
+                waitingNotices[enqueued.inboxID] = Message.Notice(id: enqueued.inboxID, time: Message.Time(created: now), text: payload["text"]?.string ?? "",
+                                                                  description: payload["description"]?.string, metadata: payload["metadata"])
+                return
+            }
             guard enqueued.item.type == "user" else { return }
             // Delivered already: a read since has it as a message.
             guard !hasMessage(enqueued.inboxID) else { return }
             var item = Pending(id: enqueued.inboxID, text: enqueued.item.payload["text"]?.string ?? "", delivery: enqueued.item.delivery, isLocal: false,
                                files: InboxItem.files(in: enqueued.item.payload), inlineFiles: InboxItem.inlineFiles(in: enqueued.item.payload))
             if let index = pending.firstIndex(where: { $0.id == item.id }) {
-                // A local copy knows the files as they were picked, before any conversion: the
-                // same ones it carries inline, if it does.
-                if !pending[index].files.isEmpty {
+                // A local copy knows the files on this Mac as they were picked, before any
+                // conversion: the same ones it carries inline, if it does. One that only carries
+                // them inline (a phone's) keeps the engine's, which have their names, if it has any.
+                if Self.keepsLocalFiles(pending[index].files, over: item) {
                     item.files = pending[index].files
                     item.inlineFiles = []
                 }
@@ -207,7 +262,8 @@ public struct Transcript: Sendable, Equatable {
         case "session.inbox.delivered":
             let id = try event.payload(as: EventPayload.InboxChanged.self).inboxID
             guard let index = pending.firstIndex(where: { $0.id == id }) else {
-                // Not ours to show (a synthetic or compaction input), or we missed it.
+                if let notice = waitingNotices.removeValue(forKey: id) { append(.synthetic(notice)) }
+                // Otherwise not ours to show (a compaction input), or we missed it.
                 return
             }
             let item = pending.remove(at: index)
@@ -334,8 +390,15 @@ public struct Transcript: Sendable, Equatable {
             isRunning = true
             let started = try event.payload(as: EventPayload.ToolInputStarted.self)
             editAssistant(started.assistantMessageID) { message in
-                // There already: a read since has it.
-                guard !message.content.contains(where: { $0.isTool(started.id) }) else { return }
+                // There already (a read since has it, or the agent named it again once it knew what
+                // it was, as Antigravity does for Kuvo Code's tools): its name as it is now.
+                if let index = message.content.lastIndex(where: { $0.isTool(started.id) }) {
+                    guard case .tool(var call) = message.content[index], call.name != started.name else { return }
+                    message.content[index] = Self.emptyBlock
+                    call.name = started.name
+                    message.content[index] = .tool(call)
+                    return
+                }
                 let call = Message.ToolCall(id: started.id, name: started.name, state: .streaming(input: ""), time: .init(created: now))
                 message.content.append(.tool(call))
             }
@@ -415,10 +478,17 @@ public struct Transcript: Sendable, Equatable {
         case "session.compaction.ended", "session.compaction.failed":
             struct Ended: Decodable { var text: String? }
             let ended = try event.payload(as: Ended.self)
-            if let index = messages.lastIndex(where: { if case .compaction = $0 { true } else { false } }), case .compaction(var message) = messages[index] {
-                message.status = event.type.hasSuffix("ended") ? "completed" : "failed"
+            let failed = event.type.hasSuffix("failed")
+            // The summary under way. One whose start was missed isn't an earlier summary's (that
+            // stays as it was): the engine's copy has it, a failed one too, and a read brings it;
+            // unless a read since has it whole already.
+            if let index = messages.lastIndex(where: { if case .compaction(let summary) = $0 { summary.status == "running" } else { false } }),
+               case .compaction(var message) = messages[index] {
+                message.status = failed ? "failed" : "completed"
                 message.summary = ended.text
                 messages[index] = .compaction(message)
+            } else if failed || !messages.contains(where: { if case .compaction(let summary) = $0 { summary.summary == ended.text } else { false } }) {
+                isStale = true
             }
 
         // History edits
@@ -558,4 +628,10 @@ extension Message.Content {
     func isTool(_ id: String) -> Bool {
         if case .tool(let call) = self { call.id == id } else { false }
     }
+}
+
+/// A value two of what holds it don't compare: when something happened by this computer's clock.
+struct Unequated<Value: Sendable>: Sendable, Equatable {
+    var value: Value
+    static func == (_: Self, _: Self) -> Bool { true }
 }

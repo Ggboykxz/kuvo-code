@@ -15,7 +15,7 @@ struct GroupEditor: View {
     var created: (BotGroup) -> Void = { _ in }
 
     @Environment(Bots.self) private var bots
-    @Environment(BotGroups.self) private var groups
+    @Environment(GroupChats.self) private var groups
     @State private var name: String
     @State private var purpose: String
     /// Its bots, in order: the first leads.
@@ -61,20 +61,19 @@ struct GroupEditor: View {
     /// to its next time; a time picked here is the one it keeps from then on.
     private var meeting: BotGroup.Meeting? {
         guard meets else { return nil }
-        let calendar = Calendar.current
-        let before = group?.meeting.flatMap { $0.next == meetsAt && $0.repeats == meetsEvery ? $0 : nil }
-        let at = meetsEvery?.keepsTimeOfDay == true ? before?.at ?? Wakes.minutes(of: meetsAt, calendar: calendar) : nil
-        let weekday = meetsEvery?.keepsWeekday == true ? before?.weekday ?? calendar.component(.weekday, from: meetsAt) : nil
-        var next = meetsAt
-        if next <= .now, let every = meetsEvery { next = every.next(after: next, now: .now, at: at, weekday: weekday, calendar: calendar) }
-        while meetsEvery == .weekdays, calendar.isDateInWeekend(next), let day = calendar.date(byAdding: .day, value: 1, to: next) { next = day }
-        let topic = topic.trimmingCharacters(in: .whitespacesAndNewlines)
-        return BotGroup.Meeting(next: next, every: meetsEvery?.text, topic: topic.isEmpty ? "Our regular meeting: where things stand, and what's next." : topic, at: at, weekday: weekday)
+        // A one-off whose time has passed: as picked, so Save stays off and says why.
+        return BotGroup.Meeting.planned(at: meetsAt, every: meetsEvery, topic: topic, before: group?.meeting)
+            ?? BotGroup.Meeting(next: meetsAt, every: nil, topic: topic, at: nil, weekday: nil)
     }
 
     private var isNew: Bool { group == nil }
     private var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var picked: [Bot] { members.compactMap { bots.bot($0) } }
+    /// The bots it can have: one that lives on a machine has those that live there too.
+    private var choices: [Bot] {
+        guard let machine = group.flatMap({ groups.machine(of: $0.id) }) else { return bots.list }
+        return bots.list.filter { $0.machine == machine }
+    }
     private var canSave: Bool { !trimmedName.isEmpty && picked.count >= 2 && (meeting.map { $0.next > .now } ?? true) }
 
     var body: some View {
@@ -159,9 +158,10 @@ struct GroupEditor: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
 
-            section("Bots", note: "Pick two or more. They answer one at a time, and each remembers the chat in its own conversation.") {
+            section("Bots", note: group.flatMap({ groups.machine(of: $0.id) }).map { "Pick two or more of the bots on \($0), where this chat lives. They answer one at a time, and each remembers the chat in its own conversation." }
+                    ?? "Pick two or more. They answer one at a time, and each remembers the chat in its own conversation.") {
                 WellGroup {
-                    ForEach(Array(bots.list.enumerated()), id: \.element.id) { index, bot in
+                    ForEach(Array(choices.enumerated()), id: \.element.id) { index, bot in
                         if index > 0 { WellDivider() }
                         MemberRow(bot: bot, isOn: members.contains(bot.id)) {
                             withAnimation(.ui) {
@@ -341,6 +341,7 @@ private struct MemberRow: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovering)
         .accessibilityAddTraits(isOn ? .isSelected : [])

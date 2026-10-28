@@ -1,7 +1,6 @@
 import AppKit
 import Quartz
 import SwiftUI
-import Textual
 import UniformTypeIdentifiers
 
 /// A file tab: the file on the left (rendered, highlighted or previewed), the project's
@@ -28,16 +27,20 @@ struct FilesView: View {
         _tree = State(initialValue: FileTree(roots: roots.map(RemoteFolder.url)))
     }
 
+    /// Each folder's path as its files' URLs have it: a machine's folder is named "ssh://…".
+    private var rootPaths: [String] { roots.map { RemoteFolder.url($0).path } }
+
     /// The folder `file` is in, for its breadcrumb.
     private func root(of file: URL) -> String {
-        roots.first { file.path.hasPrefix($0 + "/") } ?? roots[0]
+        rootPaths.firstIndex { file.path.hasPrefix($0 + "/") }.map { roots[$0] } ?? roots[0]
     }
 
     /// How a message names `file`, as "@" does: its path in the primary folder, after its
     /// folder's name in the others, in full anywhere else.
     private func mention(of file: URL) -> String {
-        guard let index = roots.firstIndex(where: { file.path.hasPrefix($0 + "/") }) else { return file.path }
-        let relative = String(file.path.dropFirst(roots[index].count + 1))
+        let paths = rootPaths
+        guard let index = paths.firstIndex(where: { file.path.hasPrefix($0 + "/") }) else { return file.path }
+        let relative = String(file.path.dropFirst(paths[index].count + 1))
         return index == 0 ? relative : RemoteFolder.url(roots[index]).lastPathComponent + "/" + relative
     }
 
@@ -81,6 +84,12 @@ final class FileTree {
         let isDirectory: Bool
         var id: URL { url }
         var name: String { url.lastPathComponent }
+
+        /// Folders first, then names as Finder orders them: file3 before file29.
+        static func inFinderOrder(_ a: Entry, _ b: Entry) -> Bool {
+            if a.isDirectory != b.isDirectory { return a.isDirectory }
+            return a.name.localizedStandardCompare(b.name) == .orderedAscending
+        }
     }
 
     /// The project's folders, the primary one first.
@@ -138,7 +147,7 @@ final class FileTree {
                 let listed = await Task.detached { RemoteShell.list(directory) ?? [] }.value
                 children[directory] = listed
                     .map { Entry(url: directory.appending(path: $0.name, directoryHint: $0.isDirectory ? .isDirectory : .notDirectory), isDirectory: $0.isDirectory) }
-                    .sorted { ($0.isDirectory ? 0 : 1, $0.name.lowercased()) < ($1.isDirectory ? 0 : 1, $1.name.lowercased()) }
+                    .sorted(by: Entry.inFinderOrder)
             }
             return []
         }
@@ -146,7 +155,7 @@ final class FileTree {
         let entries = urls
             .filter { $0.lastPathComponent != ".DS_Store" }
             .map { Entry(url: $0, isDirectory: (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true) }
-            .sorted { ($0.isDirectory ? 0 : 1, $0.name.lowercased()) < ($1.isDirectory ? 0 : 1, $1.name.lowercased()) }
+            .sorted(by: Entry.inFinderOrder)
         children[directory] = entries
         return entries
     }
@@ -280,6 +289,7 @@ private struct TreeRow: View {
             .hoverHighlight(in: RoundedRectangle(cornerRadius: 6), selected: isSelected)
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .contextMenu {
             if entry.url.isFileURL {
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([entry.url]) }
@@ -314,6 +324,7 @@ private struct MatchRow: View {
             .hoverHighlight(in: RoundedRectangle(cornerRadius: 6), selected: isSelected)
         }
         .buttonStyle(.plain)
+        .clickablePointer()
     }
 }
 
@@ -359,14 +370,20 @@ private struct FileViewer: View {
                 switch content {
                 case .text(let text) where isMarkdown && !showsSource:
                     ScrollView {
-                        StructuredText(text, parser: MathMarkdownParser())
-                            .transcriptFont()
-                            .textual.codeBlockStyle(CopyableCodeBlockStyle())
-                            .textual.highlighterTheme(CodeColors.theme)
-                            .textual.structuredTextStyle(.gitHub)
-                            .textual.textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(20)
+                        // Drawn as replies are (TextKit), so a long file opens at once. Its own
+                        // pictures, beside it; none from the web (a README's badges and tracking
+                        // pixels would reach their hosts as you open it).
+                        ReplyView(markdown: text, parser: MathMarkdownParser(), images: url.deletingLastPathComponent(), diagrams: true) { link in
+                            // Another file of the project's, here; web links in the browser.
+                            let file = link.isFileURL ? link : link.scheme == nil && !link.path.isEmpty
+                                ? URL(filePath: link.path(percentEncoded: false), relativeTo: url.deletingLastPathComponent()).standardizedFileURL : nil
+                            guard let file else { return false }
+                            app.utilities.show(file)
+                            return true
+                        }
+                        .transcriptFont()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(20)
                     }
                 case .text(let text):
                     CodeTextView(text: text, language: CodeHighlighter.language(for: url.path)) { lines in
@@ -391,7 +408,26 @@ private struct FileViewer: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .task(id: url) { content = await Self.load(url) }
+        .task(id: "\(url.absoluteString)\n\(app.utilities.fileShown)") {
+            content = await Self.load(url)
+            // Changed on disk (by the agent, say): shown again as it is. A machine's file is read
+            // again when it's shown again, which reading it each time would cost a round trip for.
+            guard url.isFileURL else { return }
+            var seen = Self.modified(url)
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                let now = Self.modified(url)
+                if now != seen {
+                    seen = now
+                    content = await Self.load(url)
+                }
+            }
+        }
+    }
+
+    /// Read from the disk each time (a URL keeps the values it was asked for).
+    private static func modified(_ url: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
     }
 
     private var header: some View {
@@ -404,6 +440,7 @@ private struct FileViewer: View {
             if isMarkdown {
                 Button(showsSource ? "View Rendered" : "View Source") { showsSource.toggle() }
                     .buttonStyle(.plain)
+                    .clickablePointer()
                     .font(.system(size: 12, weight: .medium))
                     .padding(.horizontal, 10)
                     .frame(height: 26)

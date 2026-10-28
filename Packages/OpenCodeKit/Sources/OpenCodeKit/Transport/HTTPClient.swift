@@ -121,12 +121,15 @@ public struct Empty: Codable, Sendable {
     public init() {}
 }
 
-public struct DecodingFailure: LocalizedError {
+public struct DecodingFailure: LocalizedError, CustomStringConvertible {
     public var path: String
     public var underlying: Error
+    /// What came back (the start of it), for a closer look while debugging. Not in its
+    /// description, which goes in logs: it can hold accounts' details.
     public var body: String
 
     public var errorDescription: String? { "Couldn't read the response from \(path): \(underlying)" }
+    public var description: String { errorDescription ?? path }
 }
 
 extension String {

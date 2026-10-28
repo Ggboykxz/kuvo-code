@@ -145,6 +145,7 @@ struct BrowserZoomChip: View {
                 .contentShape(.capsule)
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .onHover { isHovering = $0 }
         .help("Back to actual size (zoom with ⌘+ and ⌘−, or pinch)")
     }
@@ -243,6 +244,7 @@ struct BrowserDownloadBar<Detail: View, Actions: View>: View {
                         .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
+                .clickablePointer()
                 .foregroundStyle(.secondary)
                 .disabled(!canHide)
                 .help("Hide")

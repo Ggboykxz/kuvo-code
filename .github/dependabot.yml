@@ -7,3 +7,21 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+
+  # The Windows client's three npm manifests. The page, the harness and the shell
+  # have separate lockfiles, so each gets its own update stream.
+  - package-ecosystem: npm
+    directory: /windows/app
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: npm
+    directory: /windows/harness
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: npm
+    directory: /windows/electron
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

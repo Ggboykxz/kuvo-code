@@ -1,9 +1,30 @@
 .DS_Store
+node_modules/
 xcuserdata/
 DerivedData/
 build/
+!windows/electron/build/
+windows/electron/build/*
+!windows/electron/build/icon.ico
+!windows/electron/build/icon.png
 .build/
 .swiftpm/
 *.xcuserstate
 Config/Signing.local.xcconfig
 CLAUDE.md
+dist/
+github-token-to-revoke.txt
+
+# Playwright MCP's own logs
+.playwright-mcp/
+
+# The built page (React and TypeScript, built by Next.js): an artefact
+windows/harness/ui-build/
+windows/app/.next/
+windows/app/out/
+windows/app/next-env.d.ts
+windows/app/tsconfig.tsbuildinfo
+Agents/node_modules/
+
+# ECC's project memory vault (local handoffs and lessons; not team docs)
+.ecc/

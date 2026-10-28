@@ -17,11 +17,13 @@ struct NativeMenuButton<Label: View>: View {
 
     var body: some View {
         Button {
-            anchor.popUp(menu(), below: opensBelow)
+            // After the press: a menu's loop run inside it would hold up VoiceOver's press until it closed.
+            Modal.later { anchor.popUp(menu(), below: opensBelow) }
         } label: {
             label()
         }
         .buttonStyle(.plain)
+        .clickablePointer()
         .background(AnchorView(anchor: anchor))
         #if DEBUG
         .task {
@@ -29,7 +31,8 @@ struct NativeMenuButton<Label: View>: View {
             guard let wanted = ProcessInfo.processInfo.environment["KUVO_DEMO_MENU"], !name.isEmpty, wanted == name || wanted == name + "s" else { return }
             try? await Task.sleep(for: .seconds(3))
             let menu = menu()
-            anchor.popUp(wanted == name ? menu : menu.items.first { $0.submenu != nil }?.submenu ?? menu, below: opensBelow)
+            // Outside this task: a menu's loop run inside one holds up every other until it closes.
+            Modal.later { anchor.popUp(wanted == name ? menu : menu.items.first { $0.submenu != nil }?.submenu ?? menu, below: opensBelow) }
         }
         #endif
     }

@@ -28,6 +28,8 @@ extension UsageMenuBar {
         }
         let usage = PhoneUsage(providers: providers, refreshing: !store.refreshingProviderIDs.isEmpty, refreshed: store.lastRefreshAt)
         let encoder = JSONEncoder()
+        // Sorted: the phone link sends it again only when the text differs.
+        encoder.outputFormatting = .sortedKeys
         encoder.dateEncodingStrategy = .secondsSince1970
         return try? encoder.encode(usage)
     }

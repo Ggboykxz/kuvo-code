@@ -22,9 +22,12 @@ struct ToolCallView: View {
     }
 
     var body: some View {
-        // Something the agent made: drawn, not described.
-        if WidgetCard.isWidget(call) {
+        // Something the agent made: drawn, not described. A widget that failed is a step (the
+        // card shows one so, through this view).
+        if WidgetCard.isWidget(call), !call.state.isFailure {
             WidgetCard(call: call, send: answerAgent)
+        } else if MadePictureRow.isMade(call) {
+            MadePictureRow(call: call, directory: directory)
         } else {
             step
         }
@@ -162,6 +165,17 @@ struct ToolCallView: View {
         ToolCallView(call: call, directory: directory).summary
     }
 
+    /// What a step worked on, without the app's words for it ("Read", "Asked you a question"):
+    /// its files, its command, what it looked for, the page; for searching what's in a
+    /// conversation. Nil when it names none.
+    static func subject(of call: Message.ToolCall, in directory: String) -> String? {
+        let view = ToolCallView(call: call, directory: directory)
+        let parts = [view.relative(view.string("path"))] + ["command", "pattern", "query", "url", "description"].map(view.string)
+            + view.diffs.map { view.relative($0.file) ?? $0.file }
+        let named = parts.compactMap(\.self).filter { !$0.isEmpty }
+        return named.isEmpty ? nil : named.joined(separator: " ")
+    }
+
     private var summary: String {
         let path = relative(string("path"))
         // A bot's memory file goes by what it is.
@@ -176,15 +190,16 @@ struct ToolCallView: View {
             let files = diffs.map { relative($0.file) ?? $0.file }
             return (isActive ? "Editing " : "Edited ") + (files.count == 1 ? files[0] : files.isEmpty ? "files" : "\(files.count) files")
         case "shell":
-            if let wake = wake { return Self.summary(of: wake, isActive: isActive) + exitSuffix }
+            if let wake = wake { return Self.summary(of: wake, isActive: isActive, failed: !exitSuffix.isEmpty) + exitSuffix }
             return (isActive ? "Running " : "Ran ") + (string("command").map { "`\($0)`" } ?? "a command") + exitSuffix
         case "grep": return "Searched for “\(string("pattern") ?? "")”" + (path.map { " in \($0)" } ?? "")
         case "glob": return "Found files matching \(string("pattern") ?? "")"
         case "webfetch": return (isActive ? "Fetching " : "Fetched ") + (string("url") ?? "a page")
         case "websearch": return "Searched the web for “\(string("query") ?? "")”"
         case "question": return isActive ? "Asking you a question" : "Asked you a question"
-        case "subagent": return (string("description") ?? "Delegated a task") + (string("agent").map { " · \($0)" } ?? "")
+        case "subagent": return (string("description") ?? (isActive ? "Starting a subagent…" : "A subagent's task")) + (string("agent").map { " · \($0)" } ?? "")
         case "skill": return "Used a skill"
+        case "tool_search": return (isActive ? "Looking for a tool" : "Looked for a tool") + (string("query").map { ": “\($0)”" } ?? "")
         case "execute":
             // Code Mode: the agent wrote code that calls its tools.
             let calls = call.state.metadata?["toolCalls"]?.array?.count ?? 0
@@ -233,8 +248,22 @@ struct ToolCallView: View {
             let to = string("to") ?? "another agent"
             if input?["wait"]?.bool == true { return (isActive ? "Asking " : "Asked ") + to }
             return (isActive ? "Writing to " : "Wrote to ") + to
-        case "show_in_panel": return (isActive ? "Showing " : "Showed ") + (relative(string("path")) ?? "a file")
+        case "read_conversation":
+            let of = string("of").map { $0.hasPrefix("&") ? String($0.dropFirst()) : $0 } ?? "another agent"
+            let about = string("query").map { " about “\($0)”" } ?? ""
+            return (isActive ? "Reading " : "Read ") + of + "’s conversation" + about
+        case "show_in_panel", "show_file": return (isActive ? "Showing " : "Showed ") + (relative(string("path")) ?? "a file")
         case "start_session": return (isActive ? "Starting a session" : "Started a session") + (string("title").map { ": \($0)" } ?? "")
+        // Kuvo Code's wake-up tools, worded as the kuvo-wake commands they run are.
+        case "schedule_wake_up":
+            let wake = Wakes.Command(verb: .add, when: string("when"), note: string("note"), every: string("every").flatMap(Wakes.Repeat.init))
+            return Self.summary(of: wake, isActive: isActive, failed: call.state.isFailure)
+        case "watch_for_change":
+            return Self.summary(of: Wakes.Command(verb: .watch, when: string("every"), note: string("note")), isActive: isActive, failed: call.state.isFailure)
+        case "list_wake_ups":
+            return Self.summary(of: Wakes.Command(verb: .list, when: nil, note: nil), isActive: isActive, failed: call.state.isFailure)
+        case "cancel_wake_up":
+            return Self.summary(of: Wakes.Command(verb: .cancel, when: nil, note: nil), isActive: isActive, failed: call.state.isFailure)
         default: return "Used the browser"
         }
     }
@@ -244,8 +273,17 @@ struct ToolCallView: View {
         call.name == "shell" ? string("command").flatMap(Wakes.command(in:)) : nil
     }
 
-    /// "Scheduled a wake-up in 2 hr: check whether CI passed".
-    static func summary(of wake: Wakes.Command, isActive: Bool) -> String {
+    /// "Scheduled a wake-up in 2 hr: check whether CI passed"; `failed`, what it couldn't do
+    /// (the command exited with an error, as one a sandbox stopped from writing does).
+    static func summary(of wake: Wakes.Command, isActive: Bool, failed: Bool = false) -> String {
+        if failed {
+            switch wake.verb {
+            case .list: return "Couldn’t check its wake-ups"
+            case .cancel: return "Couldn’t cancel a wake-up"
+            case .watch: return "Couldn’t start a watch" + (wake.note.map { ": \($0)" } ?? "")
+            case .add: return "Couldn’t schedule a wake-up" + (wake.note.map { ": \($0)" } ?? "")
+            }
+        }
         switch wake.verb {
         case .list: return isActive ? "Checking its wake-ups" : "Checked its wake-ups"
         case .cancel: return isActive ? "Canceling a wake-up" : "Canceled a wake-up"
@@ -319,7 +357,13 @@ struct ToolCallView: View {
         case "browser_ask_user": "hand.raised"
         case "list_agents": "person.2"
         case "send_message": "paperplane"
+        case "read_conversation": "text.bubble"
+        case "schedule_wake_up": "alarm"
+        case "watch_for_change": "eye"
+        case "list_wake_ups": "list.bullet"
+        case "cancel_wake_up": "xmark.circle"
         case "show_in_panel": "sidebar.right"
+        case "show_file": "doc.richtext"
         default: "safari"
         }
     }
@@ -396,7 +440,7 @@ struct ToolCallView: View {
                 }
             }
         } else {
-            OutputBlock(text: outputText)
+            OutputBlock(text: outputText, command: call.name == "shell" ? string("command") ?? "" : nil)
         }
     }
 }
@@ -404,11 +448,15 @@ struct ToolCallView: View {
 /// A command's output or a step's code, in a recessed well that scrolls sideways for long lines.
 struct OutputBlock: View {
     let text: String
+    /// The command that printed it, to color it as a terminal would; nil for code and other text.
+    var command: String?
     @Environment(\.findHighlight) private var highlight
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         ScrollView(.horizontal) {
-            Text(FindText.marked(AttributedString(text.trimmingCharacters(in: .whitespacesAndNewlines)), highlight))
+            Text(FindText.marked(command.map { TerminalColors.colored(text, command: $0, dark: scheme == .dark) } ?? AttributedString(text), highlight))
                 .transcriptCodeFont()
                 .textSelection(.enabled)
                 .fixedSize(horizontal: true, vertical: false)
@@ -421,8 +469,8 @@ struct OutputBlock: View {
 }
 
 /// What a subagent was asked, and the steps it took and what it said, as they happen, under
-/// its step (which draws the line beside them).
-private struct SubagentSteps: View {
+/// its step or its row (which draws the line beside them).
+struct SubagentSteps: View {
     let id: String
     /// What the agent asked it to do (its session's own first message adds the engine's
     /// preamble).
@@ -453,10 +501,12 @@ private struct SubagentSteps: View {
                 ForEach(model.transcript.messages) { message in
                     switch message {
                     case .assistant(let assistant):
-                        ForEach(Array(assistant.content.enumerated()), id: \.offset) { _, block in
+                        ForEach(Array(assistant.content.enumerated()), id: \.offset) { index, block in
                             switch block {
                             case .text(let text):
-                                MarkdownText(text: text.text, folders: { [directory] })
+                                // One view, written or done (see `WritingText`).
+                                WritingText(row: assistant.id, part: index, text: text.text, folders: { [directory] },
+                                            isWriting: assistant.time.completed == nil && index == assistant.content.count - 1)
                             case .tool(let call):
                                 ToolCallView(call: call, directory: directory)
                             default:
@@ -467,6 +517,8 @@ private struct SubagentSteps: View {
                         EmptyView()
                     }
                 }
+                // Its reply being written draws its words from it.
+                .environment(model.writing)
                 if model.isRunning {
                     HStack(spacing: 8) {
                         Spinner(size: 11)

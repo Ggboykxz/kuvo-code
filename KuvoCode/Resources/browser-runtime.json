@@ -167,6 +167,14 @@
     "size": 1045768
    },
    {
+    "name": "google-droid-sans-fonts",
+    "version": "20120715-13.el8",
+    "repo": "AppStream",
+    "path": "Packages/g/google-droid-sans-fonts-20120715-13.el8.noarch.rpm",
+    "sha256": "3db706780458ab81531cf1adac22885bcc51ca37eceabc24fee5c2f5486e82f1",
+    "size": 2602188
+   },
+   {
     "name": "google-noto-emoji-color-fonts",
     "version": "20200916-2.el8",
     "repo": "AppStream",
@@ -863,6 +871,14 @@
     "path": "Packages/g/gnutls-3.6.16-8.el8_10.6.aarch64.rpm",
     "sha256": "7ed1ba74a22e6580d42f886c4f2b06d5856b06f9b0cafd3d5698aa1ecd431f7c",
     "size": 966360
+   },
+   {
+    "name": "google-droid-sans-fonts",
+    "version": "20120715-13.el8",
+    "repo": "AppStream",
+    "path": "Packages/g/google-droid-sans-fonts-20120715-13.el8.noarch.rpm",
+    "sha256": "3db706780458ab81531cf1adac22885bcc51ca37eceabc24fee5c2f5486e82f1",
+    "size": 2602188
    },
    {
     "name": "google-noto-emoji-color-fonts",

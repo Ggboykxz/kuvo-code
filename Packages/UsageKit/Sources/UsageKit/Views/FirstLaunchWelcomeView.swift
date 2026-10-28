@@ -61,26 +61,30 @@ struct FirstLaunchWelcomeView: View {
             }
             .padding(.horizontal, 28)
 
-            GroupBox {
-                HStack(alignment: .top, spacing: 11) {
-                    Image(systemName: "lock.shield")
-                        .font(.system(size: 20, weight: .regular))
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 2)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Access to Your Saved Sign-Ins")
-                            .font(.callout.weight(.semibold))
-                        Text("Connecting may open macOS permission dialogs for your selected providers. Choose Always Allow to keep background updates working.")
-                            .font(.callout)
+            // Only with something to connect (fork change): with nothing, it warned about dialogs
+            // that can't come.
+            if setup.isDetecting || !setup.visibleChoices.isEmpty {
+                GroupBox {
+                    HStack(alignment: .top, spacing: 11) {
+                        Image(systemName: "lock.shield")
+                            .font(.system(size: 20, weight: .regular))
                             .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 2)
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("Access to Your Saved Sign-Ins")
+                                .font(.callout.weight(.semibold))
+                            Text("Connecting may open macOS permission dialogs for your selected providers. Choose Always Allow to keep background updates working.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
                     }
-                    Spacer(minLength: 0)
+                    .padding(6)
                 }
-                .padding(6)
+                .padding(.horizontal, 28)
+                .padding(.top, 16)
             }
-            .padding(.horizontal, 28)
-            .padding(.top, 16)
 
             if #available(macOS 26.0, *) {
                 GlassEffectContainer(spacing: 12) { actionButtons }

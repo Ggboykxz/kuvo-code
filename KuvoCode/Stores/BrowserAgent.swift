@@ -27,6 +27,10 @@ final class BrowserAgent {
     static var botOwner: (String) -> String? = { _ in nil }
 
     /// The agent for one tool call: a bot's browses in its own tabs.
+    /// The panel this agent's tabs are in: its bot's, or its conversation's (the one in view's
+    /// when nobody called).
+    private var panel: String { owner ?? caller.map(utilities.panelOf) ?? utilities.panelKey }
+
     func serving(_ caller: String?) -> BrowserAgent {
         BrowserAgent(utilities: utilities, asks: asks, owner: caller.flatMap(Self.botOwner), caller: caller)
     }
@@ -49,6 +53,9 @@ final class BrowserAgent {
         }
         page.agentRests()
         guard !page.isHeld else { return Self.stillHeld }
+        // Handed back on a file the conversation may not read: it stays as it is, unread, and the
+        // agent goes on in a new tab.
+        if let moved = await moveOffForbiddenFile() { return "The user took over the browser while you worked, and has handed it back. " + moved + "Go on from here." }
         return Self.handedBack + (await snapshot())
     }
 
@@ -67,6 +74,7 @@ final class BrowserAgent {
         touched?.agentStepEnded(accepting: acceptsDialogs)
         touched = browser
         browser.agentStepBegan(caller, accepting: acceptsDialogs)
+        utilities.agentUsed(browser)
         if let owner { utilities.botWorks(owner, in: browser) }
     }
 
@@ -77,12 +85,17 @@ final class BrowserAgent {
         guard BrowserSession.url(from: address) != nil else { return "Not an address or search: \(address)" }
         browser.load(address)
         await settle(browser, expectNavigation: true)
+        // Didn't open (nothing answers there, say): why, rather than an empty tab or the page before.
+        if let failure = browser.loadFailure {
+            let before = browser.url == nil ? "" : "\n\nThe tab is still on the page before:\n\n" + (await snapshot())
+            return "Couldn't open \(address): \(failure)" + before
+        }
         return await snapshot()
     }
 
     func newTab(_ address: String?) async -> String {
         let shows = owner == nil ? caller.map(utilities.bringsForward) ?? true : true
-        let browser = utilities.newBrowser(address, byAgent: true, owner: owner, shown: shows)
+        let browser = utilities.newBrowser(address, byAgent: true, owner: panel, shown: shows)
         // A bot's new tab is the one it goes on in, and a conversation's.
         if owner != nil { use = browser }
         if owner == nil, let caller { utilities.agentWorks(caller, in: browser) }
@@ -101,9 +114,13 @@ final class BrowserAgent {
         var total = 0
         for path in paths {
             let url = URL(filePath: (path as NSString).expandingTildeInPath)
-            guard let data = try? Data(contentsOf: url) else { return "Can't read \(path) on this Mac. Give its full path." }
-            total += data.count
+            // Its size first, and only a plain file: a huge one, or a device or pipe, would hold
+            // the app while it was read.
+            let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+            guard values?.isRegularFile == true, let size = values?.fileSize else { return "Can't read \(path) on this Mac. Give the full path of a file." }
+            total += size
             guard total <= 25_000_000 else { return "That's too much to attach at once (25 MB at most)." }
+            guard let data = await Task.detached(operation: { try? Data(contentsOf: url) }).value else { return "Can't read \(path) on this Mac. Give its full path." }
             let type = UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
             files.append(["name": url.lastPathComponent, "type": type, "data": data.base64EncodedString()])
         }
@@ -122,7 +139,7 @@ final class BrowserAgent {
     /// since its last tool, for its next result: downloads, dialogs.
     func takeNotes() -> String {
         let tabs = owner == nil ? caller.map(utilities.agentTabs) : nil
-        let notes = (tabs ?? utilities.browserTabs(of: owner).map(\.browser)).flatMap { browser in
+        let notes = (tabs ?? utilities.browserTabs(of: panel).map(\.browser)).flatMap { browser in
             defer { browser.agentNotes = [] }
             return browser.agentNotes
         }
@@ -137,7 +154,7 @@ final class BrowserAgent {
     /// The panel's browser tabs (a bot's own, for a bot), numbered from 1; or switches to one, or
     /// closes one.
     func tabs(_ action: String, tab number: Int?) async -> String {
-        let open = utilities.browserTabs(of: owner)
+        let open = utilities.browserTabs(of: panel)
         if action != "list" {
             guard let number, open.indices.contains(number - 1) else { return "There's no tab [\(number ?? 0)]. " + list(open) }
             let chosen = open[number - 1]
@@ -145,11 +162,14 @@ final class BrowserAgent {
             if owner == nil, let caller, !utilities.isFree(chosen.id, for: caller) {
                 return "Another conversation's agent is using tab [\(number)]. Pick another, or open one with browser_new_tab."
             }
+            if chosen.browser.isHeld { return "The user took tab [\(number)] over and has it now. Pick another, or carry on without it." }
+            if let url = chosen.browser.url, url.isFileURL, BrowserTools.fileNote(for: url.absoluteString, caller: caller) != nil {
+                return "Tab [\(number)] shows a file outside this conversation's folder, which this session asks about before reading. Pick another, or open one with browser_new_tab."
+            }
             if action == "close" {
                 utilities.close(chosen.id)
-                return "Closed tab [\(number)]. " + list(utilities.browserTabs(of: owner))
+                return "Closed tab [\(number)]. " + list(utilities.browserTabs(of: panel))
             }
-            if chosen.browser.isHeld { return "The user took tab [\(number)] over and has it now. Pick another, or carry on without it." }
             if owner != nil { use = chosen.browser }
             if owner == nil, let caller { utilities.agentWorks(caller, in: chosen.browser) }
             if owner != nil || caller.map(utilities.bringsForward) ?? true { utilities.reveal(chosen.browser) }
@@ -164,6 +184,10 @@ final class BrowserAgent {
         return "Tabs:\n" + tabs.enumerated().map { index, tab in
             let title = tab.browser.title.isEmpty ? "(untitled)" : tab.browser.title
             let note = tab.browser === inUse ? " (in use)" : owner == nil && caller.map { !utilities.isFree(tab.id, for: $0) } == true ? " (another conversation's)" : ""
+            // One on a file the conversation may not read shows as one, without its name.
+            if let url = tab.browser.url, url.isFileURL, BrowserTools.fileNote(for: url.absoluteString, caller: caller) != nil {
+                return "[\(index + 1)] A file outside this conversation's folder" + note
+            }
             return "[\(index + 1)] \(title) — \(tab.browser.url?.absoluteString ?? "empty")" + note
         }.joined(separator: "\n")
     }
@@ -304,7 +328,11 @@ final class BrowserAgent {
         let printed = folder.appending(path: url.lastPathComponent)
         // Backgrounds and colors as on screen; printing leaves them out otherwise.
         _ = try? await browser.webView.callAsyncJavaScript(Self.keepColorsScript, contentWorld: .page)
-        switch await PagePrinter.save(browser.webView, to: printed) {
+        // What you filled in stays out of it, as out of a screenshot.
+        _ = await run(Self.printMaskScript, [:], in: browser)
+        let saved = await PagePrinter.save(browser.webView, to: printed)
+        _ = await run(Self.printUnmaskScript, [:], in: browser)
+        switch saved {
         case .saved(let pages):
             do {
                 try Data(contentsOf: printed).write(to: url, options: .atomic)
@@ -335,6 +363,11 @@ final class BrowserAgent {
         let browser = browser()
         guard let host = Self.site(of: browser.url) else { return "Open the sign-in page first." }
         guard username != nil || password != nil else { return "Name the username field, the password field, or both, by number." }
+        // The address shows a page on its way before its document arrives: the card names the
+        // site whose page it is, or none.
+        guard await Self.documentSite(in: browser) == host else {
+            return "The page is still on its way to \(host). Wait for it, take a browser_snapshot, and call browser_sign_in again."
+        }
         if let problem = await checkFields(username: username, password: password, in: browser) { return problem }
         switch await ask(.signIn(username: username != nil, password: password != nil), host: host, in: browser, for: caller) {
         case .signIn(let user, let secret):
@@ -347,12 +380,12 @@ final class BrowserAgent {
             if let problem = await checkFields(username: username, password: password, in: browser) { return Self.changed + problem }
             var filled: [String] = []
             if let username, let user {
-                let outcome = await run(Self.fillScript, ["index": username, "value": user, "wanted": "text"], in: browser)
+                let outcome = await run(Self.fillScript, ["index": username, "value": user, "wanted": "text", "site": host], in: browser)
                 guard outcome == "ok" else { return outcome }
                 filled.append("the username")
             }
             if let password, let secret {
-                let outcome = await run(Self.fillScript, ["index": password, "value": secret, "wanted": "password"], in: browser)
+                let outcome = await run(Self.fillScript, ["index": password, "value": secret, "wanted": "password", "site": host], in: browser)
                 guard outcome == "ok" else { return outcome }
                 filled.append("the password")
             }
@@ -370,12 +403,17 @@ final class BrowserAgent {
     func askCode(_ index: Int, prompt: String?, for caller: String? = nil) async -> String {
         let browser = browser()
         guard let host = Self.site(of: browser.url) else { return "Open the page that asks for the code first." }
+        // Asked for the site whose page it is, as a sign-in is: the address can show the next
+        // site while the last one's page is still there.
+        guard await Self.documentSite(in: browser) == host else {
+            return "The page is still on its way to \(host). Wait for it, take a browser_snapshot, and call browser_ask_code again."
+        }
         let kind = await run(Self.fieldKindScript, ["index": index], in: browser)
         guard kind == "text" || kind == "password" else { return kind == "missing" ? "There's no element [\(index)] on the page now. Take a fresh browser_snapshot." : "[\(index)] isn't a field to type a code into." }
         switch await ask(.code(prompt: prompt ?? ""), host: host, in: browser, for: caller) {
         case .code(let code):
             if let problem = stillOn(host, in: browser) { return problem }
-            let outcome = await run(Self.fillScript, ["index": index, "value": code, "wanted": "code"], in: browser)
+            let outcome = await run(Self.fillScript, ["index": index, "value": code, "wanted": "code", "site": host], in: browser)
             guard outcome == "ok" else { return outcome }
             try? await Task.sleep(for: .milliseconds(300))
             return "Filled the code (you can't see it). Submit it if the page doesn't on its own.\n\n" + (await snapshot())
@@ -420,11 +458,20 @@ final class BrowserAgent {
         return nil
     }
 
+    /// The site of the document the page shows, as `site(of:)` names it.
+    static func documentSite(in browser: BrowserSession) async -> String? {
+        let script = "return location.protocol === 'file:' ? 'a file on this Mac' : location.protocol === 'http:' ? 'http://' + location.hostname : location.hostname"
+        return try? await browser.webView.callAsyncJavaScript(script, arguments: [:], contentWorld: world) as? String
+    }
+
     /// The site a page is on, as the ask names it and Passwords keeps it: its host, or for a page
-    /// from a file, that it is one.
+    /// from a file, that it is one. One over plain http is a site of its own ("http://host"):
+    /// passwords are saved from https, and one sent over http can be read on the way, so a saved
+    /// one isn't offered or filled in there.
     static func site(of url: URL?) -> String? {
         guard let url else { return nil }
-        return url.isFileURL ? "a file on this Mac" : url.host()
+        if url.isFileURL { return "a file on this Mac" }
+        return url.scheme == "http" ? url.host().map { "http://" + $0 } : url.host()
     }
 
     /// Nil if the fields are there and fit what goes in them, else why not.
@@ -481,7 +528,7 @@ final class BrowserAgent {
             use = browser
         } else if let caller {
             shows = utilities.bringsForward(caller)
-            browser = utilities.agentBrowser(for: caller) ?? utilities.newBrowser(byAgent: true, shown: shows)
+            browser = utilities.agentBrowser(for: caller) ?? utilities.newBrowser(byAgent: true, owner: panel, shown: shows)
             utilities.agentWorks(caller, in: browser)
         } else {
             browser = utilities.activeBrowser ?? utilities.newBrowser(byAgent: true)
@@ -495,6 +542,53 @@ final class BrowserAgent {
 
     /// The tab a bot works in during this call.
     private var use: BrowserSession?
+
+    /// The page this call works in, without opening one.
+    private var currentPage: BrowserSession? {
+        if let owner { return use ?? utilities.botBrowser(owner) }
+        if let caller { return utilities.agentBrowser(for: caller) }
+        return utilities.activeBrowser
+    }
+
+    /// What the browser says of `page` being on a file the conversation may not read without
+    /// asking (see `BrowserTools.fileNote`); nil if it isn't. It reached it by a link, a redirect
+    /// or going back, or you opened it: its address was never checked.
+    private func forbiddenFile(in page: BrowserSession) async -> String? {
+        if let caller, BrowserTools.readsAnywhere(caller) { return nil }
+        var addresses = [page.webView.url?.absoluteString].compactMap { $0 }
+        // Its document's own address too, read apart from the page's scripts: going back, the
+        // page can be there before the address says so. Not while it shows a dialog, which holds
+        // scripts until it's answered.
+        if page.dialog == nil, let own = try? await page.webView.evaluateJavaScript("location.href", in: nil, contentWorld: .defaultClient) as? String {
+            addresses.append(own)
+        }
+        return addresses.lazy.compactMap { BrowserTools.fileNote(for: $0, caller: self.caller) }.first
+    }
+
+    /// Before a step: the tab in use on such a file (one you opened, say) stays as it is, and the
+    /// step goes on in a new tab. Says so, or nil.
+    func moveOffForbiddenFile() async -> String? {
+        guard let page = currentPage, await forbiddenFile(in: page) != nil else { return nil }
+        if let owner {
+            use = utilities.newBrowser(byAgent: true, owner: owner)
+        } else if let caller {
+            utilities.agentWorks(caller, in: utilities.newBrowser(byAgent: true, owner: panel, shown: utilities.bringsForward(caller)))
+        } else {
+            utilities.reveal(utilities.newBrowser(byAgent: true))
+        }
+        return "The tab in use shows a file outside this conversation's folder, so this goes on in a new tab.\n\n"
+    }
+
+    /// After a step: the page on such a file goes blank, unless you have it, and what the step read
+    /// is held back. Says why (not which file), or nil.
+    func leaveForbiddenFile() async -> String? {
+        guard let page = currentPage, await forbiddenFile(in: page) != nil else { return nil }
+        if page.isHeld { return "The page shows a file outside this conversation's folder, so this step's result was held back." }
+        page.webView.stopLoading()
+        page.load("about:blank")
+        await settle(page, expectNavigation: true)
+        return "The page went to a file outside this conversation's folder, which this session asks about before reading, so it's blank now and this step's result was held back."
+    }
 
     /// The tab in use, for the tab list.
     private var inUse: BrowserSession? {
@@ -514,8 +608,10 @@ final class BrowserAgent {
 
     /// The agent's own world in each page: the element scripts run there, and the numbers they
     /// keep stay there, where the page's own scripts can't read or change them. The DOM is the
-    /// same in both, so what they do to the page is the same.
-    static var world: WKContentWorld { .world(name: "kuvo-agent") }
+    /// same in both, so what they do to the page is the same. Kept: WebKit drops a world, and
+    /// what its scripts kept, once nothing holds it, so a world made afresh for each call had
+    /// lost the snapshot's numbers by the click.
+    static let world = WKContentWorld.world(name: "kuvo-agent")
 
     /// Runs one of the element scripts with the numbers from the last snapshot.
     private func run(_ body: String, _ arguments: [String: Any], in browser: BrowserSession) async -> String {
@@ -903,6 +999,13 @@ final class BrowserAgent {
     static let fillScript = """
     const element = find(index);
     if (!element) return missing(index);
+    // Only into a page of the site the user was asked about: its address may already show the
+    // next site while this document is still the last one's.
+    const where = element.ownerDocument.location;
+    const here = where.protocol === 'file:' ? 'a file on this Mac' : where.protocol === 'http:' ? 'http://' + where.hostname : where.hostname;
+    if (typeof site === 'string' && here !== site) {
+      return `The page isn't on ${site} now, so nothing was filled in. Take a fresh browser_snapshot and ask again.`;
+    }
     const kind = kindOf(element);
     if (wanted === 'password' ? kind !== 'password' : wanted === 'code' ? kind === 'other' : kind !== 'text') {
       return wanted === 'password'
@@ -937,24 +1040,37 @@ final class BrowserAgent {
     """
 
     /// Hides what the user filled in, for a screenshot, and shows it again.
-    static let maskScript = """
-    \(secretRootsScript)
-    for (const root of roots) {
-      if (!root.querySelector('[data-kuvo-secret]') || root.getElementById('kuvo-secret-mask')) continue;
-      const doc = root.ownerDocument || root;
-      const style = doc.createElement('style');
-      style.id = 'kuvo-secret-mask';
-      style.textContent = '[data-kuvo-secret]{color:transparent!important;-webkit-text-fill-color:transparent!important;text-shadow:none!important}';
-      (root.head || root.documentElement || root).appendChild(style);
-    }
-    return 'ok';
-    """
+    static let maskScript = mask("color:transparent!important;-webkit-text-fill-color:transparent!important;text-shadow:none!important", id: "kuvo-secret-mask")
+    static let unmaskScript = unmask("kuvo-secret-mask")
 
-    static let unmaskScript = """
-    \(secretRootsScript)
-    for (const root of roots) root.getElementById('kuvo-secret-mask')?.remove();
-    return 'ok';
-    """
+    /// The same for a PDF: there, text drawn clear is still in it, to copy or search, so the
+    /// fields are left out (their place stays empty). A mask of its own, so a screenshot at the
+    /// same time neither stands in for it nor takes it away.
+    static let printMaskScript = mask("visibility:hidden!important", id: "kuvo-secret-print-mask")
+    static let printUnmaskScript = unmask("kuvo-secret-print-mask")
+
+    private static func mask(_ rule: String, id: String) -> String {
+        """
+        \(secretRootsScript)
+        for (const root of roots) {
+          if (!root.querySelector('[data-kuvo-secret]') || root.getElementById('\(id)')) continue;
+          const doc = root.ownerDocument || root;
+          const style = doc.createElement('style');
+          style.id = '\(id)';
+          style.textContent = '[data-kuvo-secret]{\(rule)}';
+          (root.head || root.documentElement || root).appendChild(style);
+        }
+        return 'ok';
+        """
+    }
+
+    private static func unmask(_ id: String) -> String {
+        """
+        \(secretRootsScript)
+        for (const root of roots) root.getElementById('\(id)')?.remove();
+        return 'ok';
+        """
+    }
 
     /// Presses `key` on the element with the focus, inside frames and shadow roots too.
     static let pressScript = """

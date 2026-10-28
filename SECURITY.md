@@ -37,6 +37,28 @@ Vulnerabilities in opencode itself should go to the
 [opencode project](https://github.com/anomalyco/opencode). Tell us too if Kuvo
 Code's setup makes one easier to exploit.
 
+## Windows client
+
+The Windows client (`windows/`) is a separate product built from this repository. Its
+surface is:
+
+- the Electron shell: the window, the menu bar, the tray, the update check, and the
+  ConPTY terminal;
+- the harness: a localhost HTTP server that starts the pinned engine and serves the
+  conversation page;
+- the React page: the conversation, the panels and Settings.
+
+Reports are welcome about the shell's IPC handlers (especially anything that runs a
+command), the harness's localhost boundary and engine password, the page's Content
+Security Policy, the terminal's WebSocket, and the update download. The Windows
+installer and portable build are unsigned, so the update path is worth extra
+scrutiny.
+
+Client-only settings such as bots and machines are kept in the page's
+`localStorage`; they are not secrets, but a report that shows them leaking into a
+log or a remote request is in scope. The GitHub token used by the release tooling
+lives in a git-ignored file and is never read by the app.
+
 ## Supported versions
 
 Kuvo Code is pre-1.0. Security fixes are made on `main` and released in the

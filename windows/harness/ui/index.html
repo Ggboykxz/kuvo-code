@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://127.0.0.1:* wss://127.0.0.1:*; img-src 'self' data:; font-src 'self' data:;">
+<title>Kuvo Code</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/vendor/xterm.css">
+<link rel="stylesheet" href="/vendor/github.min.css">
+</head>
+<body>
+<header>
+  <div class="brand">Kuvo&nbsp;Code</div>
+  <button id="project" class="path" title="Change the project folder"></button>
+  <div class="spacer"></div>
+  <button id="toggle-files" class="small" title="Files and terminal">Files</button>
+  <button id="split" class="small" title="Show a second session beside this one">Split</button>
+  <button id="palette-open" class="small" title="Commands, sessions and files (Ctrl+K)">@</button>
+  <button id="settings-open" class="small" title="Appearance">Appearance</button>
+  <button id="export" class="small" title="Export conversation as Markdown">Export</button>
+  <span id="vcs" class="vcs-chip" hidden></span>
+  <button id="changes" class="small" hidden title="The files this session changed">Changes</button>
+  <div id="context-gauge" class="context-gauge" hidden title="Context window used"></div>
+  <div id="gauge-pop" class="gauge-pop" hidden></div>
+  <input id="find" class="file-search header-find" placeholder="Find in conversation…" spellcheck="false">
+  <div id="engine" class="engine" title="The engine on this machine"></div>
+</header>
+
+<main>
+  <aside>
+    <div class="aside-head">
+      <span>Sessions</span>
+      <button id="new-session" class="small">New</button>
+    </div>
+    <input id="session-search" class="file-search" placeholder="Search sessions…" spellcheck="false">
+    <input id="message-search" class="file-search" placeholder="Search messages…" spellcheck="false">
+    <div id="message-search-results" class="search-results" hidden></div>
+    <ul id="sessions"></ul>
+    <div id="sessions-empty" class="aside-empty">No sessions yet.</div>
+  </aside>
+
+  <section id="conversation">
+    <div id="session-tabs" class="session-tabs" hidden></div>
+    <div id="empty" class="empty">
+      <h1>Start with a folder</h1>
+      <p>Pick the project to work in, then say what you want done. The agent reads, edits and runs things in that folder, asking first.</p>
+      <button id="choose" class="primary">Choose a folder</button>
+      <button id="start" class="primary" hidden>Start a session</button>
+    </div>
+    <div id="steps-row" class="steps-row" hidden></div>
+    <div id="entries" class="entries"></div>
+    <div id="asks" class="asks"></div>
+    <div id="forms" class="forms" hidden></div>
+    <form id="composer" class="composer" hidden>
+      <button id="redo" class="small" type="button" hidden title="Bring back what an undo took away">Redo</button>
+      <div id="queue-dock" class="queue-dock" hidden></div>
+      <div id="attachments" class="attachments" hidden></div>
+      <div id="autocomplete" class="autocomplete" hidden></div>
+      <textarea id="prompt" rows="3" placeholder="Ask for something…  (@ mentions a file, / runs a command)"></textarea>
+      <div class="composer-foot">
+        <button id="attach" type="button" class="small" title="Attach files (also by dropping them here)">📎</button>
+        <select id="agent" title="Agent" hidden></select>
+        <select id="model" title="Model"></select>
+        <div class="spacer"></div>
+        <button id="stop" type="button" class="small" hidden>Stop</button>
+        <button id="send" class="primary" type="submit">Send</button>
+      </div>
+      <input id="attach-input" type="file" multiple hidden>
+    </form>
+  </section>
+  <section id="split-pane" class="split-pane" hidden>
+    <div class="split-head">
+      <select id="split-session" title="The session shown here"></select>
+      <button id="split-close" class="small">✕</button>
+    </div>
+    <div id="split-entries" class="entries"></div>
+  </section>
+</main>
+
+<div id="analytics-notice" class="AnalyticsNotice" hidden>
+  <div class="analytics-card">
+    <div class="settings-title">Before you start</div>
+    <p class="settings-note">Kuvo Code works entirely on this machine: the engine runs locally, its words go to the model provider you configured, and this harness collects nothing and reports nothing anywhere. Close the page and everything stops with it.</p>
+    <button id="analytics-ok" class="primary">Understood</button>
+  </div>
+</div>
+
+<div id="palette" class="palette" hidden>
+  <input id="palette-input" placeholder="Search sessions, files and actions…" spellcheck="false" autocomplete="off">
+  <div id="palette-list" class="palette-list"></div>
+</div>
+
+<div id="settings-modal" class="settings" hidden>
+  <div class="settings-card wide">
+    <div class="settings-shell">
+      <nav class="settings-nav">
+        <button data-section="appearance" class="active">Appearance</button>
+        <button data-section="keyboard">Keyboard</button>
+        <button data-section="mcp">MCP servers</button>
+        <button data-section="agents">Agents</button>
+        <button data-section="skills">Skills</button>
+        <button data-section="commands">Commands</button>
+        <button data-section="projects">Projects</button>
+        <button data-section="permissions">Permissions</button>
+        <button data-section="system">Engine &amp; storage</button>
+
+      </nav>
+      <div class="settings-pages">
+        <div class="settings-page" data-section="appearance">
+          <div class="settings-row"><span>Accent</span><div id="accent-swatches" class="swatches"></div></div>
+          <div class="settings-row">
+            <span>Mode</span>
+            <select id="setting-theme">
+              <option value="system" selected>System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <span>Text size</span>
+            <select id="setting-text-size">
+              <option value="13">Small</option>
+              <option value="14" selected>Default</option>
+              <option value="15.5">Large</option>
+              <option value="17">Larger</option>
+            </select>
+          </div>
+          <div class="settings-row">
+            <span>Motion</span>
+            <select id="setting-motion">
+              <option value="full" selected>Full</option>
+              <option value="reduced">Reduced</option>
+            </select>
+          </div>
+          <div class="settings-note">Like the Mac app's Appearance settings: the accent colors the interface, the text size sets how messages read, and reduced motion stills the shimmer and springs.</div>
+        </div>
+        <div class="settings-page" data-section="keyboard" hidden>
+          <div id="shortcut-list" class="shortcut-list"></div>
+          <div class="settings-note">Press the new keys after Change. Ctrl+S still saves an open file first.</div>
+        </div>
+        <div class="settings-page" data-section="projects" hidden>
+          <div id="projects-settings-list" class="project-settings"></div>
+          <div class="settings-note">Switch with a click, forget with the ✕. The same list is in the folder picker.</div>
+        </div>
+        <div class="settings-page" data-section="permissions" hidden>
+          <div id="saved-permissions" class="saved-permissions"></div>
+          <div class="settings-note">What this session's agent was once told it may always do, as the engine remembers it.</div>
+        </div>
+        <!-- The config file the engine reads: loaded once, edited page by page, saved whole. -->
+        <div class="settings-page" data-section="editor" hidden>
+          <div class="cfg-problem" id="cfg-problem" hidden></div>
+          <div id="editor-title" class="settings-detail-title"></div>
+          <div id="editor-fields"></div>
+          <div class="settings-editor-buttons" id="editor-buttons"></div>
+        </div>
+
+        <div class="settings-page" data-section="mcp" hidden>
+          <div class="cfg-problem" id="mcp-problem" hidden></div>
+          <h3>Servers</h3>
+          <div id="mcp-list"></div>
+          <button id="mcp-add" class="primary">Add Server…</button>
+          <h3>Popular Servers</h3>
+          <div id="mcp-catalog"></div>
+          <h3>Timeouts</h3>
+          <div class="settings-row"><span>Time to start, in milliseconds</span><input id="mcp-timeout-startup" type="number" placeholder="30000"></div>
+          <div class="settings-row"><span>Time to list tools, in milliseconds</span><input id="mcp-timeout-catalog" type="number" placeholder="30000"></div>
+          <div class="settings-row"><span>Time for one tool call, in milliseconds</span><input id="mcp-timeout-execution" type="number" placeholder="43200000"></div>
+          <button id="engine-restart" class="secondary">Restart the engine</button>
+          <h3>From opencode's own settings</h3>
+          <div id="opencode-mcp"></div>
+          <button id="opencode-import-all" class="secondary" hidden>Bring them all over</button>
+          <div class="settings-note" id="opencode-path"></div>
+          <div class="settings-note">MCP servers give the agent more tools, like a database, an issue tracker or your design files. A server on this machine runs a command; one on the web is a URL. To keep a key out of the settings file, write {env:NAME} to use one of your environment variables.</div>
+        </div>
+
+        <div class="settings-page" data-section="agents" hidden>
+          <div class="cfg-problem" id="agents-problem" hidden></div>
+          <div class="settings-row"><span>Mode for new sessions</span><select id="agent-default"></select></div>
+          <div class="settings-row"><span>Model for new sessions</span><select id="agent-default-model"></select></div>
+          <div class="settings-row"><span>Model for session titles</span><select id="agent-title-model"></select></div>
+          <h3>Agents</h3>
+          <div id="agents-list"></div>
+          <button id="agent-new" class="primary">New Agent…</button>
+          <div class="settings-note">Modes are the agents you pick in the composer. Subagents are ones the agent hands part of a task to. New sessions use the model you picked last; the upper one is for when there's none. A small, fast model is enough for titles.</div>
+        </div>
+
+        <div class="settings-page" data-section="skills" hidden>
+          <div class="cfg-problem" id="skills-problem" hidden></div>
+          <h3>Skills the Agent Can Use</h3>
+          <div id="skills-list"><div class="where">Loading…</div></div>
+          <button id="skill-new" class="primary">New Skill…</button>
+          <div class="settings-note" id="skills-folder"></div>
+          <div class="settings-note">The agent loads a skill when a task calls for it. Skills in ~/.claude/skills and ~/.agents/skills, and in a project's .opencode/skills, are found on their own.</div>
+        </div>
+
+        <div class="settings-page" data-section="commands" hidden>
+          <div class="cfg-problem" id="commands-problem" hidden></div>
+          <h3>Your Commands</h3>
+          <div id="commands-list"></div>
+          <button id="command-new" class="primary">New Command…</button>
+          <h3>The engine's own</h3>
+          <div id="commands-others"></div>
+          <div class="settings-note">Type / and a command's name at the start of a message to run it. What you type after the name fills in $ARGUMENTS; $1, $2 and so on are its words. !`command` puts in a command's output.</div>
+        </div>
+
+        <div class="settings-page" data-section="system" hidden>
+          <div id="engine-line" class="gauge-line big"></div>
+          <div id="storage-log" class="gauge-line"></div>
+          <div id="storage-attachments" class="gauge-line"></div>
+          <div id="config-lists" class="gauge-line"></div>
+          <div class="settings-note">Where this machine keeps things, and what the engine is running — what the Mac app's Engine and Storage settings show.</div>
+        </div>
+      </div>
+    </div>
+    <button id="settings-close" class="primary">Done</button>
+  </div>
+</div>
+
+<div id="drawer" class="drawer" hidden>
+  <div class="drawer-head">
+    <div class="drawer-tabs">
+      <button class="drawer-tab active" data-tab="files">Files</button>
+      <button class="drawer-tab" data-tab="terminal">Terminal</button>
+    </div>
+    <button id="drawer-close" class="small">✕</button>
+  </div>
+  <div id="drawer-files" class="drawer-body">
+    <div class="file-tree-head">
+      <button id="files-refresh" class="small">Refresh</button>
+      <button id="files-new-file" class="small">+ File</button>
+      <button id="files-new-folder" class="small">+ Folder</button>
+      <button id="files-delete" class="small">Delete</button>
+      <span id="files-root" class="note"></span>
+    </div>
+    <input id="files-search" class="file-search" placeholder="Search in project…" spellcheck="false">
+    <div id="files-search-results" class="search-results" hidden></div>
+    <div id="git-status" class="git-status" hidden></div>
+    <div id="git-branch-row" class="git-branch-row" hidden>
+      <select id="git-branch" class="file-search git-branch-select" title="Current branch"></select>
+      <button id="git-new-branch" class="small">New</button>
+      <button id="git-checkout" class="small">Checkout</button>
+    </div>
+    <button id="git-diff" class="small" hidden>Show git diff</button>
+    <button id="git-amend" class="small" hidden>Amend last commit</button>
+    <ul id="file-tree" class="file-tree"></ul>
+    <div id="file-editor" class="file-editor" hidden>
+      <div class="file-editor-head">
+        <span id="file-name" class="note"></span>
+        <button id="file-save" class="small primary">Save</button>
+      </div>
+      <textarea id="file-content" spellcheck="false"></textarea>
+    </div>
+  </div>
+  <div id="drawer-terminal" class="drawer-body" hidden>
+    <div id="terminal" class="terminal"></div>
+    <div id="terminal-note" class="note"></div>
+  </div>
+</div>
+
+<div id="diff-modal" class="modal" hidden>
+  <div class="modal-card">
+    <div class="modal-head">
+      <strong id="diff-title">Diff</strong>
+      <button id="diff-close" class="small">✕</button>
+    </div>
+    <pre id="diff-body" class="diff-body"></pre>
+  </div>
+</div>
+
+<div id="picker" class="picker" hidden>
+  <div class="picker-card">
+    <div class="picker-head">
+      <strong>Project folder</strong>
+      <button id="picker-close" class="small">✕</button>
+    </div>
+    <div class="picker-row">
+      <button id="picker-up" class="small" title="Up">↑</button>
+      <input id="picker-path" spellcheck="false">
+      <button id="picker-go" class="small">Go</button>
+    </div>
+    <div id="picker-recent" class="picker-recent" hidden></div>
+    <ul id="picker-folders"></ul>
+    <div class="picker-foot">
+      <span id="picker-note" class="note"></span>
+      <button id="picker-use" class="primary">Use this folder</button>
+    </div>
+  </div>
+</div>
+
+<script src="/vendor/xterm.min.js"></script>
+<script src="/vendor/addon-fit.min.js"></script>
+<script src="/vendor/marked.min.js"></script>
+<script src="/vendor/highlight.min.js"></script>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

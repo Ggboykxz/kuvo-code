@@ -41,7 +41,16 @@ public struct Model: Codable, Sendable, Hashable, Identifiable {
 
     public struct Limit: Codable, Sendable, Hashable {
         public var context: Int
+        /// How much of the window a request may take, when the provider allows less than all of
+        /// it (OpenAI's and GitHub Copilot's models); 0 or nil when it doesn't say.
+        public var input: Int?
         public var output: Int
+
+        /// What the conversation can fill: the engine summarizes it before this, as it does.
+        public var usable: Int {
+            if let input, input > 0 { return input }
+            return context
+        }
     }
 
     public var ref: ModelRef { ModelRef(id: id, providerID: providerID) }
@@ -223,6 +232,9 @@ public struct OAuthAttempt: Codable, Sendable, Hashable {
     public var url: String
     public var instructions: String
     public var mode: Mode
+    /// With `.auto`: the page may end on a code to paste instead, when it couldn't come back by
+    /// itself (Claude Code's sign-in, through the coding agents).
+    public var acceptsCode: Bool?
     public var time: Window
 
     public enum Mode: String, Codable, Sendable {
@@ -255,6 +267,9 @@ public struct OAuthAttempt: Codable, Sendable, Hashable {
 public struct OAuthStatus: Codable, Sendable, Hashable {
     public var status: Status
     public var message: String?
+    /// The page to sign in on, when it comes after the attempt started (the agents bridge has an
+    /// agent to download first); while pending, `message` says how it's going.
+    public var url: String?
 
     public enum Status: String, Codable, Sendable {
         case pending, complete, failed, expired

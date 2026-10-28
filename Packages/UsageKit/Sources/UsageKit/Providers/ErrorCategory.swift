@@ -76,8 +76,8 @@ extension ClaudeUsageError: CategorizedError {
 extension CodexAuthError: CategorizedError {
     var errorCategory: ErrorCategory {
         switch self {
-        case .notLoggedIn: .notLoggedIn
-        case .sessionExpired, .tokenConflict, .tokenRevoked, .tokenExpired: .authExpired
+        case .notLoggedIn, .hostOtherAccount: .notLoggedIn
+        case .sessionExpired, .tokenConflict, .tokenRevoked, .tokenExpired, .hostExpired: .authExpired
         case .usageAPIKey: .notAvailable
         case .invalidAuthPayload: .authInvalid
         }

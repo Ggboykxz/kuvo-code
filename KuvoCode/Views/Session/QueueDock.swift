@@ -75,7 +75,7 @@ private struct QueueRow: View {
             if let picture = item.files.first(where: { AttachmentItem.local($0).isImage }) {
                 QueuePicture(url: picture)
             }
-            Text(summary)
+            MessageMentions.text(styledSummary, size: 14.5)
                 .font(.system(size: 13.5))
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -95,12 +95,22 @@ private struct QueueRow: View {
                     .buttonStyle(TextButtonStyle())
                     .font(.system(size: 13))
                     .help(isRunning ? "Steer: the agent takes this at its next step, without waiting for the run to end" : "Send it now")
+                } else if isRunning {
+                    // For its next step already: what's left is not waiting for that.
+                    Button {
+                        model.sendNow(item)
+                    } label: {
+                        Label("Send Now", systemImage: "arrow.up")
+                    }
+                    .buttonStyle(TextButtonStyle())
+                    .font(.system(size: 13))
+                    .help("Send Now: stops the agent's current step and gives it this")
                 }
                 Button("Remove", systemImage: "trash") { model.cancelPending(item) }
                     .buttonStyle(CardActionStyle())
                     .help("Remove")
                 Menu {
-                    if isRunning {
+                    if isRunning && isQueued {
                         Button("Send Now") { model.sendNow(item) }
                     }
                     Button("Edit") { model.edit(item) }
@@ -114,9 +124,10 @@ private struct QueueRow: View {
                 }
                 .menuStyle(.button)
                 .buttonStyle(.plain)
+                .clickablePointer()
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .help(isRunning ? "Send Now (stops the current step), Edit, Remove" : "Edit, Remove")
+                .help(isRunning && isQueued ? "Send Now (stops the current step), Edit, Remove" : "Edit, Remove")
             }
         }
         .padding(.leading, 6)
@@ -130,6 +141,16 @@ private struct QueueRow: View {
             Button("Remove", role: .destructive) { model.cancelPending(item) }
         }
         .disabled(item.isLocal)
+    }
+
+    /// The summary, with the agents and files it names standing out, as in its bubble.
+    private var styledSummary: AttributedString {
+        let summary = summary
+        var styled = AttributedString(summary)
+        let references = SentMessage.split(item.text).references
+        let folders = [model.session.location.directory]
+        MessageMentions.apply(to: &styled, agents: MessageMentions.agents(references), folders: folders, links: false)
+        return styled
     }
 
     /// The message's first line, or what's attached when there's no text.

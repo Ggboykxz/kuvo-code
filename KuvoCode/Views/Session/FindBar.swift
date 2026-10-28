@@ -42,6 +42,27 @@ final class ConversationFind {
 
     var current: Place? { places.indices.contains(index) ? places[index] : nil }
 
+    /// Every conversation's Find, for Escape, which closes an open one before it stops anything.
+    @ObservationIgnored nonisolated(unsafe) private static var all = NSHashTable<ConversationFind>.weakObjects()
+
+    init() { Self.all.add(self) }
+
+    static var hasOpen: Bool { all.allObjects.contains(where: \.isOn) }
+
+    /// Closes the open Find bars; whether there was one.
+    static func closeOpen() -> Bool {
+        let open = all.allObjects.filter(\.isOn)
+        for find in open { find.isOn = false }
+        return !open.isEmpty
+    }
+
+    /// What the rows' marks go by. Read where the rows are made, so they're made again when it
+    /// changes: the marks are read later, as each row is laid out (`RowStack`), which SwiftUI
+    /// doesn't see, so moving to another place, or finding more, showed in no row.
+    var marksState: [AnyHashable] {
+        [isOn, query, index, places.count, current?.row, current?.number]
+    }
+
     /// Opens the bar (with `query`, when there's one to look for).
     func open(_ query: String? = nil) {
         if let query { self.query = query }
@@ -69,15 +90,16 @@ final class ConversationFind {
 
     /// Looks in `rows` for the words, away from the main thread (it reads every reply). As you
     /// type, the first place found comes into view; as the conversation changes under it, the
-    /// place you're on stays it.
-    func look(in rows: [Row], folders: [String], showsFirst: Bool) {
+    /// place you're on stays it. The looking, to wait for.
+    @discardableResult
+    func look(in rows: [Row], folders: [String], showsFirst: Bool) -> Task<Void, Never>? {
         looking?.cancel()
         let query = query
         guard isOn, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             rowsFound = []
             places = []
             index = 0
-            return
+            return nil
         }
         let was = current
         looking = Task {
@@ -92,6 +114,7 @@ final class ConversationFind {
                 index = was.flatMap { was in found.firstIndex { $0.row == was.row && $0.number == was.number } } ?? min(index, max(found.count - 1, 0))
             }
         }
+        return looking
     }
 
     @concurrent
@@ -140,6 +163,8 @@ struct FindHighlight: Hashable, Sendable {
 extension EnvironmentValues {
     /// Find's marks for the words in this row, while Find has places in it.
     @Entry var findHighlight: FindHighlight?
+    /// Room over a conversation's first row for something on top of it (Find's bar).
+    @Entry var conversationTopRoom: CGFloat = 0
 }
 
 /// Where words are in text, as Find sees them (case and accents aside), and marking them.
@@ -271,6 +296,7 @@ struct FindBar: View {
                     .textFieldStyle(.plain)
                     .focused($isFocused)
                     .onKeyPress(.return, phases: .down) { press in
+                        if Composer.isComposing { return .ignored }
                         find.step(press.modifiers.contains(.shift) ? -1 : 1)
                         return .handled
                     }
@@ -358,6 +384,8 @@ private struct FindModifier<Version: Hashable>: ViewModifier {
                 }
             }
             .animation(.ui, value: find.isOn)
+            // Room for the bar over the conversation's top, so it doesn't cover the first message.
+            .environment(\.conversationTopRoom, find.isOn ? 56 : 0)
             .onAppear { find.scroller = scroller }
             .onChange(of: find.query) { look(showsFirst: true) }
             .onChange(of: find.isOn) { look(showsFirst: true) }

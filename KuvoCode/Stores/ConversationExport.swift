@@ -1,11 +1,15 @@
 import Foundation
 import OpenCodeKit
 
-/// A conversation as Markdown, to paste into an issue or a chat: your messages, the agent's
-/// replies, and a line for each step it took, as the transcript words them.
+/// A conversation as Markdown, to paste into an issue or a chat, or for another agent to read
+/// (read_conversation): your messages, those other agents sent it and its wake-ups, the agent's
+/// replies, and a line for each step it took, as the transcript words them. `you` and `agent` are
+/// who's speaking, as whoever reads it knows them. Without `labels`, only what was said and worked
+/// on: no title, no names of who's speaking, and none of the app's words for steps (for searching
+/// what's in it).
 enum ConversationExport {
-    static func markdown(title: String, messages: [Message], directory: String) -> String {
-        var blocks = ["# " + title]
+    static func markdown(title: String, messages: [Message], directory: String, you: String = "You", agent: String = "Agent", labels: Bool = true) -> String {
+        var blocks = labels ? ["# " + title] : []
         var speaker: String?
         // The agent's steps, listed together until it says something.
         var steps: [String] = []
@@ -13,43 +17,61 @@ enum ConversationExport {
             if !steps.isEmpty {
                 let list = steps.map { "- " + $0 }.joined(separator: "\n")
                 steps = []
-                say("Agent", list)
+                say(agent, list)
             }
-            if speaker != who { blocks.append("**\(who)**") }
+            if speaker != who, labels { blocks.append("**\(who)**") }
             speaker = who
             blocks.append(text)
         }
         for message in messages {
             switch message {
             case .user(let user):
-                let (withComments, paths) = Attachments.split(CommandMessages.shared.text(of: user))
-                let (text, comments) = ReviewComments.split(withComments)
+                let written = CommandMessages.shared.text(of: user)
+                // Not yours: another agent's message, a wake-up, a group chat's work.
+                if let mail = AgentMail.parse(written) {
+                    say("Message from \(mail.name)", mail.text)
+                    continue
+                }
+                if written.hasPrefix(Wakes.marker) {
+                    say("Wake-up", String(written.dropFirst(Wakes.marker.count)))
+                    continue
+                }
+                if let work = GroupWork.parse(written) {
+                    say("Work from \(work.chat)", work.task)
+                    continue
+                }
+                let (text, comments, paths, _) = SentMessage.split(written)
                 var lines = comments.map { "> On \($0.location): \($0.text)" }
                 if !text.isEmpty { lines.append(text) }
                 let attached = (user.files ?? []).compactMap(\.name) + paths.map { ($0 as NSString).lastPathComponent }
-                if !attached.isEmpty { lines.append("Attached: " + attached.joined(separator: ", ")) }
-                if !lines.isEmpty { say("You", lines.joined(separator: "\n\n")) }
+                if !attached.isEmpty { lines.append((labels ? "Attached: " : "") + attached.joined(separator: ", ")) }
+                if !lines.isEmpty { say(you, lines.joined(separator: "\n\n")) }
             case .assistant(let assistant):
                 for block in assistant.content {
                     switch block {
                     case .text(let text) where !text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty:
-                        say("Agent", text.text.trimmingCharacters(in: .whitespacesAndNewlines))
+                        say(agent, text.text.trimmingCharacters(in: .whitespacesAndNewlines))
                     case .tool(let call):
-                        steps.append(ToolCallView.summary(of: call, in: directory))
+                        // Searched, only what it worked on: the app's words for it find nothing.
+                        if labels {
+                            steps.append(ToolCallView.summary(of: call, in: directory))
+                        } else if let subject = ToolCallView.subject(of: call, in: directory) {
+                            steps.append(subject)
+                        }
                     default:
                         break
                     }
                 }
             case .shell(let shell):
                 let output = shell.output?.output.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                say("You", "Ran `\(shell.command)`" + (output.isEmpty ? "" : "\n\n```\n\(output)\n```"))
-            case .compaction:
-                say("Agent", "_Summarized the conversation so far._")
+                say(you, (labels ? "Ran `\(shell.command)`" : shell.command) + (output.isEmpty ? "" : "\n\n```\n\(output)\n```"))
+            case .compaction where labels:
+                say(agent, "_Summarized the conversation so far._")
             default:
                 break
             }
         }
-        if !steps.isEmpty { say("Agent", "") }
+        if !steps.isEmpty { say(agent, "") }
         return blocks.filter { !$0.isEmpty }.joined(separator: "\n\n") + "\n"
     }
 

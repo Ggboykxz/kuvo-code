@@ -84,21 +84,34 @@ private struct TestHost {
     let key = LinkKey()
     let secret = RelaySecret()
     let token = randomBytes(16)
+    let paired = Paired()
     let server: LinkServer
     let link: PairingLink
 
     init(relay: MemoryRelay, handle: @escaping LinkServer.Handle, connect: LinkServer.Connect? = nil) {
-        let paired = Paired()
-        let token = self.token
-        server = LinkServer(key: key, hello: HostHello(kind: .mac, name: "Test Mac", app: "0.0.1", engine: "2.0.30"), authorize: { key, _, hello in
+        server = Self.server(key: key, token: token, paired: paired, handle: handle, connect: connect)
+        link = PairingLink(relay: URL(string: "wss://relay.test")!, host: secret.address, key: key.publicBytes, token: token, name: "Test Mac")
+        let connection = relay.connect(secret)
+        Task { [server] in await server.serve(connection) }
+    }
+
+    /// The host started again, as a Mac that quit and opened: the same key and address, the same
+    /// phones paired, none of its sessions.
+    @discardableResult
+    func startedAgain(on relay: MemoryRelay, handle: @escaping LinkServer.Handle) -> LinkServer {
+        let server = Self.server(key: key, token: token, paired: paired, handle: handle, connect: nil)
+        let connection = relay.connect(secret)
+        Task { await server.serve(connection) }
+        return server
+    }
+
+    private static func server(key: LinkKey, token: Data, paired: Paired, handle: @escaping LinkServer.Handle, connect: LinkServer.Connect?) -> LinkServer {
+        LinkServer(key: key, hello: HostHello(kind: .mac, name: "Test Mac", app: "0.0.1", engine: "2.0.30"), authorize: { key, _, hello in
             if paired.contains(key) { return true }
             guard hello.pair == token.base64URL else { return false }
             paired.insert(key)
             return true
         }, handle: handle, connect: connect)
-        link = PairingLink(relay: URL(string: "wss://relay.test")!, host: secret.address, key: key.publicBytes, token: token, name: "Test Mac")
-        let connection = relay.connect(secret)
-        Task { [server] in await server.serve(connection) }
     }
 
     final class Paired: @unchecked Sendable {
@@ -106,7 +119,61 @@ private struct TestHost {
         private var keys: Set<Data> = []
         func contains(_ key: Data) -> Bool { lock.withLock { keys.contains(key) } }
         func insert(_ key: Data) { _ = lock.withLock { keys.insert(key) } }
+        func remove(_ key: Data) { _ = lock.withLock { keys.remove(key) } }
     }
+}
+
+/// A phone's relay connection with a slow way out: each frame takes `each` to leave, in order,
+/// and `arriving` more to reach the relay.
+private final class SlowConnection: RelayTransport, @unchecked Sendable {
+    let base: MemoryRelay.Connection
+    private let lock = NSLock()
+    private var queued = 0
+    private let outbox: AsyncStream<RelayMessage>.Continuation
+
+    init(_ base: MemoryRelay.Connection, each delay: Duration, arriving latency: Duration = .zero) {
+        self.base = base
+        let (outgoing, outbox) = AsyncStream.makeStream(of: RelayMessage.self)
+        let (leaving, left) = AsyncStream.makeStream(of: (ContinuousClock.Instant, RelayMessage).self)
+        self.outbox = outbox
+        Task { [weak self] in
+            for await message in outgoing {
+                try? await Task.sleep(for: delay)
+                left.yield((.now + latency, message))
+                self?.lock.withLock { self?.queued -= 1 }
+            }
+            left.finish()
+        }
+        // On the way, in order.
+        Task {
+            for await (arrives, message) in leaving {
+                try? await Task.sleep(until: arrives)
+                base.send(message)
+            }
+        }
+    }
+
+    var address: LinkAddress { base.address }
+    var messages: AsyncStream<RelayMessage> { base.messages }
+    var isSending: Bool { lock.withLock { queued > 0 } }
+
+    func send(_ message: RelayMessage) {
+        lock.withLock { queued += 1 }
+        outbox.yield(message)
+    }
+
+    func close() {
+        outbox.finish()
+        base.close()
+    }
+}
+
+/// How many times something happened, from any thread.
+private final class Count: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+    func add() { lock.withLock { count += 1 } }
+    var value: Int { lock.withLock { count } }
 }
 
 /// Phones' addresses on the relay, by static key, as a host learns them.
@@ -185,6 +252,216 @@ private func collect(_ stream: LinkResponse) async throws -> (status: Int, heade
         #expect(try await collect(later.send(LinkRequest(path: "api/info"), to: paired)).status == 200)
     }
 
+    @Test func aHostStartedAgainGetsANewSessionAndRunsTheRequestOnce() async throws {
+        let relay = MemoryRelay()
+        let runs = Count()
+        let counting: LinkServer.Handle = { request, phone in
+            if request.method == "POST" { runs.add() }
+            return echo(request, phone)
+        }
+        let host = TestHost(relay: relay, handle: counting)
+        let client = phone(on: relay)
+        let paired = try await client.pair(host.link)
+        #expect(try await collect(client.send(LinkRequest(path: "api/info"), to: paired)).status == 200)
+
+        // The Mac quits and opens again; the phone's session is one it no longer knows.
+        host.startedAgain(on: relay, handle: counting)
+        await client.setTimingForTesting(LinkClient.Timing(beforeRead: .zero, beforeChange: .zero))
+        let posted = try await collect(client.send(LinkRequest(method: "POST", path: "api/x", body: Data("once".utf8)), to: paired))
+        #expect(posted.status == 200)
+        #expect(posted.body == Data("once".utf8))
+        #expect(runs.value == 1)
+    }
+
+    /// Removed from the Mac's paired phones: its session ends there and then, and it's turned away
+    /// from then on, its key no longer one the Mac knows (the pairing link it used, gone too).
+    @Test func aPhoneRemovedFromTheMacIsTurnedAway() async throws {
+        let relay = MemoryRelay()
+        let host = TestHost(relay: relay, handle: echo)
+        let key = LinkKey()
+        let client = LinkClient(relay: host.link.relay, key: key, secret: RelaySecret(), name: "p", app: "0", connect: relay.connect)
+        let paired = try await client.pair(host.link)
+        #expect(try await collect(client.send(LinkRequest(path: "api/info"), to: paired)).status == 200)
+
+        host.paired.remove(key.publicBytes)
+        await host.server.forget(phone: key.publicBytes)
+        await client.setTimingForTesting(LinkClient.Timing(beforeRead: .zero, beforeChange: .zero))
+        await #expect(throws: LinkError.refused) { try await collect(client.send(LinkRequest(path: "api/info"), to: paired)) }
+    }
+
+    /// Removed while the Mac was letting it in (asked whether to, and removed meanwhile, from a
+    /// phone say): it gets no session.
+    @Test func aPhoneRemovedWhileItsLetInIsTurnedAway() async throws {
+        let relay = MemoryRelay()
+        let hostKey = LinkKey(), hostSecret = RelaySecret()
+        let (asked, asking) = AsyncStream<Void>.makeStream()
+        let (answers, answering) = AsyncStream<Bool>.makeStream()
+        let server = LinkServer(key: hostKey, hello: HostHello(kind: .mac, name: "Test Mac", app: "0.0.1", engine: "2.0.30"), authorize: { _, _, _ in
+            asking.yield()
+            for await allowed in answers { return allowed }
+            return false
+        }, handle: echo)
+        let connection = relay.connect(hostSecret)
+        Task { await server.serve(connection) }
+        let key = LinkKey()
+        let client = LinkClient(relay: URL(string: "wss://relay.test")!, key: key, secret: RelaySecret(), name: "p", app: "0", connect: relay.connect)
+        let host = PairedHost(address: hostSecret.address, key: hostKey.publicBytes, name: "", kind: .mac)
+        let sending = Task { try await collect(client.send(LinkRequest(path: "api/info"), to: host)) }
+        for await _ in asked { break }
+        await server.forget(phone: key.publicBytes)
+        answering.yield(true)
+        await #expect(throws: LinkError.refused) { try await sending.value }
+    }
+
+    /// The Mac's own connection to the relay drops and comes back (the network changed, the relay
+    /// restarted): a paired phone carries on, on a new session, and what it sends runs once.
+    @Test func aPhoneCarriesOnAfterTheMacsRelayConnectionComesBack() async throws {
+        let relay = MemoryRelay()
+        let runs = Count()
+        let counting: LinkServer.Handle = { request, phone in
+            if request.method == "POST" { runs.add() }
+            return echo(request, phone)
+        }
+        let host = TestHost(relay: relay, handle: counting)
+        let client = phone(on: relay)
+        let paired = try await client.pair(host.link)
+        #expect(try await collect(client.send(LinkRequest(path: "api/info"), to: paired)).status == 200)
+
+        // The same host, serving on a new connection: the old one's sessions are over.
+        let again = relay.connect(host.secret)
+        Task { [server = host.server] in await server.serve(again) }
+        await client.setTimingForTesting(LinkClient.Timing(beforeRead: .zero, beforeChange: .zero))
+        let posted = try await collect(client.send(LinkRequest(method: "POST", path: "api/x", body: Data("once".utf8)), to: paired))
+        #expect(posted.status == 200 && posted.body == Data("once".utf8))
+        #expect(runs.value == 1)
+    }
+
+    /// A host mails another (the Mac, its phone list to a machine's bridge) through the relay,
+    /// sealed for that one's key alone, from its own.
+    @Test func aHostMailsAnotherSealedForItAlone() async throws {
+        let relay = MemoryRelay()
+        let host = TestHost(relay: relay, handle: echo)
+        let machineKey = LinkKey(), machineSecret = RelaySecret()
+        let machine = relay.connect(machineSecret)
+        let payload = Data(#"{"phones":[],"at":1}"#.utf8)
+        var sent = false
+        for _ in 0..<100 where !sent {
+            sent = await host.server.mail(payload, to: machineKey.publicBytes, at: machineSecret.address) == .sent
+            if !sent { try await Task.sleep(for: .milliseconds(10)) }
+        }
+        #expect(sent)
+        var iterator = machine.messages.makeAsyncIterator()
+        guard case .deliver(_, let frame)? = await iterator.next() else { Issue.record("nothing came"); return }
+        #expect(try Mail.open(frame, to: machineKey, from: host.key.publicBytes) == payload)
+        #expect(throws: (any Error).self) { try Mail.open(frame, to: LinkKey(), from: host.key.publicBytes) }
+    }
+
+    /// Your other computers mail each other (PROTOCOL.md, "Peers"): mail that comes is handed on,
+    /// with where it's from; mail too big for the relay (which would close the connection for
+    /// it) isn't sent.
+    @Test func mailBetweenHostsIsHandedOnAndOneTooBigIsntSent() async throws {
+        let relay = MemoryRelay()
+        let sender = TestHost(relay: relay, handle: echo)
+        let key = LinkKey(), secret = RelaySecret()
+        let came = AsyncStream<(Data, LinkAddress)>.makeStream()
+        let receiver = LinkServer(key: key, hello: HostHello(kind: .machine, name: "lokum", app: "0.0.1", engine: "2.0.30"),
+                                  authorize: { _, _, _ in false }, handle: echo, mailed: { frame, from in came.continuation.yield((frame, from)) })
+        let connection = relay.connect(secret)
+        Task { await receiver.serve(connection) }
+        let payload = Data(#"{"letter":{"id":"ltr_1"},"at":1}"#.utf8)
+        var sent = false
+        for _ in 0..<100 where !sent {
+            sent = await sender.server.mail(payload, to: key.publicBytes, at: secret.address) == .sent
+            if !sent { try await Task.sleep(for: .milliseconds(10)) }
+        }
+        #expect(sent)
+        var iterator = came.stream.makeAsyncIterator()
+        let (frame, from) = try #require(await iterator.next())
+        #expect(from == sender.secret.address)
+        #expect(try Mail.open(frame, to: key, from: sender.key.publicBytes) == payload)
+        #expect(await sender.server.mail(Data(repeating: 0x61, count: RelayMessage.maxPayload), to: key.publicBytes, at: secret.address) == .tooBig)
+    }
+
+    @Test func aQuietSessionToAHostThatLeftSaysSoWithoutWaiting() async throws {
+        let relay = MemoryRelay()
+        let host = TestHost(relay: relay, handle: echo)
+        let client = phone(on: relay)
+        let paired = try await client.pair(host.link)
+        await client.setTimingForTesting(LinkClient.Timing(beforeRead: .zero, beforeChange: .zero))
+        // Its relay connection gone (the Mac asleep): the check hears it's unreachable at once.
+        relay.connect(host.secret).close()
+        let began = ContinuousClock.now
+        await #expect(throws: LinkError.hostOffline) { try await collect(client.send(LinkRequest(path: "api/info"), to: paired)) }
+        #expect(ContinuousClock.now - began < .seconds(3))
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aRequestLostOnTheWayFailsRatherThanWaitingForever() async throws {
+        let relay = MemoryRelay()
+        let host = TestHost(relay: relay, handle: echo)
+        let client = phone(on: relay)
+        let paired = try await client.pair(host.link)
+        await client.setTimingForTesting(LinkClient.Timing(answer: .milliseconds(100), check: .milliseconds(200)))
+        // Something still connected at the host's address that takes frames and never answers,
+        // as a host's old relay connection does while it starts again.
+        let deaf = relay.connect(host.secret)
+        let began = ContinuousClock.now
+        await #expect(throws: LinkError.timedOut) { try await collect(client.send(LinkRequest(path: "api/info"), to: paired)) }
+        #expect(ContinuousClock.now - began < .seconds(3))
+        _ = deaf
+    }
+
+    @Test func aBigBodyOnASlowConnectionIsntCutOff() async throws {
+        let relay = MemoryRelay()
+        let host = TestHost(relay: relay, handle: echo)
+        let client = LinkClient(relay: URL(string: "wss://relay.test")!, key: LinkKey(), secret: RelaySecret(), name: "Test iPhone", app: "0.0.1") { _, secret in
+            SlowConnection(relay.connect(secret), each: .milliseconds(20))
+        }
+        let paired = try await client.pair(host.link)
+        await client.setTimingForTesting(LinkClient.Timing(beforeChange: .zero, answer: .milliseconds(100), check: .milliseconds(200)))
+        // About twenty pieces, each taking 20 ms to leave: longer than a check may take.
+        let big = randomBytes(1_300_000)
+        let response = try await collect(client.send(LinkRequest(method: "POST", path: "api/upload", body: big), to: paired))
+        #expect(response.body == big)
+    }
+
+    @Test func aRequestAlongsideABigBodyOnASlowConnectionIsntCutOff() async throws {
+        // A second request's check goes out behind the body; it starting at different points
+        // tells whether the check counts from when its ping leaves.
+        for offset in [0, 100, 200, 250, 300, 350, 400] {
+            let relay = MemoryRelay()
+            let host = TestHost(relay: relay, handle: echo)
+            let client = LinkClient(relay: URL(string: "wss://relay.test")!, key: LinkKey(), secret: RelaySecret(), name: "Test iPhone", app: "0.0.1") { _, secret in
+                SlowConnection(relay.connect(secret), each: .milliseconds(20), arriving: .milliseconds(150))
+            }
+            let paired = try await client.pair(host.link)
+            await client.setTimingForTesting(LinkClient.Timing(beforeChange: .zero, answer: .milliseconds(100), check: .milliseconds(300)))
+            let big = randomBytes(1_300_000)
+            async let upload = collect(client.send(LinkRequest(method: "POST", path: "api/upload", body: big), to: paired))
+            try await Task.sleep(for: .milliseconds(offset))
+            let small = try await collect(client.send(LinkRequest(method: "POST", path: "api/small", body: Data("x".utf8)), to: paired))
+            #expect(small.status == 200, "starting at \(offset) ms")
+            #expect(try await upload.body == big, "starting at \(offset) ms")
+        }
+    }
+
+    @Test func aSlowAnswerFromAHostThatIsThereIsWaitedFor() async throws {
+        let relay = MemoryRelay()
+        let slow: LinkServer.Handle = { request, _ in
+            AsyncThrowingStream { continuation in
+                Task {
+                    try? await Task.sleep(for: .milliseconds(600))
+                    continuation.yield(.head(status: 200, headers: [:]))
+                    continuation.finish()
+                }
+            }
+        }
+        let host = TestHost(relay: relay, handle: slow)
+        let client = phone(on: relay)
+        let paired = try await client.pair(host.link)
+        await client.setTimingForTesting(LinkClient.Timing(answer: .milliseconds(100), check: .milliseconds(200)))
+        #expect(try await collect(client.send(LinkRequest(path: "api/slow"), to: paired)).status == 200)
+    }
+
     @Test func bodiesLongerThanOneMessageArriveWhole() async throws {
         let relay = MemoryRelay()
         let host = TestHost(relay: relay, handle: echo)
@@ -193,6 +470,36 @@ private func collect(_ stream: LinkResponse) async throws -> (status: Int, heade
         let big = randomBytes(300_000)
         let response = try await collect(client.send(LinkRequest(method: "POST", path: "api/upload", body: big), to: paired))
         #expect(response.body == big)
+    }
+
+    @Test(.timeLimit(.minutes(1))) func aHostThatStopsTellsItsPhones() async throws {
+        let relay = MemoryRelay()
+        // An event stream that never ends by itself.
+        let host = TestHost(relay: relay) { request, phone in
+            guard request.path == "api/event" else { return echo(request, phone) }
+            return AsyncThrowingStream { continuation in
+                let task = Task {
+                    continuation.yield(.head(status: 200, headers: ["content-type": "text/event-stream"]))
+                    continuation.yield(.body(Data("data: hello\n\n".utf8)))
+                    while !Task.isCancelled { try? await Task.sleep(for: .milliseconds(50)) }
+                }
+                continuation.onTermination = { _ in task.cancel() }
+            }
+        }
+        let client = phone(on: relay)
+        let paired = try await client.pair(host.link)
+        await client.setTimingForTesting(LinkClient.Timing(answer: .seconds(30), check: .seconds(30)))
+        var parts = client.send(LinkRequest(path: "api/event"), to: paired).makeAsyncIterator()
+        // Its head, and its first event.
+        _ = try await parts.next()
+        _ = try await parts.next()
+        // The host stops (its engine starting over): the phone hears at once, not after its checks.
+        let began = ContinuousClock.now
+        await host.server.closeAll()
+        await #expect(throws: LinkError.closed) { _ = try await parts.next() }
+        #expect(ContinuousClock.now - began < .seconds(2))
+        // What it asks next goes on a new session.
+        #expect(try await collect(client.send(LinkRequest(path: "api/info"), to: paired)).status == 200)
     }
 
     @Test func aStreamStopsOnTheHostWhenThePhoneStopsReading() async throws {

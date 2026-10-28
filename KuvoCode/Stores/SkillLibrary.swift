@@ -42,8 +42,15 @@ nonisolated enum SkillLibrary {
 
         /// Unique in its repository; two folders can share a name.
         var id: String { path }
-        /// The engine knows a skill by its folder's name, and it's installed under it.
-        var name: String { (path as NSString).lastPathComponent }
+        /// The engine knows a skill by its folder's name, and it's installed under it: the
+        /// repository's, for one that's a skill itself (its SKILL.md at the top).
+        var name: String { path.isEmpty ? repository.name : (path as NSString).lastPathComponent }
+
+        /// Its SKILL.md, in the repository.
+        var skillFile: String { path.isEmpty ? "SKILL.md" : path + "/SKILL.md" }
+
+        /// A file of it, relative to its folder.
+        func relative(_ file: String) -> String { path.isEmpty ? file : String(file.dropFirst(path.count + 1)) }
     }
 
     /// A repository's skills, and whether GitHub cut the list short (a very big repository).
@@ -109,20 +116,29 @@ nonisolated enum SkillLibrary {
         let tree = try JSONDecoder().decode(Tree.self, from: data)
         let files = tree.tree.filter { $0.type == "blob" }.map(\.path)
         let folders = Set(files.filter { ($0 as NSString).lastPathComponent == "SKILL.md" }.map { ($0 as NSString).deletingLastPathComponent }.filter { !$0.isEmpty })
+        // A repository that's one skill: its SKILL.md at the top, with what's beside it (not its
+        // .github and other hidden folders).
+        let isSkill = files.contains("SKILL.md")
         // Each file to the skill folder it's in (the deepest one, for skills inside skills).
         var byFolder: [String: [String]] = [:]
         for file in files {
             var folder = (file as NSString).deletingLastPathComponent
             while !folder.isEmpty, !folders.contains(folder) { folder = (folder as NSString).deletingLastPathComponent }
             if !folder.isEmpty { byFolder[folder, default: []].append(file) }
+            else if isSkill, !file.hasPrefix(".") { byFolder["", default: []].append(file) }
         }
-        let skills = folders.sorted().map { RemoteSkill(repository: repository, path: $0, files: byFolder[$0] ?? []) }
+        var skills = ((isSkill ? [""] : []) + folders.sorted()).map { RemoteSkill(repository: repository, path: $0, files: byFolder[$0] ?? []) }
+        // A copy kept for another tool, in a hidden folder (.claude/skills, .openclaw/skills…),
+        // of a skill the repository has in plain sight: listed once, as the one in plain sight.
+        func isHidden(_ skill: RemoteSkill) -> Bool { skill.path.split(separator: "/").contains { $0.hasPrefix(".") } }
+        let shown = Set(skills.filter { !isHidden($0) }.map(\.name))
+        skills.removeAll { isHidden($0) && shown.contains($0.name) }
         return Listing(skills: skills, isPartial: tree.truncated == true)
     }
 
     /// The name and description in a skill's SKILL.md.
     @concurrent static func about(_ skill: RemoteSkill) async -> About {
-        guard let data = try? await URLSession.shared.data(from: rawURL(skill.repository, skill.path + "/SKILL.md")).0 else { return About() }
+        guard let data = try? await URLSession.shared.data(from: rawURL(skill.repository, skill.skillFile)).0 else { return About() }
         return about(markdown: String(decoding: data, as: UTF8.self))
     }
 
@@ -159,19 +175,32 @@ nonisolated enum SkillLibrary {
     @concurrent static func install(_ skill: RemoteSkill, into folder: URL) async throws {
         let destination = folder.appending(path: skill.name)
         if FileManager.default.fileExists(atPath: destination.path) { throw Failure.taken(skill.name) }
-        let staging = FileManager.default.temporaryDirectory.appending(path: "skill-\(UUID().uuidString)")
+        let staging = try await stage(skill)
         defer { try? FileManager.default.removeItem(at: staging) }
-        for file in skill.files {
-            let (data, response) = try await URLSession.shared.data(from: rawURL(skill.repository, file))
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw Failure.notFound(file) }
-            let target = staging.appending(path: String(file.dropFirst(skill.path.count + 1)))
-            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try data.write(to: target)
-        }
-        let source = ["repository": skill.repository.id, "path": skill.path, "branch": skill.repository.branch]
-        try JSONSerialization.data(withJSONObject: source, options: [.prettyPrinted, .sortedKeys]).write(to: staging.appending(path: sourceFile))
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try FileManager.default.moveItem(at: staging, to: destination)
+    }
+
+    /// A skill's files, with the note of where they came from, in a temporary folder of their
+    /// own (the caller's to remove), ready to go where it's installed.
+    @concurrent static func stage(_ skill: RemoteSkill) async throws -> URL {
+        let staging = FileManager.default.temporaryDirectory.appending(path: "skill-\(UUID().uuidString)")
+        do {
+            for file in skill.files {
+                let (data, response) = try await URLSession.shared.data(from: rawURL(skill.repository, file))
+                guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw Failure.notFound(file) }
+                let target = staging.appending(path: skill.relative(file))
+                try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: target)
+            }
+            let source = ["repository": skill.repository.id, "path": skill.path, "branch": skill.repository.branch]
+            try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+            try JSONSerialization.data(withJSONObject: source, options: [.prettyPrinted, .sortedKeys]).write(to: staging.appending(path: sourceFile))
+            return staging
+        } catch {
+            try? FileManager.default.removeItem(at: staging)
+            throw error
+        }
     }
 
     /// Skills installed from GitHub, by their folder's name, with where they came from.

@@ -16,7 +16,19 @@ struct BotTemplate: Identifiable {
     /// A job as the first message to a new bot: what it does in a few words, then how.
     static func firstMessage(job: String, instructions: String) -> String {
         let job = job.trimmingCharacters(in: .whitespacesAndNewlines)
-        let instructions = instructions.trimmingCharacters(in: .whitespacesAndNewlines)
+        var instructions = instructions.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A bot's job as its memory keeps it (a shared bot's) starts with the job's line: said once.
+        var lines = instructions.components(separatedBy: "\n")
+        if !job.isEmpty, let first = lines.first, Bots.job(inMemory: "## Job\n" + first)?.line == job {
+            // Only the job's sentence: a line that goes on after it (its details) keeps the rest.
+            if let end = first.range(of: ". "), !first[end.upperBound...].trimmingCharacters(in: .whitespaces).isEmpty,
+               Bots.job(inMemory: "## Job\n" + first[..<end.lowerBound])?.line == job {
+                lines[0] = first[end.upperBound...].trimmingCharacters(in: .whitespaces)
+            } else {
+                lines.removeFirst()
+            }
+            instructions = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
         guard !job.isEmpty || !instructions.isEmpty else { return "" }
         return [job.isEmpty ? "" : "Your job, in a few words: \(job).", instructions,
                 "Start now: ask me for anything you need first, do the first round, and if it repeats or keeps an eye on something, set that up."]

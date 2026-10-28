@@ -1,0 +1,137 @@
+> **Frozen — 0.5.101.** This document tracked the Windows client's parity with the macOS
+> Kuvo Code app. As of 0.6.0 the Windows client is its own product: parity tracking
+> stops here, and the content below is historical reference. New work is tracked in
+> `docs/ROADMAP.md`.
+
+# Parity — the Mac app, and the Windows one
+
+What the macOS app does (646 Swift files, ~133 000 lines) and where the Windows client
+stands. The Windows app is not a translation of the Swift *code* — it is the same
+**behaviour**, written again in React and TypeScript on top of the same engine
+(`windows/app` for the view, `windows/harness` for the server, `OpenCodeKit`'s routes
+mirrored in `windows/harness/engine.mjs` and typed in `windows/app/src/api.ts`).
+
+**Legend** — ✅ porté · ◐ partiel · ⬜ à faire · ⛔ hors périmètre (décidé ou amont)
+
+## The conversation
+
+| Mac | Windows |
+| --- | --- |
+| `SessionView`, `TranscriptView` | ✅ la vue React (`App.tsx`), même lecture des événements |
+| `Composer` | ✅ envoi, pièces jointes, glisser-déposer, files d'un coup |
+| `ComposerMenus` | ✅ (modèles et agents en menus cherchables, groupés par fournisseur) |
+| `ModelPicker` | ✅ sélecteur de modèle (par fournisseur) |
+| `QueueDock` | ✅ la file (steer/queue, reprendre), avec repli |
+| `ContextGauge` | ✅ la jauge + son popover (fenêtre de contexte, coût, compact) |
+| `StepsRow` | ✅ (le résumé des étapes, dépliable) |
+| `AttentionCards` | ✅ les demandes de permission et les formulaires, et *Try Again* sous un run échoué |
+| `YourMessage`, `AttachmentViews` | ✅ (pièces jointes, images) |
+| `ToolCallView`, `ShellRow` | ✅ (les outils se replient comme sur le Mac : ce qui a des détails s'ouvre, un filet le long, un sous-agent montre ses étapes) |
+| `DiffView` | ✅ la vue des changements d'un fichier |
+| `FindBar` | ✅ (le header) |
+| `QuoteList`, `SelectionMenu` | ✅ (sélectionner, *Quote*, la citation part avec le message) |
+| `LongText` | ✅ (repliés, *Show more*) |
+| `MathText` | ✅ (KaTeX, $inline$ et $$bloc$$, les polices embarquées) |
+| `MarkdownChunks` | ✅ (marked, assaini) |
+| `CodeTextView` | ✅ (copie, surlignage) |
+| `FileLinks` | ✅ un span de code qui nomme un fichier du projet devient un lien : il l'ouvre dans le panneau latéral |
+| `WidgetView` | ⛔ c'est la fonction du navigateur intégré (`kuvo-browser_show_widget`), rendue en WebView : elle suit le navigateur |
+| `ConversationScroll` | ✅ (la conversation suit le bas ; *↓ Latest* quand on relit) |
+
+## The side panel and the window
+
+| Mac | Windows |
+| --- | --- |
+| `SidebarView` | ✅ sessions, recherche, non lus, archivage |
+| `UtilitiesPane` / `FilesView` | ✅ l'onglet Files |
+| `TerminalSession` | ✅ l'onglet Terminal (ConPTY du shell) ; 0.5.95 : le même shell survit au panneau caché et aux autres onglets, démarre dans le dossier du projet à la grille réelle, se relance après une sortie, *Run* interrompt d'abord (Ctrl-C, 300 ms), et le menu du clic droit ajoute au message / copie / colle |
+| `ChangesPanel` | ✅ l'onglet Changes : git, plis, notes de ligne, message écrit, commit |
+| `ProjectChanges` | ✅ les portées uncommitted / unstaged / staged / branch / session |
+| `TitleBar`, `RootView`, `MainView` | ✅ la coque, la bande de titre |
+| `CommandPalette` | ✅ (Ctrl+K) : sessions, fichiers, commandes, et ce qu'on peut faire — avec les touches qui le font |
+| `OpenQuickly` | ✅ (0.5.94 : 560 de large, recherche de 48, lignes de 30, dix résultats, les plus récents d'abord, le classement du Mac) |
+| `BrowserSession`, `BrowserChrome`, `BrowserAskCard` | ⛔ le navigateur intégré : surface **amont** |
+| `ImageViewer` | ✅ (la visionneuse par-dessus la page) |
+| `AgentBadge` | ⛔ c'est le badge du navigateur intégré (« X navigue », *Take Over*) : il suit le navigateur |
+
+## The settings
+
+| Mac | Windows |
+| --- | --- |
+| `GeneralSettings` | ✅ (mises à jour, démarrage à l'login, veille, import opencode) |
+| `NotificationSettings` | ✅ (0.5.96 : sessions, son, compteur sur l'icône, lien vers les réglages système) |
+| `PrivacySettings` | ✅ (0.5.96 : partage anonyme, ce qui est envoyé, raccourcis vers le stockage, le navigateur et les mots de passe) |
+| `PanelSettings` | ✅ (0.5.96 : ce avec quoi le panneau démarre, affichage à la navigation de l'agent, rangement des onglets, page Nouvel onglet) |
+| `AppearanceSettings` | ✅ (accent, thème, taille du texte, mouvement) |
+| `ShortcutsSettings` | ✅ la liste, cherchable ; les raccourcis sont câblés et **enregistrables** (l'enregistreur du Mac : clic, puis les touches) |
+| `UsageKit` (le panneau de la barre des menus) | ◐ l'usage du moteur : ce que l'agent a dépensé, par modèle et par session. Les forfaits des fournisseurs (Copilot, Codex, Grok, OpenRouter, Z.ai) demanderaient la clé du fournisseur — on ne la prend pas. |
+| `MCPSettings` | ✅ (état, édition, catalogue, timeouts, import opencode) |
+| `AgentsSettings` | ✅ (défaut, mode, modèle, pas, instructions, règles) |
+| `SkillsSettings` | ✅ (liste, on/off, SKILL.md) |
+| `CommandsSettings` | ✅ (les vôtres + celles du moteur) |
+| `PermissionsSettings` | ✅ (règles enregistrées, oubli) |
+| `ArchivedSessionsSettings` | ✅ |
+| `GitSettings` | ✅ (préfixe de branche, instructions de commit et de PR) |
+| `EngineSettings`, `StorageSettings` | ✅ |
+| `SettingsDetail`, `SettingsControls` | ✅ (les éditeurs, en pages) |
+| `IntegrationsSettings` | ⛔ les sign-ins OAuth : **les secrets** (décidé) |
+| `PasswordsSettings` | ⛔ idem |
+| `BrowserSettings` | ⛔ navigateur intégré : amont |
+| `MachinesSettings`, `MachineForm`, `MachineStatusViews` | ⛔ machines distantes : amont |
+| `PhoneSettings`, `PhoneLink` | ⛔ téléphone : amont |
+| `SiteSignInPage`, `SiteSignIns` | ⛔ comptes du site : amont |
+| `ProvidersView`, `CustomProviders` | ✅ (les fournisseurs du moteur, et les tiens : id, nom, adresse, modèles — **sans la clé**) |
+| `ConnectView` | ⛔ la connexion OAuth d'un fournisseur : **les secrets** (décidé) |
+| `BotEditor`, `GroupEditor`, `GroupChatView` | ⛔ groupes et bots : amont |
+
+## The rest of the app
+
+| Mac | Windows |
+| --- | --- |
+| `Workspace`, `SessionModel` | ✅ le moteur, les sessions, les événements |
+| `EngineConfig` | ✅ le fichier de réglages, lu et écrit comme le Mac |
+| `OpencodeImport` | ✅ (MCP, agents, commandes, modèle — **les clés restent**) |
+| `MCPCatalog` | ✅ le catalogue des 11 serveurs populaires |
+| `SlashCommands`, `Mentions` | ✅ (/ et @) |
+| `ConversationExport` | ✅ (Markdown) |
+| `ProjectFiles`, `ProjectFolders` | ✅ (l'arbre, le sélecteur de dossier) |
+| `GitBranches` | ✅ (la portée branch) |
+| `ReviewComments` | ✅ (les notes de ligne du panneau Changes) |
+| `ProjectChanges` (revert) | ✅ (remettre un fichier comme il était) |
+| Create Pull Request | ✅ (pousse la branche, le modèle écrit le titre et la description, la page de l'hôte s'ouvre) |
+| `Attachments`, `Drafts`, `Quoting` | ✅ (les pièces jointes, la citation ; **les brouillons** : ce qui est tapé mais pas envoyé, par session, d'un lancement à l'autre — et un message qui n'a pas pu partir revient dans la boîte) |
+| `Updates`, `Awake`, `Notifier` | ✅ (via les réglages de la coquille — et la vérification des mises à jour **marche** : nos versions sont des prereleases au tag `windows-v*`, ce qu'electron-updater ne lit pas ; la coquille demande à GitHub et propose l'installeur) |
+| `Analytics` | ✅ (l'avis, rien n'est collecté) |
+| `PagePrinter`, `ImageViewer` | ⛔ / ✅ (l'impression d'une page suit le navigateur intégré) |
+| `UsageAccounts`, `Personalities`, `ProviderCompatibility` | ◐ la **compatibilité des fournisseurs** : les modèles Claude de GitHub Copilot sont nommés dans les réglages du moteur, qui n'ajoute alors pas `thinking.block_binding` (ils le refusent). Les *personalities* suivent les bots ⛔. |
+| `ClaudeCode`, `Bots`, `BotGroups`, `BotRecipe` | ⛔ amont |
+| `SidebarView` (les projets) | ✅ la barre latérale porte **tous** les projets, chacun avec ses sessions (cinq à la fois, le reste à la demande), et les *Récents* : les huit sessions les plus récentes de tous les projets. Le dossier est servi par le harnais (`POST /api/project`), et la coquille et le harnais gardent **une** seule liste des projets récents |
+| `ProviderLogo` | ✅ la marque du fournisseur (models.dev), fetched et dessinée dans l'encre, ou dans la couleur du fabricant ; l'initiale tient sa place jusqu'à son arrivée |
+| `NativeMenu` | ✅ une vraie barre de menus (l'app, File, Edit, Session, Tools, View, Window, Help), avec les commandes et les touches du Mac ; celles qui agissent sur la conversation le demandent à la page. 0.5.94 : les groupes Session et Tools, l'historique des onglets fermés et Open Quickly ; les commandes des surfaces absentes (New Project, New Chat, bots, navigateur, Accounts) ne sont pas dessinées. |
+
+## What the shipped Mac app does now (v0.5.20, v0.5.21)
+
+The upstream releases after ours carry behaviours we read in the release notes and ported
+or noted:
+
+| Upstream | Here |
+| --- | --- |
+| v0.5.21 — the sidebar and the side panel slide ahead of the conversation, which moves along | ◐ the panel slides; the sidebar now folds away (Ctrl+0) and the conversation moves with it |
+| v0.5.21 — opening or closing them no longer leaves the conversation blank | ✅ (the layout reflows) |
+| v0.5.21 — the agent's commands find *your* sign-ins and settings, as in a terminal | ⛔ not ours to fix: it needs the engine to hand the commands the user's environment, while it reads its settings from this app's own folder. Measured: pointing the engine at the user's config home makes it lose this app's skills. |
+| v0.5.19 — a checklist in a reply shows checkboxes, ticked or not | ✅ |
+| v0.5.19 — *Bring Over* says what is still missing when everything is already here | ✅ (it names the sign-in that is missing) |
+| v0.5.20 — a reply's lines no longer overlap after the sidebar opens or closes | ✅ (the transcript is fluid) |
+| v0.5.20 — the sidebar slides in, kept ready while hidden | ✅ (it folds, with the motion layer's timing) |
+| v0.5.20 — picking another model mid-run hands the run over at once | ✅ (the model is posted live) |
+| v0.5.20 — a reply that stops arriving says it is waiting for the model | ⛔ engine-side : c'est le moteur qui parle |
+
+## The design
+
+The view is bound to the **Mac app's own design layer** (`KuvoCode/Design/`), extracted in
+`docs/MAC-UI-MAP.md` and written down in `windows/harness/ui/DESIGN.md`. Phase 1 retired
+OpenDesign's `modern-minimal`: the Mac's warm canvas, card fills, accent glass, radii, shadows
+and type sizes are the binding. The motion layer is the Mac's too since 0.5.40: one spring —
+`.spring(response: 0.32, dampingFraction: 0.86)` — as the analytic curve in CSS and as
+Motion's spring in the components, the 120 ms hover, the 13 % press fill, and the shimmer.
+The contrast of every text/surface pair passes AA in both themes.

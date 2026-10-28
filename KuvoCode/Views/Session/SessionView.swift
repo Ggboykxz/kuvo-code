@@ -3,27 +3,85 @@ import SwiftUI
 
 struct SessionView: View {
     let model: SessionModel
+    /// Whether the window shows the conversations at all (not with Settings over them).
+    @Environment(\.isConversationShown) private var isInSight
     @Environment(Catalog.self) private var catalog
     @Environment(AppModel.self) private var app
     @LastModel private var lastModel
     @State private var height: CGFloat = 0
 
+    /// The conversations seen last, newest first, kept made (hidden) for going back to them.
+    @State private var kept: [SessionModel] = []
+    /// The size each kept one had as it went out of view, which it keeps while hidden: resizing
+    /// the window lays out only the one in view.
+    @State private var hiddenSizes: [String: CGSize] = [:]
+    @State private var size: CGSize = .zero
+    /// A list open over the composer (see `ComposerListShown`).
+    @State private var listShown = false
+
     var body: some View {
-        TranscriptView(model: model)
-            // A bar, not just an inset: the conversation scrolls on under the composer, softly
-            // blurred there by the scroll view's edge effect.
-            .safeAreaBar(edge: .bottom, spacing: 0) {
-                BottomStack(model: model, lastModel: $lastModel)
-                    // Room for the composer, the cards' own buttons and a little conversation.
-                    .environment(\.cardRoom, max(160, height - 440))
+        ZStack {
+            // One for each session, kept for the few seen last: going back to one shows it as it
+            // was, rather than making it again. What's around them (the composer below) stays as
+            // you go from one to another: it keeps the keyboard, and isn't made again each time.
+            ForEach(Self.shown(model, kept: kept), id: \.id) { each in
+                let isShown = each.id == model.id
+                let hiddenSize = isShown ? nil : hiddenSizes[each.id]
+                TranscriptView(model: each)
+                    .frame(width: hiddenSize?.width, height: hiddenSize?.height)
+                    // However big that was, the stack is the size it's given.
+                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
+                    .opacity(isShown ? 1 : 0)
+                    .allowsHitTesting(isShown)
+                    .accessibilityHidden(!isShown)
+                    .environment(\.isConversationShown, isShown && isInSight)
+                    .zIndex(isShown ? 1 : 0)
+                    .environment(\.isOffline, Self.offlineMachine(of: each, in: app) != nil)
             }
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
-            // Its machine out of reach: the conversation to read, without what needs the engine.
-            .environment(\.isOffline, Self.offlineMachine(of: model, in: app) != nil)
-            .navigationTitle(model.session.title ?? "New Session")
-            // A conversation as last seen is read once its machine is back.
-            .task { if !model.isLoaded, !model.isCopy { await model.load() } }
-            .task(id: model.session.location.directory) { await catalog.loadCommands(in: model.session.location.directory) }
+        }
+        .scrollEdgeEffectHidden(listShown, for: .bottom)
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
+        .onChange(of: model.id, initial: true) { old, new in
+            kept = Array(([model] + kept.filter { $0.id != new }).prefix(Self.keptCount))
+            hiddenSizes[old] = size
+            hiddenSizes[new] = nil
+            hiddenSizes = hiddenSizes.filter { id, _ in kept.contains { $0.id == id } }
+        }
+        // A bar, not just an inset: the conversation scrolls on under the composer, softly
+        // blurred there by the scroll view's edge effect.
+        .safeAreaBar(edge: .bottom, spacing: 0) {
+            BottomStack(model: model, lastModel: $lastModel)
+                // Room for the composer, the cards' own buttons and a little conversation.
+                .environment(\.cardRoom, max(160, height - 440))
+        }
+        .onPreferenceChange(ComposerListShown.self) { shown in listShown = shown }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
+        // Its machine out of reach: the conversation to read, without what needs the engine.
+        .environment(\.isOffline, Self.offlineMachine(of: model, in: app) != nil)
+        .navigationTitle(model.session.title ?? "New Session")
+        // A conversation as last seen is read once its machine is back.
+        // A copy shown while the engine reads (this Mac's) is read too; one waiting for its
+        // machine is read once the machine is back.
+        .task(id: model.id) { if !model.isLoaded, !model.waitsForEngine { await model.load() } }
+        .task(id: model.session.location.directory) { await catalog.loadCommands(in: model.session.location.directory) }
+        // Its wake-ups and watches, read again as each run ends (its agent may have set one,
+        // or one went); a bot's are its row's to read.
+        .task(id: "\(model.id) \(model.isRunning)") {
+            guard !model.isRunning, app.bots.bot(forSession: model.id) == nil else { return }
+            await app.wakeUps.read(WakeUps.owner(of: model.session))
+        }
+    }
+
+    #if DEBUG
+    /// KUVO_PERF_KEPT=<n>: that many kept instead (1: none but the one in view), to compare.
+    static let keptCount = ProcessInfo.processInfo.environment["KUVO_PERF_KEPT"].flatMap(Int.init) ?? 4
+    #else
+    static let keptCount = 4
+    #endif
+
+    /// The kept conversations, with the one in view among them.
+    private static func shown(_ model: SessionModel, kept: [SessionModel]) -> [SessionModel] {
+        kept.contains { $0.id == model.id } ? kept : [model] + kept.prefix(keptCount - 1)
     }
 
     /// The machine a session runs on, while it can't be reached (connecting again), or its
@@ -36,7 +94,7 @@ struct SessionView: View {
 
 /// Something that didn't work (a message that didn't go, an undo), over the composer until you
 /// dismiss it or send again.
-private struct FailureBar: View {
+struct FailureBar: View {
     let text: String
     let dismiss: () -> Void
 
@@ -80,11 +138,30 @@ private struct BottomStack: View {
     @Environment(\.takesCardKeys) private var takesCardKeys
     @Namespace private var glass
 
+    /// Commands its agent left running, which the conversation doesn't show as they run: once
+    /// they've run a moment (see `Workspace.lastingShellJobs`).
+    private var backgroundJobs: [ShellJob] {
+        (workspace.shellJobs[model.id] ?? []).filter { workspace.lastingShellJobs.contains($0.id) && !model.inlineShells.contains($0.id) }
+    }
+
+    /// Its wake-ups and watches, when it keeps any: not a bot's, which Edit Bot and its row show.
+    private var wakeOwner: WakeUps.Owner? {
+        guard app.bots.bot(forSession: model.id) == nil else { return nil }
+        let owner = WakeUps.owner(of: model.session)
+        let waiting = !(app.wakeUps.wakes[owner.key] ?? []).isEmpty || !(app.wakeUps.watches[owner.key] ?? []).isEmpty
+        return waiting ? owner : nil
+    }
+
+    /// Subagents its agent handed work to that are at it now.
+    private var subagentsAtWork: [SessionModel.Subagent] {
+        model.subagents.filter { workspace.isWorking($0, for: model.id) }
+    }
+
     var body: some View {
         GlassEffectContainer(spacing: 12) {
             VStack(spacing: 12) {
                 ForEach(model.permissions) { request in
-                    PermissionCard(request: request, directory: model.session.location.directory) { decision in
+                    PermissionCard(request: request, command: model.permissionCommands[request.id], directory: model.session.location.directory) { decision in
                         model.reply(to: request, decision)
                     }
                     .disabled(offlineMachine != nil)
@@ -120,6 +197,26 @@ private struct BottomStack: View {
                         .glassEffectID("offline", in: glass)
                         .transition(.opacity)
                 }
+                if !subagentsAtWork.isEmpty {
+                    SubagentsBar(subagents: subagentsAtWork, folder: model.session.location.directory, isHidden: $model.hidesSubagents)
+                        .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
+                        .glassEffectID("subagents", in: glass)
+                        .transition(.opacity)
+                }
+                if !backgroundJobs.isEmpty {
+                    BackgroundBar(jobs: backgroundJobs, api: workspace.api(forSession: model.id), directory: model.session.location.directory, isHidden: $model.hidesBackgroundJobs) { job in
+                        Task { await workspace.stopShellJob(job, in: model.id) }
+                    }
+                    .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
+                    .glassEffectID("background", in: glass)
+                    .transition(.opacity)
+                }
+                if let owner = wakeOwner {
+                    WakeBar(owner: owner, isHidden: $model.hidesWakes)
+                        .glassEffect(.regular, in: .rect(cornerRadius: Metrics.composerRadius))
+                        .glassEffectID("wakes", in: glass)
+                        .transition(.opacity)
+                }
                 // What's waiting, tucked behind the composer's top edge.
                 VStack(spacing: -QueueDock.overlap) {
                 if !model.waiting.isEmpty {
@@ -127,6 +224,7 @@ private struct BottomStack: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
                 Composer(
+                    session: model.id,
                     text: $model.draftText,
                     files: $model.draftFiles,
                     quotes: $model.draftQuotes,
@@ -134,6 +232,7 @@ private struct BottomStack: View {
                     agent: model.agent,
                     approval: model.approval,
                     model: model.session.model ?? catalog.startingModel(lastModel),
+                    modelInUse: model.modelInUse,
                     isRunning: model.isRunning,
                     hasQueue: !model.waiting.isEmpty,
                     history: { model.sentMessages },
@@ -150,7 +249,15 @@ private struct BottomStack: View {
                         defaultApproval = approval
                     },
                     onSelectModel: { ref in
-                        model.selectModel(ref)
+                        // A coding agent's model (or Auto) in a session on the engine: it carries on with them.
+                        if !OutsideAgents.isAgentSession(model.session), OutsideAgents.runsInBridge(ref.providerID) {
+                            // (A bot's conversation as any: the bot takes the new session.)
+                            Task {
+                                do { try await workspace.moveToAgents(model.id, model: ref) } catch { model.failure = error.localizedDescription }
+                            }
+                        } else {
+                            model.selectModel(ref)
+                        }
                         lastModel = ref
                     },
                     onSend: { send(queue: false) },
@@ -172,6 +279,8 @@ private struct BottomStack: View {
                 }
             }
             .animation(.ui, value: model.waiting.isEmpty)
+            .animation(.ui, value: backgroundJobs.map(\.id))
+            .animation(.ui, value: subagentsAtWork.map(\.id))
             .animation(.ui, value: offlineMachine == nil)
             .animation(.ui, value: model.failure)
             .animation(.ui, value: app.browserAsks.asks(for: model.session.id).map(\.id))
@@ -218,17 +327,9 @@ private struct BottomStack: View {
             Analytics.shared.firstMessageBlocked("machine_offline")
             return
         }
-        model.failure = nil
-        let commands = catalog.commands(in: model.session.location.directory)
-        // A "!" or "/" command runs as typed; what you were replying to waits for a message.
-        let isCommand = SessionModel.shellCommand(in: model.draftText) != nil || SlashCommands.parse(model.draftText, commands: commands) != nil
-        let text = isCommand ? model.draftText : Quoting.message(quotes: model.draftQuotes, text: model.draftText)
-        let files = model.draftFiles
-        // Emptied first: what can't be sent comes back to it.
-        model.draftText = ""
-        model.draftFiles = []
-        if !isCommand { model.draftQuotes = [] }
-        model.submit(text, files: files, for: catalog.model(model.session.model), queue: queue, commands: commands)
+        let machine = RemoteFolder.machine(of: model.session.location.directory).map { id in app.machines.list.first { $0.id == id }?.name ?? id }
+        let unavailable = model.session.model.flatMap { catalog.needsSignIn($0) ? catalog.unavailable($0, on: machine) : nil }
+        model.submitDraft(for: catalog.model(model.session.model), queue: queue, commands: catalog.commands(in: model.session.location.directory), unavailable: unavailable)
     }
 }
 
@@ -245,7 +346,7 @@ struct DraftSessionView: View {
     @Environment(AppModel.self) private var app
     /// Picked in the composer; until then, the mode Settings starts new sessions in.
     @State private var pickedAgent: String?
-    private var agent: String { pickedAgent ?? catalog.startingAgent(chosen: app.engineConfig.value(at: ["default_agent"])?.string) }
+    private var agent: String { pickedAgent ?? catalog.startingAgent(chosen: EngineConfig.of(catalog.machine)?.value(at: ["default_agent"])?.string) }
     @AppStorage(ToolApproval.key) private var approval = ToolApproval.approveAll
     /// New sessions in a git repository get a worktree of their own (remembered).
     @AppStorage("newSessionWorktree") private var worktree = false
@@ -327,9 +428,9 @@ struct DraftSessionView: View {
         let inWorktrees = isRepository && worktree
         let count = inWorktrees ? attempts : 1
         Task {
+            var sessions: [Session] = []
             do {
                 // One after another: each worktree's setup runs on its own.
-                var sessions: [Session] = []
                 for _ in 0..<count {
                     sessions.append(try await workspace.createSession(in: directory, model: startingModel, agent: agent, approval: approval, worktree: inWorktrees))
                 }
@@ -338,8 +439,17 @@ struct DraftSessionView: View {
                 Drafts.shared.remove(draftKey)
                 if let first = sessions.first, !since.isEmpty { Drafts.shared[first.id] = since }
                 for session in sessions { created(session, sent.text, sent.files) }
+                // Kept until the engine has it (or it's back in the session's composer): a quit
+                // while it's prepared, or while the session's tools start, doesn't lose it.
+                for session in sessions { await workspace.model(for: session.id)?.messagesSent() }
                 Drafts.shared.sent(sending)
             } catch {
+                // Attempts made before one failed go too: they'd never get the message, and
+                // sending again makes them all anew.
+                for session in sessions {
+                    await workspace.delete(session.id)
+                    if inWorktrees { await workspace.discardWorktree(session.location.directory) }
+                }
                 Analytics.shared.firstMessageBlocked("session_failed_" + Analytics.trouble(error))
                 Drafts.shared.putBack(sending)
                 failure = error.localizedDescription

@@ -1,28 +1,99 @@
 {
-  "fill": {
-    "linear-gradient": [
-      "display-p3:0.106,0.094,0.180,1.00000",
-      "display-p3:0.035,0.031,0.071,1.00000"
-    ],
-    "orientation": {
-      "start": {
-        "x": 0.5,
-        "y": 0
-      },
-      "stop": {
-        "x": 0.5,
-        "y": 1
+  "fill-specializations": [
+    {
+      "value": {
+        "linear-gradient": [
+          "srgb:0.96078,0.94902,0.92157,1.00000",
+          "srgb:0.90980,0.89020,0.85098,1.00000"
+        ],
+        "orientation": {
+          "start": {
+            "x": 0.5,
+            "y": 0
+          },
+          "stop": {
+            "x": 0.5,
+            "y": 1
+          }
+        }
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "linear-gradient": [
+          "srgb:0.10588,0.10196,0.12549,1.00000",
+          "srgb:0.05490,0.05098,0.06667,1.00000"
+        ],
+        "orientation": {
+          "start": {
+            "x": 0.5,
+            "y": 0
+          },
+          "stop": {
+            "x": 0.5,
+            "y": 1
+          }
+        }
       }
     }
-  },
+  ],
   "groups": [
     {
-      "name": "Cursor",
+      "name": "Team",
       "layers": [
         {
-          "image-name": "cursor.svg",
-          "name": "cursor",
-          "glass": true,
+          "image-name": "round.png",
+          "name": "round",
+          "glass": false,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "image-name": "squircle.png",
+          "name": "squircle",
+          "glass": false,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "image-name": "pebble.png",
+          "name": "pebble",
+          "glass": false,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "image-name": "gem.png",
+          "name": "gem",
+          "glass": false,
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "image-name": "bloom.png",
+          "name": "bloom",
+          "glass": false,
           "position": {
             "scale": 1,
             "translation-in-points": [
@@ -33,42 +104,15 @@
         }
       ],
       "shadow": {
-        "kind": "neutral",
-        "opacity": 0.5
+        "kind": "none",
+        "opacity": 0
       },
       "translucency": {
         "enabled": false,
-        "value": 0.0
+        "value": 0
       },
-      "lighting": "individual",
-      "specular": true
-    },
-    {
-      "name": "Chevron",
-      "layers": [
-        {
-          "image-name": "chevron.svg",
-          "name": "chevron",
-          "glass": true,
-          "position": {
-            "scale": 1,
-            "translation-in-points": [
-              0,
-              0
-            ]
-          }
-        }
-      ],
-      "shadow": {
-        "kind": "neutral",
-        "opacity": 0.5
-      },
-      "translucency": {
-        "enabled": true,
-        "value": 0.35
-      },
-      "lighting": "individual",
-      "specular": true
+      "lighting": "combined",
+      "specular": false
     }
   ],
   "supported-platforms": {

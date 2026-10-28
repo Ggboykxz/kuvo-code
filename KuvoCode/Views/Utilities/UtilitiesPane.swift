@@ -135,6 +135,8 @@ struct UtilitiesPane: View {
         case .browser: utilities.browsers[tab.id]?.displayTitle ?? "New Tab"
         case .machinePage(let machine, let page):
             app.machines.engine(machine)?.browser.page(page)?.name ?? "New Tab"
+        case .subagent(let id, _):
+            app.workspace.subagentTitle(id) ?? "Subagent"
         }
     }
 
@@ -157,6 +159,7 @@ struct UtilitiesPane: View {
             } else {
                 .symbol("globe")
             }
+        case .subagent: .symbol("person.2")
         }
     }
 
@@ -188,7 +191,7 @@ struct UtilitiesPane: View {
                 }
             case .browser:
                 if let session = utilities.browsers[tab.id] {
-                    BrowserPane(session: session, attach: { utilities.attachToMessage?($0) }) {
+                    BrowserPane(session: session, attach: attachToMessage) {
                         NewTabPage(utilities: utilities, tabID: tab.id, directory: directory, environment: environment) { address in
                             session.load(address)
                         } openInNewTab: { address in
@@ -201,7 +204,7 @@ struct UtilitiesPane: View {
                 }
             case .machinePage(let machine, let page):
                 if let browser = app.machines.engine(machine)?.browser {
-                    MachineBrowserPane(browser: browser, page: page, attach: { utilities.attachToMessage?($0) }) {
+                    MachineBrowserPane(browser: browser, page: page, attach: attachToMessage) {
                         NewTabPage(utilities: utilities, tabID: tab.id, directory: directory, environment: environment) { address in
                             // A new tab opens its page; a blank page goes there.
                             if page == nil { utilities.open(address, inTab: tab.id) } else { browser.load(address) }
@@ -215,8 +218,17 @@ struct UtilitiesPane: View {
                 } else {
                     placeholder("Machine Removed", symbol: "server.rack", detail: "\(machine) isn’t one of your machines anymore. Close this tab.")
                 }
+            case .subagent(let id, let folder):
+                SubagentPane(id: id, folder: folder)
+                    .id(tab.id)
             }
         }
+    }
+
+    /// Add Screenshot to Message, for a conversation whose message can carry files: not a group
+    /// chat's, which takes words only.
+    private var attachToMessage: (([URL]) -> Void)? {
+        utilities.groupInView == nil ? { [utilities] files in utilities.attachToMessage?(files) } : nil
     }
 
     private func placeholder(_ title: String, symbol: String, detail: String) -> some View {
@@ -291,6 +303,13 @@ private struct UtilityTabButton: View {
         .onTapGesture(perform: select)
         .onHover { isHovering = $0 }
         .help(title)
+        // A tab to pick for VoiceOver, which has no tap to make, and Close Tab, whose button shows
+        // only on hover.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction(.default, select)
+        .accessibilityAction(named: "Close Tab", close)
     }
 }
 
@@ -308,6 +327,7 @@ struct PanelIconStyle: ButtonStyle {
             .opacity(configuration.isPressed ? 0.6 : 1)
             .contentShape(.rect)
             .onHover { isHovering = $0 }
+            .clickablePointer()
     }
 }
 

@@ -15,6 +15,7 @@ struct TranscriptView: View {
     #endif
     let model: SessionModel
     @Environment(Workspace.self) private var workspace
+    @Environment(Catalog.self) private var catalog
     @Environment(\.isOffline) private var isOffline
     @AppStorage(StepsDetail.key) private var stepsDetail = StepsDetail.summary
     @State private var scroller = ConversationScroller()
@@ -37,7 +38,7 @@ struct TranscriptView: View {
         // More of a reply, in a row of its own, carries on from the row before rather than coming in.
         let added = rows.filter { !$0.continues }
         ConversationScroll(scroller: scroller, animation: rowCache.isBulk ? nil : Self.rowAnimation, change: RowCache.Change(count: added.count, last: added.last?.id), thinking: Self.thinking(in: rows),
-                           quote: { model.addQuote($0, how: "selection") }) {
+                           nearTop: model.hasEarlier ? { loadEarlier() } : nil, quote: { model.addQuote($0, how: "selection") }) {
             // Its top in view: the messages before, read and put ahead, the view staying put.
             if model.hasEarlier, !rows.isEmpty {
                 HStack(spacing: 8) {
@@ -49,23 +50,20 @@ struct TranscriptView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.bottom, 20)
                 .id("earlier")
-                .onAppear { loadEarlier(above: rows.first?.id) }
+                .onAppear { loadEarlier() }
             }
-            ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                RowView(row: row, directory: model.session.location.directory, folders: model.folders, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" && !isOffline ? { model.buildPlan() } as () -> Void : nil, reply: model.reply(to:))
-                    .equatable()
-                    .environment(\.findHighlight, find.highlight(for: row.id))
-                    .id(row.id)
-                    #if DEBUG
-                    .onAppear {
-                        ScrollFrameMonitor.rowsMade += 1
-                        ScrollFrameMonitor.rowsMadeByID[row.id, default: 0] += 1
-                    }
-                    #endif
-                    .padding(.top, index == 0 ? 0 : row.spacing(after: rows[index - 1]))
-                    .transition(Self.rowTransition)
+            #if DEBUG
+            if Perf.lazy {
+                stackRows(rows)
+            } else {
+                rowStack(rows)
             }
+            #else
+            rowStack(rows)
+            #endif
         }
+        // The reply being written draws its words from it.
+        .environment(model.writing)
         // What a widget writes back goes to this conversation's agent, as yours.
         .environment(\.answerAgent) { text in model.submit(text, files: [], for: nil, queue: false, commands: []) }
         .overlay {
@@ -100,8 +98,7 @@ struct TranscriptView: View {
             ParseClock.total = .zero
             ParseClock.count = 0
             // How tall it is, from AppKit's scroll view (SwiftUI doesn't pass on every change).
-            func scrollViews(in view: NSView) -> [NSScrollView] { (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews) }
-            let height = NSApp.windows.compactMap(\.contentView).flatMap(scrollViews).map { $0.documentView?.frame.height ?? 0 }.max() ?? 0
+            let height = ScrollAnchor.conversationScrollView()?.documentView?.frame.height ?? 0
             var y = height
             for _ in 0..<150 where y > 0 {
                 y -= 200
@@ -118,6 +115,29 @@ struct TranscriptView: View {
                 if let handle = FileHandle(forWritingAtPath: path) { handle.seekToEndOfFile(); handle.write(Data(line.utf8)); try? handle.close() } else { FileManager.default.createFile(atPath: path, contents: Data(line.utf8)) }
             }
         }
+        // Once, whatever happens to this view meanwhile (the test notes it if it's made again).
+        .onAppear { PerfRead.start() }
+        .onAppear {
+            // The session asked for (KUVO_DEMO_SESSION), once it's the one in view.
+            guard ProcessInfo.processInfo.environment["KUVO_DEMO_SESSION"].map({ $0 == model.id }) ?? true else { return }
+            PerfOpen.start { rowCache.rows.last?.id }
+        }
+        // KUVO_DEMO_FIND_STEPS=<n>: once Find is open, Next that many times, a second and a half apart.
+        .task {
+            guard let steps = ProcessInfo.processInfo.environment["KUVO_DEMO_FIND_STEPS"].flatMap(Int.init) else { return }
+            try? await Task.sleep(for: .seconds(8))
+            for by in Array(repeating: 1, count: steps) + [-1, -1] {
+                find.step(by)
+                try? await Task.sleep(for: .milliseconds(1500))
+            }
+        }
+        .onDisappear { PerfRead.viewsGone += 1 }
+        .task { await PerfRender.run(model: model) }
+        .task { await PerfDrag.run() }
+        .onAppear { PerfCompare.run() }
+        .onAppear { PerfCopyTest.run() }
+        .onAppear { PerfSelectTest.run() }
+        .onAppear { PerfLayoutCheck.run() }
         // KUVO_DEMO_WANDER=<seconds>: that long after it opens, scrolls up a screen or two and back
         // down, again and again, as you would reading what streams in, for KUVO_DEMO_WANDER_FOR
         // seconds: scroll gestures, as a trackpad sends them, through AppKit.
@@ -126,9 +146,8 @@ struct TranscriptView: View {
             guard let wait = environment["KUVO_DEMO_WANDER"].flatMap(Double.init) else { return }
             try? await Task.sleep(for: .seconds(wait))
             let end = ContinuousClock.now + .seconds(Double(environment["KUVO_DEMO_WANDER_FOR"] ?? "") ?? 30)
-            func scrollViews(in view: NSView) -> [NSScrollView] { (view as? NSScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews) }
             // The conversation's: the tallest.
-            guard let view = NSApp.windows.compactMap(\.contentView).flatMap(scrollViews).max(by: { ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0) }) else { return }
+            guard let view = ScrollAnchor.conversationScrollView() else { return }
             var step = 0
             while ContinuousClock.now < end {
                 // 30 frames up, 30 down, 40 pt a frame, each way a gesture of its own.
@@ -171,13 +190,61 @@ struct TranscriptView: View {
         rows.map { ConversationFind.Row(id: $0.id, parts: $0.findParts) }
     }
 
-    private func loadEarlier(above id: String?) {
-        // Only once you've scrolled up to it, not as the conversation opens at its end; unless
-        // it all fits, when the top is in view from the start.
-        guard !scroller.followsEnd || scroller.fits else { return }
+    /// The rows, laid out by a stack of their own (see `RowStack`).
+    private func rowStack(_ rows: [Row]) -> some View {
+        // Made again as Find's marks change (each row reads its own as it's laid out).
+        _ = find.marksState
+        return RowStack(items: rows, id: \.id, same: ==, estimate: Self.estimate, animatesNew: !rowCache.isBulk, text: { $0.copiedText(folders: model.folders()) },
+                 space: { row, index in index == 0 ? 0 : row.spacing(after: rows[index - 1]) }) { row, index in
+            RowView(row: row, directory: model.session.location.directory, folders: model.folders, heard: model.heard, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" && !isOffline ? { model.buildPlan() } as () -> Void : nil, reply: model.reply(to:))
+                .equatable()
+                .environment(\.findHighlight, find.highlight(for: row.id))
+                .padding(.top, index == 0 ? 0 : row.spacing(after: rows[index - 1]))
+        }
+    }
+
+    #if DEBUG
+    /// The rows, in the lazy stack (KUVO_PERF_LAZY).
+    @ViewBuilder private func stackRows(_ rows: [Row]) -> some View {
+        ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+            RowView(row: row, directory: model.session.location.directory, folders: model.folders, heard: model.heard, cancel: model.cancelPending, undo: model.undo(from:), redo: model.redo, fork: fork, retry: model.retry(_:), buildPlan: model.agent == "plan" && !isOffline ? { model.buildPlan() } as () -> Void : nil, reply: model.reply(to:))
+                .equatable()
+                .environment(\.findHighlight, find.highlight(for: row.id))
+                .conversationRow(row.id)
+                .id(row.id)
+                #if DEBUG
+                .onAppear {
+                    ScrollFrameMonitor.rowsMade += 1
+                    ScrollFrameMonitor.rowsMadeByID[row.id, default: 0] += 1
+                }
+                .modifier(RowProbe(id: row.id))
+                #endif
+                .padding(.top, index == 0 ? 0 : row.spacing(after: rows[index - 1]))
+                .transition(Self.rowTransition)
+        }
+    }
+    #endif
+
+    /// A row's height before it's measured: about what its words take at a column's width.
+    private static func estimate(_ row: Row) -> CGFloat {
+        switch row {
+        case .assistant(let message, _), .more(let message, _):
+            let characters = message.content.reduce(0) { if case .text(let part) = $1 { $0 + part.text.count } else { $0 } }
+            return 24 + CGFloat(characters / 95 + 1) * 24
+        case .user: return 90
+        case .steps: return 40
+        case .turnEnd: return 34
+        default: return 60
+        }
+    }
+
+    /// The messages before those read, put ahead of them: what you're reading stays where it is.
+    private func loadEarlier() {
+        // Only once you've scrolled up toward it, not as the conversation opens at its end;
+        // unless it all fits, when the top is in view from the start.
+        guard model.hasEarlier, !model.isLoadingEarlier, !scroller.followsEnd || scroller.fits else { return }
         Task {
             await model.loadEarlier()
-            if let id { scroller.keep(id) }
             // Still all in view: the top won't come into view again, so on to the next.
             try? await Task.sleep(for: .milliseconds(300))
             while model.hasEarlier, scroller.fits, !Task.isCancelled {
@@ -219,6 +286,14 @@ struct TranscriptView: View {
         for index in messages.indices.reversed() {
             turnEnds[index] = following
             if case .idle(let idle) = messages[index] { following = idle }
+        }
+        // Where the conversation ends for Try Again: a model or mode picked after a failed run
+        // leaves it the last, so it goes again with them.
+        let last = messages.lastIndex { message in
+            switch message {
+            case .modelSwitched, .agentSwitched: false
+            default: true
+            }
         }
         func flushSteps(live: Bool) {
             guard !steps.isEmpty else { return }
@@ -265,10 +340,18 @@ struct TranscriptView: View {
                         // Something it made shows on its own, in the conversation's flow.
                         flushSteps(live: false)
                         rows.append(.widget(call))
+                    case .tool(let call) where MadePictureRow.isMade(call):
+                        // So does an image it made.
+                        flushSteps(live: false)
+                        rows.append(.picture(call))
                     case .tool(let call) where call.name == "kuvo-browser_send_message":
                         // So does what it wrote to another agent.
                         flushSteps(live: false)
                         rows.append(.sent(call))
+                    case .tool(let call) where call.name == "subagent":
+                        // And each subagent it handed work to, at work or done.
+                        flushSteps(live: false)
+                        rows.append(.subagent(call))
                     case .reasoning, .tool:
                         if steps.isEmpty { stepsID = "steps-" + assistant.id + "#\(part)" }
                         steps.append(block)
@@ -284,27 +367,41 @@ struct TranscriptView: View {
                     rows.append(.assistant(end, showsError: showsError))
                 }
             case .idle(let idle):
-                rows.append(.turnEnd(idle, turn, isLast: index == messages.count - 1))
+                rows.append(.turnEnd(idle, turn, isLast: index == last))
                 turn = TurnStats()
             case .modelSwitched(let change):
-                rows.append(.notice(change.id, "cpu", "Switched to \(change.model.id)" + (change.model.variant.map { " · \(EffortLevel.title($0))" } ?? "")))
+                // By its name, as the model menu shows it ("Big Pickle", not big-pickle).
+                rows.append(.notice(change.id, "cpu", "Switched to \(catalog.model(change.model)?.name ?? change.model.id)" + (change.model.variant.map { " · \(EffortLevel.title($0))" } ?? "")))
             case .agentSwitched(let change):
                 rows.append(.notice(change.id, change.agent == "plan" ? "list.bullet.clipboard" : "hammer", "\(change.agent.capitalized) mode"))
             case .compaction(let compaction):
-                rows.append(.notice(compaction.id, "rectangle.compress.vertical", compaction.status == "running" ? "Summarizing the conversation…" : "Summarized the conversation to save space"))
+                let words = switch compaction.status {
+                case "running": "Summarizing the conversation…"
+                case "failed": "Couldn’t summarize the conversation"
+                default: "Summarized the conversation to save space"
+                }
+                rows.append(.notice(compaction.id, "rectangle.compress.vertical", words))
             case .shell(let shell):
                 rows.append(.shell(shell))
             case .synthetic(let notice), .system(let notice):
+                // A turn the app or the engine started (a model switched mid-run carries on), timed
+                // from it as one you started is from your message.
+                if turn.started == nil { turn.started = notice.time.created }
                 let sources = notice.instructionSources
                 if !sources.isEmpty, sources.allSatisfy({ $0.contains(ProjectFolders.instructionKey) }) {
                     rows.append(.notice(notice.id, "folder", "Project folders updated"))
-                } else if !sources.isEmpty, sources.allSatisfy({ $0.hasPrefix("core/") }) {
-                    // The engine's own guidance (for the browser tools, say): nothing you set.
+                } else if !sources.isEmpty, sources.allSatisfy({ $0.hasPrefix("core/") || $0.contains(Workspace.worktreeInstructionKey) || $0.contains(Bots.instructionKey) }) {
+                    // The engine's own guidance (for the browser tools, say), or what Kuvo Code
+                    // adds for a worktree or a bot: nothing you set.
                     break
+                } else if notice.metadata?["source"]?.string == "shell" {
+                    // A command the agent left running in the background ended, which wakes it.
+                    rows.append(.notice(notice.id, "terminal", Self.backgroundEnd(notice)))
                 } else if notice.text.hasPrefix("<system-reminder>") {
                     // The engine's word to the model, not to you. Plan mode's rules say the mode,
-                    // for a session that starts in it (a switch says so itself).
-                    if notice.text.contains("Plan mode") {
+                    // for a session that starts in it (a switch says so itself); not the one that
+                    // says it's left ("You are NO LONGER in Plan mode", after Build It).
+                    if notice.text.contains("Plan mode"), notice.text.range(of: "no longer in Plan mode", options: .caseInsensitive) == nil {
                         if case .notice(_, "list.bullet.clipboard", _)? = rows.last {} else {
                             rows.append(.notice(notice.id, "list.bullet.clipboard", "Plan mode: it explores and plans, without changing files"))
                         }
@@ -321,6 +418,9 @@ struct TranscriptView: View {
         }
         // A step still going at the end is under way, whatever the running state says.
         flushSteps(live: model.transcript.isRunning || StepsRow.isUnfinished(steps.last))
+        if cut == nil, let step = Self.interruptedStep(in: messages, isRunning: model.transcript.isRunning) {
+            rows.append(.notice(step.id + "#interrupted", "pause.circle", "Interrupted before it finished: send a message to carry on"))
+        }
         if let cut {
             let undone = all[cut...].count { if case .user = $0 { true } else { false } }
             rows.append(.undone(max(undone, 1)))
@@ -331,7 +431,22 @@ struct TranscriptView: View {
         // Always while it works, with the time since your message, so a long step is plainly
         // still going.
         if model.transcript.isRunning {
-            rows.append(.working(since: turn.started))
+            // Since when nothing has come back from the model: your message, or a step, with no
+            // step writing or running a tool after it (a step stays open while its tools run).
+            var quiet: Milliseconds?
+            var followsHeard = false
+            switch messages.last {
+            case .assistant(let step)?:
+                // Partway through its reply (not a tool at work): since it last sent anything, so a
+                // reply that stalls midway says so as well.
+                let toolRuns = step.content.contains { if case .tool(let call) = $0, case .running = call.state { true } else { false } }
+                quiet = step.time.completed ?? (step.content.isEmpty ? step.time.created : toolRuns ? nil : model.transcript.lastHeard)
+                followsHeard = step.time.completed == nil && !step.content.isEmpty && !toolRuns
+            case .user(let message)?: quiet = message.time.created
+            case .synthetic(let notice)?, .system(let notice)?: quiet = notice.time.created
+            default: break
+            }
+            rows.append(.working(since: turn.started, quiet: quiet, followsHeard: followsHeard))
         }
         return rows
     }
@@ -422,8 +537,12 @@ enum Row: Identifiable, Hashable {
     case steps(String, [Message.Content], isLive: Bool)
     /// Something the agent made with show_widget, drawn in the conversation.
     case widget(Message.ToolCall)
+    /// An image it made.
+    case picture(Message.ToolCall)
     /// What it wrote to another agent (send_message).
     case sent(Message.ToolCall)
+    /// A subagent it handed part of the work to.
+    case subagent(Message.ToolCall)
     /// `isLast`: the conversation ends here, so a failed run can be tried again.
     case turnEnd(Message.Idle, TurnStats, isLast: Bool)
     case notice(String, String, String)
@@ -433,7 +552,10 @@ enum Row: Identifiable, Hashable {
     /// An undo that the next message makes final, with how many messages it took back.
     case undone(Int)
     /// The agent at work, since the time of your message.
-    case working(since: Milliseconds?)
+    /// `quiet`: since when nothing has come back from the model.
+    /// `followsHeard`: quiet since the model last sent anything, which new words move on without
+    /// the rows being made again (see `RowView.heard`).
+    case working(since: Milliseconds?, quiet: Milliseconds?, followsHeard: Bool)
 
     /// The words Find looks in, as the row shows them: messages, replies, and commands you ran
     /// with what they printed.
@@ -456,6 +578,22 @@ enum Row: Identifiable, Hashable {
         }
     }
 
+    /// Its words as a selection across the conversation copies it whole: as it reads (Markdown
+    /// as shown), a line of steps as its summary.
+    func copiedText(folders: [String]) -> String {
+        switch self {
+        case .steps(_, let blocks, _):
+            return StepsRow.summary(of: blocks)
+        default:
+            return findParts.map { part in
+                switch part {
+                case .plain(let text): text
+                case .markdown(let text): FindText.shown(markdown: text, folders: folders)
+                }
+            }.joined(separator: "\n")
+        }
+    }
+
     /// More of a reply before it.
     var continues: Bool {
         if case .more = self { true } else { false }
@@ -466,10 +604,12 @@ enum Row: Identifiable, Hashable {
         switch (previous, self) {
         // The space the Markdown style puts between those paragraphs.
         case (_, .more(_, let gap)): gap
-        case (.more, .assistant), (.more, .turnEnd), (.more, .working(_)), (.more, .steps): 10
+        case (.more, .assistant), (.more, .turnEnd), (.more, .working), (.more, .steps): 10
         case (_, .widget), (.widget, _), (_, .sent), (.sent, _): 14
-        case (.assistant, .assistant), (.assistant, .turnEnd), (.assistant, .working(_)),
-             (.steps, .assistant), (.assistant, .steps), (.steps, .turnEnd), (.steps, .working(_)): 10
+        case (.assistant, .assistant), (.assistant, .turnEnd), (.assistant, .working),
+             (.steps, .assistant), (.assistant, .steps), (.steps, .turnEnd), (.steps, .working),
+             (.subagent, .subagent), (.steps, .subagent), (.subagent, .steps), (.assistant, .subagent), (.more, .subagent),
+             (.subagent, .assistant), (.subagent, .turnEnd), (.subagent, .working): 10
         case (_, .user), (_, .pending): 28
         case (.shell, .shell): 12
         case (_, .shell): 20
@@ -485,7 +625,9 @@ enum Row: Identifiable, Hashable {
         case .assistant(let m, _), .more(let m, _): m.id
         case .steps(let id, _, _): id
         case .widget(let call): call.id
+        case .picture(let call): call.id
         case .sent(let call): call.id
+        case .subagent(let call): call.id
         case .turnEnd(let m, _, _): m.id
         case .notice(let id, _, _): id
         case .shell(let m): m.id
@@ -507,6 +649,9 @@ private struct RowView: View, Equatable {
     @Environment(\.bot) private var bot
     let directory: String
     let folders: () -> [String]
+    /// When the model was last heard, and how far this Mac's clock is ahead of the engine's, as of
+    /// now: the working line reads them each second.
+    let heard: () -> (last: Milliseconds?, offset: Milliseconds)
     let cancel: (Transcript.Pending) -> Void
     let undo: (Message.User) -> Void
     let redo: () -> Void
@@ -518,9 +663,19 @@ private struct RowView: View, Equatable {
     let reply: (String) -> Void
     @Environment(\.answerAgent) private var answerAgent
     @Environment(\.isOffline) private var isOffline
+    @Environment(\.isSubagentConversation) private var isSubagent
 
     static func sentAt(_ created: Milliseconds) -> String {
         MessageTime.sentAt(Date(timeIntervalSince1970: created / 1000))
+    }
+
+    /// "Working… 12s · Esc to stop"; once the model has said nothing for a while, that it's
+    /// waiting for it, which a provider that never answers can make last many minutes.
+    static func working(since: Milliseconds?, quiet: Milliseconds?, now: Date) -> String {
+        if let quiet, now.timeIntervalSince1970 - quiet / 1000 >= 20 {
+            return "Waiting for the model to answer…" + elapsed(since: quiet, now: now)
+        }
+        return "Working…" + elapsed(since: since, now: now)
     }
 
     /// " 12s", " 1m 5s" after a few seconds, then " · Esc to stop".
@@ -541,18 +696,23 @@ private struct RowView: View, Equatable {
             if let work = GroupWork.parse(CommandMessages.shared.text(of: message)) {
                 GroupWorkRow(id: message.id, chat: work.chat, chatID: work.id, task: work.task, at: message.time.created)
             }
+        case .user(let message) where isSubagent && SubagentTask.parse(CommandMessages.shared.text(of: message)) != nil:
+            // A subagent's task, in its own tab: the agent's words, not yours.
+            AgentMessageRow(id: message.id, from: "the main agent", session: "", text: SubagentTask.parse(CommandMessages.shared.text(of: message)) ?? "", at: message.time.created)
         case .user(let message) where CommandMessages.shared.text(of: message).hasPrefix(Wakes.marker):
             WakeRow(note: String(CommandMessages.shared.text(of: message).dropFirst(Wakes.marker.count)), at: message.time.created)
         case .user(let message):
-            let (text, comments, paths) = UserBubble.split(CommandMessages.shared.text(of: message))
+            let written = CommandMessages.shared.text(of: message)
+            let (text, comments, paths, references) = SentMessage.split(written)
             let stored = (message.files ?? []).enumerated().map { AttachmentItem.stored($1, id: "\(message.id)#\($0)") }
-            YourMessage(text: text, attachments: stored + Attachments.paths(paths, besides: (message.files ?? []).compactMap(\.fileURL)).map(AttachmentItem.path), comments: comments, sent: Date(timeIntervalSince1970: message.time.created / 1000),
+            YourMessage(text: text, references: references, folders: folders(), attachments: stored + Attachments.paths(paths, besides: (message.files ?? []).compactMap(\.fileURL)).map(AttachmentItem.path), comments: comments, sent: Date(timeIntervalSince1970: message.time.created / 1000),
+                        fromPhone: FromPhone.isFromPhone(written),
                         fork: { fork(message) }, undo: { undo(message) },
-                        undoNote: "The conversation goes back to before this message, and so do the files the agent changed since. The message comes back to the composer. You can redo it all until you send something.",
+                        undoNote: YourMessage.undoNote(in: directory),
                         isOffline: isOffline)
         case .pending(let item):
-            let (text, comments, paths) = UserBubble.split(item.text)
-            UserBubble(text: text, attachments: item.files.map(AttachmentItem.local) + Attachments.paths(paths, besides: item.files).map(AttachmentItem.path), comments: comments,
+            let (text, comments, paths, references) = SentMessage.split(item.text)
+            UserBubble(text: text, references: references, folders: folders(), attachments: item.files.map(AttachmentItem.local) + Attachments.paths(paths, besides: item.files).map(AttachmentItem.path), comments: comments,
                        status: item.isLocal ? "Sending" : item.delivery == .queue ? "Queued" : "Sending")
                 .contextMenu { Button("Cancel", role: .destructive) { cancel(item) }.disabled(isOffline) }
         case .assistant(let message, let showsError):
@@ -563,8 +723,12 @@ private struct RowView: View, Equatable {
             StepsRow(blocks: blocks, isLive: isLive, directory: directory)
         case .widget(let call):
             WidgetCard(call: call, send: answerAgent)
+        case .picture(let call):
+            MadePictureRow(call: call, directory: directory)
         case .sent(let call):
             AgentSentRow(call: call)
+        case .subagent(let call):
+            SubagentRow(call: call, directory: directory)
         case .turnEnd(let idle, let stats, let isLast):
             TurnEndView(idle: idle, stats: stats, directory: directory, retry: isLast && !isOffline ? stats.message.map { message in { retry(message) } } : nil,
                         build: isLast && stats.agent == "plan" ? buildPlan : nil, reply: reply)
@@ -594,7 +758,7 @@ private struct RowView: View, Equatable {
             .background(.quaternary.opacity(0.5), in: .capsule)
             .frame(maxWidth: .infinity)
             .help("Sending a message makes the undo final")
-        case .working(let since):
+        case .working(let since, let quiet, let followsHeard):
             HStack(spacing: 8) {
                 // A bot shows itself at work.
                 if let bot {
@@ -602,7 +766,9 @@ private struct RowView: View, Equatable {
                         .frame(width: 16)
                 }
                 TimelineView(.periodic(from: .now, by: 1)) { context in
-                    ShimmerText(text: "Working…" + Self.elapsed(since: since, now: context.date))
+                    let latest = heard()
+                    // Against the engine's clock, as its times are: a machine's may be behind.
+                    ShimmerText(text: Self.working(since: since, quiet: followsHeard ? latest.last ?? quiet : quiet, now: context.date.addingTimeInterval(-latest.offset / 1000)))
                         .font(.callout)
                 }
             }
@@ -614,16 +780,29 @@ struct UserBubble: View {
     let text: String
     /// Words with styling of their own (a group chat's mentions), in place of plain ones.
     var style: ((String) -> AttributedString?)?
+    /// The bots and sessions it names with "&", and the project's folders for the files it names
+    /// with "@": they stand out (see `MessageMentions`).
+    var references: [AgentReferences.Reference] = []
+    var folders: [String] = []
     var attachments: [AttachmentItem] = []
     var comments: [ReviewComment] = []
     var status: String?
     @Environment(\.findHighlight) private var highlight
+    @Environment(AppModel.self) private var app
+
+    /// A part of its words with its own styling, and what it names standing out.
+    private func styled(_ part: String, agents: [MessageMentions.Agent]) -> AttributedString? {
+        let own = style?(part)
+        guard part.contains(AgentReferences.trigger) || (!folders.isEmpty && part.contains("@")) else { return own }
+        var text = own ?? AttributedString(part)
+        MessageMentions.apply(to: &text, agents: agents, folders: folders)
+        return text
+    }
 
     /// A message as its bubble shows it: its words, the review comments it was sent with, and
     /// the files it names as attached.
     static func split(_ message: String) -> (text: String, comments: [ReviewComment], paths: [String]) {
-        let (withComments, paths) = Attachments.split(message)
-        let (text, comments) = ReviewComments.split(withComments)
+        let (text, comments, paths, _) = SentMessage.split(message)
         return (text, comments, paths)
     }
 
@@ -658,6 +837,7 @@ struct UserBubble: View {
             // What it replied to, each part above the words that answer it.
             let parts = Self.parts(text)
             let marks = highlight?.spread(over: parts.map(\.text))
+            let agents = MessageMentions.agents(references, bots: app.bots)
             ForEach(parts.indices, id: \.self) { index in
                 Group {
                     if parts[index].isQuote {
@@ -665,7 +845,7 @@ struct UserBubble: View {
                             .frame(maxWidth: 420, alignment: .trailing)
                             .padding(.top, index == 0 ? 0 : 6)
                     } else {
-                        MessageText(text: parts[index].text, styled: style?(parts[index].text))
+                        MessageText(text: parts[index].text, styled: styled(parts[index].text, agents: agents))
                     }
                 }
                 .environment(\.findHighlight, marks?[index])
@@ -679,6 +859,16 @@ struct UserBubble: View {
         .opacity(status == nil ? 1 : 0.7)
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.leading, 80)
+        // A named agent opens its conversation; a named file, in the side panel.
+        .environment(\.openURL, OpenURLAction { url in
+            if let session = MessageMentions.session(in: url) {
+                if app.workspace.session(session) != nil { app.open(.session(session)) }
+                return .handled
+            }
+            guard url.isFileURL else { return .systemAction }
+            app.utilities.show(url)
+            return .handled
+        })
     }
 }
 
@@ -688,6 +878,7 @@ private struct MessageText: View {
     let text: String
     var styled: AttributedString?
     @Environment(\.findHighlight) private var highlight
+    @Environment(\.messageFont) private var messageFont
     @State private var isExpanded = false
     @State private var shownHeight: CGFloat = 0
     @State private var fullHeight: CGFloat = 0
@@ -707,15 +898,16 @@ private struct MessageText: View {
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
-            Text(shown)
+            MessageMentions.text(shown, size: messageFont.size * 1.1)
                 .transcriptFont()
                 .lineLimit(isExpanded ? nil : Self.lines)
+                .modifier(LinkPointer(isOn: styled?.runs.contains { $0.link != nil } == true))
                 .textSelection(.enabled)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { if mayBeLong { shownHeight = $0 } }
                 .background(alignment: .top) {
                     // The whole text, unseen, to tell whether the limit cuts anything.
                     if mayBeLong, !isExpanded {
-                        Text(shown)
+                        MessageMentions.text(shown, size: messageFont.size * 1.1)
                             .transcriptFont()
                             .fixedSize(horizontal: false, vertical: true)
                             .hidden()
@@ -769,8 +961,11 @@ private struct AssistantStepView: View {
                 Group {
                     switch block {
                     case .text(let text):
-                        // The last of a step under way may still be writing a code block.
-                        MarkdownText(text: text.text, folders: folders, isWriting: message.time.completed == nil && index == message.content.count - 1)
+                        // The last of a step under way: its words as they stream in. The same view
+                        // once it's done, so finishing doesn't make the reply's views again (a
+                        // frame of a tenth of a second at the end of each reply).
+                        WritingText(row: message.id, part: index, text: text.text, folders: folders,
+                                    isWriting: message.time.completed == nil && index == message.content.count - 1)
                     case .reasoning(let reasoning):
                         ReasoningView(block: reasoning)
                     case .tool(let call):
@@ -795,12 +990,41 @@ private struct AssistantStepView: View {
     }
 }
 
+/// The text a step under way ends in, which may still be being written: its words as they stream
+/// in, from the session's `WritingBlock`, so more of them draw only this.
+struct WritingText: View {
+    /// Its row, and where it is among the step's blocks.
+    let row: String
+    let part: Int
+    /// Its words when the conversation was last drawn.
+    let text: String
+    var folders: () -> [String] = { [] }
+    /// Still being written; once it's done, just its words.
+    var isWriting = true
+    @Environment(WritingBlock.self) private var writing: WritingBlock?
+
+    var body: some View {
+        // Still being written: a code block it ends in is colored once it's done.
+        let shown = isWriting ? writing?.text(row: row, part: part) ?? text : text
+        MarkdownText(text: shown, folders: folders, agents: MarkdownText.agents(namedIn: shown), isWriting: isWriting)
+    }
+}
+
 struct MarkdownText: View {
+    /// The agents `text` names with "&" (a bot's face and color, as in your messages); none
+    /// without an "&", so most replies aren't looked through.
+    /// Only for a reply with an "&" before a name: one with "&&" or "& " in its code doesn't look
+    /// up (and follow) your sessions.
+    static func agents(namedIn text: String) -> [MessageMentions.Agent] {
+        text.range(of: #"&[^\s&]"#, options: .regularExpression) != nil ? MessageMentions.agents(namedIn: text) : []
+    }
+
     let text: String
     /// The project's folders: file names written as code in them become links.
     var folders: () -> [String] = { [] }
-    /// In a group chat, its bots, for their mentions.
+    /// In a group chat, its bots, for their mentions, and the agents a message names with "&".
     var mentions: [Bot] = []
+    var agents: [MessageMentions.Agent] = []
     /// Still being written: a code block it ends in is colored once it's done.
     var isWriting = false
     @Environment(\.findHighlight) private var highlight
@@ -829,7 +1053,7 @@ struct MarkdownText: View {
             ForEach(chunks.indices, id: \.self) { index in
                 // Code still being written is colored once it's done.
                 MarkdownPiece(text: isWriting ? MarkdownChunks.text(of: chunks[index], marking: CodeLanguage.writing) : String(chunks[index].text),
-                              folders: folders, mentions: mentions, highlight: marks?[index])
+                              folders: folders, mentions: mentions, agents: agents, highlight: marks?[index])
                     .equatable()
                     .padding(.top, chunks[index].gap)
             }
@@ -837,33 +1061,64 @@ struct MarkdownText: View {
     }
 }
 
-/// Markdown, drawn by Textual. Equal when its words and marks are: a piece that's done isn't read
+/// Markdown, drawn with TextKit (`ReplyView`). Equal when its words and marks are: a piece that's done isn't read
 /// again as the rest of its reply streams in.
 private struct MarkdownPiece: View, Equatable {
     let text: String
     let folders: () -> [String]
     let mentions: [Bot]
+    let agents: [MessageMentions.Agent]
     let highlight: FindHighlight?
     @Environment(AppModel.self) private var app
 
     static func == (a: MarkdownPiece, b: MarkdownPiece) -> Bool {
-        a.text == b.text && a.highlight == b.highlight && a.mentions == b.mentions
+        a.text == b.text && a.highlight == b.highlight && a.mentions == b.mentions && a.agents == b.agents
     }
 
     var body: some View {
-        StructuredText(text, parser: FileLinkingParser(folders: folders, mentions: mentions, highlight: highlight))
+        #if DEBUG
+        if Perf.textual { textual } else { textKit }
+        #else
+        textKit
+        #endif
+    }
+
+    /// With TextKit: a few views a piece, where Textual makes several for every block.
+    private var textKit: some View {
+        ReplyView(markdown: text, parser: FileLinkingParser(folders: folders, mentions: mentions, agents: agents, highlight: highlight)) { url in
+            // A file opens in the side panel, a named agent its conversation; web links in the browser.
+            if let session = MessageMentions.session(in: url) {
+                if app.workspace.session(session) != nil { app.open(.session(session)) }
+                return true
+            }
+            guard url.isFileURL else { return false }
+            app.utilities.show(url)
+            return true
+        }
+        #if DEBUG
+        .onAppear { ScrollFrameMonitor.piecesMade += 1 }
+        #endif
+    }
+
+    private var textual: some View {
+        StructuredText(text, parser: FileLinkingParser(folders: folders, mentions: mentions, agents: agents, highlight: highlight))
             // Textual reads it again only when the text changes: made again when the marks do.
             .id(highlight)
             .transcriptFont()
             // Closer to the text than the GitHub style, so they win: code blocks, and, with Find's
             // marks, inline code without its own background (the marks give it one).
             .textual.codeBlockStyle(CopyableCodeBlockStyle())
+            .textual.listItemStyle(.firstLine)
             .textual.inlineStyle(highlight == nil ? .gitHub : .findMarks)
             .textual.highlighterTheme(CodeColors.theme)
             .textual.structuredTextStyle(.gitHub)
             .textual.textSelection(.enabled)
-            // A file opens in the side panel; web links in the browser.
+            // A file opens in the side panel, a named agent its conversation; web links in the browser.
             .environment(\.openURL, OpenURLAction { url in
+                if let session = MessageMentions.session(in: url) {
+                    if app.workspace.session(session) != nil { app.open(.session(session)) }
+                    return .handled
+                }
                 guard url.isFileURL else { return .systemAction }
                 app.utilities.show(url)
                 return .handled
@@ -938,23 +1193,70 @@ private struct TurnEndView: View {
     /// Builds what a plan described; offered under Plan mode's last answer.
     var build: (() -> Void)?
     var reply: ((String) -> Void)?
+    @Environment(AppModel.self) private var app
+
+    /// The model's account was refused because its sign-in couldn't be renewed: the engine says only
+    /// "Request failed: 400" then (a key refused, the service says why itself).
+    private var signInEnded: Bool {
+        idle.error?.type == "provider.auth" && idle.error?.message.hasPrefix("Request failed") == true
+    }
+
+    /// What went wrong; an ended sign-in said plainly, with the service's words after it.
+    /// A provider that turned the request down for want of a sign-in, whatever the engine calls it.
+    private var refused: Bool {
+        idle.error.map { $0.type == "provider.auth" || Catalog.isSignInRefusal($0.message) } == true
+    }
+
+    private var message: String {
+        guard let error = idle.error else { return "The run failed." }
+        guard signInEnded else {
+            guard refused, error.type != "provider.auth" else { return error.message }
+            let there = RemoteFolder.machine(of: directory).map { " on \($0)" } ?? ""
+            return "This model’s account isn’t signed in\(there), so the request was refused (\(error.message)). Sign in to it again in Accounts, or choose another model."
+        }
+        let ended = "This model's sign-in has ended and couldn't be renewed, so the request was refused (\(error.message))."
+        // A machine signs in on its own, to its plans, or to a plan's coding agent there.
+        if let machine = RemoteFolder.machine(of: directory) {
+            return ended + " Sign in to it on \(machine) in Accounts, or use its plan's coding agent there (Codex for ChatGPT)."
+        }
+        return ended + " Sign in to its account again."
+    }
 
     var body: some View {
         switch idle.outcome {
         case .failed:
             VStack(alignment: .leading, spacing: 8) {
-                ErrorCard(message: idle.error?.message ?? "The run failed.")
+                ErrorCard(message: message)
                 HStack(spacing: 8) {
+                    // The model's account to sign in to again: in Accounts, where this conversation
+                    // runs (a machine signs in on its own).
+                    if refused {
+                        let machine = RemoteFolder.machine(of: directory)
+                        Button(signInEnded ? "Sign In Again" : "Open Accounts", systemImage: "person.crop.circle") { app.openAccounts(on: machine) }
+                            .buttonStyle(.glass)
+                            .controlSize(.small)
+                            .help(machine.map { "Accounts, on \($0)" } ?? "Accounts")
+                    }
+                    // A coding agent to sign in to: where this conversation runs (a machine signs in
+                    // on its own), Accounts open on it.
+                    if idle.error?.type == "signin" {
+                        let machine = RemoteFolder.machine(of: directory)
+                        Button(machine.map { "Sign In on \($0)" } ?? "Open Accounts", systemImage: "person.crop.circle") { app.openAccounts(on: machine) }
+                            .buttonStyle(.glass)
+                            .controlSize(.small)
+                            .help(machine.map { "Sign in to the coding agents on \($0): its sign-ins are its own" } ?? "Sign in to the coding agents")
+                    }
                     if let retry {
                         Button("Try Again", systemImage: "arrow.clockwise", action: retry)
                             .buttonStyle(.glass)
                             .controlSize(.small)
                             .help("Send your last message again")
                     }
-                    // What it changed before failing.
+                    // What it changed and said before failing.
                     if !stats.files.isEmpty {
                         TurnFiles(files: stats.files, directory: directory)
                     }
+                    replyButtons
                 }
             }
         case .interrupted:
@@ -965,6 +1267,7 @@ private struct TurnEndView: View {
                 if !stats.files.isEmpty {
                     TurnFiles(files: stats.files, directory: directory)
                 }
+                replyButtons
             }
         case .succeeded:
             HStack(spacing: 6) {
@@ -976,20 +1279,25 @@ private struct TurnEndView: View {
                 if !stats.files.isEmpty {
                     TurnFiles(files: stats.files, directory: directory)
                 }
-                if !stats.text.isEmpty {
-                    CopyButton(text: stats.text.joined(separator: "\n\n"), help: "Copy the Reply")
-                    if let reply {
-                        MessageActionButton(symbol: "arrowshape.turn.up.left", help: "Reply: quotes the part you selected (or the whole reply) in the composer") {
-                            reply(stats.text.joined(separator: "\n\n"))
-                        }
-                    }
-                }
+                replyButtons
                 if let build {
                     Button("Build It", systemImage: "hammer", action: build)
                         .buttonStyle(.glass)
                         .controlSize(.small)
                         .help("Switch to Build mode and have the agent carry out this plan")
                         .padding(.leading, 4)
+                }
+            }
+        }
+    }
+
+    /// Copy and Reply, for what it said, however the turn ended.
+    @ViewBuilder private var replyButtons: some View {
+        if !stats.text.isEmpty {
+            CopyButton(text: stats.text.joined(separator: "\n\n"), help: "Copy the Reply")
+            if let reply {
+                MessageActionButton(symbol: "arrowshape.turn.up.left", help: "Reply: quotes the part you selected (or the whole reply) in the composer") {
+                    reply(stats.text.joined(separator: "\n\n"))
                 }
             }
         }
@@ -1196,10 +1504,13 @@ private struct AgentSentRow: View {
     @Environment(AppModel.self) private var app
 
     private var input: JSONValue? {
-        switch call.state {
+        let input: JSONValue? = switch call.state {
         case .running(let input, _), .completed(let input, _, _), .failed(let input, _, _, _): input
         case .streaming: nil
         }
+        // Grok's, sent before the bridge read its arguments out of its own wrapping.
+        if let wrapped = input?["tool_input"], wrapped["text"] != nil || wrapped["to"] != nil { return wrapped }
+        return input
     }
 
     /// What the tool said back: the answer it waited for, or that it's sent.
@@ -1209,7 +1520,8 @@ private struct AgentSentRow: View {
     }
 
     var body: some View {
-        let to = input?["to"]?.string ?? "another agent"
+        // As it may have been named: "&Mira".
+        let to = input?["to"]?.string.map { $0.hasPrefix("&") ? String($0.dropFirst()) : $0 } ?? "another agent"
         let address = AgentMail.shared.directory().first { $0.session == to || $0.name.caseInsensitiveCompare(to) == .orderedSame }
         let text = input?["text"]?.string ?? ""
         let answer = said.flatMap { said in said.range(of: " answered:\n\n").map { String(said[$0.upperBound...]) } }
@@ -1236,7 +1548,7 @@ private struct AgentSentRow: View {
             }
         } content: {
             if !text.isEmpty {
-                MarkdownText(text: text)
+                MarkdownText(text: text, agents: MarkdownText.agents(namedIn: text))
                     .padding(.leading, 24)
             }
             // What it answered, when it was waited for.
@@ -1246,7 +1558,7 @@ private struct AgentSentRow: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .padding(.leading, 24)
-                MarkdownText(text: answer)
+                MarkdownText(text: answer, agents: MarkdownText.agents(namedIn: answer))
                     .padding(.leading, 24)
             }
         }
@@ -1277,6 +1589,7 @@ private struct FoldingCard<Header: View, Accessory: View, Content: View>: View {
     @ViewBuilder var header: Header
     @ViewBuilder var accessory: Accessory
     @ViewBuilder var content: Content
+    @State private var isHoveringHeader = false
 
     /// A few lines at most: shown open from the start.
     static func isShort(_ text: String) -> Bool {
@@ -1312,7 +1625,17 @@ private struct FoldingCard<Header: View, Accessory: View, Content: View>: View {
                                 .truncationMode(.tail)
                         }
                     }
+                    // A fill under the pointer that reaches past the words without moving them,
+                    // and the pointing hand, which the conversation's selection layer on top
+                    // would otherwise turn into an I-beam.
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(isHoveringHeader ? Pressable.hoverFill : .clear, in: .rect(cornerRadius: 6))
+                    .background(HoverTracker { isHoveringHeader = $0 })
+                    .padding(.horizontal, -6)
+                    .padding(.vertical, -3)
                     .contentShape(.rect)
+                    .animation(.easeOut(duration: 0.12), value: isHoveringHeader)
                 }
                 .buttonStyle(.plain)
                 .help(open ? "Fold it to its first line" : "Show all of it")
@@ -1360,7 +1683,7 @@ private struct AgentMessageRow: View {
                     .help("Open \(from)'s conversation")
             }
         } content: {
-            MarkdownText(text: text)
+            MarkdownText(text: text, agents: MarkdownText.agents(namedIn: text))
                 .padding(.leading, 24)
         }
     }
@@ -1519,6 +1842,10 @@ enum Perf {
     static let noGlass = ProcessInfo.processInfo.environment["KUVO_PERF_NO_GLASS"] != nil
     static let noEdge = ProcessInfo.processInfo.environment["KUVO_PERF_NO_EDGE"] != nil
     static let noAnimation = ProcessInfo.processInfo.environment["KUVO_PERF_NO_ANIM"] != nil
+    /// KUVO_PERF_TEXTUAL: replies drawn by Textual, as they were, instead of TextKit (`ReplyView`).
+    static let textual = ProcessInfo.processInfo.environment["KUVO_PERF_TEXTUAL"] != nil
+    /// KUVO_PERF_LAZY: rows in the lazy stack, as they were, instead of `RowStack`.
+    static let lazy = ProcessInfo.processInfo.environment["KUVO_PERF_LAZY"] != nil
 }
 #endif
 
@@ -1555,5 +1882,21 @@ private struct CutFade: ViewModifier {
         } else {
             content
         }
+    }
+}
+
+extension TranscriptView {
+    /// A run cut off with no end of its own (Kuvo Code quit, or its engine stopped, while it
+    /// worked): the step it stopped in, which the conversation says was interrupted, rather than
+    /// ending on a failed step. None while it runs, or once its run has an end (Stop gives it one).
+    static func interruptedStep(in messages: [Message], isRunning: Bool) -> Message.Assistant? {
+        let last = messages.last { message in
+            switch message {
+            case .modelSwitched, .agentSwitched: false
+            default: true
+            }
+        }
+        guard !isRunning, case .assistant(let step)? = last, step.error?.isInterruption == true else { return nil }
+        return step
     }
 }

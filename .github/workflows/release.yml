@@ -8,6 +8,13 @@ name: Release
 # version's section of CHANGELOG.md. Before tagging, rename its "## Unreleased"
 # heading to the version, like "## 0.1.0"; a tag without notes fails right away.
 #
+# A beta is a vMAJOR.MINOR.PATCH-beta.N tag on main, like v0.7.0-beta.1: the version
+# it leads up to. It's published as a prerelease, never the latest, with the
+# Unreleased notes as they are; only copies with Settings › General › Get beta
+# updates on are offered it. The update feed holds the newest release and, when
+# it's newer, the newest beta (scripts/merge-appcast.py); a beta's feed also
+# replaces the newest release's, which is where installed copies read it.
+#
 # Every release is signed with a Developer ID and notarized, so macOS opens it
 # without a warning; the workflow stops if any of these secrets is missing.
 #   MACOS_CERTIFICATE_P12       base64 of the Developer ID Application .p12
@@ -20,7 +27,11 @@ name: Release
 #
 # Every release also needs SPARKLE_PRIVATE_KEY, the EdDSA key that signs the
 # update feed (appcast.xml). Installed copies of Kuvo Code only accept updates
-# signed with it. scripts/set-update-key.sh uploads it; the signing and
+# signed with it. With KUVO_BOX_SIGNING_KEY (an Ed25519 key, PEM) it also
+# publishes what remote machines run, for them to update themselves with
+# (boxes.json and box-<version>.tar.gz); machines take only what's signed with a
+# key pinned in kuvo-link.js (UPDATE_KEYS). scripts/set-box-key.sh makes that
+# key once, keeps it in your login keychain, uploads it and prints the key to pin. scripts/set-update-key.sh uploads it; the signing and
 # notarization secrets come from scripts/set-signing-secrets.sh and
 # scripts/set-notary-secrets.sh.
 #
@@ -31,10 +42,13 @@ on:
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+"
   workflow_dispatch:
 
+# One at a time, releases and betas alike: each writes the update feed from the one before. A
+# dry run waits in a line of its own, so starting one never cancels a release waiting its turn.
 concurrency:
-  group: release-${{ github.ref }}
+  group: ${{ github.event_name == 'push' && 'release' || format('release-dry-run-{0}', github.run_id) }}
   cancel-in-progress: false
 
 permissions:
@@ -61,8 +75,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Release tags must look like vMAJOR.MINOR.PATCH." >&2
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-beta\.[0-9]+)?$ ]]; then
+            echo "Release tags must look like vMAJOR.MINOR.PATCH, or vMAJOR.MINOR.PATCH-beta.N for a beta." >&2
             exit 1
           fi
 
@@ -100,6 +114,7 @@ jobs:
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
       SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+      KUVO_BOX_SIGNING_KEY: ${{ secrets.KUVO_BOX_SIGNING_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -115,7 +130,12 @@ jobs:
             exit 1
           fi
           # Notes come from CHANGELOG.md; checked now so a tag without them fails in seconds.
-          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+          # A beta's are what's under Unreleased so far.
+          if [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF_NAME" == *-beta.* ]]; then
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+            echo "BETA=true" >> "$GITHUB_ENV"
+            ./scripts/release-notes.sh Unreleased > "$RUNNER_TEMP/notes.md"
+          elif [[ "$GITHUB_EVENT_NAME" == push ]]; then
             echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
             ./scripts/release-notes.sh "${GITHUB_REF_NAME#v}" > "$RUNNER_TEMP/notes.md"
           else
@@ -185,6 +205,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "build/Kuvo Code.app/Contents/Info.plist")" = "$VERSION"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "build/Kuvo Code.app/Contents/Info.plist")" = "$(./scripts/build-version.sh "$VERSION")"
           # A release is two files: the disk image people download and the update
           # feed installed copies read. Updates install from the same disk image.
           # The license notices travel inside the app.
@@ -192,8 +213,40 @@ jobs:
           # Unversioned, so kuvo.run/code can always link to releases/latest/download/KuvoCode.dmg.
           cp build/KuvoCode.dmg dist/KuvoCode.dmg
           ./scripts/appcast.sh "$VERSION" dist/KuvoCode.dmg \
-            "https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION/KuvoCode.dmg" "$RUNNER_TEMP/notes.md" > dist/appcast.xml
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION/KuvoCode.dmg" "$RUNNER_TEMP/notes.md" > "$RUNNER_TEMP/item.xml"
+          # With the newest of the other kind from the feed that's out, on the newest release.
+          # None before the first release; one that lost its feed starts it again. Anything
+          # else (GitHub not answering) stops here rather than leave betas or releases out.
+          mkdir "$RUNNER_TEMP/current"
+          if [[ "$GITHUB_EVENT_NAME" != push ]]; then
+            : # A dry run shows the feed of what it built.
+          elif latest="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>"$RUNNER_TEMP/view.err")"; then
+            if ! gh release download "$latest" --repo "$GITHUB_REPOSITORY" --pattern appcast.xml --dir "$RUNNER_TEMP/current" 2>"$RUNNER_TEMP/download.err"; then
+              grep -qi "no assets match" "$RUNNER_TEMP/download.err" || { cat "$RUNNER_TEMP/download.err" >&2; exit 1; }
+              echo "$latest has no update feed: this one starts it again." >&2
+            fi
+          elif ! grep -qi "release not found" "$RUNNER_TEMP/view.err"; then
+            cat "$RUNNER_TEMP/view.err" >&2
+            exit 1
+          fi
+          python3 ./scripts/merge-appcast.py "$RUNNER_TEMP/item.xml" "$RUNNER_TEMP/current/appcast.xml" > dist/appcast.xml
           cat dist/appcast.xml
+
+      - name: Package the box release
+        # What machines run, for them to update themselves with (Packages/KuvoLink/PROTOCOL.md,
+        # "Updates"): the files this version puts on every machine, packed, and boxes.json, a
+        # manifest naming the pack and the engine's Linux builds, signed. Without the key, there's
+        # none, and machines update only as a Mac connects.
+        if: env.KUVO_BOX_SIGNING_KEY != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          "build/Kuvo Code.app/Contents/MacOS/Kuvo Code" --write-box-files "$RUNNER_TEMP/box"
+          test "$(cat "$RUNNER_TEMP/box/bin/box-version")" = "$VERSION"
+          for file in kuvo-link.js kuvo-browser.js kuvo-agents.js kuvo-start kuvo-launch; do test -s "$RUNNER_TEMP/box/bin/$file"; done
+          COPYFILE_DISABLE=1 tar --no-xattrs --no-mac-metadata --uid 0 --gid 0 -czf "dist/box-$VERSION.tar.gz" -C "$RUNNER_TEMP/box" .
+          node scripts/sign-box.mjs "$VERSION" "dist/box-$VERSION.tar.gz" \
+            "https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION/box-$VERSION.tar.gz" "$RUNNER_TEMP/box/box.json" > dist/boxes.json
 
       - name: Upload the dry-run build
         if: github.event_name == 'workflow_dispatch'
@@ -216,10 +269,16 @@ jobs:
             gh release delete "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --yes
           fi
 
+          if [[ "${BETA:-}" == true ]]; then
+            { printf 'A beta of what comes next, for trying it out before it’s released: Kuvo Code offers it with Settings › General › Get beta updates on.\n\n'; cat "$RUNNER_TEMP/notes.md"; } > "$RUNNER_TEMP/beta-notes.md"
+            mv "$RUNNER_TEMP/beta-notes.md" "$RUNNER_TEMP/notes.md"
+          fi
           printf '\n\nRequires macOS 26 or later on Apple silicon. Signed with a Developer ID and notarized by Apple.\n' >> "$RUNNER_TEMP/notes.md"
+          kind=()
+          if [[ "${BETA:-}" == true ]]; then kind=(--prerelease); fi
           # --generate-notes adds the link to the full list of commits after these notes.
           gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
-            --draft --title "Kuvo Code ${GITHUB_REF_NAME#v}" --generate-notes \
+            --draft ${kind[@]+"${kind[@]}"} --title "Kuvo Code ${GITHUB_REF_NAME#v}" --generate-notes \
             --notes-file "$RUNNER_TEMP/notes.md"
 
           expected="$(find dist -type f -exec basename {} \; | sort)"
@@ -230,4 +289,24 @@ jobs:
             exit 1
           fi
 
-          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          if [[ "${BETA:-}" != true ]]; then
+            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          else
+            gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+            # Installed copies read the newest release's feed, so the beta goes there too. The
+            # upload replaces the feed by taking the old one off first: checked, and tried again,
+            # so that release isn't left without one.
+            latest="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+            for attempt in 1 2 3; do
+              if gh release upload "$latest" dist/appcast.xml --repo "$GITHUB_REPOSITORY" --clobber; then break; fi
+              if [[ $attempt == 3 ]]; then
+                if gh release view "$latest" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -qx appcast.xml; then
+                  echo "$latest still has its old feed, without this beta: upload dist/appcast.xml there by hand." >&2
+                else
+                  echo "$latest is left without its update feed: upload dist/appcast.xml there by hand." >&2
+                fi
+                exit 1
+              fi
+              sleep 10
+            done
+          fi

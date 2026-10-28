@@ -37,9 +37,15 @@ HEADER
     section OpenUsage fork https://github.com/robinebers/openusage \
         "Packages/UsageKit is a fork of OpenUsage, not the official OpenUsage. The OpenUsage name and logo are trademarks of Robin Ebers and aren't used." \
         Packages/UsageKit/LICENSE
+    section Textual 0.5.0 https://github.com/gonzalezreal/textual \
+        "Packages/Textual is a copy of Textual with Kuvo Code's changes (see its README)." \
+        Packages/Textual/LICENSE
     section Prism 1.29.0 https://prismjs.com \
         "KuvoCode/Resources/prism-bundle.js, with its language definitions, as bundled by Textual's Scripts/bundle-prism.sh." \
         Licenses/Prism.txt
+    section Mermaid 11.17.2 https://github.com/mermaid-js/mermaid \
+        "KuvoCode/Resources/mermaid.min.js, unchanged, as published on npm; the libraries it bundles are under their own licenses, MIT or similar." \
+        Licenses/mermaid.txt
     section browser-use 0.4.2 https://github.com/browser-use/browser-use \
         "KuvoCode/Resources/buildDomTree.js, unchanged." \
         Licenses/browser-use.txt

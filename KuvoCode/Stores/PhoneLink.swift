@@ -6,6 +6,7 @@ import OpenCodeKit
 import os
 import UsageKit
 import Security
+import UniformTypeIdentifiers
 import SystemConfiguration
 
 /// Kuvo Code for iPhone's way in: this Mac answers the phones you've paired, through the relay,
@@ -20,27 +21,23 @@ final class PhoneLink {
         UserDefaults.standard.bool(forKey: "phoneLink") || ProcessInfo.processInfo.environment["KUVO_DEMO_PHONE"] != nil
     }
 
-    /// Where the relay is until there's a public one. `defaults write run.kuvo.code
-    /// phoneLink.relay wss://…` points elsewhere.
-    static let defaultRelay = URL(string: "ws://127.0.0.1:8790")!
+    /// The relay your computers and phones meet at. `defaults write run.kuvo.code phoneLink.relay
+    /// wss://…` points elsewhere (a relay of your own, or one for tests).
+    static let defaultRelay = URL(string: "wss://kuvolink.porigam.com.tr")!
     static let pairingTime: Duration = .seconds(600)
 
-    struct Phone: Codable, Hashable, Identifiable {
-        /// Its static key, base64url.
-        var key: String
-        var name: String
-        var added: Date
-        /// Its address on the relay, where its notifications go: learned as it comes in.
-        var address: String?
-        var id: String { key }
-    }
+    /// A paired phone: its key, name, when it paired, where it is and its pairing.
+    typealias Phone = PairedPhones.Phone
 
     enum Status: Equatable {
         case off, connecting, connected
         case failed(String)
     }
 
-    private(set) var phones: [Phone] = []
+    /// The phones you've paired, and the ones removed (from here or from a phone), which stay out
+    /// until they're paired again (`PairedPhones`).
+    private(set) var paired = PairedPhones()
+    var phones: [Phone] { paired.phones }
     /// Your machines' bridges, which phones reach directly (with the Mac closed), by machine:
     /// what `kuvo/hosts` tells a phone.
     private(set) var machineHosts: [String: MachineHost] = [:]
@@ -49,25 +46,65 @@ final class PhoneLink {
     /// Your bots, for `kuvo/bots`: the phone draws and describes each as the Mac does; set by
     /// AppModel.
     @ObservationIgnored weak var bots: Bots?
+    /// Every conversation's wake-ups and watches, for `kuvo/wakes`; set by AppModel.
+    @ObservationIgnored weak var wakeUps: WakeUps?
     /// What agents ask you for while they browse, for `kuvo/asks`: a phone answers them as the
     /// cards in the window do; set by AppModel.
     @ObservationIgnored weak var browserAsks: BrowserAsks?
     /// Your group chats, for `kuvo/groups`: a phone reads and writes in them as the window does;
     /// set by AppModel.
-    @ObservationIgnored weak var groups: BotGroups?
+    @ObservationIgnored weak var groups: GroupChats?
+    /// Your sessions, for stopping a command an agent left running (`kuvo/shell/<id>/stop`); set
+    /// by AppModel.
+    @ObservationIgnored weak var workspace: Workspace?
     /// A machine's name, by its id, for where an ask's browser runs; set by AppModel.
     @ObservationIgnored var machineName: (String) -> String? = { _ in nil }
+    /// The agents bridge (Claude Code, Codex…), for `kuvo/agents/api/…`; set by AppModel.
+    @ObservationIgnored var agents: OutsideAgents?
+    /// Plans whose sign-in ended (the service refused it), for `kuvo/accounts/ended`, and
+    /// Disconnect as Settings › Accounts does it (here and on your machines); set by AppModel.
+    @ObservationIgnored var endedSignIns: () -> [String] = { [] }
+    /// (Whether it was one of your plans: nothing else is signed out.)
+    @ObservationIgnored var forgetSignIn: (String) -> Bool = { _ in false }
+    /// Whether a group chat is on its way to another computer; set by AppModel.
+    @ObservationIgnored var isMoving: (String) -> Bool = { Moves.isFrozen($0) }
+    /// This Mac's engine settings, for `kuvo/config` and `kuvo/mcp/catalog`; set by AppModel.
+    @ObservationIgnored weak var engineConfig: EngineConfig?
+    /// Starts this Mac's engine over, as Settings › Engine's Restart does; set by AppModel.
+    @ObservationIgnored var restartEngine: () -> Void = {}
+    /// When the engine running now came up, for `kuvo/info`; set by AppModel.
+    @ObservationIgnored var engineStarted: () -> Date? = { nil }
 
     struct MachineHost: Codable, Hashable {
         var name: String
         var address: String
         var key: String
+        /// Its engine is another Mac's, which gives it its settings, as it was when it last
+        /// connected (nil from before this was kept).
+        var anotherMac: Bool?
+        /// Its bridge talks to your other computers itself (PROTOCOL.md, "Peers"): it takes their
+        /// lists and letters by mail.
+        var peers: Bool?
     }
 
     /// What's kept in phone-link.json.
     private struct Saved: Codable {
         var phones: [Phone] = []
+        var removed: [PairedPhones.Removal] = []
         var machines: [String: MachineHost] = [:]
+
+        init(phones: [Phone] = [], removed: [PairedPhones.Removal] = [], machines: [String: MachineHost] = [:]) {
+            self.phones = phones
+            self.removed = removed
+            self.machines = machines
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            phones = try container.decodeIfPresent([Phone].self, forKey: .phones) ?? []
+            removed = try container.decodeIfPresent([PairedPhones.Removal].self, forKey: .removed) ?? []
+            machines = try container.decodeIfPresent([String: MachineHost].self, forKey: .machines) ?? [:]
+        }
     }
     private(set) var status = Status.off
     /// The link a phone pairs with, while Settings › Phone shows it: good for ten minutes, once.
@@ -99,12 +136,25 @@ final class PhoneLink {
     @ObservationIgnored private var endpoint: ServerEndpoint?
     private let log = Logger(subsystem: "run.kuvo.code", category: "phone")
 
-    private static var file: URL { AppInfo.supportDirectory.appending(path: "phone-link.json") }
+    /// Where the phones and machines are kept: phone-link.json (a test's own, for a test).
+    private let savedFile: URL
 
-    init() {
-        let saved = (try? JSONDecoder().decode(Saved.self, from: Data(contentsOf: Self.file))) ?? Saved()
-        phones = saved.phones
+    /// `file` and `identity`: a test's own, kept apart from the app's file and Keychain.
+    init(file: URL? = nil, identity: (key: LinkKey, secret: RelaySecret)? = nil) {
+        savedFile = file ?? AppInfo.supportDirectory.appending(path: "phone-link.json")
+        let saved = (try? JSONDecoder().decode(Saved.self, from: Data(contentsOf: savedFile))) ?? Saved()
+        paired = PairedPhones(phones: saved.phones, removed: saved.removed)
         machineHosts = saved.machines
+        if let identity { self.identity = identity }
+    }
+
+    /// The Keychain wouldn't give out this Mac's key or secret this launch.
+    private static var unreadable = false
+
+    /// This Mac's own key and secret, as your phones and machines know them (not a stand-in).
+    private var hasIdentity: Bool {
+        _ = identity
+        return !Self.unreadable
     }
 
     private static func loadIdentity() -> (key: LinkKey, secret: RelaySecret) {
@@ -113,12 +163,14 @@ final class PhoneLink {
     }
 
     /// One of them from the Keychain, made the first time. One the Keychain won't give out (you
-    /// said no when it asked) isn't replaced: phones won't reach this Mac until it's opened again.
+    /// said no when it asked) isn't replaced, and the link stays off (`unreadable`): your phones
+    /// and other computers would take a stand-in for another Mac. It's tried again next launch.
     private static func kept<T>(_ account: String, read: (Data) -> T?, make: () -> T, bytes: (T) -> Data) -> T {
         do {
             if let data = try keychain(account), let value = read(data) { return value }
         } catch {
             Logger(subsystem: "run.kuvo.code", category: "phone").error("Couldn’t read the phone link’s \(account, privacy: .public) from the Keychain: \(error.localizedDescription, privacy: .public)")
+            unreadable = true
             return make()
         }
         let value = make()
@@ -131,28 +183,81 @@ final class PhoneLink {
         (SCDynamicStoreCopyComputerName(nil, nil) as String?) ?? "Mac"
     }
 
-    /// Starts answering phones, through this Mac's engine at `endpoint`, once it's ready.
+    /// Whether you have machines: with them, this Mac meets them at the relay (and they each
+    /// other), phone or not. Set by the app.
+    @ObservationIgnored var hasMachines: () -> Bool = { false }
+
+    /// This Mac connects to the relay: for your phones, or for your other computers. A Mac on its
+    /// own, without the phone link, makes no connection.
+    var relayWanted: Bool { Self.isEnabled || hasMachines() }
+
+    /// Where each conversation being moved lives now (nil: this Mac), by machine. Set by the app
+    /// (`Moves.livePlaces`).
+    @ObservationIgnored var movedSessions: () -> [String: String?] = { [:] }
+
+    /// Mail from one of your machines (PROTOCOL.md, "Peers"), opened: which machine, and what it
+    /// said. Set by the app (AgentMail).
+    @ObservationIgnored var onMail: (_ machine: String, _ payload: [String: Any]) -> Void = { _, _ in }
+
+    /// Starts answering phones and your machines, through this Mac's engine at `endpoint`, once
+    /// it's ready.
     func start(endpoint: ServerEndpoint) {
         self.endpoint = endpoint
-        guard Self.isEnabled, running == nil else { return }
+        guard relayWanted, running == nil, hasIdentity else { return }
         server = makeServer(endpoint: endpoint)
         running = Task { await run() }
         keepPresent()
+        #if DEBUG
+        pairForDemo()
+        #endif
     }
 
+    #if DEBUG
+    /// KUVO_DEMO_PHONE_PAIR=<file>: once the relay answers, a pairing code, its link written to
+    /// that file, for pairing a simulator (or a test) without a camera or the window.
+    private func pairForDemo() {
+        guard let file = ProcessInfo.processInfo.environment["KUVO_DEMO_PHONE_PAIR"] else { return }
+        Task { [weak self] in
+            for _ in 0..<60 where self?.status != .connected { try? await Task.sleep(for: .milliseconds(500)) }
+            guard let self, pairing == nil else { return }
+            beginPairing()
+            try? pairing?.url.absoluteString.write(toFile: file, atomically: true, encoding: .utf8)
+        }
+    }
+    #endif
+
     func stop() {
-        running?.cancel()
-        running = nil
+        let server = server, running = running
+        self.running = nil
         presence?.cancel()
         presence = nil
-        server = nil
+        self.server = nil
         status = .off
+        // Phones hear their sessions end (see `LinkServer.closeAll`); the relay connection goes
+        // once that's on its way.
+        Task {
+            await server?.closeAll()
+            try? await Task.sleep(for: .milliseconds(300))
+            running?.cancel()
+        }
     }
 
     private func restart() {
         guard let endpoint else { return }
         stop()
         start(endpoint: endpoint)
+    }
+
+    /// A machine added or removed: with the first, this Mac meets it at the relay; with the last
+    /// gone (and no phone link), it stops. The others hear who their peers are now.
+    func machinesChanged() {
+        if relayWanted, running == nil, let endpoint {
+            start(endpoint: endpoint)
+        } else if !relayWanted, running != nil {
+            stop()
+        }
+        syncMachines()
+        Task { await tellMachines() }
     }
 
     /// Shows a pairing link (as a QR code) for a phone to scan.
@@ -165,11 +270,48 @@ final class PhoneLink {
         pairing = nil
     }
 
+    /// Removes a phone you've paired (Settings › Phone): here and on your machines, for good, until
+    /// it's paired again.
     func remove(_ phone: Phone) {
-        phones.removeAll { $0.id == phone.id }
+        let mac = key.publicBytes.base64URL
+        removePhones([.init(key: phone.key, pairing: phone.pairing)], by: mac)
+    }
+
+    /// `entries` removed by `sender`, this Mac or a phone paired with it: as `PairedPhones` has it
+    /// (never this Mac, and for good). Their sessions end, and your machines hear of it. False,
+    /// changing nothing, when that isn't allowed.
+    @discardableResult
+    private func removePhones(_ entries: [PairedPhones.Entry], by sender: String) -> Bool {
+        let before = Set(paired.phones.map(\.key))
+        guard paired.remove(entries, by: sender, macs: [key.publicBytes.base64URL]) else { return false }
         save()
-        if let key = Data(base64URL: phone.key) { Task { [server] in await server?.forget(phone: key) } }
+        // Once the answer's on its way: a phone that removed itself gets it too.
+        let gone = before.subtracting(paired.phones.map(\.key)).compactMap { Data(base64URL: $0) }
+        Task { [server] in
+            try? await Task.sleep(for: .milliseconds(200))
+            for key in gone { await server?.forget(phone: key) }
+        }
         syncMachines()
+        Task { await tellMachines() }
+        return true
+    }
+
+    /// `kuvo/phones`: the phones paired with this Mac (`you`, the one asking); `kuvo/phones/remove`
+    /// (POST, `{"phones": [{key, pairing}]}`): a phone removes others (a lost one, say) or itself.
+    func answerPhones(_ request: LinkRequest, asking: Data?) -> (Int, Data) {
+        let encoder = JSONEncoder()
+        let me = asking?.base64URL
+        if request.path == "kuvo/phones" {
+            struct Listed: Encodable { var key: String; var name: String; var added: Double; var pairing: String; var you: Bool }
+            let listed = paired.phones.map { Listed(key: $0.key, name: $0.name, added: $0.added.timeIntervalSince1970, pairing: $0.pairing, you: $0.key == me) }
+            return (200, (try? encoder.encode(["phones": listed])) ?? Data())
+        }
+        guard request.method.uppercased() == "POST" else { return (405, Data("{}".utf8)) }
+        struct Given: Decodable { var phones: [PairedPhones.Entry] }
+        guard let me, let given = try? JSONDecoder().decode(Given.self, from: request.body), removePhones(given.phones, by: me) else {
+            return (400, (try? encoder.encode(["message": "Only phones paired here can be removed, and never your Mac."])) ?? Data())
+        }
+        return (200, Data("{}".utf8))
     }
 
     // MARK: Machines
@@ -184,7 +326,7 @@ final class PhoneLink {
     /// The machine keeps its own keys and tells this Mac only its address and public key. With
     /// no phones, the bridge stops there.
     func sync(_ engine: MachineEngine) async {
-        guard Self.isEnabled, engine.isReady else { return }
+        guard relayWanted, engine.isReady, hasIdentity else { return }
         let machine = engine.machine
         let folder = FileManager.default.temporaryDirectory.appending(path: Bundle.main.bundleIdentifier ?? "run.kuvo.code").appending(path: "phone-link-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -194,30 +336,55 @@ final class PhoneLink {
             let hash = SHA256.hash(data: script).map { String(format: "%02x", $0) }.joined()
             let scriptFile = folder.appending(path: Bridge.fileName)
             try script.write(to: scriptFile)
-            try await machine.connection.run(RemoteEngineInstaller.script("""
+            try await machine.connection.run(BoxVersion.guardScript + "\n" + RemoteEngineInstaller.script("""
                 f="$K/bin/\(Bridge.fileName)"
                 if [ "$(sha256sum "$f" 2>/dev/null | cut -c1-64)" = "\(hash)" ]; then cat >/dev/null; else cat >"$f.new" && mv -f "$f.new" "$f"; fi
                 """), input: scriptFile)
 
             struct Setup: Encodable {
-                struct Phone: Encodable { var key: String; var name: String; var address: String? }
                 var relay: String
                 var name: String
-                var phones: [Phone]
+                /// With the phone link off, none: the machine keeps the phones it has.
+                var phones: [PhoneList.Phone]?
+                var removed: [PairedPhones.Removal]?
+                /// This Mac's key, which a phone list it mails later must come from, and when this one's from.
+                var mac: String
+                var at: Int64
+                /// Your other computers: this Mac and your other machines (PROTOCOL.md, "Peers").
+                var peers: [Peer]
+                var peersAt: Int64
+                /// The machine's name here, for its agents to say where they are.
+                var id: String
+                /// Conversations being moved, by the computer they live on now.
+                var moved: [Moved]
+                /// This Mac never puts its own files over a newer box's (`BoxVersion`): the box may
+                /// update itself once every Mac it sees does.
+                var tolerates = 1
+                /// This Mac's ID, as its engine launches there name it.
+                var macID = MachineEngine.macID
             }
             let settings = folder.appending(path: "setup.json")
-            try JSONEncoder().encode(Setup(relay: relay.absoluteString, name: machine.name, phones: phones.map { .init(key: $0.key, name: $0.name, address: $0.address) })).write(to: settings)
+            let list = phoneList
+            // Your phones only while the phone link is on.
+            try JSONEncoder().encode(Setup(relay: relay.absoluteString, name: machine.name, phones: Self.isEnabled ? list.phones : nil, removed: Self.isEnabled ? list.removed : nil,
+                                           mac: key.publicBytes.base64URL, at: list.at,
+                                           peers: peers(for: machine.id), peersAt: list.at, id: machine.id, moved: moved)).write(to: settings)
             let output = try await machine.connection.run(RemoteEngineInstaller.script("""
                 KUVO_HOME="$K" BUN_BE_BUN=1 BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 "$E" "$K/bin/\(Bridge.fileName)" setup
                 """), input: settings)
-            struct Answer: Decodable { var address: String?; var key: String? }
+            struct Answer: Decodable { var address: String?; var key: String?; var peers: Bool? }
             let answer = try? JSONDecoder().decode(Answer.self, from: Data(output.utf8))
+            let before = machineHosts[machine.id]
             if let address = answer?.address, let key = answer?.key {
-                machineHosts[machine.id] = MachineHost(name: machine.name, address: address, key: key)
+                machineHosts[machine.id] = MachineHost(name: machine.name, address: address, key: key, anotherMac: engine.isAnotherMacsEngine, peers: answer?.peers)
             } else {
                 machineHosts[machine.id] = nil
             }
             save()
+            // A machine new here (or at a new address, or newly talking to other computers): your
+            // others hear it's one of theirs.
+            let now = machineHosts[machine.id]
+            if now?.address != before?.address || now?.key != before?.key || now?.peers != before?.peers { Task { await tellMachines() } }
             // Here from the start, not from the next minute: the bridge leaves this machine's news to this Mac.
             if status == .connected, phones.contains(where: { $0.address != nil }) { await markPresent(on: machine) }
         } catch {
@@ -231,10 +398,13 @@ final class PhoneLink {
     private func keepPresent() {
         presence?.cancel()
         presence = Task { [weak self] in
+            var minutes = 0
             while !Task.isCancelled {
                 if let self, status == .connected, phones.contains(where: { $0.address != nil }) {
                     for engine in readyMachines() where engine.isLive { await markPresent(on: engine.machine) }
                 }
+                if minutes % 15 == 1 { await self?.tellMachines() }
+                minutes += 1
                 try? await Task.sleep(for: .seconds(60))
             }
         }
@@ -249,6 +419,119 @@ final class PhoneLink {
     private func markPresent(on machine: Machine) async {
         let at = ContinuousClock.now
         if await RemoteServer.markPresent(MachineEngine.macID, on: machine.connection) { markedPresent[machine.id] = at }
+    }
+
+    /// The phones you've paired, as a machine's bridge takes them, with the ones removed (which
+    /// stay out there too, until they're paired again), and when (in milliseconds).
+    struct PhoneList: Encodable {
+        struct Phone: Encodable { var key: String; var name: String; var address: String?; var pairing: String }
+        var phones: [Phone]
+        var removed: [PairedPhones.Removal]
+        var at: Int64
+    }
+
+    private var phoneList: PhoneList {
+        PhoneList(phones: phones.map { .init(key: $0.key, name: $0.name, address: $0.address, pairing: $0.pairing) }, removed: paired.removed,
+                  at: Int64(Date.now.timeIntervalSince1970 * 1000))
+    }
+
+    /// A conversation being moved, and the key of the computer it lives on now (PROTOCOL.md,
+    /// "Peers"): the one it left may still list it.
+    struct Moved: Encodable {
+        var session: String
+        var key: String
+    }
+
+    private var moved: [Moved] {
+        movedSessions().compactMap { session, place in
+            // On this Mac, or a machine whose link talks to other computers (others' aren't peers).
+            let live: String? = if let place { machineHosts[place]?.peers == true ? machineHosts[place]?.key : nil } else { key.publicBytes.base64URL }
+            return live.map { Moved(session: session, key: $0) }
+        }.sorted { $0.session < $1.session }
+    }
+
+    /// One of your other computers, as a machine's bridge keeps it (PROTOCOL.md, "Peers").
+    struct Peer: Encodable {
+        var key: String
+        var address: String
+        var name: String
+        var kind: String
+        /// A machine's name here, for the agents of each to say where they are.
+        var id: String?
+    }
+
+    /// `machine`'s peers: this Mac, and your other machines this Mac set up whose bridge talks to
+    /// other computers (an older one's agents are this Mac's to speak for).
+    private func peers(for machine: String) -> [Peer] {
+        let me = Peer(key: key.publicBytes.base64URL, address: secret.address.bytes.base64URL, name: Self.computerName, kind: "mac", id: nil)
+        return [me] + machineHosts.filter { $0.key != machine && $0.value.anotherMac != true && $0.value.peers == true }
+            .sorted { $0.key < $1.key }
+            .map { Peer(key: $0.value.key, address: $0.value.address, name: $0.value.name, kind: "machine", id: $0.key) }
+    }
+
+    /// Mails each of your machines' bridges the phones you've paired and its peers, through the
+    /// relay, so one you removed loses its way in there at once, whether this Mac can reach the
+    /// machine itself now or not: as phones or machines change, as the relay answers, and every
+    /// 15 minutes while it does (a machine that was off gets it once it's back). Only this Mac's
+    /// key is taken there.
+    /// `ask`: this Mac just met the relay, and may have missed what they said: each tells it its
+    /// agents again (PROTOCOL.md, "Peers").
+    func tellMachines(ask: Bool = false) async {
+        guard let server, status == .connected, !machineHosts.isEmpty else { return }
+        struct Told: Encodable {
+            /// With the phone link off, none: the machine keeps the phones it has.
+            var phones: [PhoneList.Phone]?
+            var removed: [PairedPhones.Removal]?
+            var at: Int64
+            var peers: [Peer]
+            var ask: String?
+            var moved: [Moved]
+        }
+        let list = phoneList
+        for (machine, host) in machineHosts where host.anotherMac != true {
+            guard let key = Data(base64URL: host.key), let bytes = Data(base64URL: host.address), let address = LinkAddress(bytes: bytes),
+                  let payload = try? JSONEncoder().encode(Told(phones: Self.isEnabled ? list.phones : nil, removed: Self.isEnabled ? list.removed : nil, at: list.at, peers: peers(for: machine),
+                                                               ask: ask ? "agents" : nil, moved: moved))
+            else { continue }
+            if await server.mail(payload, to: key, at: address) != .sent { log.error("Couldn’t mail a machine’s bridge your phones") }
+        }
+    }
+
+    /// Mails `payload` to one of your machines' bridges (one that talks to other computers
+    /// itself): `offline` when it can't go now (no relay connection, or it isn't such a machine),
+    /// `tooBig` for one the relay won't take.
+    func mail(_ payload: [String: Any], to machine: String) async -> LinkServer.MailOutcome {
+        guard let server, status == .connected, let host = machineHosts[machine], host.peers == true, host.anotherMac != true,
+              let key = Data(base64URL: host.key), let bytes = Data(base64URL: host.address), let address = LinkAddress(bytes: bytes) else { return .offline }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return .tooBig }
+        return await server.mail(data, to: key, at: address)
+    }
+
+    /// This Mac's public key, as your machines know it (none while the Keychain won't give it out).
+    var macKey: String? {
+        hasIdentity ? key.publicBytes.base64URL : nil
+    }
+
+    /// Whether `machine`'s bridge talks to your other computers itself (it makes its own list of
+    /// agents, and sends its agents' letters).
+    func talksToPeers(_ machine: String) -> Bool {
+        machineHosts[machine]?.peers == true && machineHosts[machine]?.anotherMac != true
+    }
+
+    /// Whether `machine`'s bridge talks to your other computers itself, and this Mac meets it at
+    /// the relay now.
+    func reachesByMail(_ machine: String) -> Bool {
+        status == .connected && machineHosts[machine]?.peers == true && machineHosts[machine]?.anotherMac != true
+    }
+
+    /// A mail frame from the relay: opened with the key of one of your machines, or dropped.
+    private func mailed(_ frame: Data) {
+        for (machine, host) in machineHosts where host.anotherMac != true {
+            guard let remote = Data(base64URL: host.key), let opened = try? Mail.open(frame, to: key, from: remote) else { continue }
+            guard let payload = try? JSONSerialization.jsonObject(with: opened) as? [String: Any] else { return }
+            onMail(machine, payload)
+            return
+        }
     }
 
     /// A machine you removed: phones stop being told about it.
@@ -267,7 +550,16 @@ final class PhoneLink {
                 let connection = try await WebSocketRelay.connect(to: relay, secret: secret)
                 status = .connected
                 attempt = 0
+                // Your machines hear who's here, as soon as there's a way to tell them, and tell
+                // their agents again (what they said meanwhile didn't come).
+                Task { [weak self] in
+                    try? await Task.sleep(for: .milliseconds(500))
+                    await self?.tellMachines(ask: true)
+                }
                 await server.serve(connection)
+                // Gone: nothing goes by mail until it's back (unless this was stopped, or another
+                // connection took over meanwhile).
+                if !Task.isCancelled, self.server === server { status = .connecting }
             } catch {
                 status = .failed("Can’t reach the relay at \(relay.host() ?? relay.absoluteString).")
             }
@@ -281,22 +573,11 @@ final class PhoneLink {
         let base = endpoint.url.absoluteString.hasSuffix("/") ? endpoint.url : URL(string: endpoint.url.absoluteString + "/")!
         let password = endpoint.password
         let log = log
+        let agents = agents?.address
         return LinkServer(key: key, hello: hello) { [weak self] key, address, hello in
             await self?.authorize(key, address, hello) ?? false
-        } handle: { [weak self] request, _ in
-            guard request.path.hasPrefix("kuvo/") else { return EngineRoutes.forward(request, to: base, password: password) }
-            if request.path == "kuvo/asks/events" { return Self.following { self?.asksJSON() } }
-            if request.path == "kuvo/groups/events" { return Self.following { self?.groupsJSON() } }
-            if let id = Self.groupID(in: request.path, then: "events") { return Self.following { self?.groupJSON(id) } }
-            if request.path == "kuvo/usage/events" { return Self.following { self?.usageJSON() } }
-            return AsyncThrowingStream { continuation in
-                Task { @MainActor in
-                    let (status, body) = self?.answer(request) ?? (503, Data())
-                    continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
-                    continuation.yield(.body(body))
-                    continuation.finish()
-                }
-            }
+        } handle: { [weak self] request, phone in
+            Self.respond(to: request, link: self, engine: base, password: password, agents: agents, asking: phone.key)
         } connect: { request, _, input in
             // Terminals: the engine's, in a project's folder.
             EngineRoutes.connect(request, to: base, password: password, input: input)
@@ -308,26 +589,162 @@ final class PhoneLink {
             case .notAllowed: log.info("A push wasn't from one of the phone's hosts")
             case .refused: log.error("Apple refused a push")
             }
+        } confirmed: { [weak self] phone in
+            Task { @MainActor in self?.confirmed(phone) }
+        } mailed: { [weak self] frame, _ in
+            Task { @MainActor in self?.mailed(frame) }
         }
+    }
+
+    /// What this Mac answers a paired phone's request with: Kuvo's own routes (`kuvo/…`), the
+    /// coding agents' bridge's (`kuvo/agents/…`, at `agents`) and the engine's (at `base`).
+    /// `asking`: the phone's key.
+    nonisolated static func respond(to request: LinkRequest, link: PhoneLink?, engine base: URL, password: String?,
+                                    agents: OutsideAgents.Address?, asking: Data? = nil) -> AsyncThrowingStream<LinkResponsePart, Error> {
+        guard request.path.hasPrefix("kuvo/") else {
+            return Self.namingAgents(in: request, by: link) { EngineRoutes.forward($0, to: base, password: password) }
+        }
+        // The outside agents' sessions, through their bridge, as the engine's go through it.
+        if request.path.hasPrefix(Self.agentsPrefix) {
+            var forwarded = request
+            forwarded.path = String(request.path.dropFirst(Self.agentsPrefix.count))
+            guard let bridge = agents?.endpoint else { return Self.unavailable() }
+            let base = bridge.url.absoluteString.hasSuffix("/") ? bridge.url : URL(string: bridge.url.absoluteString + "/")!
+            // Their accounts and Auto too; never where the engine is (the Mac says).
+            return Self.namingAgents(in: forwarded, by: link) {
+                EngineRoutes.forward($0, to: base, password: bridge.password, allowing: { EngineRoutes.allowsAgents($0, method: $1) })
+            }
+        }
+        if request.path.split(separator: "?").first == "kuvo/file" { return Self.file(request.path) }
+        // The phones paired with this Mac, and removing some, from any of them.
+        if request.path == "kuvo/phones" || request.path == "kuvo/phones/remove" {
+            return AsyncThrowingStream { continuation in
+                Task { @MainActor in
+                    let (status, body) = link?.answerPhones(request, asking: asking) ?? (503, Data())
+                    continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
+                    continuation.yield(.body(body))
+                    continuation.finish()
+                }
+            }
+        }
+        // A new bot or group chat, as New Bot and New Group Chat make them.
+        if request.method.uppercased() == "POST", request.path == "kuvo/bots" || request.path == "kuvo/groups" {
+            return AsyncThrowingStream { continuation in
+                Task { @MainActor in
+                    let (status, body) = await (request.path == "kuvo/bots" ? link?.makeBot(request.body) : link?.makeGroup(request.body)) ?? (503, Data())
+                    continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
+                    continuation.yield(.body(body))
+                    continuation.finish()
+                }
+            }
+        }
+        if request.path == "kuvo/asks/events" { return Self.following { link?.asksJSON() } }
+        if request.path == "kuvo/groups/events" { return Self.following { link?.groupsJSON() } }
+        if let id = Self.groupID(in: request.path, then: "events") { return Self.followingGroup(id, link: link) }
+        // A sign-in's page that sent the browser back to this Mac, loaded here.
+        if request.path == "kuvo/sign-in/return" {
+            return AsyncThrowingStream { continuation in
+                let task = Task {
+                    let (status, body) = request.method.uppercased() == "POST" ? await Self.loadSignInReturn(request.body) : (405, Data())
+                    continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
+                    continuation.yield(.body(body))
+                    continuation.finish()
+                }
+                continuation.onTermination = { _ in task.cancel() }
+            }
+        }
+        if request.path == "kuvo/usage/events" { return Self.following { link?.usageJSON() } }
+        // A chat's name, purpose, bots or meeting changed, as Edit Group Chat changes them.
+        if request.path.hasPrefix("kuvo/groups/"), request.method.uppercased() == "PATCH" {
+            return AsyncThrowingStream { continuation in
+                Task { @MainActor in
+                    let (status, body) = await link?.changeGroup(String(request.path.dropFirst("kuvo/groups/".count)), with: request.body) ?? (503, Data())
+                    continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
+                    continuation.yield(.body(body))
+                    continuation.finish()
+                }
+            }
+        }
+        // What a phone does in a group chat: one on a machine answers once the machine has.
+        if request.path.hasPrefix("kuvo/groups/"), request.method.uppercased() == "POST" {
+            return AsyncThrowingStream { continuation in
+                Task { @MainActor in
+                    let (status, body) = await link?.answerGroup(String(request.path.dropFirst("kuvo/groups/".count)), with: request.body) ?? (503, Data())
+                    continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
+                    continuation.yield(.body(body))
+                    continuation.finish()
+                }
+            }
+        }
+        // This Mac's sign-ins, listed (`api/credential` has what each is signed in with too).
+        if request.path.split(separator: "?").first == "kuvo/accounts/credentials" {
+            return AsyncThrowingStream { continuation in
+                Task { @MainActor in
+                    let (status, body) = await link?.credentialsJSON() ?? (503, Data())
+                    continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
+                    continuation.yield(.body(body))
+                    continuation.finish()
+                }
+            }
+        }
+        // A session's wake-ups and watches: read, or one canceled.
+        if request.path.hasPrefix("kuvo/wakes/") {
+            return AsyncThrowingStream { continuation in
+                Task { @MainActor in
+                    let (status, body) = await link?.answerWakes(request) ?? (503, Data())
+                    continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
+                    continuation.yield(.body(body))
+                    continuation.finish()
+                }
+            }
+        }
+        if let id = Self.shellID(in: request.path), request.method.uppercased() == "POST" {
+            return AsyncThrowingStream { continuation in
+                Task { @MainActor in
+                    let (status, body) = await link?.stopShell(id, with: request.body) ?? (503, Data())
+                    continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
+                    continuation.yield(.body(body))
+                    continuation.finish()
+                }
+            }
+        }
+        return AsyncThrowingStream { continuation in
+            Task { @MainActor in
+                let (status, body) = link?.answer(request) ?? (503, Data())
+                continuation.yield(.head(status: status, headers: ["content-type": "application/json"]))
+                continuation.yield(.body(body))
+                continuation.finish()
+            }
+        }
+    }
+
+    /// A phone's session proved its own: its notifications go where it is now, for machines'
+    /// bridges too.
+    private func confirmed(_ phone: LinkServer.Phone) {
+        let encoded = phone.key.base64URL
+        guard let index = paired.phones.firstIndex(where: { $0.key == encoded }), paired.phones[index].address != phone.address.text else { return }
+        paired.phones[index].address = phone.address.text
+        save()
+        syncMachines()
     }
 
     /// Lets in a phone you've paired, or one showing the pairing link's token (once, in time).
     private func authorize(_ key: Data, _ address: LinkAddress, _ hello: PhoneHello) -> Bool {
+        // Met at the relay only for your machines: no phone comes in.
+        guard Self.isEnabled else { return false }
         let encoded = key.base64URL
-        if let index = phones.firstIndex(where: { $0.key == encoded }) {
-            // Where its notifications go, for machines' bridges too.
-            if phones[index].address != address.text {
-                phones[index].address = address.text
-                save()
-                syncMachines()
-            }
-            return true
-        }
+        // Where a paired one's notifications go changes once its session proves its own (see
+        // `confirmed`): the first handshake message can be replayed from another address.
+        let isPaired = phones.contains(where: { $0.key == encoded })
+        // Showing the token: a pairing of its own, paired before or not (one removed on your
+        // machines comes back there too).
         guard let pairing, ContinuousClock.now < pairingEnds, let token = hello.pair.flatMap({ Data(base64URL: $0) }),
               token.count == pairing.token.count, zip(token, pairing.token).reduce(0, { $0 | ($1.0 ^ $1.1) }) == 0
-        else { return false }
-        phones.append(Phone(key: encoded, name: String(hello.name.prefix(100)), added: .now, address: address.text))
+        else { return isPaired }
+        // A pairing of its own: in, whatever removed it before.
+        paired.pair(Phone(key: encoded, name: String(hello.name.prefix(100)), added: .now, address: address.text, pairing: PairedPhones.newPairing()))
         save()
+        Task { await tellMachines() }
         self.pairing = nil
         syncMachines()
         log.info("Paired a phone")
@@ -363,48 +780,118 @@ final class PhoneLink {
         return idle >= 120 || locked
     }
 
+    /// Where the outside agents' bridge is reached over the link.
+    nonisolated static let agentsPrefix = "kuvo/agents/"
+
+    /// A message the phone sends (`POST api/session/<id>/prompt`) says who the agents it names
+    /// with "&" are, as one written here does (`AgentReferences`), before `forward` takes it on.
+    nonisolated private static func namingAgents(in request: LinkRequest, by link: PhoneLink?,
+                                                 forward: @escaping @Sendable (LinkRequest) -> AsyncThrowingStream<LinkResponsePart, Error>) -> AsyncThrowingStream<LinkResponsePart, Error> {
+        let parts = request.path.split(separator: "?").first?.split(separator: "/") ?? []
+        guard request.method.uppercased() == "POST", parts.count == 4, parts[0] == "api", parts[1] == "session", parts[3] == "prompt",
+              let session = String(parts[2]).removingPercentEncoding else { return forward(request) }
+        return AsyncThrowingStream { continuation in
+            let task = Task { @MainActor in
+                var named = request
+                if var body = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any], let text = body["text"] as? String {
+                    let directory = link?.workspace?.session(session)?.location.directory
+                    // Who it names with "&", then that it's from the phone (see `FromPhone`).
+                    let naming = text.contains(AgentReferences.trigger) ? AgentReferences.naming(in: text, excluding: session, here: directory.flatMap(RemoteFolder.machine(of:))) : text
+                    body["text"] = FromPhone.adding(to: naming)
+                    if let data = try? JSONSerialization.data(withJSONObject: body) { named.body = data }
+                }
+                do {
+                    for try await part in forward(named) { continuation.yield(part) }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    nonisolated private static func unavailable() -> AsyncThrowingStream<LinkResponsePart, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.yield(.head(status: 503, headers: ["content-type": "application/json"]))
+            continuation.yield(.body(Data(#"{"message":"The coding agents aren't running on this Mac."}"#.utf8)))
+            continuation.finish()
+        }
+    }
+
     /// Kuvo's own routes, beside the engine's.
     private func answer(_ request: LinkRequest) -> (Int, Data) {
         /// `chats`: the folder of conversations of no project, which the phone lists as Chats.
+        /// `agents`: the outside agents' bridge is up, at `kuvo/agents/api/…`.
         struct Info: Encodable {
             var kind = "mac"; var name: String; var app: String; var engine: String; var chats: String
+            var agents = false
+            /// When the engine running now came up, in seconds since 1970: a restart changes it.
+            var started: Double?
             /// Integrations' names by their MCP server's, for what a server asks.
             var integrations = Dictionary(uniqueKeysWithValues: Integrations.all.map { ($0.id, $0.title) })
         }
         struct Hosts: Encodable {
-            struct Host: Encodable { var kind = "machine"; var name: String; var address: String; var key: String; var relay: String }
+            /// `machine`: its id, as bots name theirs. `anotherMac`: its engine is another Mac's,
+            /// which gives it its settings, so this Mac's (`kuvo/config`) don't reach it (as it
+            /// was when it last connected).
+            struct Host: Encodable {
+                var kind = "machine"; var name: String; var address: String; var key: String; var relay: String
+                var machine: String; var anotherMac: Bool
+            }
             var hosts: [Host]
         }
         let encoder = JSONEncoder()
         switch request.path {
         case "kuvo/info":
-            return (200, (try? encoder.encode(Info(name: Self.computerName, app: AppInfo.version, engine: OpenCodeEngine.version, chats: Workspace.chatsFolder))) ?? Data())
+            var info = Info(name: Self.computerName, app: AppInfo.version, engine: OpenCodeEngine.version, chats: Workspace.chatsFolder)
+            info.agents = agents?.api != nil
+            info.started = engineStarted()?.timeIntervalSince1970
+            return (200, (try? encoder.encode(info)) ?? Data())
         case "kuvo/bots":
-            // Each bot by its session (here or on a machine): its name, look and job, and what
-            // the Mac knows of it that its session doesn't say: paused, when it next wakes (in
-            // seconds since 1970), how many things it watches.
-            struct Listed: Encodable {
-                struct Entry: Encodable {
-                    var session: String, name: String, look: BotLook, machine: String?, job: String
-                    var paused: Bool, wakes: Double?, watching: Int
-                }
-                var bots: [Entry]
+            return (200, (try? encoder.encode(["bots": (bots?.list ?? []).map(entry)])) ?? Data())
+        case "kuvo/bots/templates":
+            return (200, templatesJSON())
+        case "kuvo/named":
+            // Who "&" can name in a message: every bot, and the recent sessions with a name.
+            struct Named: Encodable {
+                struct Entry: Encodable { var session: String, name: String, kind: String, machine: String?, project: String?, about: String? }
+                var agents: [Entry]
             }
-            let entries = (bots?.list ?? []).map { bot in
-                Listed.Entry(
-                    session: bot.sessionID, name: bot.name, look: bot.look, machine: bot.machine, job: bot.job,
-                    paused: bots?.paused.contains(bot.id) == true,
-                    wakes: bots?.wakes[bot.id]?.map(\.due).min()?.timeIntervalSince1970,
-                    watching: bots?.watches[bot.id]?.count ?? 0)
+            let entries = AgentReferences.candidates(excluding: nil).map {
+                Named.Entry(session: $0.session, name: $0.name, kind: $0.kind, machine: $0.machine, project: $0.project, about: $0.about)
             }
-            return (200, (try? encoder.encode(Listed(bots: entries))) ?? Data())
+            return (200, (try? encoder.encode(Named(agents: entries))) ?? Data())
         case "kuvo/hosts":
-            let hosts = machineHosts.values.sorted { $0.name < $1.name }.map { Hosts.Host(name: $0.name, address: $0.address, key: $0.key, relay: relay.absoluteString) }
+            let hosts = machineHosts.sorted { $0.value.name < $1.value.name }.map { id, host in
+                Hosts.Host(name: host.name, address: host.address, key: host.key, relay: relay.absoluteString, machine: id, anotherMac: host.anotherMac ?? false)
+            }
             return (200, (try? encoder.encode(Hosts(hosts: hosts))) ?? Data())
         case "kuvo/asks":
             return (200, asksJSON())
+        case "kuvo/wakes":
+            // Every session's with a wake-up or a watch, for the marks beside it as in the sidebar:
+            // its soonest wake-up (seconds since 1970) and whether it watches. Bots' come with `kuvo/bots`.
+            struct Listed: Encodable {
+                struct Entry: Encodable { var session: String; var next: Double?; var watching: Bool }
+                var sessions: [Entry]
+            }
+            let wakes = wakeUps?.wakes ?? [:]
+            let watches = wakeUps?.watches ?? [:]
+            let keys = Set(wakes.filter { !$0.value.isEmpty }.keys).union(watches.filter { !$0.value.isEmpty }.keys).filter { bots?.bot($0) == nil }
+            let entries = keys.sorted().map { key in
+                Listed.Entry(session: key, next: wakes[key]?.map(\.due).min()?.timeIntervalSince1970, watching: watches[key]?.isEmpty == false)
+            }
+            return (200, (try? JSONEncoder().encode(Listed(sessions: entries))) ?? Data())
         case "kuvo/groups":
             return (200, groupsJSON())
+        case "kuvo/accounts/ended":
+            return (200, (try? JSONEncoder().encode(["providers": endedSignIns()])) ?? Data())
+        case let path where path.hasPrefix("kuvo/accounts/") && path.hasSuffix("/forget") && request.method.uppercased() == "POST":
+            // Disconnect, as Settings › Accounts does it: its sign-ins and keys here, and the copies on your machines.
+            let provider = String(path.dropFirst("kuvo/accounts/".count).dropLast("/forget".count))
+            guard !provider.isEmpty, !provider.contains("/"), provider.range(of: #"^[A-Za-z0-9_@.-]+$"#, options: .regularExpression) != nil else { return (404, Data()) }
+            return forgetSignIn(provider) ? (200, Data("{}".utf8)) : (404, Data())
         case "kuvo/usage":
             guard let usage = usageJSON() else { return (404, Data()) }
             return (200, usage)
@@ -413,13 +900,268 @@ final class PhoneLink {
             if Self.usageSample { return (200, Data("{}".utf8)) }
             #endif
             return UsageMenuBar.shared.refreshAll() ? (200, Data("{}".utf8)) : (404, Data())
-        case let path where path.hasPrefix("kuvo/groups/") && request.method == "POST":
-            return answerGroup(String(path.dropFirst("kuvo/groups/".count)), with: request.body)
         case let path where path.hasPrefix("kuvo/asks/") && request.method == "POST":
             return answerAsk(String(path.dropFirst("kuvo/asks/".count)), with: request.body)
+        case "kuvo/config":
+            return answerConfig(request)
+        case "kuvo/mcp/catalog":
+            return catalogJSON()
+        case "kuvo/personalities":
+            return answerPersonalities(nil, request)
+        case let path where path.hasPrefix("kuvo/personalities/"):
+            return answerPersonalities(String(path.dropFirst("kuvo/personalities/".count)).removingPercentEncoding ?? "", request)
+        case "kuvo/keys":
+            guard request.method.uppercased() == "GET" else { return (405, Data()) }
+            return (200, (try? JSONSerialization.data(withJSONObject: ["keys": IntegrationKeys.shared])) ?? Data("{}".utf8))
+        case let path where path.hasPrefix("kuvo/keys/"):
+            return answerKey(String(path.dropFirst("kuvo/keys/".count)).removingPercentEncoding ?? "", request)
+        case let path where path.hasPrefix("kuvo/mcp/catalog/") && request.method.uppercased() == "POST":
+            return addFromCatalog(String(path.dropFirst("kuvo/mcp/catalog/".count)))
+        case "kuvo/engine/restart" where request.method.uppercased() == "POST":
+            // Answered first: the restart takes the link down with the engine, and the phone sees
+            // this Mac come back (`kuvo/info` answers again).
+            let restart = restartEngine
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1))
+                restart()
+            }
+            return (202, Data("{}".utf8))
         default:
             return (404, Data())
         }
+    }
+
+    // MARK: Personalities
+
+    /// `kuvo/personalities`: the personalities you made, this Mac's copy of the library (each
+    /// computer keeps one, and they meet as this Mac connects to a machine). GET lists them;
+    /// POST `{name, description}` makes one; PATCH `kuvo/personalities/<id>` changes its name or
+    /// description, and DELETE removes it. As a machine's bridge answers them.
+    private func answerPersonalities(_ id: String?, _ request: LinkRequest) -> (Int, Data) {
+        struct Listed: Encodable { var personalities: [Personality] }
+        let store = Personalities.shared
+        let body = (try? JSONSerialization.jsonObject(with: request.body) as? [String: Any]) ?? [:]
+        let encoded = { (value: any Encodable) in (try? JSONEncoder().encode(value)) ?? Data("{}".utf8) }
+        let plain = { (key: String) in (body[key] as? String).map { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ") } }
+        let incomplete = Self.message("A personality needs a name and a description.")
+        switch (request.method.uppercased(), id) {
+        case ("GET", nil):
+            return (200, encoded(Listed(personalities: store.custom)))
+        case ("POST", nil):
+            guard let name = plain("name"), !name.isEmpty, let description = (body["description"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !description.isEmpty else { return (400, incomplete) }
+            return (200, encoded(store.add(name: String(name.prefix(80)), description: String(description.prefix(2000)))))
+        case ("PATCH", let id?):
+            guard var personality = store.custom.first(where: { $0.id == id }) else { return (404, Data()) }
+            if let name = plain("name") { personality.name = String(name.prefix(80)) }
+            if let description = (body["description"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) { personality.description = String(description.prefix(2000)) }
+            guard !personality.name.isEmpty, !personality.description.isEmpty else { return (400, incomplete) }
+            store.update(personality)
+            let bots = bots
+            Task { await bots?.personalityChanged(id) }
+            return (200, encoded(store.personality(id) ?? personality))
+        case ("DELETE", let id?):
+            guard let personality = store.custom.first(where: { $0.id == id }) else { return (404, Data()) }
+            store.delete(personality)
+            let bots = bots
+            Task { await bots?.personalityChanged(id) }
+            return (200, Data("{}".utf8))
+        default:
+            return (405, Data())
+        }
+    }
+
+    // MARK: Settings
+
+    /// `kuvo/keys/<name>`: one of this Mac's integrations' keys (`KUVO_KEY_…`, not a bot's own),
+    /// in your Keychain: GET its value, PUT `{"value": …}` to set it, DELETE to remove it. The
+    /// engine reads it as it next reads its settings.
+    private func answerKey(_ name: String, _ request: LinkRequest) -> (Int, Data) {
+        guard name.range(of: #"\AKUVO_KEY_[A-Za-z0-9_]+\z"#, options: .regularExpression) != nil, !IntegrationKeys.isBots(name) else {
+            return (400, Self.message("That isn't a key's name."))
+        }
+        switch request.method.uppercased() {
+        case "GET":
+            guard let value = IntegrationKeys.value(name) else { return (404, Data()) }
+            return (200, (try? JSONSerialization.data(withJSONObject: ["value": value])) ?? Data())
+        case "PUT":
+            guard let value = (try? JSONSerialization.jsonObject(with: request.body) as? [String: Any])?["value"] as? String, !value.isEmpty else {
+                return (400, Self.message("Send {\"value\": \"…\"}."))
+            }
+            return IntegrationKeys.set(value, for: name) ? (200, Data("{}".utf8)) : (500, Self.message("It couldn't be saved in the Keychain."))
+        case "DELETE":
+            return IntegrationKeys.set(nil, for: name) ? (200, Data("{}".utf8)) : (500, Self.message("It couldn't be removed from the Keychain."))
+        default:
+            return (405, Data())
+        }
+    }
+
+    /// `kuvo/config`: this Mac's engine settings, as Settings shows them, its own (each machine
+    /// has its own, from its bridge). PATCH changes some, as Settings does, with
+    /// `{"changes": [{"path": [keys…], "value": …}]}` (null removes it), and answers with them all.
+    /// A change can say what it read there (`"was"`, null for nothing): changed since, nothing is
+    /// changed and it answers 409. A path goes through objects only; a list is sent whole.
+    private func answerConfig(_ request: LinkRequest) -> (Int, Data) {
+        guard let config = engineConfig else { return (503, Data()) }
+        // As the file is now, edited elsewhere or not.
+        config.reload()
+        if let problem = config.problem { return (409, Self.message("The engine's settings file can't be changed from here: \(problem)")) }
+        switch request.method.uppercased() {
+        case "GET":
+            break
+        case "PATCH":
+            struct Change: Decodable {
+                var path: [String]
+                var value: JSONValue
+                /// Absent: not checked; `.null`: nothing was there.
+                var was: JSONValue?
+
+                enum CodingKeys: String, CodingKey { case path, value, was }
+                init(from decoder: Decoder) throws {
+                    let container = try decoder.container(keyedBy: CodingKeys.self)
+                    path = try container.decode([String].self, forKey: .path)
+                    value = try container.decode(JSONValue.self, forKey: .value)
+                    was = container.contains(.was) ? try container.decode(JSONValue.self, forKey: .was) : nil
+                }
+            }
+            struct Given: Decodable { var changes: [Change] }
+            guard let changes = (try? JSONDecoder().decode(Given.self, from: request.body))?.changes, (1...100).contains(changes.count),
+                  changes.allSatisfy({ (1...16).contains($0.path.count) && $0.path.allSatisfy { !$0.isEmpty && $0.count <= 200 } })
+            else { return (400, Self.message("Send {\"changes\": [{\"path\": [keys…], \"value\": …}]}.")) }
+            // Keys go through objects only: one through a list or a plain value would replace it
+            // whole (every permission rule, for "permissions", "0"). A list is sent whole.
+            if changes.contains(where: { change in (1..<change.path.count).contains { config.value(at: Array(change.path[..<$0])).map { $0.object == nil } ?? false } }) {
+                return (400, Self.message("A path goes through objects only; send a list whole, at its own path."))
+            }
+            if changes.contains(where: { change in change.was.map { (config.value(at: change.path) ?? .null) != $0 } ?? false }) {
+                return (409, Self.message("It changed since you read it."))
+            }
+            // A phone's, not one to offer other computers here: the phone offers its own.
+            config.set(changes.map { (path: $0.path, value: $0.value == .null ? nil : $0.value) }, noted: false)
+            if let problem = config.problem { return (500, Self.message(problem)) }
+        default:
+            return (405, Data())
+        }
+        return (200, Self.settingsJSON(config.settings))
+    }
+
+    private static func settingsJSON(_ settings: [String: JSONValue]) -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        return (try? encoder.encode(settings)) ?? Data("{}".utf8)
+    }
+
+    nonisolated private static func message(_ text: String) -> Data {
+        (try? JSONEncoder().encode(["message": text])) ?? Data()
+    }
+
+    // MARK: Files
+
+    /// The biggest file `kuvo/file` sends.
+    nonisolated static let fileLimit = 25 * 1024 * 1024
+
+    /// `kuvo/file?uri=<file:// URI>`: a file on this Mac, as an agent's reply or tool names it: its
+    /// bytes with its type; 404 with a `message` for one that isn't there (or isn't a file), 413
+    /// over `fileLimit`.
+    nonisolated static func file(_ path: String) -> AsyncThrowingStream<LinkResponsePart, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task.detached {
+                let (status, type, body) = readFile(path)
+                continuation.yield(.head(status: status, headers: ["content-type": type]))
+                // In pieces, as the engine's bodies go.
+                var start = body.startIndex
+                while start < body.endIndex, !Task.isCancelled {
+                    let end = body.index(start, offsetBy: 32 * 1024, limitedBy: body.endIndex) ?? body.endIndex
+                    continuation.yield(.body(body.subdata(in: start..<end)))
+                    start = end
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    nonisolated static func readFile(_ path: String) -> (status: Int, type: String, body: Data) {
+        let json = "application/json"
+        guard let uri = URLComponents(string: path)?.queryItems?.first(where: { $0.name == "uri" })?.value,
+              let url = URL(string: uri), url.isFileURL else {
+            return (400, json, message("That isn’t a file:// address."))
+        }
+        let file = url.resolvingSymlinksInPath()
+        let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard values?.isRegularFile == true else { return (404, json, message("That file isn’t there anymore.")) }
+        guard (values?.fileSize ?? 0) <= fileLimit else { return (413, json, message("That file is too big to open here.")) }
+        guard let data = try? Data(contentsOf: file, options: .mappedIfSafe) else { return (404, json, message("That file isn’t there anymore.")) }
+        return (200, UTType(filenameExtension: file.pathExtension)?.preferredMIMEType ?? "application/octet-stream", data)
+    }
+
+    /// `kuvo/mcp/catalog`: Settings › MCP Servers' popular servers, each with whether it's added
+    /// (`integration` too when Integrations added it, and keeps it there), and `macOnly` for one
+    /// that runs on this Mac alone (its Chrome), which never reaches your machines.
+    private func catalogJSON() -> (Int, Data) {
+        guard let config = engineConfig else { return (503, Data()) }
+        struct Listed: Encodable {
+            struct Entry: Encodable {
+                var id: String, title: String, summary: String, access: String
+                var added: Bool, integration: Bool, macOnly: Bool
+            }
+            var servers: [Entry]
+        }
+        config.reload()
+        let entries = MCPCatalog.servers.map { server in
+            let added = config.value(at: MCPSettings.path + [server.id]) != nil
+            let access = switch server.access {
+            case .signIn: "signIn"
+            case .open: "open"
+            case .local: "local"
+            }
+            return Listed.Entry(id: server.id, title: server.title, summary: server.summary, access: access, added: added,
+                                integration: added && Integrations.service(server.id) != nil, macOnly: MCPCatalog.macOnly.contains(server.id))
+        }
+        return (200, (try? JSONEncoder().encode(Listed(servers: entries))) ?? Data())
+    }
+
+    /// `POST kuvo/mcp/catalog/<id>`: adds one of them, as its Add button does, and answers with
+    /// the settings (as `kuvo/config`). One already added stays as it is.
+    private func addFromCatalog(_ id: String) -> (Int, Data) {
+        guard let config = engineConfig else { return (503, Data()) }
+        guard let server = MCPCatalog.servers.first(where: { $0.id == id }) else { return (404, Data()) }
+        config.reload()
+        if let problem = config.problem { return (409, Self.message("The engine's settings file can't be changed from here: \(problem)")) }
+        if config.value(at: MCPSettings.path + [server.id]) == nil { MCPCatalog.add(server, to: config) }
+        if let problem = config.problem { return (500, Self.message(problem)) }
+        return (200, Self.settingsJSON(config.settings))
+    }
+
+    /// `POST kuvo/sign-in/return` with `{"url"}`: where a sign-in's page sent the browser back
+    /// to this Mac (an MCP server's, or a plan's that finishes here), which a phone can't load,
+    /// loaded here, as the browser would have. Only this Mac's own address
+    /// (`EngineRoutes.signInReturn`), and no further than it answers (a redirect isn't followed).
+    /// Answers with the status it got (`{"status"}`): 2xx or 3xx, it took it.
+    nonisolated private static func loadSignInReturn(_ body: Data) async -> (Int, Data) {
+        struct Given: Decodable { var url: String }
+        guard let given = try? JSONDecoder().decode(Given.self, from: body), let url = EngineRoutes.signInReturn(given.url) else {
+            return (400, message("That isn't an address a sign-in returns to on this computer."))
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        guard let (_, response) = try? await URLSession.shared.data(for: request, delegate: StaysThere()),
+              let status = (response as? HTTPURLResponse)?.statusCode else {
+            return (502, message("Nothing on this computer took it. Start the sign-in again."))
+        }
+        return (200, (try? JSONEncoder().encode(["status": status])) ?? Data())
+    }
+
+    // MARK: Accounts
+
+    /// `kuvo/accounts/credentials`: each sign-in this Mac's engine keeps, by its ID, with the plan
+    /// it's for, its name and whether it's the one in use: the list alone (the engine's
+    /// `api/credential` has what each is signed in with too).
+    private func credentialsJSON() async -> (Int, Data) {
+        guard let api = workspace?.api else { return (503, Data()) }
+        guard let credentials = try? await api.credentials() else { return (502, Data()) }
+        struct Listed: Encodable { var id: String; var integrationID: String; var label: String; var active: Bool }
+        let listed = credentials.map { Listed(id: $0.id, integrationID: $0.integrationID, label: $0.label, active: $0.active) }
+        return (200, (try? JSONEncoder().encode(["credentials": listed])) ?? Data())
     }
 
     // MARK: Asks
@@ -467,7 +1209,9 @@ final class PhoneLink {
             }
             return listed
         }
-        return (try? JSONEncoder().encode(Listed(asks: asks))) ?? Data()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return (try? encoder.encode(Listed(asks: asks))) ?? Data()
     }
 
     /// A phone's answer, as the card's: a sign-in typed there (kept in Passwords if asked) or one
@@ -554,14 +1298,19 @@ final class PhoneLink {
         var look: BotLook
         var session: String
         var directory: String
+        /// Its own conversation is with the coding agents.
+        var agents: Bool
     }
 
     private func members(of group: BotGroup) -> [GroupMember] {
-        group.members.compactMap { bots?.bot($0) }.map { GroupMember(id: $0.id, name: $0.name, look: $0.look, session: $0.sessionID, directory: $0.directory) }
+        group.members.compactMap { bots?.bot($0) }.map { GroupMember(id: $0.id, name: $0.name, look: $0.look, session: $0.sessionID, directory: $0.directory, agents: $0.agents == true) }
     }
 
     private static var groupEncoder: JSONEncoder {
         let encoder = JSONEncoder()
+        // Sorted, as a stream sends what it's encoded only when the text differs, and JSONEncoder
+        // writes a struct's keys in another order almost every time.
+        encoder.outputFormatting = .sortedKeys
         encoder.dateEncodingStrategy = .secondsSince1970
         return encoder
     }
@@ -569,52 +1318,292 @@ final class PhoneLink {
     /// Your group chats as the sidebar lists them: who's in each, who's talking, whether it
     /// waits on you to keep going, and the last thing said.
     private func groupsJSON() -> Data {
-        struct Listed: Encodable {
-            struct Group: Encodable {
-                var id: String
-                var name: String
-                var purpose: String?
-                var members: [GroupMember]
-                var speaking: String?
-                var discussing: Bool
-                var paused: Bool
-                var unread: Bool
-                var last: GroupMessage?
-                var meeting: BotGroup.Meeting?
-            }
-            var groups: [Group]
-        }
+        struct Listed: Encodable { var groups: [GroupEntry] }
         guard let groups else { return Data(#"{"groups":[]}"#.utf8) }
-        let listed = groups.list.map { group in
-            var last = groups.messages(in: group.id).last { $0.kind != .note }
-            last?.steps = nil
-            return Listed.Group(id: group.id, name: group.name, purpose: group.purpose, members: members(of: group),
-                                speaking: groups.speaking[group.id], discussing: groups.discussing.contains(group.id),
-                                paused: groups.paused.contains(group.id), unread: groups.isUnread(group), last: last, meeting: group.meeting)
-        }
-        return (try? Self.groupEncoder.encode(Listed(groups: listed))) ?? Data()
+        return (try? Self.groupEncoder.encode(Listed(groups: groups.list.map { entry($0, in: groups) }))) ?? Data()
+    }
+
+    /// A chat as `kuvo/groups` lists it.
+    private struct GroupEntry: Encodable {
+        var id: String
+        var name: String
+        var purpose: String?
+        var members: [GroupMember]
+        var speaking: String?
+        var discussing: Bool
+        var paused: Bool
+        var unread: Bool
+        var last: GroupMessage?
+        var meeting: BotGroup.Meeting?
+        /// The machine it lives on (its bots' too), by id as bots name theirs; none for this Mac.
+        var machine: String?
+        /// On its way to another computer: what would change it waits until it's there.
+        var moving: Bool
+    }
+
+    private func entry(_ group: BotGroup, in groups: GroupChats) -> GroupEntry {
+        var last = groups.messages(in: group.id).last { $0.kind != .note }
+        last?.steps = nil
+        return GroupEntry(id: group.id, name: group.name, purpose: group.purpose, members: members(of: group),
+                          speaking: groups.speaking[group.id], discussing: groups.discussing.contains(group.id),
+                          paused: groups.paused.contains(group.id), unread: groups.isUnread(group), last: last, meeting: group.meeting,
+                          machine: groups.machine(of: group.id), moving: isMoving(group.id))
     }
 
     /// One chat as it reads now: its latest messages (with what each bot did on its turn), who's
     /// talking, and whether it's under way or paused. Nil once the chat's gone.
     private func groupJSON(_ id: String) -> Data? {
+        groupLines(id)?.whole
+    }
+
+    /// One chat's line, whole and without its messages (`state`), for `followingGroup`.
+    struct GroupLines: Equatable {
+        var messages: Data
+        var state: Data
+        /// `state` with its `messages` first.
+        var whole: Data { Data(#"{"messages":"#.utf8) + messages + Data(",".utf8) + state.dropFirst() }
+    }
+
+    private func groupLines(_ id: String) -> GroupLines? {
         struct Chat: Encodable {
-            var messages: [GroupMessage]
             var speaking: String?
             var discussing: Bool
             var paused: Bool
+            var moving: Bool
+            /// What the bot talking is doing, its last step (see `GroupActivity`).
+            var activity: [GroupActivity]?
         }
         guard let groups, groups.group(id) != nil else { return nil }
-        let chat = Chat(messages: Array(groups.messages(in: id).suffix(300)), speaking: groups.speaking[id],
-                        discussing: groups.discussing.contains(id), paused: groups.paused.contains(id))
-        return try? Self.groupEncoder.encode(chat)
+        let chat = Chat(speaking: groups.speaking[id], discussing: groups.discussing.contains(id), paused: groups.paused.contains(id),
+                        moving: isMoving(id), activity: groups.activity[id])
+        guard let messages = try? Self.groupEncoder.encode(Array(groups.messages(in: id).suffix(300))),
+              let state = try? Self.groupEncoder.encode(chat) else { return nil }
+        return GroupLines(messages: messages, state: state)
+    }
+
+    // MARK: Making bots and group chats
+
+    /// A bot as `kuvo/bots` lists it: by its session (here or on a machine), with its name, look
+    /// and job, and what the Mac knows of it that its session doesn't say: paused, when it next
+    /// wakes (in seconds since 1970), how many things it watches.
+    struct BotEntry: Encodable {
+        var id: String, session: String, name: String, look: BotLook, machine: String?, job: String
+        var paused: Bool, wakes: Double?, watching: Int
+        /// Its conversation is with the coding agents: read through `kuvo/agents/api/…`.
+        var agents: Bool
+    }
+
+    private func entry(_ bot: Bot) -> BotEntry {
+        BotEntry(id: bot.id, session: bot.sessionID, name: bot.name, look: bot.look, machine: bot.machine, job: bot.job,
+                 paused: bots?.paused.contains(bot.id) == true,
+                 wakes: bots?.wakes[bot.id]?.map(\.due).min()?.timeIntervalSince1970,
+                 watching: bots?.watches[bot.id]?.count ?? 0,
+                 agents: bot.agents == true)
+    }
+
+    /// `kuvo/bots/templates`: what New Bot offers: its templates, the personalities (yours too),
+    /// the looks, the model it starts with in each place (this Mac, `mac`, and each machine by
+    /// id), and your projects, by where they are.
+    private func templatesJSON() -> Data {
+        struct Template: Encodable {
+            var id: String, name: String, job: String, instructions: String, look: BotLook, personality: String?, wantsProject: Bool
+        }
+        struct Listed: Encodable {
+            struct Personality: Encodable { var id: String, name: String, description: String, custom: Bool }
+            struct Looks: Encodable { var colors: [String], shapes: [String], faces: [String] }
+            struct Project: Encodable { var directory: String, name: String, machine: String? }
+            var templates: [Template]
+            var personalities: [Personality]
+            var looks: Looks
+            var startingModel: [String: ModelRef?]
+            var projects: [Project]
+        }
+        let app = bots?.app
+        var starting: [String: ModelRef?] = ["mac": app?.catalog.startingModel(LastModel.current, scope: .on(machine: nil))]
+        for machine in app?.machines.list ?? [] {
+            starting[machine.id] = app?.machines.engine(machine.id)?.catalog.startingModel(LastModel.current, scope: .on(machine: machine.id)) ?? nil
+        }
+        let listed = Listed(
+            templates: BotTemplate.all.map { Template(id: $0.id, name: $0.name, job: $0.job, instructions: $0.instructions, look: $0.look, personality: $0.personality, wantsProject: $0.wantsProject) },
+            personalities: Personalities.shared.all.map { .init(id: $0.id, name: $0.name, description: $0.description, custom: $0.isCustom) },
+            looks: .init(colors: BotLook.Tint.allCases.map(\.rawValue), shapes: BotLook.Form.allCases.map(\.rawValue), faces: BotLook.Face.allCases.map(\.rawValue)),
+            startingModel: starting,
+            projects: (workspace?.projects ?? []).map { .init(directory: $0.directory, name: $0.name, machine: RemoteFolder.machine(of: $0.directory)) })
+        return (try? JSONEncoder().encode(listed)) ?? Data()
+    }
+
+    /// `POST kuvo/bots`: a bot made as New Bot makes it, `{name, look?, personality?, model?,
+    /// machine?, project?, template?}`. A project on a machine makes it there. From a template it
+    /// waits for you, with the template's job as `firstMessage` for your composer; otherwise it
+    /// writes first. Answers 201 `{bot, firstMessage}`; 400 for what's missing or unknown, 409
+    /// while its machine isn't connected, 422 for a model that can't run there, 503 when it
+    /// couldn't be made.
+    func makeBot(_ body: Data) async -> (Int, Data) {
+        struct Given: Decodable {
+            var name: String?, look: BotLook?, personality: String?, model: ModelRef?, machine: String?, project: String?, template: String?
+        }
+        guard let bots, let app = bots.app else { return (503, Self.message("Bots aren’t ready yet. Try again in a moment.")) }
+        guard let given = try? JSONDecoder().decode(Given.self, from: body) else { return (400, Self.message("That isn’t a bot to make.")) }
+        let name = Bots.oneLine(given.name ?? "")
+        guard !name.isEmpty else { return (400, Self.message("A bot needs a name.")) }
+        var template: BotTemplate?
+        if let id = given.template {
+            guard let found = BotTemplate.all.first(where: { $0.id == id }) else { return (400, Self.message("There’s no template “\(id)”.")) }
+            template = found
+        }
+        let personality = given.personality ?? template?.personality
+        if let personality, Personalities.shared.personality(personality) == nil { return (400, Self.message("There’s no personality “\(personality)”.")) }
+        // Where it lives: its project's computer, or the one picked.
+        var machine = given.machine
+        if let project = given.project {
+            guard let found = workspace?.projects.first(where: { $0.directory == project }) else { return (400, Self.message("That project isn’t in Kuvo Code.")) }
+            machine = RemoteFolder.machine(of: found.directory)
+        }
+        let place = machine.map { id in app.machines.list.first { $0.id == id }?.name ?? id }
+        if let machine {
+            guard app.machines.list.contains(where: { $0.id == machine }) else { return (400, Self.message("There’s no machine “\(machine)”.")) }
+            guard app.machines.engine(machine)?.isReady == true else { return (409, Self.message("\(place ?? machine) isn’t connected. Connect to it, then try again.")) }
+        } else if app.workspace.api == nil {
+            return (503, Self.message("The engine isn’t running."))
+        }
+        let catalog = machine.flatMap { app.machines.engine($0)?.catalog } ?? app.catalog
+        if let model = given.model {
+            guard ModelScope.on(machine: machine).allows(model.providerID) else { return (422, Self.message("That model can’t run on \(place ?? "this Mac"): choose another.")) }
+            if catalog.needsSignIn(model) { return (422, Self.message(catalog.unavailable(model, on: place))) }
+        }
+        do {
+            let bot = try await bots.create(name: name, look: given.look ?? template?.look ?? .random(), personality: personality, model: given.model, machine: machine, project: given.project)
+            let first = template.map { BotTemplate.firstMessage(job: $0.job, instructions: $0.instructions) }
+            if first == nil { Task { await bots.greet(bot) } }
+            struct Made: Encodable {
+                var bot: BotEntry
+                var firstMessage: String?
+                func encode(to encoder: Encoder) throws {
+                    var container = encoder.container(keyedBy: CodingKeys.self)
+                    try container.encode(bot, forKey: .bot)
+                    try container.encode(firstMessage, forKey: .firstMessage)
+                }
+                enum CodingKeys: String, CodingKey { case bot, firstMessage }
+            }
+            return (201, (try? JSONEncoder().encode(Made(bot: entry(bot), firstMessage: first))) ?? Data())
+        } catch Bots.Failure.notConnected(let machineName) {
+            return (409, Self.message("\(machineName) isn’t connected. Connect to it, then try again."))
+        } catch {
+            return (503, Self.message(error.localizedDescription))
+        }
+    }
+
+    /// A meeting as a phone sends it: `{next, every, topic}`, `next` in seconds since 1970 and
+    /// `every` as kuvo-wake writes it (`1d`, `weekdays`, `1w`…; null for once).
+    struct GivenMeeting: Decodable {
+        var next: Double
+        var every: String?
+        var topic: String?
+
+        /// As Edit Group Chat sets it up (`BotGroup.Meeting.planned`), or why it can't be.
+        func planned(before: BotGroup.Meeting?) -> Result<BotGroup.Meeting, PhoneLink.Refusal> {
+            var repeats: Wakes.Repeat?
+            if let every {
+                guard let parsed = Wakes.Repeat(every) else { return .failure(.init("“\(every)” isn’t how often a meeting can come back.")) }
+                repeats = parsed
+            }
+            guard let meeting = BotGroup.Meeting.planned(at: Date(timeIntervalSince1970: next), every: repeats, topic: topic ?? "", before: before) else {
+                return .failure(.init("That time has passed. Pick one to come."))
+            }
+            return .success(meeting)
+        }
+    }
+
+    struct Refusal: Error {
+        var message: String
+        init(_ message: String) { self.message = message }
+    }
+
+    /// `POST kuvo/groups`: a group chat made as New Group Chat makes it, on this Mac, `{name,
+    /// members, purpose?, meeting?}` (members by bot id; a meeting as `GivenMeeting`). Answers 201
+    /// `{group}`, as `kuvo/groups` lists it; 400 without a name or two bots, or for a meeting that
+    /// can't be, 404 for a bot that isn't there.
+    func makeGroup(_ body: Data) async -> (Int, Data) {
+        struct Given: Decodable { var name: String?, members: [String]?, purpose: String?, meeting: GivenMeeting? }
+        guard let groups, let bots else { return (503, Self.message("Group chats aren’t ready yet. Try again in a moment.")) }
+        guard let given = try? JSONDecoder().decode(Given.self, from: body) else { return (400, Self.message("That isn’t a group chat to make.")) }
+        let name = Bots.oneLine(given.name ?? "")
+        guard !name.isEmpty else { return (400, Self.message("A group chat needs a name.")) }
+        var members: [String] = []
+        for id in given.members ?? [] where !members.contains(id) { members.append(id) }
+        guard members.count >= 2 else { return (400, Self.message("A group chat needs at least two bots.")) }
+        if let missing = members.first(where: { bots.bot($0) == nil }) { return (404, Self.message("There’s no bot “\(missing)”.")) }
+        var meeting: BotGroup.Meeting?
+        if let given = given.meeting {
+            switch given.planned(before: nil) {
+            case .success(let planned): meeting = planned
+            case .failure(let refusal): return (400, Self.message(refusal.message))
+            }
+        }
+        let purpose = given.purpose?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let group = groups.create(name: name, purpose: purpose?.isEmpty == false ? purpose : nil, members: members, meeting: meeting)
+        return (201, (try? Self.groupEncoder.encode(["group": entry(group, in: groups)])) ?? Data())
+    }
+
+    /// `PATCH kuvo/groups/<id>`: its name, purpose, bots or meeting changed, as Edit Group Chat
+    /// changes them: `{name?, purpose?, members?, meeting?}`, a meeting as `GivenMeeting` (null
+    /// for none, an empty purpose for none). Answers 200 `{group}`, as `kuvo/groups` lists it;
+    /// 404 for no such chat, 400 for what can't be, 409 while it moves.
+    func changeGroup(_ id: String, with body: Data) async -> (Int, Data) {
+        guard let groups, let bots else { return (503, Self.message("Group chats aren’t ready yet. Try again in a moment.")) }
+        guard !id.contains("/"), var group = groups.group(id) else { return (404, Self.message("That group chat isn’t there any more.")) }
+        guard let fields = try? JSONSerialization.jsonObject(with: body) as? [String: Any] else { return (400, Self.message("That isn’t a change to a group chat.")) }
+        if fields["name"] != nil {
+            let name = Bots.oneLine(fields["name"] as? String ?? "")
+            guard !name.isEmpty else { return (400, Self.message("A group chat needs a name.")) }
+            group.name = name
+        }
+        if fields["purpose"] != nil {
+            let purpose = (fields["purpose"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            group.purpose = purpose.isEmpty ? nil : purpose
+        }
+        if let given = fields["members"] {
+            guard let list = given as? [String] else { return (400, Self.message("Those aren’t bots.")) }
+            var members: [String] = []
+            for member in list where !members.contains(member) { members.append(member) }
+            guard members.count >= 2 else { return (400, Self.message("A group chat needs at least two bots.")) }
+            if let missing = members.first(where: { bots.bot($0) == nil }) { return (404, Self.message("There’s no bot “\(missing)”.")) }
+            // One that lives on a machine has only bots that live there; one on this Mac, any bot,
+            // as Edit Group Chat allows.
+            if let machine = groups.machine(of: id), let stranger = members.first(where: { bots.bot($0)?.machine != machine }) {
+                return (400, Self.message("\(bots.bot(stranger)?.name ?? "That bot") doesn’t live where this chat does."))
+            }
+            group.members = members
+        }
+        if let given = fields["meeting"] {
+            if given is NSNull {
+                group.meeting = nil
+            } else {
+                guard let data = try? JSONSerialization.data(withJSONObject: given), let meeting = try? JSONDecoder().decode(GivenMeeting.self, from: data) else {
+                    return (400, Self.message("That isn’t a meeting."))
+                }
+                switch meeting.planned(before: group.meeting) {
+                case .success(let planned): group.meeting = planned
+                case .failure(let refusal): return (400, Self.message(refusal.message))
+                }
+            }
+        }
+        do {
+            try await groups.change(group)
+        } catch Moves.Failure.moving {
+            return (409, Self.message("That chat is moving. Try again once it’s there."))
+        } catch {
+            return (503, Self.message(error.localizedDescription))
+        }
+        guard let changed = groups.group(id) else { return (404, Self.message("That group chat isn’t there any more.")) }
+        return (200, (try? Self.groupEncoder.encode(["group": entry(changed, in: groups)])) ?? Data())
     }
 
     /// What a phone does in a chat, as in the window: writes to it (`{"text"}`), stops it, lets it
     /// keep going, looks at it, takes a message of yours back (`{"message"}`, answering with
     /// what was taken, for the phone's composer), or starts the work a wrap-up split up
     /// (`{"message"}`, the wrap-up).
-    private func answerGroup(_ path: String, with body: Data) -> (Int, Data) {
+    private func answerGroup(_ path: String, with body: Data) async -> (Int, Data) {
         let parts = path.split(separator: "/").map(String.init)
         guard let groups, let id = parts.first, groups.group(id) != nil else { return (404, Data()) }
         struct Given: Decodable { var text: String?; var message: String? }
@@ -622,7 +1611,8 @@ final class PhoneLink {
         switch parts.dropFirst().first {
         case nil:
             guard let text = given?.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return (400, Data()) }
-            groups.send(text, to: id)
+            // Moving, or its machine away or saying no: the phone keeps it, and says so.
+            guard await groups.sendNow(text, to: id) else { return (409, Data(#"{"message":"It can't take messages right now. Try again in a moment."}"#.utf8)) }
         case "stop":
             groups.stop(id)
         case "keep-going":
@@ -630,7 +1620,10 @@ final class PhoneLink {
         case "viewed":
             groups.markViewed(id)
         case "undo":
-            guard let message = given?.message, let taken = groups.undo(from: message, in: id) else { return (404, Data()) }
+            guard let message = given?.message else { return (404, Data()) }
+            // Moving, or its machine away: as for what you write.
+            guard !isMoving(id), groups.unreachable(id) == nil else { return (409, Data()) }
+            guard let taken = await groups.undo(from: message, in: id) else { return (404, Data()) }
             return (200, (try? JSONEncoder().encode(["text": taken])) ?? Data())
         case "start":
             guard let message = given?.message, groups.messages(in: id).contains(where: { $0.id == message && $0.tasks != nil }) else { return (404, Data()) }
@@ -642,6 +1635,84 @@ final class PhoneLink {
     }
 
     /// The chat in `kuvo/groups/<id>/<action>`.
+    /// `kuvo/shell/<id>/stop` → the engine's id of the command.
+    nonisolated private static func shellID(in path: String) -> String? {
+        let parts = path.split(separator: "/")
+        guard parts.count == 4, parts[0] == "kuvo", parts[1] == "shell", parts[3] == "stop" else { return nil }
+        return String(parts[2]).removingPercentEncoding
+    }
+
+    /// `GET kuvo/wakes/<session>`: its wake-ups, watches and whether they're paused, read now;
+    /// `POST kuvo/wakes/<session>/cancel` with `{"wake": "<id>"}` or `{"watch": "<letters>"}`
+    /// cancels one, and `…/now` with `{"wake": "<id>"}` sends one now (one that repeats still
+    /// comes back at its time), as the bar over the Mac's composer does. Times are seconds since 1970.
+    /// A wake-up that couldn't go or be taken back: 409 while its conversation is on its way to
+    /// another computer (as a machine's bridge says it), else 503.
+    nonisolated private static func status(of error: any Error) -> Int {
+        if case .moving? = error as? Moves.Failure { return 409 }
+        return 503
+    }
+
+    private func answerWakes(_ request: LinkRequest) async -> (Int, Data) {
+        let parts = request.path.split(separator: "?").first?.split(separator: "/").map(String.init) ?? []
+        guard parts.count >= 3, let session = parts[2].removingPercentEncoding, let app = AgentMail.shared.app,
+              let found = app.workspace.session(session) else { return (404, Data("{}".utf8)) }
+        let owner = WakeUps.owner(of: found)
+        let wakeUps = app.wakeUps
+        // As they are now: a machine session's aren't read until something asks.
+        await wakeUps.read(owner)
+        if parts.count == 4, parts[3] == "now", request.method.uppercased() == "POST" {
+            struct Given: Decodable { var wake: String }
+            guard let id = (try? JSONDecoder().decode(Given.self, from: request.body))?.wake,
+                  let wake = wakeUps.wakes[owner.key]?.first(where: { $0.id == id || $0.letters == id }) else { return (404, Data("{}".utf8)) }
+            do { try await wakeUps.wakeNow(wake, of: owner) } catch {
+                return (Self.status(of: error), (try? JSONEncoder().encode(["message": error.localizedDescription])) ?? Data())
+            }
+            return (200, Data("{}".utf8))
+        }
+        if parts.count == 4, parts[3] == "cancel", request.method.uppercased() == "POST" {
+            struct Given: Decodable { var wake: String?; var watch: String? }
+            let given = try? JSONDecoder().decode(Given.self, from: request.body)
+            do {
+                if let id = given?.wake, let wake = wakeUps.wakes[owner.key]?.first(where: { $0.id == id || $0.letters == id }) {
+                    try await wakeUps.cancel(wake, of: owner)
+                } else if let letters = given?.watch, let watch = wakeUps.watches[owner.key]?.first(where: { $0.letters == letters }) {
+                    try await wakeUps.cancel(watch, of: owner)
+                } else {
+                    return (404, Data("{}".utf8))
+                }
+            } catch {
+                return (Self.status(of: error), (try? JSONEncoder().encode(["message": error.localizedDescription])) ?? Data())
+            }
+            return (200, Data("{}".utf8))
+        }
+        guard parts.count == 3 else { return (404, Data("{}".utf8)) }
+        struct Listed: Encodable {
+            struct Wake: Encodable { var id: String; var due: Double; var note: String; var every: String? }
+            struct Watch: Encodable { var letters: String; var every: String; var check: String; var note: String }
+            var wakes: [Wake]; var watches: [Watch]; var paused: Bool
+        }
+        let listed = Listed(wakes: (wakeUps.wakes[owner.key] ?? []).map { .init(id: $0.id, due: $0.due.timeIntervalSince1970, note: $0.note, every: $0.every?.text) },
+                            watches: (wakeUps.watches[owner.key] ?? []).map { .init(letters: $0.letters, every: $0.every, check: $0.check, note: $0.note) },
+                            paused: wakeUps.paused.contains(owner.key))
+        return (200, (try? JSONEncoder().encode(listed)) ?? Data())
+    }
+
+    /// Stops a command an agent left running, as Stop in the bar over the composer does: found
+    /// among the ones this Mac follows, or asked of the engine of `session` when given.
+    private func stopShell(_ id: String, with body: Data) async -> (Int, Data) {
+        struct Given: Decodable { var session: String? }
+        guard let workspace else { return (503, Data()) }
+        var found = workspace.shellJobs.lazy.compactMap { session, jobs in jobs.first { $0.id == id }.map { (session, $0) } }.first
+        if found == nil, let session = (try? JSONDecoder().decode(Given.self, from: body))?.session, let api = workspace.api(forSession: session),
+           let job = try? await api.shell(id, directory: workspace.session(session)?.location.directory), job.status == "running" {
+            found = (session, job)
+        }
+        guard let (session, job) = found else { return (404, Data("{}".utf8)) }
+        let how = await workspace.stopShellJob(job, in: session)
+        return (200, Data(#"{"stopped":"\#(how)"}"#.utf8))
+    }
+
     nonisolated private static func groupID(in path: String, then action: String) -> String? {
         let parts = path.split(separator: "/")
         guard parts.count == 4, parts[0] == "kuvo", parts[1] == "groups", parts[3] == action else { return nil }
@@ -649,10 +1720,16 @@ final class PhoneLink {
     }
 
     /// A response that doesn't end: `current()` now, as a line of JSON, and again each time it
-    /// changes, until the phone stops reading.
+    /// changes, until the phone stops reading. 404 when there's nothing to follow (no usage panel,
+    /// no such chat), as reading it once answers.
     nonisolated private static func following(_ current: @escaping @MainActor () -> Data?) -> AsyncThrowingStream<LinkResponsePart, Error> {
         AsyncThrowingStream { continuation in
             let task = Task { @MainActor in
+                guard current() != nil else {
+                    continuation.yield(.head(status: 404, headers: [:]))
+                    continuation.finish()
+                    return
+                }
                 continuation.yield(.head(status: 200, headers: ["content-type": "application/x-ndjson"]))
                 var last: Data?
                 while !Task.isCancelled {
@@ -662,6 +1739,33 @@ final class PhoneLink {
                         last = now
                     }
                     await changed(current)
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    /// One chat's events (`kuvo/groups/<id>/events`), as `following` sends them, but a line whose
+    /// messages are as they were (who's talking, or what they're doing, changed) leaves them out,
+    /// and the phone keeps the ones it has.
+    nonisolated private static func followingGroup(_ id: String, link: PhoneLink?) -> AsyncThrowingStream<LinkResponsePart, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task { @MainActor in
+                guard link?.groupLines(id) != nil else {
+                    continuation.yield(.head(status: 404, headers: [:]))
+                    continuation.finish()
+                    return
+                }
+                continuation.yield(.head(status: 200, headers: ["content-type": "application/x-ndjson"]))
+                var last: GroupLines?
+                while !Task.isCancelled {
+                    guard let now = link?.groupLines(id) else { break }
+                    if now != last {
+                        continuation.yield(.body((now.messages == last?.messages ? now.state : now.whole) + Data("\n".utf8)))
+                        last = now
+                    }
+                    await changed { link?.groupLines(id)?.whole }
                 }
                 continuation.finish()
             }
@@ -692,7 +1796,7 @@ final class PhoneLink {
     }
 
     private func save() {
-        try? JSONEncoder().encode(Saved(phones: phones, machines: machineHosts)).write(to: Self.file, options: .atomic)
+        try? JSONEncoder().encode(Saved(phones: paired.phones, removed: paired.removed, machines: machineHosts)).write(to: savedFile, options: .atomic)
     }
 
     // MARK: Keychain
@@ -728,5 +1832,14 @@ final class PhoneLink {
         item[kSecAttrLabel as String] = "Kuvo Code phone link"
         item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
         SecItemAdd(item as CFDictionary, nil)
+    }
+}
+
+/// Stops at the first answer an address gives, rather than following where it sends the browser
+/// next (`kuvo/sign-in/return`).
+nonisolated private final class StaysThere: NSObject, URLSessionTaskDelegate, Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }

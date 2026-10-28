@@ -3,7 +3,7 @@ import OpenCodeKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Creating a project, or changing one, in the window's main card: its name and its folders.
+/// Creating a project, or changing one, in a popup over the window: its name and its folders.
 /// Sessions run in the primary folder, and the agent can work in the others too. An existing
 /// project keeps its primary folder, since its sessions live there.
 struct ProjectEditor: View {
@@ -25,6 +25,8 @@ struct ProjectEditor: View {
     @State private var setupFolder: String?
     @State private var engineProject: String?
     @State private var run: String
+    @State private var terminal: String
+    @FocusState private var isTerminalFocused: Bool
     @FocusState private var isRunFocused: Bool
     @FocusState private var isSetupFocused: Bool
     private let focusesRun: Bool
@@ -39,6 +41,8 @@ struct ProjectEditor: View {
     @State private var isCheckingFolder = false
     @State private var folderFailure: String?
     @FocusState private var isFolderFocused: Bool
+    /// How tall the form is: the popup grows with it, up to a point, then it scrolls.
+    @State private var formHeight: CGFloat = 320
 
     init(project: Workspace.Project?, folders: [String] = [], focusesRun: Bool = false, save: @escaping (String, Workspace.ProjectSettings) -> Void, close: @escaping () -> Void) {
         self.project = project
@@ -47,6 +51,7 @@ struct ProjectEditor: View {
         self.focusesRun = focusesRun
         _name = State(initialValue: project?.settings.name ?? "")
         _run = State(initialValue: project?.settings.run ?? "")
+        _terminal = State(initialValue: project?.settings.terminal ?? "")
         _folders = State(initialValue: project?.allFolders ?? folders)
         _machine = State(initialValue: (project?.allFolders ?? folders).first.flatMap(RemoteFolder.machine(of:)))
     }
@@ -64,31 +69,43 @@ struct ProjectEditor: View {
                     }
                 }, cancel: { withAnimation(.ui) { showsAddMachine = false } })
             }
+            .frame(width: Self.width, height: 480)
             .transition(.opacity)
         } else {
             editor
         }
     }
 
+    static let width: CGFloat = 560
+
     private var editor: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text(isNew ? "New Project" : "Edit Project")
+                    .font(.title2.weight(.bold))
+                Spacer(minLength: 12)
+                Button("Close", systemImage: "xmark", action: close)
+                    .buttonStyle(CardActionStyle())
+                    .help("Close")
+            }
+            .padding(.horizontal, 28)
+            .padding(.top, 24)
+            .padding(.bottom, 18)
             ScrollView {
                 form
-                    .frame(maxWidth: 600)
-                    .padding(.horizontal, Metrics.gutter + 8)
-                    .padding(.top, 24)
-                    .padding(.bottom, 8)
-                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 28)
+                    .padding(.bottom, 4)
+                    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { formHeight = $0 }
             }
             .scrollBounceBehavior(.basedOnSize)
             .scrollEdgeEffectStyle(.soft, for: .bottom)
+            .frame(height: min(formHeight, 520))
             EditorFooter(primary: isNew ? "Create Project" : "Save", canDoPrimary: !folders.isEmpty, onPrimary: saveProject, onCancel: close, cancelsOnEscape: true)
-                .frame(maxWidth: 600)
-                .padding(.horizontal, Metrics.gutter + 8)
-                .padding(.top, 12)
-                .padding(.bottom, 20)
-                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 28)
+                .padding(.top, 20)
+                .padding(.bottom, 24)
         }
+        .frame(width: Self.width)
         .onAppear { if focusesRun { isRunFocused = true } else { isNameFocused = true } }
         .task(id: folders.first) { await loadSetup() }
         #if DEBUG
@@ -133,6 +150,37 @@ struct ProjectEditor: View {
                 }
             }
 
+            section("Terminal Instead of Chat", note: "New sessions in this project open a terminal running this command, flags and all; leave it empty for the usual chat.") {
+                VStack(alignment: .leading, spacing: 10) {
+                    WellGroup(isActive: isTerminalFocused) {
+                        WellRow(isActive: isTerminalFocused) {
+                            Image(systemName: "apple.terminal")
+                                .font(.system(size: 13))
+                        } content: {
+                            TextField("Terminal", text: $terminal, prompt: Text(verbatim: "omp"), axis: .vertical)
+                                .textFieldStyle(.plain)
+                                .font(.system(size: 14, design: .monospaced))
+                                .lineLimit(1...8)
+                                .focused($isTerminalFocused)
+                                .padding(.vertical, 12)
+                        }
+                    }
+                    Flow(spacing: 6) {
+                        ForEach(Self.terminalSuggestions, id: \.self) { command in
+                            Button {
+                                terminal = command
+                            } label: {
+                                Text(verbatim: command)
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                            }
+                            .buttonStyle(FilledButtonStyle(shape: .capsule))
+                        }
+                    }
+                }
+            }
+
             if setup != nil {
                 section("Worktree Setup") {
                     WellGroup(isActive: isSetupFocused) {
@@ -153,9 +201,12 @@ struct ProjectEditor: View {
         }
     }
 
+    /// Terminal coding agents to start from; any command, with its flags, can be typed instead.
+    private static let terminalSuggestions = ["omp", "claude", "codex", "opencode", "pi", "gemini", "aider", "amp"]
+
     private func saveProject() {
         guard let primary = folders.first else { return }
-        save(primary, Workspace.ProjectSettings(name: name, folders: Array(folders.dropFirst()), run: run))
+        save(primary, Workspace.ProjectSettings(name: name, folders: Array(folders.dropFirst()), run: run, terminal: terminal))
         saveSetup()
         close()
     }

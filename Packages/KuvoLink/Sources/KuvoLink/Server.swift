@@ -19,6 +19,12 @@ public actor LinkServer {
     /// Opens a socket (PROTOCOL.md, "Sockets"): what the phone sends arrives on the input; what
     /// comes back goes to the phone, `.open` first.
     public typealias Connect = @Sendable (LinkRequest, Phone, AsyncStream<Data>) -> AsyncThrowingStream<LinkSocketEvent, Error>
+    /// A phone's session proved its own: its first message opened with the keys of the handshake,
+    /// which a replayed first handshake message can't do. Where it is now (for its notifications).
+    public typealias Confirmed = @Sendable (Phone) -> Void
+    /// A mail frame from another host (PROTOCOL.md, "Mail"), whole, and where it came from: the
+    /// host opens it with the keys it takes mail from.
+    public typealias Mailed = @Sendable (_ frame: Data, _ from: LinkAddress) -> Void
 
     let key: LinkKey
     let hello: HostHello
@@ -26,6 +32,8 @@ public actor LinkServer {
     let handle: Handle
     let connect: Connect?
     let pushed: Pushed?
+    let confirmed: Confirmed?
+    let mailed: Mailed?
     private var relay: (any RelayTransport)?
     private var sessions: [SessionKey: Session] = [:]
 
@@ -42,6 +50,8 @@ public actor LinkServer {
         var running: [Int: Task<Void, Never>] = [:]
         /// Open sockets' input, by request.
         var sockets: [Int: AsyncStream<Data>.Continuation] = [:]
+        /// Its first message came, opened: it's the phone's own (see `Confirmed`).
+        var isConfirmed = false
 
         init(key: SessionKey, phone: Phone, transport: Transport) {
             self.key = key
@@ -50,13 +60,15 @@ public actor LinkServer {
         }
     }
 
-    public init(key: LinkKey, hello: HostHello, authorize: @escaping Authorize, handle: @escaping Handle, connect: Connect? = nil, pushed: Pushed? = nil) {
+    public init(key: LinkKey, hello: HostHello, authorize: @escaping Authorize, handle: @escaping Handle, connect: Connect? = nil, pushed: Pushed? = nil, confirmed: Confirmed? = nil, mailed: Mailed? = nil) {
         self.key = key
         self.hello = hello
         self.authorize = authorize
         self.handle = handle
         self.connect = connect
         self.pushed = pushed
+        self.confirmed = confirmed
+        self.mailed = mailed
     }
 
     /// Serves over `relay` until it closes. Sessions on an earlier connection end.
@@ -86,6 +98,13 @@ public actor LinkServer {
     /// Whether a phone has a session open: the app on its screen.
     public var hasSessions: Bool { !sessions.isEmpty }
 
+    /// Ends every session, telling each phone, as this host stops (its engine starting over, the
+    /// app quitting): a phone opens a new one for what it asks next at once, rather than finding
+    /// out the old one's gone when that goes unanswered.
+    public func closeAll() {
+        for session in sessions.values { end(session, notify: true) }
+    }
+
     /// Sends `notice` (a `Notice`'s JSON) to each phone's notifications, sealed for it alone; the
     /// relay pushes it to the phone through Apple. False with no relay connection to send it on.
     @discardableResult
@@ -98,10 +117,33 @@ public actor LinkServer {
         return true
     }
 
-    /// Ends the sessions of a phone that's no longer paired.
+    /// How a mail went: on its way, not now (no relay connection), or too big for the relay.
+    public enum MailOutcome: Sendable, Equatable {
+        case sent, offline, tooBig
+    }
+
+    /// Sends `payload` to another host (a machine's bridge), sealed for its key alone, through the
+    /// relay. Nothing comes back: one that isn't connected now doesn't get it (the relay says it's
+    /// unreachable). One the relay won't take (it would close this connection for it) isn't sent.
+    @discardableResult
+    public func mail(_ payload: Data, to remote: Data, at address: LinkAddress) -> MailOutcome {
+        guard let relay else { return .offline }
+        guard let sealed = try? Mail.seal(payload, from: key, to: remote), sealed.count <= RelayMessage.maxPayload else { return .tooBig }
+        relay.send(.send(to: address, payload: sealed))
+        return .sent
+    }
+
+    /// Ends the sessions of a phone that's no longer paired, and one it's let in meanwhile.
     public func forget(phone key: Data) {
+        forgets += 1
+        forgotten[key] = forgets
         for session in sessions.values where session.phone.key == key { end(session, notify: true) }
     }
+
+    /// When each phone was last forgotten, counting forgets: one let in while it was asked whether
+    /// to (`authorize`) and forgotten meanwhile doesn't get its session.
+    private var forgotten: [Data: Int] = [:]
+    private var forgets = 0
 
     private func receive(_ frame: LinkFrame, from address: LinkAddress) async {
         let key = SessionKey(address: address, id: frame.session)
@@ -113,19 +155,27 @@ public actor LinkServer {
             guard let plaintext = try? session.transport.open(frame.body), let message = try? LinkMessage(plaintext) else {
                 return end(session, notify: true)
             }
+            if !session.isConfirmed {
+                session.isConfirmed = true
+                confirmed?(session.phone)
+            }
             receive(message, in: session)
         case .close:
             if let session = sessions[key] { end(session, notify: false) }
-        case .handshake2, .mail:
+        case .mail:
+            mailed?(frame.data, address)
+        case .handshake2:
             break
         }
     }
 
     private func handshake(_ message: Data, key: SessionKey) async {
         var responder = IKResponder(staticKey: self.key, prologue: Link.prologue)
+        let asked = forgets
         guard let payload = try? responder.readMessage1(message),
               let phoneHello = try? JSONDecoder().decode(PhoneHello.self, from: payload), phoneHello.v == Link.version,
               await authorize(responder.remoteStatic, key.address, phoneHello),
+              (forgotten[responder.remoteStatic] ?? 0) <= asked,
               let (reply, transport) = try? responder.writeMessage2(payload: JSONEncoder().encode(hello))
         else { return send(.close, key: key) }
         // One session per phone: a new one replaces what's left of the last.
