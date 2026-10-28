@@ -26,6 +26,15 @@ npm run smoke                                              # starts the portable
 The build needs the harness executable in `windows/harness/build/` (the step above
 produces it); electron-builder copies it into `resources/harness/`.
 
+## Updates
+
+The shell asks GitHub for the newest `windows-v*` release, downloads its
+`Kuvo-Code-Setup-<version>.exe` into `%APPDATA%\Kuvo Code\updates`, checks the
+bytes, and starts it detached before quitting so it can replace the files. Every
+attempt is written to `%APPDATA%\Kuvo Code\update.log`; Settings › General shows
+the last failure and opens that file. When the GitHub API is limited, the
+releases feed is used instead.
+
 ## Code signing
 
 The builds are unsigned. For a production release, sign `kuvo-windows-harness.exe` and

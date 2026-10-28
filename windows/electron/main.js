@@ -1,12 +1,15 @@
 // Kuvo Code's Windows shell: a native window around the harness, which already knows how to
 // install and run the engine. This process owns the window, the tray, the terminal (ConPTY)
 // and the lifecycle.
-const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, globalShortcut, Notification, powerSaveBlocker, shell, ipcMain } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage, dialog, globalShortcut, Notification, powerSaveBlocker, shell, ipcMain, net } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { RELEASES_API, pickRelease } = require('./update-check.js');
+const {
+  RELEASES_API, RELEASES_ATOM, pickRelease, parseAtom, describeError,
+} = require('./update-check.js');
+const { downloadInstaller, launchInstaller, sweepInstallers } = require('./update-install.js');
 const { startTerminalServer: startPtyServer } = require('./terminal.js');
 const { checkDestination } = require('./ssh.js');
 let pty = null;
@@ -17,9 +20,30 @@ try { WebSocketServer = require('ws').WebSocketServer; } catch (error) { console
 const isDev = !app.isPackaged;
 const userData = app.getPath('userData');
 const configPath = path.join(userData, 'config.json');
+const updatesFolder = path.join(userData, 'updates');
+const updateLogPath = path.join(userData, 'update.log');
+
+// Windows shows a toast only for an app it knows by its Application User Model ID, which is
+// the one the installer's shortcut carries. Without this, "Version 0.7.3 is available" is
+// shown to nobody — and a quiet check looks like a check that failed.
+if (process.platform === 'win32') app.setAppUserModelId('run.kuvo.code.windows');
 
 function loadConfig() { try { return JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch { return {}; } }
 function saveConfig(config) { fs.mkdirSync(userData, { recursive: true }); fs.writeFileSync(configPath, JSON.stringify(config, null, 2)); }
+
+/// What the updater did, and why it stopped. A quiet check that fails says nothing on
+/// purpose, so the log is where a failure is read afterwards.
+function logUpdate(message) {
+  try {
+    fs.mkdirSync(userData, { recursive: true });
+    fs.appendFileSync(updateLogPath, `${new Date().toISOString()} ${message}\n`);
+    if (fs.statSync(updateLogPath).size > 256 * 1024) {
+      const kept = fs.readFileSync(updateLogPath, 'utf8').split('\n').slice(-200).join('\n');
+      fs.writeFileSync(updateLogPath, kept);
+    }
+  } catch {}
+}
+const messageOf = error => String(error && error.message || error || 'Something went wrong.');
 
 // The app's own icon, taken from the macOS build (windows/tools/make-icon.py). The window
 // and the tray wear it; Windows takes the executable's icon from build/icon.ico.
@@ -35,6 +59,7 @@ let terminalServer = null;
 let terminalCwd = os.homedir();
 let mainWindow = null;
 let tray = null;
+let rebuildTrayMenu = null;
 let quitting = false;
 // What the menu bar draws from the page's state: the tab bar's own command changes its
 // word, and the Appearance picker shows the one in use (KuvoCodeApp.swift:130-229).
@@ -124,7 +149,8 @@ function createWindow(url) {
     if (!harnessUrl || !target.startsWith(harnessUrl)) event.preventDefault();
   });
   // The settings page can change these; the window coming forward is when they are read.
-  mainWindow.on('focus', () => applyShellPreferences());
+  // The menu bar's checks come from the same file, so they are rebuilt then too.
+  mainWindow.on('focus', () => { applyShellPreferences(); refreshUpdateMenus(); });
   mainWindow.on('close', (event) => {
     if (!quitting) { event.preventDefault(); mainWindow.hide(); }
   });
@@ -192,6 +218,11 @@ function applicationMenu() {
           const next = loadConfig(); next.autoUpdate = item.checked; saveConfig(next);
           if (item.checked) void checkForUpdates({ quiet: true });
         } },
+        ...(pendingUpdate ? [{
+          label: `Update to ${pendingUpdate.version}…`,
+          enabled: !installing,
+          click: () => { void askToInstall(pendingUpdate); },
+        }] : []),
         { label: "Check for Updates…", click: () => { void checkForUpdates(); } },
         { type: "separator" },
         // The Mac's Settings and Accounts live in the app menu (KuvoCodeApp.swift:240-248);
@@ -322,11 +353,24 @@ function createTray() {
       const next = loadConfig(); next.autoUpdate = item.checked; saveConfig(next);
       if (item.checked) void checkForUpdates({ quiet: true });
     } });
+    // A version that was found is reachable from here, whether or not Windows showed the
+    // note: the tray is the one place that is always a click away.
+    if (pendingUpdate) {
+      items.push({
+        label: installing ? `Downloading ${pendingUpdate.version}…` : `Update to ${pendingUpdate.version}…`,
+        enabled: !installing,
+        click: () => { void askToInstall(pendingUpdate); },
+      });
+    }
+    if (updateState.status === 'failed') {
+      items.push({ label: `Update failed: ${updateState.error ?? 'see the log'}`, enabled: false });
+    }
     items.push({ label: 'Check for updates', click: () => { void checkForUpdates(); } });
     items.push({ type: 'separator' });
     items.push({ label: 'Quit', click: () => { quitting = true; app.quit(); } });
     tray.setContextMenu(Menu.buildFromTemplate(items));
   };
+  rebuildTrayMenu = rebuild;
   rebuild();
   tray.on('click', () => { if (mainWindow) { mainWindow.show(); mainWindow.focus(); } });
   // Rebuild the menu when the window is shown, so recent projects stay fresh.
@@ -419,56 +463,210 @@ function shutdown() {
 // provider looks for another kind of release — so the shell asks GitHub itself, compares the
 // versions, and offers the installer. The keys are ours: the installer is the portable one's
 // bigger brother, and it replaces what is installed.
+//
+// The check goes through Electron's network stack, not Node's: it reads this machine's proxy
+// and its certificate store, so a machine whose browser reaches GitHub reaches it here too.
+// When the API is limited or blocked, the releases feed answers instead.
 
-async function checkForUpdates({ quiet = false } = {}) {
+/// What the updater is doing, for the page and the tray: the version that is running, the one
+/// waiting to be installed, and how the last attempt ended.
+const updateState = { status: 'idle', error: null, checkedAt: null, downloaded: null };
+let pendingUpdate = null;
+let updateCheck = null;
+let installing = false;
+
+const updateStatus = () => ({
+  version: app.getVersion(),
+  available: pendingUpdate?.version ?? null,
+  notes: pendingUpdate?.notes ?? '',
+  status: updateState.status,
+  error: updateState.error,
+  checkedAt: updateState.checkedAt,
+  logPath: updateLogPath,
+});
+
+function refreshUpdateMenus() {
+  try { applicationMenu(); } catch {}
+  try { rebuildTrayMenu?.(); } catch {}
+}
+
+async function releasesFromApi() {
+  const response = await net.fetch(RELEASES_API, {
+    headers: { 'user-agent': 'Kuvo-Code', accept: 'application/vnd.github+json' },
+  });
+  if (!response.ok) {
+    const left = response.headers.get('x-ratelimit-remaining');
+    throw new Error(`GitHub answered ${response.status}${left === '0' ? ' (its limit for this network is used up)' : ''}`);
+  }
+  return response.json();
+}
+
+async function releasesFromFeed() {
+  const response = await net.fetch(RELEASES_ATOM, { headers: { 'user-agent': 'Kuvo-Code' } });
+  if (!response.ok) throw new Error(`GitHub answered ${response.status}`);
+  return parseAtom(await response.text());
+}
+
+/// One check at a time: the menu, the tray, the startup note and the page can all ask.
+function checkForUpdates({ quiet = false, notify = quiet } = {}) {
+  if (updateCheck) return updateCheck;
+  updateCheck = runUpdateCheck({ quiet, notify }).finally(() => { updateCheck = null; });
+  return updateCheck;
+}
+
+async function runUpdateCheck({ quiet, notify }) {
+  updateState.status = 'checking';
+  updateState.error = null;
+  refreshUpdateMenus();
+  let releases;
   try {
-    const response = await fetch(RELEASES_API, { headers: { 'user-agent': 'Kuvo-Code' } });
-    if (!response.ok) throw new Error(`GitHub answered ${response.status}`);
-    const releases = await response.json();
-    const update = pickRelease(releases, app.getVersion());
-    if (!update) {
+    releases = await releasesFromApi();
+    logUpdate('checked the releases (the API)');
+  } catch (error) {
+    logUpdate(`the API failed: ${messageOf(error)}`);
+    try {
+      releases = await releasesFromFeed();
+      logUpdate('checked the releases (the feed)');
+    } catch (second) {
+      logUpdate(`the feed failed too: ${messageOf(second)}`);
+      updateState.status = 'failed';
+      updateState.error = describeError(second);
+      refreshUpdateMenus();
       if (!quiet) {
-        const message = { type: 'info', title: 'Kuvo Code', message: `Kuvo Code ${app.getVersion()} is the latest.` };
-        if (mainWindow) dialog.showMessageBox(mainWindow, message);
-        else dialog.showMessageBox(message);
+        dialog.showErrorBox('Kuvo Code', `Kuvo Code couldn't check for updates.\n\n${updateState.error}\n\nThe log is at ${updateLogPath}.`);
       }
       return null;
     }
-    if (quiet) {
-      // On startup, a note in the corner — not a question that waits for an answer. Clicking
-      // it asks the question.
-      try {
-        const note = new Notification({ title: 'Kuvo Code', body: `Version ${update.version} is available.` });
-        note.on('click', () => { void checkForUpdates(); });
-        note.show();
-      } catch {}
-      return update;
+  }
+
+  const update = pickRelease(releases, app.getVersion());
+  updateState.checkedAt = new Date().toISOString();
+  if (!update) {
+    pendingUpdate = null;
+    updateState.status = 'current';
+    logUpdate(`${app.getVersion()} is the latest`);
+    refreshUpdateMenus();
+    if (!quiet) {
+      const message = { type: 'info', title: 'Kuvo Code', message: `Kuvo Code ${app.getVersion()} is the latest.` };
+      if (mainWindow) dialog.showMessageBox(mainWindow, message);
+      else dialog.showMessageBox(message);
     }
-    const question = {
-      type: 'info', buttons: ['Download and install', 'Later'], defaultId: 0,
-      title: 'A new version', message: `Kuvo Code ${update.version} is available. Download it now?`,
-    };
-    const choice = mainWindow ? dialog.showMessageBoxSync(mainWindow, question) : dialog.showMessageBoxSync(question);
-    if (choice !== 0) return update;
-    await downloadAndRun(update);
-    return update;
-  } catch (error) {
-    if (!quiet) dialog.showErrorBox('Kuvo Code', `The update check failed: ${String(error && error.message || error)}`);
     return null;
+  }
+
+  pendingUpdate = update;
+  updateState.status = 'available';
+  logUpdate(`${update.version} is available`);
+  refreshUpdateMenus();
+  if (notify) {
+    // On startup, a note in the corner — not a question that waits for an answer. Clicking
+    // it asks the question.
+    try {
+      const note = new Notification({ title: 'Kuvo Code', body: `Version ${update.version} is available.` });
+      note.on('click', () => { void askToInstall(update); });
+      note.show();
+    } catch (error) {
+      logUpdate(`a notification failed: ${messageOf(error)}`);
+    }
+  }
+  if (!quiet) await askToInstall(update);
+  return update;
+}
+
+async function askToInstall(update) {
+  if (!update || installing) return;
+  const question = {
+    type: 'info', buttons: ['Download and install', 'Later'], defaultId: 0, cancelId: 1,
+    title: 'A new version',
+    message: `Kuvo Code ${update.version} is available. Download it now?`,
+    detail: `This is Kuvo Code ${app.getVersion()}. The installer downloads first, then opens.`,
+  };
+  if (mainWindow && !mainWindow.isVisible()) mainWindow.show();
+  const parent = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  const choice = parent ? await dialog.showMessageBox(parent, question) : await dialog.showMessageBox(question);
+  if (choice.response !== 0) return;
+  await installUpdate(update);
+}
+
+async function installUpdate(update) {
+  if (!update || installing) return;
+  installing = true;
+  updateState.status = 'downloading';
+  updateState.error = null;
+  refreshUpdateMenus();
+  let lastReport = 0;
+  const showProgress = (written, total) => {
+    const now = Date.now();
+    if (now - lastReport < 150 && written !== total) return;
+    lastReport = now;
+    const fraction = total ? Math.min(1, written / total) : -1;
+    try { if (mainWindow) mainWindow.setProgressBar(fraction); } catch {}
+    try {
+      if (tray) tray.setToolTip(total && fraction >= 0
+        ? `Kuvo Code — downloading ${update.version}: ${Math.round(fraction * 100)}%`
+        : `Kuvo Code — downloading ${update.version}`);
+    } catch {}
+  };
+  try {
+    logUpdate(`downloading ${update.name}`);
+    if (mainWindow && !mainWindow.isVisible()) mainWindow.show();
+    const file = await downloadInstaller({
+      url: update.url,
+      name: update.name,
+      directory: updatesFolder,
+      fetch: (url, init) => net.fetch(url, init),
+      onProgress: showProgress,
+    });
+    updateState.downloaded = file;
+    logUpdate(`downloaded ${path.basename(file)}`);
+    try { if (mainWindow) mainWindow.setProgressBar(-1); } catch {}
+    try { if (tray) tray.setToolTip('Kuvo Code'); } catch {}
+    updateState.status = 'installing';
+    refreshUpdateMenus();
+    await startInstaller(file);
+    logUpdate('the installer started; quitting so it can replace the files');
+    quitting = true;
+    // A moment for the installer's own window to come up before this one goes.
+    setTimeout(() => app.quit(), 600);
+  } catch (error) {
+    updateState.status = 'failed';
+    updateState.error = describeError(error);
+    logUpdate(`failed: ${messageOf(error)}`);
+    try { if (mainWindow) mainWindow.setProgressBar(-1); } catch {}
+    try { if (tray) tray.setToolTip('Kuvo Code'); } catch {}
+    refreshUpdateMenus();
+    dialog.showErrorBox(
+      'Kuvo Code',
+      `Kuvo Code couldn't install ${update.version}.\n\n${updateState.error}\n\nThe log is at ${updateLogPath}.`,
+    );
+  } finally {
+    installing = false;
   }
 }
 
-async function downloadAndRun(update) {
-  const name = typeof update?.name === "string" ? path.basename(update.name) : "";
-  if (!name || !/\\.exe$/i.test(name) || name.includes("..")) throw new Error("that download's name isn't allowed.");
-  const target = path.join(os.tmpdir(), name);
-  const response = await fetch(update.url, { headers: { 'user-agent': 'Kuvo-Code' } });
-  if (!response.ok) throw new Error(`the download failed (${response.status})`);
-  const buffer = Buffer.from(await response.arrayBuffer());
-  await fs.promises.writeFile(target, buffer);
-  const failure = await shell.openPath(target);
-  if (failure) throw new Error(failure);
+/// Start the installer itself; if Windows refuses the direct start, ask it to open the file,
+/// which is what a double-click does. Its own error is the one worth reporting.
+async function startInstaller(file) {
+  try {
+    await launchInstaller({ path: file });
+  } catch (error) {
+    logUpdate(`starting it directly failed (${messageOf(error)}); asking Windows to open it`);
+    const failure = await shell.openPath(file);
+    if (failure) throw new Error(failure);
+  }
 }
+
+ipcMain.handle('kuvo:update-status', () => updateStatus());
+ipcMain.handle('kuvo:update-check', async () => {
+  // From the page, the page shows the answer: no dialog, and no note it did not ask for.
+  await checkForUpdates({ quiet: true, notify: false });
+  return updateStatus();
+});
+ipcMain.handle('kuvo:update-install', async () => {
+  if (!pendingUpdate) return updateStatus();
+  await installUpdate(pendingUpdate);
+  return updateStatus();
+});
 
 app.whenReady().then(async () => {
   try {
@@ -477,15 +675,22 @@ app.whenReady().then(async () => {
     applyShellPreferences();
     globalShortcut.register('CommandOrControl+Shift+K', toggleWindow);
     applicationMenu();
-    // Auto-update on startup, unless the user turned it off: a note, not a question.
-    if (cfg.autoUpdate !== false) {
-      void checkForUpdates({ quiet: true });
-      // And again a few times a day, so a version published while the app is open is
-      // still found — the Mac app's updater checks in the background too.
-      setInterval(() => {
-        if (loadConfig().autoUpdate !== false) void checkForUpdates({ quiet: true });
-      }, 6 * 60 * 60 * 1000);
-    }
+    // Installers an earlier attempt left behind are a hundred megabytes each; a day is
+    // long enough to retry a failed one by hand.
+    void sweepInstallers(updatesFolder).then(removed => {
+      if (removed.length) logUpdate(`removed ${removed.length} old installer${removed.length === 1 ? '' : 's'}`);
+    });
+    // Auto-update on startup, unless the user turned it off: a note, not a question. The
+    // smoke test only checks that the shell starts, so it does not go looking for a version.
+    const smoking = process.argv.includes('--smoke');
+    if (cfg.autoUpdate !== false && !smoking) void checkForUpdates({ quiet: true });
+    // And again a few times a day, so a version published while the app is open is still
+    // found — the Mac app's updater checks in the background too. The timer stays, and
+    // reads the setting each time, so turning updates on in Settings starts the checks
+    // without a restart.
+    setInterval(() => {
+      if (loadConfig().autoUpdate !== false) void checkForUpdates({ quiet: true });
+    }, 6 * 60 * 60 * 1000);
     if (process.argv.includes('--smoke')) {
       const url = await startHarness();
       const response = await fetch(`${url}api/state`, { signal: AbortSignal.timeout(10000) });

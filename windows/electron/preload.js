@@ -16,6 +16,11 @@ contextBridge.exposeInMainWorld("kuvo", {
   maximize: () => ipcRenderer.send("kuvo:maximize"),
   openExternal: (url) => ipcRenderer.send("kuvo:open-external", url),
   sshCheck: (destination) => ipcRenderer.invoke("kuvo:ssh-check", destination),
+  // The updater, for Settings › General: what it last found, a check asked for from the
+  // page, and the installer the shell already knows about.
+  updateStatus: () => ipcRenderer.invoke("kuvo:update-status"),
+  checkForUpdates: () => ipcRenderer.invoke("kuvo:update-check"),
+  installUpdate: () => ipcRenderer.invoke("kuvo:update-install"),
   closeWindow: () => ipcRenderer.send("kuvo:close-window"),
   // The menu bar's items that act on the conversation.
   onMenu: (callback) => ipcRenderer.on("kuvo:menu", (_event, id) => callback(id)),

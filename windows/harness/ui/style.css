@@ -3545,6 +3545,8 @@ button > svg, .small > svg, .session-delete > svg, .keycap-clear > svg { display
 .setting-row-label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .setting-row-note { color: var(--ink-soft); font-size: 12px; line-height: 1.4; }
 .setting-row-control { display: flex; align-items: center; flex: 0 0 auto; }
+/* The updater's two answers side by side: the version it found, and a check on demand. */
+.settings-update-actions { display: flex; align-items: center; gap: 6px; }
 
 /* The three modes, each with a little window of its own (AppearanceSettings.swift:16-28:
    the Mac shows a thumbnail for each, and the chosen one is marked). */

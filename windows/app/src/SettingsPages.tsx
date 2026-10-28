@@ -32,6 +32,41 @@ import {
   SkeletonRows,
 } from "./SettingsShared";
 
+/// The updater as the shell sees it: the version running, the one it found, and how the
+/// last attempt ended. The page shows what the shell says rather than keeping a copy, so
+/// Settings and the tray never disagree.
+type UpdateStatus = {
+  version: string;
+  available: string | null;
+  notes: string;
+  status: "idle" | "checking" | "available" | "current" | "downloading" | "installing" | "failed";
+  error: string | null;
+  checkedAt: string | null;
+  logPath: string;
+};
+
+type UpdateBridge = {
+  updateStatus?: () => Promise<UpdateStatus>;
+  checkForUpdates?: () => Promise<UpdateStatus>;
+  installUpdate?: () => Promise<UpdateStatus>;
+  showInFolder?: (path: string) => void;
+};
+
+const updateBridge = (): UpdateBridge =>
+  (typeof window === "undefined" ? {} : (window as unknown as { kuvo?: UpdateBridge }).kuvo ?? {});
+// Asked when the page draws, not when the module loads: the static export has no window.
+const canCheckForUpdates = () => typeof updateBridge().checkForUpdates === "function";
+
+const shellUpdateStatus = async (): Promise<UpdateStatus | null> => {
+  try { return (await updateBridge().updateStatus?.()) ?? null; } catch { return null; }
+};
+const shellCheckForUpdates = async (): Promise<UpdateStatus | null> => {
+  try { return (await updateBridge().checkForUpdates?.()) ?? null; } catch { return null; }
+};
+const shellInstallUpdate = async (): Promise<UpdateStatus | null> => {
+  try { return (await updateBridge().installUpdate?.()) ?? null; } catch { return null; }
+};
+
 export function AppearancePage() {
   return (
     <>
@@ -131,11 +166,14 @@ export function GeneralPage() {
   });
   const [imported, setImported] = useState<string[] | null>(null);
   const [missing, setMissing] = useState<string[]>([]);
+  const [update, setUpdate] = useState<UpdateStatus | null>(null);
+  const [checking, setChecking] = useState(false);
 
   useEffect(() => {
     void api<{ updates: boolean; startAtLogin: boolean; keepAwake: boolean; path: string }>("/api/app-settings")
       .then(answer => setSettings(answer))
       .catch(() => {});
+    void shellUpdateStatus().then(setUpdate);
   }, []);
 
   const set = async (next: Partial<typeof settings>) => {
@@ -146,6 +184,40 @@ export function GeneralPage() {
       complain(error);
     }
   };
+
+  const check = async () => {
+    setChecking(true);
+    try {
+      const answer = await shellCheckForUpdates();
+      if (answer) setUpdate(answer);
+    } catch (error) {
+      complain(error);
+    }
+    setChecking(false);
+  };
+
+  const install = async () => {
+    setUpdate(current => (current ? { ...current, status: "downloading", error: null } : current));
+    const answer = await shellInstallUpdate();
+    if (answer) setUpdate(answer);
+  };
+
+  const available = update?.available ?? null;
+  const failed = update?.status === "failed" ? update.error : null;
+  const busy = update?.status === "downloading" || update?.status === "installing";
+  const versionNote = !update
+    ? "Reading the version…"
+    : update.status === "downloading"
+      ? `Downloading Kuvo Code ${available ?? ""}…`
+      : update.status === "installing"
+        ? `Starting the installer for ${available ?? ""}…`
+        : available
+          ? `Kuvo Code ${available} is available.`
+          : update.status === "current"
+            ? "Kuvo Code is up to date."
+            : failed
+              ? `The last check failed: ${failed}`
+              : `Kuvo Code ${update.version}.`;
 
   return (
     <>
@@ -163,10 +235,30 @@ export function GeneralPage() {
         </SettingRow>
       </SettingGroup>
       <SettingGroup title="Updates">
-        <SettingRow label="Check for updates automatically" note="Updates are signed and come from Kuvo Code's releases.">
+        <SettingRow label="Check for updates automatically" note="Once when Kuvo Code opens, and again a few times a day.">
           <input type="checkbox" checked={settings.updates} onChange={event => void set({ updates: event.target.checked })} />
         </SettingRow>
+        <SettingRow
+          label="Version"
+          note={versionNote}
+        >
+          <span className="settings-update-actions">
+            {available ? <button className="primary small" disabled={busy} onClick={() => void install()}>Install {available}…</button> : null}
+            <button className="small" disabled={checking || busy || !canCheckForUpdates()} onClick={() => void check()}>
+              {checking ? "Checking…" : "Check Now"}
+            </button>
+          </span>
+        </SettingRow>
+        {failed ? (
+          <SettingRow label="The update log" note={update?.logPath ?? ""}>
+            <button className="small" onClick={() => updateBridge().showInFolder?.(update?.logPath ?? "")}>Show in Folder</button>
+          </SettingRow>
+        ) : null}
       </SettingGroup>
+      <div className="settings-note">
+        Updates come from Kuvo Code&rsquo;s releases on GitHub. The installer isn&rsquo;t signed yet, so
+        Windows may warn before it runs.
+      </div>
       <SettingGroup title="While Agents Work">
         <SettingRow
           label="Keep this machine awake"
